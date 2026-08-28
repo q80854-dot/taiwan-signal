@@ -1,13 +1,12 @@
-import sys, os
-print("=== APP STARTING ===", flush=True)
-print(f"Python: {sys.version}", flush=True)
-print(f"Path: {sys.path}", flush=True)
 """
 app.py — Flask 主應用 v1.0
 排程：08:45 早報 / 16:00 更新品種 / 16:30 掃描
 API + Telegram Webhook + 系統監控
 """
-import os, logging, threading
+import sys, os, logging, threading
+print("=== APP STARTING ===", flush=True)
+print(f"Python: {sys.version}", flush=True)
+
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request, render_template
 from config import SYSTEM, TELEGRAM_BOT_TOKEN
