@@ -211,7 +211,7 @@ def create_app():
         except Exception as e: logger.warning(f"Webhook 設定失敗: {e}")
     logger.info(f"✅ {SYSTEM['name']} v{SYSTEM['version']} 啟動")
     return app
-
+app = create_app()
 if __name__ == "__main__":
     create_app()
     app.run(host="0.0.0.0", port=SYSTEM["web_port"], debug=False)
