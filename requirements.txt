@@ -1,9 +1,0 @@
-flask
-gunicorn
-yfinance
-pandas
-numpy
-requests
-APScheduler
-pytz
-python-dotenv
