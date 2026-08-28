@@ -1,3 +1,7 @@
+import sys, os
+print("=== APP STARTING ===", flush=True)
+print(f"Python: {sys.version}", flush=True)
+print(f"Path: {sys.path}", flush=True)
 """
 app.py — Flask 主應用 v1.0
 排程：08:45 早報 / 16:00 更新品種 / 16:30 掃描
