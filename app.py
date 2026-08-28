@@ -62,9 +62,35 @@ def setup_scheduler():
 # ── Routes ──
 @app.route("/")
 def index():
-    try: return render_template("dashboard.html")
-    except: return jsonify({"status": "ok", "system": SYSTEM["name"], "version": SYSTEM["version"]})
-
+    try:
+        return render_template("dashboard.html")
+    except Exception as e:
+        logger.error(f"Template error: {e}")
+        return f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head><meta charset="utf-8"><title>台股波段智慧交易系統</title>
+<style>
+  body{{background:#0d1117;color:#e6edf3;font-family:system-ui;padding:30px;line-height:1.6}}
+  h1{{color:#00d47e;margin-bottom:20px}}
+  a{{color:#4d9eff;margin-right:15px}}
+  .err{{background:#21262d;border:1px solid #ff4060;border-radius:8px;padding:15px;margin:15px 0;font-size:13px}}
+  .links{{background:#21262d;border-radius:8px;padding:15px;margin-top:20px}}
+</style>
+</head>
+<body>
+<h1>🇹🇼 台股波段智慧交易系統 v{SYSTEM['version']}</h1>
+<p>✅ 系統運行中，正在診斷儀表板問題...</p>
+<div class="err">
+  <b>Template 錯誤：</b><code>{e}</code>
+</div>
+<div class="links">
+  <b>可用 API：</b><br><br>
+  <a href="/api/state">/api/state</a>
+  <a href="/api/market">/api/market</a>
+  <a href="/api/diagnostics">/api/diagnostics</a>
+  <a href="/health">/health</a>
+</div>
+</body></html>"""
 @app.route("/api/state")
 def api_state():
     try:
