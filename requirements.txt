@@ -1,7 +1,7 @@
-gunicorn==21.2.0
-flask==3.0.3
-yfinance==0.2.36
-requests==2.31.0
-APScheduler==3.10.4
-pytz==2024.1
-python-dotenv==1.0.1
+gunicorn
+flask
+yfinance
+requests
+APScheduler
+pytz
+python-dotenv
