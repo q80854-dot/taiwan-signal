@@ -1,0 +1,8 @@
+gunicorn
+flask
+yfinance
+curl_cffi
+requests
+APScheduler
+pytz
+python-dotenv
