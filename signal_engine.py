@@ -23,17 +23,30 @@ def calc_trade_cost(price, lots, direction):
             "cost_pct": round(total_cost/total_value*100,3) if total_value else 0}
 
 def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="中型股"):
+    # ★ 修正：2026-08-30——投資人回測報告核對數字時發現：舊版「lots = max(1, ...)」不管風險預算
+    # (2%) 或單一部位資金上限(30%)換算出來是多少，最少一定強迫買1張。股價較高、或停損距離較寬的
+    # 標的（例如當時的 6669.TW），换算下來连0.1張都不到，也照樣被塞進1張，等於這筆交易的實際風險
+    # 遠遠超出系統自己設定的2%風控上限（backtest 上實測：6669.TW 第一筆停損就虧了帳戶的36%，
+    # 是預期2%的18倍）。這不只是回測數字失真而已——generate_signal_tw()（即時掃描、真的會推送給
+    # 使用者的訊號）呼叫的是同一個函式，第192行本來就寫了「if pos["lots"]<=0: return None」想擋掉
+    # 這種「連1張都嫌大」的訊號，但因為這裡從來不會真的回傳0，那行防呆形同虛設，代表明天實戰上路
+    # 後，遇到股價較高/停損較寬的標的，一樣可能會推送出實際風險遠超過2%上限的訊號。
+    # 修正：不再無條件下限1張，換算後不足1張就直接回傳 lots=0（不進場），讓既有的
+    # `if pos["lots"]<=0` 防呆真正生效，風控上限才會是系統實際遵守的規則，不是好看而已。
     balance  = balance  or ACCOUNT_BALANCE_TWD
     risk_pct = risk_pct or 2.0
     max_risk = balance * risk_pct / 100
     sl_dist  = abs(price - stop_loss)
-    if sl_dist <= 0: return {"lots":1,"risk_twd":0,"risk_pct":0,"position_value":0,"roundtrip_cost":0,"breakeven_pct":0}
+    if sl_dist <= 0 or price <= 0:
+        return {"lots":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,"breakeven_pct":0}
     risk_per_lot = sl_dist * SHARES_PER_LOT
     raw_lots = max_risk / risk_per_lot
     max_lots_by_cap = (balance * 0.30) / (price * SHARES_PER_LOT)
     raw_lots = min(raw_lots, max_lots_by_cap)
     max_lots_map = {"大型股":20,"中型股":10,"小型股":5,"ETF":30}
-    lots = max(1, min(max_lots_map.get(size_cat,10), math.floor(raw_lots)))
+    lots = min(max_lots_map.get(size_cat,10), math.floor(raw_lots))
+    if lots < 1:
+        return {"lots":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,"breakeven_pct":0}
     position_value = lots * price * SHARES_PER_LOT
     buy_cost  = calc_trade_cost(price, lots, "buy")
     sell_cost = calc_trade_cost(price, lots, "sell")
