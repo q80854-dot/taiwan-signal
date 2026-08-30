@@ -432,6 +432,19 @@ let _state=null,_signals=[],_eqChart=null,_activeTab='overview';
 const safe=(v,fb='—')=>(v===null||v===undefined||v===''||v!==v)?fb:v;
 const safeN=(v,d=2,fb='—')=>{const n=parseFloat(v);return isNaN(n)?fb:n.toFixed(d);};
 const chgStr=(c)=>{const n=parseFloat(c);if(isNaN(n))return '—';return(n>=0?'▲ +':'▼ ')+Math.abs(n).toFixed(2)+'%';};
+// ★ 修正：2026-08-30（第二輪）——後端 calc_position_size() 改用零股(股數)為單位後，
+// suggested_shares 可能是任意股數，不再一定是1000的倍數，直接顯示「N張」（把股數當張數講）
+// 會誤導。改成台股慣用的「N張M股」混合顯示，不足1張只顯示股數。suggested_shares 是主要來源，
+// 沒有這個欄位時（理論上不會，防呆用）退回用 suggested_lots*1000 換算。
+const fmtShares=(s)=>{
+  let shares=s.suggested_shares;
+  if(shares===null||shares===undefined) shares=Math.round((s.suggested_lots||1)*1000);
+  shares=Math.round(shares);
+  const lots=Math.floor(shares/1000), rem=shares%1000;
+  if(lots&&rem) return `${lots}張${rem}股`;
+  if(lots) return `${lots}張`;
+  return `${rem}股`;
+};
 // ★ 台股慣例：漲＝紅（--up）、跌＝綠（--down），跟美股相反。全站色彩語意統一從這裡套用。
 const dirColor=(v)=>v>0?'var(--up)':v<0?'var(--down)':'var(--tx3)';
 const setEl=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -609,7 +622,7 @@ function renderLatestSignals(sigs){
         <div class="sig-item"><label>現價</label><span>${safeN(s.current_price,2)}</span></div>
         <div class="sig-item"><label>止損</label><span style="color:var(--down)">${safeN(s.stop_loss,2)}</span></div>
         <div class="sig-item"><label>TP1</label><span style="color:var(--up)">${safeN(s.tp1,2)}</span></div>
-        <div class="sig-item"><label>張數</label><span>${safe(s.suggested_lots,1)}</span></div>
+        <div class="sig-item"><label>股數</label><span>${fmtShares(s)}</span></div>
       </div>
       <div class="sig-note"><span>${safe(s.sector)}</span><span>風險 TWD ${(s.risk_twd||0).toLocaleString()}</span><span>RR 1:${safeN(s.rr1,1)}</span></div>
     </div>`;
@@ -651,7 +664,7 @@ function renderSignals(){
         <div class="sig-item"><label style="color:var(--up)">TP2</label><span style="color:var(--up)">${safeN(s.tp2,2)}（+${safeN(s.tp2_pct,1)}%）</span></div>
       </div>
       <div class="sig-box">
-        <span>建議 <b>${safe(s.suggested_lots,1)} 張</b></span>
+        <span>建議 <b>${fmtShares(s)}</b></span>
         <span>風險 <b style="color:var(--up)">TWD ${(s.risk_twd||0).toLocaleString()}（${safeN(s.risk_pct,1)}%）</b></span>
         <span>費稅 <b>TWD ${(s.roundtrip_cost||0).toLocaleString()}</b></span>
       </div>
