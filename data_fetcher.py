@@ -617,19 +617,26 @@ def fetch_market_index() -> Dict:
                                 f"但 Yahoo 即時報價時間={rmt_date}、regularMarketPrice={rmp}。"
                                 f"改用 regularMarketPrice 當現價，原本那根當前收"
                             )
-                            # meta 裡有些商品會附 chartPreviousClose/previousClose，有就優先用；
-                            # 沒有的話用「原本以為是現價、其實是前一交易日收盤」的那個值頂上，
-                            # 在只落後一個交易日的情況下方向是對的。
-                            meta_prev = meta.get("previousClose") or meta.get("chartPreviousClose")
+                            # ★ 修正：2026-08-30 部署後立刻用正式環境的真實資料驗證這個修正時，
+                            #   抓到我自己這次修正裡的一個新 bug——這裡原本會優先採用
+                            #   meta.get("previousClose")/meta.get("chartPreviousClose")，
+                            #   當時的理由是「meta 裡如果有現成的前收就直接用，比較準」。
+                            #   但正式環境實測發現，這兩個欄位算出來的數字是錯的：TWII 現價修正
+                            #   成功變成 46331.45（跟真實收盤一致）後，前收卻變成 44762.32，
+                            #   跟真實的前一交易日收盤 45975.22 對不上；S&P500 現價修正成功變成
+                            #   7711.76，前收卻是 7674.37，也跟真實的 7730.99 對不上——代表
+                            #   chartPreviousClose/previousClose 這兩個欄位實際代表的基準日期
+                            #   跟我原本假設的「regularMarketTime 的前一個交易日」不一樣（很可能
+                            #   是相對於整個查詢區間起點的前收，不是相對於最新報價的前收），
+                            #   我當初沒辦法從 sandbox 直接連 Yahoo 驗證，這個假設從一開始就沒有
+                            #   真的被驗證過，這次部署後第一時間查真實數字才抓到。
+                            #   改法：不再信任 meta 裡的前收欄位，直接拿「原本以為是現價、
+                            #   其實是前一交易日收盤」的那根 K 線收盤價當前收——這個數字是
+                            #   history() 回傳的、真實存在過的收盤價，只是被誤判成「現價」，
+                            #   拿來當前收在「只落後一個交易日」這個已知情境下方向一定是對的，
+                            #   不需要依賴 meta 裡意義不明的欄位。
                             pv = p
                             p = rmp
-                            if meta_prev is not None:
-                                try:
-                                    meta_prev_f = float(meta_prev)
-                                    if meta_prev_f > 0 and not math.isnan(meta_prev_f):
-                                        pv = meta_prev_f
-                                except (TypeError, ValueError):
-                                    pass
                     except Exception as e:
                         logger.warning(f"yfinance 大盤 {key}({sym}): 新鮮度交叉比對本身出錯，維持原本數字：{e}")
                 # ★ 修正：2026-08-30 用單元測試抓到的真實 bug——這兩個合理性上限是舊的
