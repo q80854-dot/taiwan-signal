@@ -160,6 +160,50 @@ def api_walkforward(ticker: str):
         return jsonify(walk_forward_backtest_tw(t))
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+# ── 批量回測（多檔一次跑）──
+# ★ 新增：2026-08-30——使用者要求一次回測 30+ 檔，逐檔呼叫 /api/backtest/<ticker>
+#   會很慢（每檔都要重新抓資料、重新算指標），而且 30+ 檔跑完常常超過
+#   gunicorn 的 120 秒逾時。這裡改成背景執行緒（跟 /api/scan/force 同一個模式）：
+#   POST 啟動後立刻回應，前端/呼叫端改用 /api/backtest/full/status 輪詢結果，
+#   避免長時間佔用一個 HTTP request、也避免逾時被切斷導致跑到一半的結果整組遺失。
+#   backtester.py 的 run_full_backtest_tw() 本來就有批量回測的邏輯，這裡只是把它
+#   接上 API，沒有新增或修改回測本身的計算邏輯。
+_full_backtest_state = {"status": "idle", "started_at": None, "result": None, "error": None}
+
+def job_full_backtest(tickers, min_score):
+    global _full_backtest_state
+    try:
+        from backtester import run_full_backtest_tw
+        result = run_full_backtest_tw(tickers=tickers, min_score=min_score)
+        _full_backtest_state["result"] = result
+        _full_backtest_state["status"] = "done"
+        _full_backtest_state["error"] = None
+        logger.info(f"[BT-full] 完成，共 {result.get('total',0)} 檔有效結果")
+    except Exception as e:
+        logger.error(f"job_full_backtest: {e}", exc_info=True)
+        _full_backtest_state["status"] = "error"
+        _full_backtest_state["error"] = str(e)
+
+@app.route("/api/backtest/full", methods=["POST"])
+def api_backtest_full_start():
+    if _full_backtest_state["status"] == "running":
+        return jsonify({"status": "already_running", "started_at": _full_backtest_state["started_at"]})
+    data = request.get_json(silent=True) or {}
+    tickers = data.get("tickers")
+    min_score = data.get("min_score", 65.0)
+    if tickers is not None and not isinstance(tickers, list):
+        return jsonify({"error": "tickers 必須是陣列"}), 400
+    _full_backtest_state["status"] = "running"
+    _full_backtest_state["started_at"] = datetime.now(timezone.utc).isoformat()
+    _full_backtest_state["result"] = None
+    _full_backtest_state["error"] = None
+    threading.Thread(target=job_full_backtest, args=(tickers, min_score), daemon=True).start()
+    return jsonify({"status": "started", "n_tickers": len(tickers) if tickers else "default(TW50)"})
+
+@app.route("/api/backtest/full/status")
+def api_backtest_full_status():
+    return jsonify(_full_backtest_state)
+
 # ── Telegram Webhook ──
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
