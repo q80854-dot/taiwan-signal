@@ -21,6 +21,23 @@ from config import (
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 SUBSCRIBERS_PATH = "instance/subscribers.json"
 
+# ★ 修正：2026-08-30（第二輪）——signal_engine.calc_position_size() 改用零股(股數)為單位後，
+# suggested_shares 可能是任意股數（例如 347 股），不再一定是1000的倍數。原本訊息裡直接寫
+# 「{suggested_lots}張」在股數制下會顯示成不合理的「0.347張」。這裡改成台股慣用的「N張M股」
+# 混合顯示（不足1張時只顯示股數），suggested_shares 是主要來源；如果訊號是舊格式沒有這個欄位
+# （理論上不會，但保留防呆），退回用 suggested_lots*1000 換算。
+def format_shares(sig: Dict) -> str:
+    shares = sig.get("suggested_shares")
+    if shares is None:
+        shares = round(sig.get("suggested_lots", 1) * 1000)
+    shares = int(shares)
+    lots, rem = divmod(shares, 1000)
+    if lots and rem:
+        return f"{lots}張{rem}股"
+    if lots:
+        return f"{lots}張"
+    return f"{rem}股"
+
 # ════════════════════════════════════════════════
 # 訂閱者管理
 # ════════════════════════════════════════════════
@@ -291,7 +308,7 @@ def send_daily_report(signals: List[Dict], market_overview: Dict, scan_stats: Di
             f"{i+1}. {s.get('emoji_grade','')} {s['name']}（{s['code']}）"
             f"{'📈' if s['direction']=='buy' else '📉'} {s['score']}分 "
             f"SL {s.get('sl_pct',0):.1f}% TP1+{s.get('tp1_pct',0):.1f}% "
-            f"建議{s.get('suggested_lots',1)}張"
+            f"建議{format_shares(s)}"
             for i, s in enumerate(signals)
         )
         msg_paid = (
@@ -397,7 +414,7 @@ def format_signal_paid(sig: Dict) -> str:
         f"🎯 TP2：{sig.get('tp2',0):.2f}（+{sig.get('tp2_pct',0):.1f}%）1:{sig.get('rr2',2.5)} ← 出1/3\n"
         f"🎯 TP3：{sig.get('tp3',0):.2f}（+{sig.get('tp3_pct',0):.1f}%）1:{sig.get('rr3',4.0)} ← 出1/3\n\n"
         f"📦 <b>倉位</b>\n"
-        f"建議：<b>{sig.get('suggested_lots',1)} 張</b>\n"
+        f"建議：<b>{format_shares(sig)}</b>\n"
         f"風險：TWD {sig.get('risk_twd',0):,}（{sig.get('risk_pct',0):.1f}%）\n"
         f"費稅：TWD {sig.get('roundtrip_cost',0):,}\n\n"
         f"📊 <b>指標</b>\n"

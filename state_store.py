@@ -31,6 +31,11 @@ class StateStore:
                     current_price REAL, entry_price REAL,
                     stop_loss     REAL, tp1 REAL, tp2 REAL, tp3 REAL,
                     sl_pct        REAL, tp1_pct REAL, tp2_pct REAL,
+                    -- ★ 修正：2026-08-30（第二輪）——這個欄位名字是舊制（1000股=1張）留下來的，
+                    -- 但 signal_engine.calc_position_size() 改用零股(股數)為單位後，這裡實際存的
+                    -- 是股數，不是張數。沒有重新命名欄位是為了不動到既有 production DB 的 schema
+                    -- （SQLite ALTER COLUMN 風險/複雜度不成比例），純粹是欄位名稱歷史遺留，
+                    -- 讀寫這個欄位時請當作股數處理，不要照字面當成張數。
                     suggested_lots INTEGER, risk_twd REAL, risk_pct REAL,
                     position_value REAL, roundtrip_cost REAL,
                     vol_ratio     REAL, adx_value REAL, rsi_value REAL,
@@ -74,7 +79,7 @@ class StateStore:
                     sig["current_price"],sig["entry_price"],sig["stop_loss"],
                     sig["tp1"],sig.get("tp2",0),sig.get("tp3",0),
                     sig.get("sl_pct",0),sig.get("tp1_pct",0),sig.get("tp2_pct",0),
-                    sig.get("suggested_lots",1),sig.get("risk_twd",0),sig.get("risk_pct",0),
+                    sig.get("suggested_shares",sig.get("suggested_lots",1)),sig.get("risk_twd",0),sig.get("risk_pct",0),
                     sig.get("position_value",0),sig.get("roundtrip_cost",0),
                     sig.get("vol_ratio",1),sig.get("adx_value",0),sig.get("rsi_value",50),
                     sig.get("inst_signal",""),sig.get("weekly_bias",""),

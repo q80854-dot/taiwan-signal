@@ -44,10 +44,16 @@ def check_foreign_flow(market_overview: Dict) -> Dict:
     return {"triggered":False,"level":"normal","net_buy_twd":nb}
 
 def check_account_requirement(ticker: str, stock_info: Dict) -> Dict:
-    price=stock_info.get("close",100); min_capital=price*1000*1.1
+    # ★ 修正：2026-08-30——原本假設下單一定是整張(1000股)，用 price*1000*1.1 當最低門檻。
+    # 現在 calc_position_size() 已經改用零股(股數)為單位下單，不再需要湊滿一張才能進場，
+    # 所以這裡的最低資金需求也不該再綁定「1張」，改成「至少買得起1股，並留一點手續費緩衝」。
+    # 真正「這筆帳戶規模、這個停損距離，換算出來的股數夠不夠達到有意義的部位」這件事，
+    # calc_position_size() 自己就會處理（換算後不足1股會直接回傳 shares=0、不進場），
+    # 這裡只做「連1股都買不起」這種最基本的資金下限檢查。
+    price=stock_info.get("close",100); min_capital=price*1.1
     if ACCOUNT_BALANCE_TWD<min_capital:
         return {"sufficient":False,"required":round(min_capital,0),"current":ACCOUNT_BALANCE_TWD,
-                "message":f"⚠️ 帳戶不足買 1 張（需 TWD {min_capital:,.0f}）","warning_only":True}
+                "message":f"⚠️ 帳戶不足買 1 股（需 TWD {min_capital:,.0f}）","warning_only":True}
     return {"sufficient":True}
 
 _daily_loss = {"date":"","loss_twd":0.0,"signal_count":0}

@@ -13,8 +13,8 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-def calc_trade_cost(price, lots, direction):
-    total_value = price * lots * SHARES_PER_LOT
+def calc_trade_cost(price, shares, direction):
+    total_value = price * shares
     commission  = max(MIN_COMMISSION, total_value * COMMISSION_RATE)
     tax         = total_value * TAX_RATE_SELL if direction == "sell" else 0
     total_cost  = commission + tax
@@ -23,38 +23,42 @@ def calc_trade_cost(price, lots, direction):
             "cost_pct": round(total_cost/total_value*100,3) if total_value else 0}
 
 def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="中型股"):
-    # ★ 修正：2026-08-30——投資人回測報告核對數字時發現：舊版「lots = max(1, ...)」不管風險預算
-    # (2%) 或單一部位資金上限(30%)換算出來是多少，最少一定強迫買1張。股價較高、或停損距離較寬的
-    # 標的（例如當時的 6669.TW），换算下來连0.1張都不到，也照樣被塞進1張，等於這筆交易的實際風險
-    # 遠遠超出系統自己設定的2%風控上限（backtest 上實測：6669.TW 第一筆停損就虧了帳戶的36%，
-    # 是預期2%的18倍）。這不只是回測數字失真而已——generate_signal_tw()（即時掃描、真的會推送給
-    # 使用者的訊號）呼叫的是同一個函式，第192行本來就寫了「if pos["lots"]<=0: return None」想擋掉
-    # 這種「連1張都嫌大」的訊號，但因為這裡從來不會真的回傳0，那行防呆形同虛設，代表明天實戰上路
-    # 後，遇到股價較高/停損較寬的標的，一樣可能會推送出實際風險遠超過2%上限的訊號。
-    # 修正：不再無條件下限1張，換算後不足1張就直接回傳 lots=0（不進場），讓既有的
-    # `if pos["lots"]<=0` 防呆真正生效，風控上限才會是系統實際遵守的規則，不是好看而已。
+    # ★ 修正：2026-08-30（第一輪）——投資人回測報告核對數字時發現：舊版「lots = max(1, ...)」不管
+    # 風險預算(2%)或單一部位資金上限(30%)換算出來是多少，最少一定強迫買1張。股價較高、或停損距離
+    # 較寬的標的（例如當時的 6669.TW），换算下來连0.1張都不到，也照樣被塞進1張，等於這筆交易的實際
+    # 風險遠遠超出系統自己設定的2%風控上限。第一輪先把「無條件下限1張」改成「不足1張就直接不進場」，
+    # 但這樣又衍生出新問題：台股以「張」(1000股)為最小交易單位的話，像台積電、聯發科、大立光這種
+    # 高價股，只要停損距離夠寬，連1張的風險都會超過2%——不是策略選擇不進場，是「張」這個交易單位
+    # 本身把這些標的鎖在門外，53檔 TW50+ETF 的回測裡有20檔完全交易不到就是這樣來的。
+    # ★ 修正：2026-08-30（第二輪，本次）——改用台股零股(odd-lot)交易的「股」為單位，不再綁定
+    # 1000股=1張的整張門檻。風險預算/單一部位上限換算出來多少股，就用多少股（無條件捨去到整股），
+    # 換算後不足1股才不進場——這樣「用多少張」不再是進不進得了場的門檻，只有風險預算本身才是。
+    # max_shares_map 沿用原本 max_lots_map 的分類上限精神（原本20/10/5/30張），改成等值的股數上限
+    # （×1000），確保這層「大型股最多20張」的曝險保護仍然存在，只是允許中間值不必卡在整張邊界。
+    # 注意：零股交易本身仍有實務限制（撮合時段/流動性跟整張不同，這裡沒有另外模擬），詳見文件說明。
     balance  = balance  or ACCOUNT_BALANCE_TWD
     risk_pct = risk_pct or 2.0
     max_risk = balance * risk_pct / 100
     sl_dist  = abs(price - stop_loss)
     if sl_dist <= 0 or price <= 0:
-        return {"lots":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,"breakeven_pct":0}
-    risk_per_lot = sl_dist * SHARES_PER_LOT
-    raw_lots = max_risk / risk_per_lot
-    max_lots_by_cap = (balance * 0.30) / (price * SHARES_PER_LOT)
-    raw_lots = min(raw_lots, max_lots_by_cap)
-    max_lots_map = {"大型股":20,"中型股":10,"小型股":5,"ETF":30}
-    lots = min(max_lots_map.get(size_cat,10), math.floor(raw_lots))
-    if lots < 1:
-        return {"lots":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,"breakeven_pct":0}
-    position_value = lots * price * SHARES_PER_LOT
-    buy_cost  = calc_trade_cost(price, lots, "buy")
-    sell_cost = calc_trade_cost(price, lots, "sell")
+        return {"shares":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,"breakeven_pct":0}
+    risk_per_share = sl_dist
+    raw_shares = max_risk / risk_per_share
+    max_shares_by_cap = (balance * 0.30) / price
+    raw_shares = min(raw_shares, max_shares_by_cap)
+    max_shares_map = {"大型股":20000,"中型股":10000,"小型股":5000,"ETF":30000}
+    shares = min(max_shares_map.get(size_cat,10000), math.floor(raw_shares))
+    if shares < 1:
+        return {"shares":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,"breakeven_pct":0}
+    position_value = shares * price
+    buy_cost  = calc_trade_cost(price, shares, "buy")
+    sell_cost = calc_trade_cost(price, shares, "sell")
     roundtrip = buy_cost["total_cost"] + sell_cost["total_cost"]
     return {
-        "lots":           lots,
-        "risk_twd":       round(lots * risk_per_lot, 0),
-        "risk_pct":       round(lots * risk_per_lot / balance * 100, 2),
+        "shares":         shares,
+        "lots":           round(shares / SHARES_PER_LOT, 3),
+        "risk_twd":       round(shares * risk_per_share, 0),
+        "risk_pct":       round(shares * risk_per_share / balance * 100, 2),
         "position_value": round(position_value, 0),
         "margin_pct":     round(position_value / balance * 100, 1),
         "roundtrip_cost": round(roundtrip, 0),
@@ -202,7 +206,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
         if tp_info["rr1"]<THRESH["min_rr"]: return None
         pos=calc_position_size(price,sl,size_cat=size_cat)
-        if pos["lots"]<=0: return None
+        if pos["shares"]<=0: return None
         ema_ind=daily_ind.get("ema",{})
         ema5_val=ema_ind.get("e_fast") if ema_ind.get("valid") else None
         entry_zone_low=round(min(price*0.98, ema5_val*0.99) if ema5_val else price*0.98, 2)
@@ -233,7 +237,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             "tp2_pct":round(abs(tp_info["tp2"]-price)/price*100,2),
             "tp3_pct":round(abs(tp_info["tp3"]-price)/price*100,2),
             "rr1":tp_info["rr1"],"rr2":tp_info["rr2"],"rr3":tp_info["rr3"],"exit_plan":tp_info["exit_plan"],
-            "suggested_lots":pos["lots"],"risk_twd":pos["risk_twd"],"risk_pct":pos["risk_pct"],
+            "suggested_shares":pos["shares"],"suggested_lots":pos["lots"],"risk_twd":pos["risk_twd"],"risk_pct":pos["risk_pct"],
             "position_value":pos["position_value"],"roundtrip_cost":pos["roundtrip_cost"],"breakeven_pct":pos["breakeven_pct"],
             "adx_value":adx_val,"rsi_value":mtf["rsi_value"],"vol_ratio":vol_ratio,"atr":round(atr,2),
             "inst_signal":inst_signal,"weekly_bias":mtf["weekly_bias"],
@@ -242,7 +246,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             "generated_at":datetime.now(timezone.utc).isoformat(),"expire_days":CB["signal_expire_days"],
             "result":"pending","pnl_twd":0,"status":"active",
         }
-        logger.info(f"[{ticker}] ✅ {name} {direction} score={score}({grade}) SL={sl:.1f} TP1={tp_info['tp1']:.1f} lots={pos['lots']}")
+        logger.info(f"[{ticker}] ✅ {name} {direction} score={score}({grade}) SL={sl:.1f} TP1={tp_info['tp1']:.1f} shares={pos['shares']}")
         return signal
     except Exception as e:
         logger.error(f"generate_signal_tw {ticker}: {e}", exc_info=True); return None

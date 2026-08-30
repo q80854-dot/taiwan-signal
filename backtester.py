@@ -1,6 +1,6 @@
 """
 backtester.py — 台股波段版 v1.0
-修正：pnl 改台股張數計算（含手續費+證交稅）
+修正：pnl 改台股股數計算（含手續費+證交稅）
 移除：外匯 pip/lot 計算、外匯黑名單
 """
 import logging, time, math
@@ -10,8 +10,10 @@ from config import ACCOUNT_BALANCE_TWD, SIGNAL_THRESHOLDS as THRESH, COMMISSION_
 
 logger = logging.getLogger(__name__)
 
-def calc_tw_pnl(entry, close, direction, lots):
-    shares=lots*SHARES_PER_LOT
+# ★ 修正：2026-08-30（第二輪）——跟 signal_engine.calc_position_size() 的修正配套：不再假設倉位
+# 一定是「張」(1000股)的整數倍，改直接吃股數。calc_tw_pnl 的 shares 參數現在就是股數本身，
+# 不用再乘 SHARES_PER_LOT。
+def calc_tw_pnl(entry, close, direction, shares):
     gross=(close-entry)*shares if direction=="buy" else (entry-close)*shares
     buy_fee=max(MIN_COMMISSION,entry*shares*COMMISSION_RATE)
     sell_fee=max(MIN_COMMISSION,close*shares*COMMISSION_RATE)
@@ -67,11 +69,11 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
                 if hit_sl: res,cp="sl",sl
                 elif hit_tp2: res,cp="tp2",tp2
                 else: res,cp="tp1",tp1
-                lots=open_trade.get("lots",1)
-                pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,lots)
+                shares=open_trade.get("shares",1)
+                pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares)
                 balance+=pnl
                 trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],"close":cp,
-                                "sl":sl,"tp1":tp1,"result":res,"pnl_twd":pnl,"lots":lots,
+                                "sl":sl,"tp1":tp1,"result":res,"pnl_twd":pnl,"shares":shares,
                                 "pnl_pct":round(pnl/balance*100,2),"score":open_trade.get("score",0),
                                 "bar_in":open_trade["bar"],"bar_out":i,"hold_days":i-open_trade["bar"]})
                 open_trade=None; just_exited=True
@@ -94,11 +96,11 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
                                 tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
                                 if tp_info["rr1"]>=THRESH["min_rr"]:
                                     pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat)
-                                    if pos["lots"]>0:
+                                    if pos["shares"]>0:
                                         open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"tp2":tp_info["tp2"],
-                                                    "score":score,"lots":pos["lots"],"bar":i}
+                                                    "score":score,"shares":pos["shares"],"bar":i}
         if open_trade:
-            unreal_pnl=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade.get("lots",1))
+            unreal_pnl=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade.get("shares",1))
             equity.append(balance+unreal_pnl)
         else:
             equity.append(balance)
@@ -107,11 +109,11 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
         # （i=n-1，price=closes[-1]）時，未平倉部位已經用同一個 cp=closes[-1] 算過浮動損益、
         # append 進 equity_curve 了，這裡只是把它「實現」成真正的 balance/trades 紀錄，數值一致，
         # 不需要重複記錄，否則 equity_curve 最後會多一個重複點。
-        d=open_trade["direction"]; cp=closes[-1]; lots=open_trade.get("lots",1)
-        pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,lots)
+        d=open_trade["direction"]; cp=closes[-1]; shares=open_trade.get("shares",1)
+        pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares)
         balance+=pnl
         trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],"close":cp,
-                        "result":"forced_close","pnl_twd":pnl,"lots":lots,"pnl_pct":round(pnl/balance*100,2),
+                        "result":"forced_close","pnl_twd":pnl,"shares":shares,"pnl_pct":round(pnl/balance*100,2),
                         "score":open_trade["score"],"bar_in":open_trade["bar"],"bar_out":n-1,"hold_days":n-1-open_trade["bar"]})
     metrics=calc_performance_metrics(equity,trades)
     wins=[t for t in trades if t["result"] in ("tp1","tp2")]
@@ -159,7 +161,7 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
                 hit_tp1=(d=="buy" and highs[i]>=tp1) or (d=="sell" and lows[i]<=tp1)
                 if hit_sl or hit_tp1:
                     res="tp1" if hit_tp1 else "sl"; cp=tp1 if hit_tp1 else sl
-                    pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,open_trade.get("lots",1))
+                    pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,open_trade.get("shares",1))
                     balance+=pnl; t={"result":res,"pnl_twd":pnl,"score":open_trade["score"]}
                     test_trades.append(t); all_test_trades.append(t); open_trade=None; continue
             if open_trade: continue
@@ -179,8 +181,8 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
             if tp_info["rr1"]<THRESH["min_rr"]: continue
             pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat)
-            if pos["lots"]<=0: continue
-            open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"score":score,"lots":pos["lots"],"bar":i}
+            if pos["shares"]<=0: continue
+            open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"score":score,"shares":pos["shares"],"bar":i}
         wins_w=len([t for t in test_trades if t["result"]=="tp1"])
         window_results.append({"window":win_idx+1,"n_trades":len(test_trades),
                                 "win_rate":round(wins_w/max(len(test_trades),1)*100,1),
