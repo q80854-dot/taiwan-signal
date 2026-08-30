@@ -45,9 +45,19 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
         size_cat="中型股"
     n=len(closes); LOOKBACK=130; trades=[]; equity=[balance]; open_trade=None
     logger.info(f"[BT] {ticker} 開始回測，共 {n} 根日線，size_cat={size_cat}")
+    # ★ 修正：2026-08-30——投資人報告核對數字時發現 Sharpe/最大回撤嚴重失真的根因：equity_curve
+    #   原本只在「每次平倉當下」才記一筆，不是每根K棒都記。calc_performance_metrics() 卻把這條
+    #   equity_curve 相鄰兩點的報酬率當「逐日報酬」處理、年化時乘上 sqrt(252)——但兩個平倉點之間
+    #   往往隔了好幾天甚至好幾週，實際上是「逐筆交易報酬」被誤當成「逐日報酬」年化，交易筆數越少
+    #   （min_score≥65 門檻本來就選得嚴）灌水越誇張，這是 Sharpe 動輒破百的直接原因；同時最大回撤
+    #   也因此只看得到「已實現」損益的高低點，完全看不到持倉中途尚未停損/停利、帳面上一度虧很多的
+    #   情況。改成不管有沒有平倉，「每一根K棒」都用當下收盤價把未平倉部位的浮動損益 mark-to-market
+    #   計入 equity，讓 equity_curve 變成真正的逐日序列，calc_performance_metrics() 不用改，
+    #   sqrt(252) 年化、回撤計算就都會是對的。
     for i in range(LOOKBACK,n):
         wd={"closes":closes[:i],"highs":highs[:i],"lows":lows[:i],"opens":opens[:i],"volumes":volumes[:i]}
         price=closes[i]
+        just_exited=False
         if open_trade:
             d=open_trade["direction"]; sl=open_trade["sl"]; tp1=open_trade["tp1"]; tp2=open_trade["tp2"]
             hit_sl=(d=="buy" and lows[i]<=sl) or (d=="sell" and highs[i]>=sl)
@@ -59,38 +69,47 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
                 else: res,cp="tp1",tp1
                 lots=open_trade.get("lots",1)
                 pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,lots)
-                balance+=pnl; equity.append(balance)
+                balance+=pnl
                 trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],"close":cp,
                                 "sl":sl,"tp1":tp1,"result":res,"pnl_twd":pnl,"lots":lots,
                                 "pnl_pct":round(pnl/balance*100,2),"score":open_trade.get("score",0),
                                 "bar_in":open_trade["bar"],"bar_out":i,"hold_days":i-open_trade["bar"]})
-                open_trade=None; continue
-        if open_trade: continue
-        mtf=check_multi_timeframe_tw({"daily":wd})
-        direction=mtf.get("direction","none")
-        if direction=="none": continue
-        score=mtf.get("score",0)
-        if score<min_score: continue
-        adx_val=mtf.get("adx_value",0)
-        if adx_val<THRESH["min_adx"]: continue
-        vol_ratio=mtf.get("vol_ratio",1.0)
-        if vol_ratio<THRESH["min_vol_ratio"] and score<75: continue
-        daily_ind=mtf.get("entry_indicators",{})
-        atr=daily_ind.get("atr",{}).get("value",0) or price*0.02
-        if not atr: continue
-        low_5d=min(lows[max(0,i-5):i]) if i>=5 else None
-        high_5d=max(highs[max(0,i-5):i]) if i>=5 else None
-        sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)
-        tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
-        if tp_info["rr1"]<THRESH["min_rr"]: continue
-        pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat)
-        if pos["lots"]<=0: continue
-        open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"tp2":tp_info["tp2"],
-                    "score":score,"lots":pos["lots"],"bar":i}
+                open_trade=None; just_exited=True
+        if open_trade is None and not just_exited:
+            mtf=check_multi_timeframe_tw({"daily":wd})
+            direction=mtf.get("direction","none")
+            if direction!="none":
+                score=mtf.get("score",0)
+                if score>=min_score:
+                    adx_val=mtf.get("adx_value",0)
+                    if adx_val>=THRESH["min_adx"]:
+                        vol_ratio=mtf.get("vol_ratio",1.0)
+                        if not(vol_ratio<THRESH["min_vol_ratio"] and score<75):
+                            daily_ind=mtf.get("entry_indicators",{})
+                            atr=daily_ind.get("atr",{}).get("value",0) or price*0.02
+                            if atr:
+                                low_5d=min(lows[max(0,i-5):i]) if i>=5 else None
+                                high_5d=max(highs[max(0,i-5):i]) if i>=5 else None
+                                sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)
+                                tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
+                                if tp_info["rr1"]>=THRESH["min_rr"]:
+                                    pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat)
+                                    if pos["lots"]>0:
+                                        open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"tp2":tp_info["tp2"],
+                                                    "score":score,"lots":pos["lots"],"bar":i}
+        if open_trade:
+            unreal_pnl=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade.get("lots",1))
+            equity.append(balance+unreal_pnl)
+        else:
+            equity.append(balance)
     if open_trade:
+        # ★ 修正：這裡不再額外 append 一筆 equity——上面逐K棒 mark-to-market 迴圈跑到最後一根
+        # （i=n-1，price=closes[-1]）時，未平倉部位已經用同一個 cp=closes[-1] 算過浮動損益、
+        # append 進 equity_curve 了，這裡只是把它「實現」成真正的 balance/trades 紀錄，數值一致，
+        # 不需要重複記錄，否則 equity_curve 最後會多一個重複點。
         d=open_trade["direction"]; cp=closes[-1]; lots=open_trade.get("lots",1)
         pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,lots)
-        balance+=pnl; equity.append(balance)
+        balance+=pnl
         trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],"close":cp,
                         "result":"forced_close","pnl_twd":pnl,"lots":lots,"pnl_pct":round(pnl/balance*100,2),
                         "score":open_trade["score"],"bar_in":open_trade["bar"],"bar_out":n-1,"hold_days":n-1-open_trade["bar"]})
