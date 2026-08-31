@@ -428,7 +428,10 @@ def fetch_foreign_total_flow() -> Dict:
         if data.get("stat") != "OK": return {}
         rows = data.get("data", [])
         if not rows: return {}
-        foreign_row = next((row for row in rows if "外資及陸資" in row[0] and "自營商" not in row[0]), None)
+        # 注意：正確那一列的名稱本身就是「外資及陸資(不含外資自營商)」，
+        # 字串裡含有「自營商」三個字，不能用排除法；用 startswith 精準比對，
+        # 才不會跟另一列「外資自營商」（不同法人）搞混。
+        foreign_row = next((row for row in rows if row[0].strip().startswith("外資及陸資")), None)
         if not foreign_row or len(foreign_row) < 4: return {}
         net_buy = int(foreign_row[3].replace(",","").replace("+",""))
         return _cache_set("foreign_total", {
