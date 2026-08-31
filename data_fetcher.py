@@ -222,6 +222,28 @@ def _fetch_tpex() -> Optional[Dict]:
                         "chg": 0, "chg_pt": 0, "source": source}
         return None
 
+    # 方法零：★ 修正：2026-08-31——session-cookie 版跟原本無狀態版拿到一模一樣的
+    # 「Expecting value: line 1 column 1」錯誤，代表不是 cookie/session 的問題。
+    # fubon_broker.py 之前抓 Yahoo 個股 K 線也遇過幾乎一樣的症狀（Render 雲端機房
+    # 用預設 requests 的 TLS/HTTP 指紋被辨識出來擋掉），當時改用 curl_cffi 偽裝成
+    # 真實 Chrome 的 TLS 指紋解決。這裡用同一招先試一次，同時把回應內容前 200 字
+    # 印出來，這樣不管有沒有成功都能確定 TPEx 真正回傳的是什麼（真的是空 body，
+    # 還是某種驗證頁/錯誤頁）。
+    try:
+        from curl_cffi import requests as cffi_requests
+        r = cffi_requests.get(json_url, headers=tpex_headers, timeout=10, impersonate="chrome", verify=False)
+        body = r.text.strip()
+        if r.status_code == 200 and body:
+            result = _parse_tpex_json(body, "tpex_official_cffi")
+            if result:
+                logger.info(f"TPEX 官方(curl_cffi/Chrome偽裝): {result['price']}")
+                return result
+            logger.warning(f"TPEX official curl_cffi: 200 但解析失敗，body前200字={body[:200]!r}")
+        else:
+            logger.warning(f"TPEX official curl_cffi: HTTP {r.status_code}，body前200字={body[:200]!r}")
+    except Exception as e:
+        logger.warning(f"TPEX official curl_cffi: {e}")
+
     # 方法一：先訪問母頁面建立 session，再用同一個 session 打 AJAX 端點
     try:
         s = requests.Session()
@@ -229,25 +251,28 @@ def _fetch_tpex() -> Optional[Dict]:
         s.get("https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php?l=zh-tw",
               timeout=10, verify=False)
         r = s.get(json_url, timeout=10, verify=False)
-        if r.status_code == 200 and r.text.strip():
-            result = _parse_tpex_json(r.text, "tpex_official_session")
+        body = r.text.strip()
+        if r.status_code == 200 and body:
+            result = _parse_tpex_json(body, "tpex_official_session")
             if result:
                 logger.info(f"TPEX 官方(session): {result['price']}")
                 return result
             else:
-                logger.warning(f"TPEX official session: 200 但沒有有效資料列 - {r.text[:200]}")
+                logger.warning(f"TPEX official session: 200 但沒有有效資料列，body前200字={body[:200]!r}")
         else:
-            logger.warning(f"TPEX official session: HTTP {r.status_code}，body長度={len(r.text.strip())}")
+            logger.warning(f"TPEX official session: HTTP {r.status_code}，body前200字={body[:200]!r}")
     except Exception as e:
         logger.warning(f"TPEX official session: {e}")
 
     # 方法二：原本的無狀態單次請求（保留當退路，成本很低）
     try:
         r = requests.get(json_url, headers=tpex_headers, timeout=10, verify=False)
-        if r.status_code == 200 and r.text.strip():
-            result = _parse_tpex_json(r.text, "tpex_official")
+        body = r.text.strip()
+        if r.status_code == 200 and body:
+            result = _parse_tpex_json(body, "tpex_official")
             if result:
                 return result
+            logger.warning(f"TPEX official: 200 但解析失敗，body前200字={body[:200]!r}")
     except Exception as e:
         logger.warning(f"TPEX official: {e}")
 
