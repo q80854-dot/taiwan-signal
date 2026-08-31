@@ -71,10 +71,11 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
                 else: res,cp="tp1",tp1
                 shares=open_trade.get("shares",1)
                 pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares)
+                entry_balance=balance
                 balance+=pnl
                 trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],"close":cp,
                                 "sl":sl,"tp1":tp1,"result":res,"pnl_twd":pnl,"shares":shares,
-                                "pnl_pct":round(pnl/balance*100,2),"score":open_trade.get("score",0),
+                                "pnl_pct":round(pnl/entry_balance*100,2),"score":open_trade.get("score",0),
                                 "bar_in":open_trade["bar"],"bar_out":i,"hold_days":i-open_trade["bar"]})
                 open_trade=None; just_exited=True
         if open_trade is None and not just_exited:
