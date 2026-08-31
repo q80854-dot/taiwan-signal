@@ -252,9 +252,13 @@ def _fetch_tpex() -> Optional[Dict]:
                     # （通常是同目錄下另一個 .php，帶著不同的參數組合），印出來看。
                     if "index_summary" in url:
                         import re
-                        ajax_hits = re.findall(r'[\w./]*\.php\?[^"\'\s\\]{0,120}', body)
-                        uniq = list(dict.fromkeys(ajax_hits))[:20]
-                        logger.info(f"TPEX index_summary 頁面內找到的 .php AJAX 網址候選: {uniq}")
+                        # 上一輪找 .php? 完全沒中，改成更寬鬆的方式：列出所有外部 <script src=...>
+                        # （AJAX 邏輯可能寫在共用的 .js 檔案裡，不是內嵌在這個頁面），
+                        # 以及頁面裡任何看起來像相對路徑檔名（.php/.js/.asp 等）的字串。
+                        scripts = re.findall(r'<script[^>]*\bsrc=["\']([^"\']+)["\']', body)
+                        file_like = re.findall(r'["\']([./\w-]+\.(?:php|js|asp|aspx)(?:\?[^"\']*)?)["\']', body)
+                        logger.info(f"TPEX index_summary <script src>: {list(dict.fromkeys(scripts))[:20]}")
+                        logger.info(f"TPEX index_summary 檔名字串: {list(dict.fromkeys(file_like))[:30]}")
             if result:
                 logger.info(f"TPEX 官方({label}): {result['price']}")
                 return result
