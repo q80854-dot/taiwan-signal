@@ -25,7 +25,38 @@ from config import TIMEFRAMES, SYSTEM, CIRCUIT_BREAKER as CB
 
 FUBON_API_KEY = os.getenv("FUBON_API_KEY", "")
 FUGLE_API_KEY = os.getenv("FUGLE_API_KEY", "")
+FUBON_PUBLIC_BASE = "https://api.fugle.tw/marketdata/v1.0"
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+
+# ★ 新增：2026-08-31——富果（富邦子公司）行情 API，用來取代常被雲端主機 IP
+# 擋掉的 TWSE/TPEX 官方網頁爬蟲。這是需要金鑰的商用 API，走的是完全不同的
+# 網路路徑/驗證方式，不會有「Render 雲端 IP 被反爬蟲擋掉」這種問題。
+# 金鑰已確認在 Render 環境變數設定且有效（/api/diagnostics 驗證過）。
+def _fetch_fugle_index(symbol: str) -> Optional[Dict]:
+    """富果 API 抓單一指數（TAIEX=加權指數 / TPEx=上櫃指數）"""
+    if not FUGLE_API_KEY:
+        return None
+    try:
+        r = requests.get(
+            f"{FUBON_PUBLIC_BASE}/stock/intraday/quote/{symbol}",
+            headers={**HEADERS, "X-API-KEY": FUGLE_API_KEY},
+            timeout=8,
+        )
+        if r.status_code == 200:
+            d  = r.json()
+            p  = float(d.get("closePrice", 0) or d.get("lastPrice", 0) or 0)
+            pv = float(d.get("previousClose", 0) or 0)
+            if p > 0:
+                return {"price": round(p,2), "prev": round(pv,2) if pv else round(p,2),
+                        "chg": round((p-pv)/pv*100,2) if pv else 0,
+                        "chg_pt": round(p-pv,2) if pv else 0,
+                        "source": "fugle"}
+            logger.warning(f"Fugle {symbol}: HTTP 200 但無有效價格欄位 - {r.text[:200]}")
+        else:
+            logger.warning(f"Fugle {symbol}: HTTP {r.status_code} - {r.text[:200]}")
+    except Exception as e:
+        logger.warning(f"Fugle {symbol}: {e}")
+    return None
 
 # ══ 快取 ══
 _cache: Dict = {}
@@ -51,6 +82,13 @@ def _fetch_twii() -> Optional[Dict]:
     # 但台股大盤已漲破 45000 點，導致三個來源全部被這道檢查擋掉，
     # 前端才會一直顯示「—」。放寬為 3000~150000 並留大量緩衝空間。
     TWII_MIN, TWII_MAX = 3000, 150000
+
+    # 方法零：富果 API（TAIEX，需金鑰，走商用 API 不受雲端 IP 反爬蟲限制，優先嘗試）
+    fg = _fetch_fugle_index("TAIEX")
+    if fg and TWII_MIN < fg["price"] < TWII_MAX:
+        logger.info(f"TWII 富果: {fg['price']:.0f}（{fg['chg']:+.2f}%）")
+        fg["source"] = "fugle"
+        return fg
 
     # 方法一：TWSE 大盤指數歷史
     try:
@@ -117,6 +155,15 @@ def _fetch_tpex() -> Optional[Dict]:
     # 200 但空 body（"Expecting value: line 1 column 1"），推測是輕量
     # bot 檢查擋掉沒有瀏覽器標頭的請求，補上 Referer/Accept-Language
     # 等常見瀏覽器標頭再試一次。
+    # ★ 修正：2026-08-31（優先處理）——官方爬蟲從 Render 一直被擋（見下方），
+    # 改成優先用富果 API 抓 TPEx 指數（需金鑰，已在 Render 環境變數設好且驗證有效），
+    # 這是走商用 API 通道，不會遇到雲端 IP 被反爬蟲擋掉的問題，抓不到才退回舊方法。
+    fg = _fetch_fugle_index("TPEx")
+    if fg and 50 < fg["price"] < 5000:
+        logger.info(f"TPEX 富果: {fg['price']:.2f}（{fg['chg']:+.2f}%）")
+        fg["source"] = "fugle"
+        return fg
+
     tpex_headers = {
         **HEADERS,
         "Referer": "https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php",
