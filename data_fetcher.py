@@ -390,13 +390,21 @@ def fetch_institutional_flow(date_str=None) -> Dict:
         data = r.json()
         if data.get("stat") != "OK": return {}
         result = {}
+        # ★ 修正：2026-08-31——T86 實際欄位順序（0-indexed）：
+        #   [0]證券代號 [1]證券名稱 [2]外陸資買進股數 [3]外陸資賣出股數
+        #   [4]外陸資買賣超股數 [5]外資自營商買進 [6]外資自營商賣出
+        #   [7]外資自營商買賣超股數 [8]投信買進股數 [9]投信賣出股數
+        #   [10]投信買賣超股數 [11]自營商買賣超股數 ... [18]三大法人買賣超股數
+        #   原本 tn 誤取 row[7]（外資自營商買賣超，不是投信）、
+        #   tt 誤取 row[11]（自營商買賣超，不是三大法人合計），修正為
+        #   正確欄位 row[10]（投信）與 row[18]（三大法人合計）。
         for row in data.get("data", []):
             try:
                 code = row[0].strip(); name = row[1].strip()
                 def pi(v): return int(v.replace(",","").replace("+","")) if v.strip() not in ("-","") else 0
                 fn = pi(row[4]) if len(row)>4 else 0
-                tn = pi(row[7]) if len(row)>7 else 0
-                tt = pi(row[11]) if len(row)>11 else 0
+                tn = pi(row[10]) if len(row)>10 else 0
+                tt = pi(row[18]) if len(row)>18 else 0
                 result[code] = {"name":name,"foreign_net":fn,"trust_net":tn,"total_net":tt,
                                 "signal":"strong_buy" if fn>500 and tn>0 else "buy" if fn>100 else "strong_sell" if fn<-500 else "sell" if fn<-100 else "neutral"}
             except: continue
@@ -407,7 +415,12 @@ def fetch_institutional_flow(date_str=None) -> Dict:
 
 def fetch_foreign_total_flow() -> Dict:
     if c := _cache_get("foreign_total", 3600): return c
-    url = "https://www.twse.com.tw/fund/MI_QFIIS?response=json&selectType=Daily"
+    # ★ 修正：2026-08-31——原本呼叫的 MI_QFIIS?selectType=Daily 其實是
+    # 「外資及陸資持股比率統計」（欄位是發行股數、持股比率等，完全沒有
+    # 買賣金額），"data" 永遠是空陣列，導致外資動向一直顯示 0億。
+    # 改用正確的「三大法人買賣金額統計表」BFI82U，抓「外資及陸資
+    # (不含外資自營商)」那一列的買賣差額（新台幣金額）。
+    url = "https://www.twse.com.tw/fund/BFI82U?response=json&type=day"
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200: return {}
@@ -415,10 +428,11 @@ def fetch_foreign_total_flow() -> Dict:
         if data.get("stat") != "OK": return {}
         rows = data.get("data", [])
         if not rows: return {}
-        latest  = rows[-1]
-        net_buy = int(latest[4].replace(",","").replace("+","")) if len(latest)>4 else 0
+        foreign_row = next((row for row in rows if "外資及陸資" in row[0] and "自營商" not in row[0]), None)
+        if not foreign_row or len(foreign_row) < 4: return {}
+        net_buy = int(foreign_row[3].replace(",","").replace("+",""))
         return _cache_set("foreign_total", {
-            "date": latest[0], "net_buy_twd": net_buy,
+            "date": data.get("date",""), "net_buy_twd": net_buy,
             "net_buy_lots": round(net_buy/1000,0),
             "signal": "strong_buy" if net_buy>50e8 else "buy" if net_buy>0 else "strong_sell" if net_buy<-50e8 else "sell"
         })
