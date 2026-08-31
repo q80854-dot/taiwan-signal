@@ -47,6 +47,11 @@ def _cache_clear(key):
 def _fetch_twii() -> Optional[Dict]:
     """TWSE 官方 API 抓加權指數（不依賴 yfinance）"""
 
+    # ★ 修正：2026-08-31——加權指數合理值域原本寫死 5000~30000，
+    # 但台股大盤已漲破 45000 點，導致三個來源全部被這道檢查擋掉，
+    # 前端才會一直顯示「—」。放寬為 3000~150000 並留大量緩衝空間。
+    TWII_MIN, TWII_MAX = 3000, 150000
+
     # 方法一：TWSE 大盤指數歷史
     try:
         today = datetime.now().strftime("%Y%m%d")
@@ -59,7 +64,7 @@ def _fetch_twii() -> Optional[Dict]:
                 last  = rows[-1];   prev = rows[-2]
                 p  = float(str(last[-1]).replace(",", ""))
                 pv = float(str(prev[-1]).replace(",", ""))
-                if 5000 < p < 30000:
+                if TWII_MIN < p < TWII_MAX:
                     logger.info(f"TWII TWSE: {p:.0f}（{(p-pv)/pv*100:+.2f}%）")
                     return {"price": round(p,2), "prev": round(pv,2),
                             "chg": round((p-pv)/pv*100,2), "chg_pt": round(p-pv,2),
@@ -77,7 +82,7 @@ def _fetch_twii() -> Optional[Dict]:
             if rows:
                 row = rows[-1]
                 p   = float(str(row[1]).replace(",", ""))
-                if 5000 < p < 30000:
+                if TWII_MIN < p < TWII_MAX:
                     return {"price": round(p,2), "prev": round(p,2),
                             "chg": 0, "chg_pt": 0, "source": "twse_fmnav"}
     except Exception as e:
@@ -93,7 +98,7 @@ def _fetch_twii() -> Optional[Dict]:
                     close_col = h["Close"]
                     p  = float(close_col.iloc[-1])
                     pv = float(close_col.iloc[-2])
-                    if 5000 < p < 30000:
+                    if TWII_MIN < p < TWII_MAX:
                         logger.info(f"TWII yfinance({period}): {p:.0f}")
                         return {"price": round(p,2), "prev": round(pv,2),
                                 "chg": round((p-pv)/pv*100,2), "chg_pt": round(p-pv,2),
@@ -108,11 +113,20 @@ def _fetch_twii() -> Optional[Dict]:
 
 def _fetch_tpex() -> Optional[Dict]:
     """TPEX 官方 API 抓上櫃指數"""
+    # ★ 修正：2026-08-31——官方 API 從雲端主機（Render）呼叫時常回傳
+    # 200 但空 body（"Expecting value: line 1 column 1"），推測是輕量
+    # bot 檢查擋掉沒有瀏覽器標頭的請求，補上 Referer/Accept-Language
+    # 等常見瀏覽器標頭再試一次。
+    tpex_headers = {
+        **HEADERS,
+        "Referer": "https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php",
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+    }
     try:
         today = datetime.now().strftime("%Y%m%d")
         url   = f"https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php?l=zh-tw&d={today[:4]}/{today[4:6]}/{today[6:]}&o=json"
-        r = requests.get(url, headers=HEADERS, timeout=10, verify=False)
-        if r.status_code == 200:
+        r = requests.get(url, headers=tpex_headers, timeout=10, verify=False)
+        if r.status_code == 200 and r.text.strip():
             d = r.json()
             items = d.get("aaData", [])
             if items:
@@ -125,9 +139,10 @@ def _fetch_tpex() -> Optional[Dict]:
     except Exception as e:
         logger.warning(f"TPEX official: {e}")
 
-    # yfinance 備用
+    # yfinance 備用 —— ★ 修正：2026-08-31 移除確認不存在的 "^TPEX"
+    # （Yahoo 回 404 Quote not found），只保留 "^TWOII" 嘗試。
     if YFINANCE_OK:
-        for sym in ["^TPEX", "^TWOII"]:
+        for sym in ["^TWOII"]:
             try:
                 h = yf.Ticker(sym).history(period="3mo", interval="1d")
                 if h is not None and not h.empty and len(h) >= 2:
@@ -138,8 +153,8 @@ def _fetch_tpex() -> Optional[Dict]:
                                 "chg": round((p-pv)/pv*100,2), "chg_pt": round(p-pv,2),
                                 "source": f"yfinance_{sym}"}
                 time.sleep(0.2)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"TPEX yfinance {sym}: {e}")
     return None
 
 
