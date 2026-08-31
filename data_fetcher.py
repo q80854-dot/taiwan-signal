@@ -47,22 +47,28 @@ def _fugle_discover_indices() -> None:
     if _fugle_index_discovery_done or not FUGLE_API_KEY:
         return
     _fugle_index_discovery_done = True
-    for market in ("TSE", "OTC"):
+    # market=OTC 查回 0 筆，代表富果的「指數」清單不是用股票市場別(TSE/OTC)分類，
+    # 這裡改成：market=TSE 撈全部 185 筆，用關鍵字「櫃」「上櫃」「OTC」篩出候選項；
+    # 同時也試著完全不帶 market 參數，看是否能撈到更完整/不同的清單。
+    for label, params in (("TSE", {"market": "TSE", "type": "INDEX"}),
+                           ("OTC", {"market": "OTC", "type": "INDEX"}),
+                           ("no_market", {"type": "INDEX"})):
         try:
             r = requests.get(
                 f"{FUBON_PUBLIC_BASE}/stock/intraday/tickers",
                 headers={**HEADERS, "X-API-KEY": FUGLE_API_KEY},
-                params={"market": market, "type": "INDEX"},
+                params=params,
                 timeout=10,
             )
             if r.status_code == 200:
                 data = r.json().get("data", [])
-                sample = [{"symbol": it.get("symbol"), "name": it.get("name")} for it in data[:15]]
-                logger.info(f"Fugle 指數清單 market={market}: 共{len(data)}筆，前15筆={sample}")
+                matches = [{"symbol": it.get("symbol"), "name": it.get("name")}
+                           for it in data if any(k in (it.get("name") or "") for k in ("櫃", "OTC", "上櫃"))]
+                logger.info(f"Fugle 指數清單 {label}: 共{len(data)}筆，含「櫃」關鍵字={matches}")
             else:
-                logger.warning(f"Fugle 指數清單 market={market}: HTTP {r.status_code} - {r.text[:200]}")
+                logger.warning(f"Fugle 指數清單 {label}: HTTP {r.status_code} - {r.text[:200]}")
         except Exception as e:
-            logger.warning(f"Fugle 指數清單 market={market}: {e}")
+            logger.warning(f"Fugle 指數清單 {label}: {e}")
 
 
 def _fetch_fugle_index(symbol: str) -> Optional[Dict]:
