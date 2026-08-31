@@ -240,14 +240,20 @@ def _fetch_tpex() -> Optional[Dict]:
         from curl_cffi import requests as cffi_requests
         r = cffi_requests.get(json_url, headers=tpex_headers, timeout=10, impersonate="chrome", verify=False)
         body = r.text.strip()
+        # ★ 修正：2026-08-31——之前 json.loads 解析失敗會直接拋例外，蓋掉了
+        # 想印出來看的 raw bytes 診斷訊息（永遠只看到 JSONDecodeError 的
+        # 「Expecting value...」，看不到實際內容）。這裡把「拿到 raw bytes」
+        # 跟「嘗試解析」分成兩段，解析失敗也一定會先印出 raw bytes 是什麼。
+        logger.info(f"TPEX official raw: HTTP {r.status_code}, len={len(r.content)}, raw={r.content[:80]!r}")
+        result = None
         if r.status_code == 200 and body:
-            result = _parse_tpex_json(body, "tpex_official_cffi")
-            if result:
-                logger.info(f"TPEX 官方(curl_cffi/Chrome偽裝): {result['price']}")
-                return result
-            logger.warning(f"TPEX official: 200 但無法解析，raw bytes={r.content[:60]!r}")
-        else:
-            logger.warning(f"TPEX official: HTTP {r.status_code}，raw bytes={r.content[:60]!r}")
+            try:
+                result = _parse_tpex_json(body, "tpex_official_cffi")
+            except Exception as parse_err:
+                logger.warning(f"TPEX official: JSON 解析失敗 - {parse_err}")
+        if result:
+            logger.info(f"TPEX 官方(curl_cffi/Chrome偽裝): {result['price']}")
+            return result
     except Exception as e:
         logger.warning(f"TPEX official: {e}")
 
