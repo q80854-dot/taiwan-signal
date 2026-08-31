@@ -20,9 +20,25 @@ html,body{height:100%;overflow:hidden;background:var(--bg)}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:13px;color:var(--t2);line-height:1.5}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-thumb{background:var(--bd);border-radius:2px}
-.shell{display:flex;height:100vh}
+.shell{display:flex;height:100vh;position:relative}
 /* Sidebar */
 .side{width:200px;min-width:200px;background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
+.hamburger{display:none;width:30px;height:30px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);align-items:center;justify-content:center;cursor:pointer;font-size:14px;flex-shrink:0}
+.side-backdrop{display:none}
+@media(max-width:640px){
+  .hamburger{display:flex}
+  .top-l{display:flex;align-items:center;gap:10px;min-width:0}
+  .top-l span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top{gap:8px}
+  .top-r{gap:6px}
+  #tw-time{display:none}
+  .btn{padding:5px 9px;font-size:10px}
+  .side{position:fixed;top:0;bottom:0;left:0;z-index:101;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.5)}
+  .side.open{transform:translateX(0)}
+  .side-backdrop.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100}
+  .sig-grid{grid-template-columns:repeat(2,1fr)!important}
+  .idx-chip{min-width:0;flex:1 1 calc(50% - 8px)}
+}
 .logo{padding:14px 12px 10px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px}
 .logo-ic{width:28px;height:28px;border-radius:6px;background:var(--G);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#000;flex-shrink:0}
 .logo-nm{font-size:12px;font-weight:700;color:var(--t1);line-height:1.3}
@@ -105,8 +121,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 </head>
 <body>
 <div class="shell">
+<div class="side-backdrop" id="side-backdrop" onclick="closeSide()"></div>
 <!-- Sidebar -->
-<div class="side">
+<div class="side" id="side">
   <div class="logo">
     <div class="logo-ic">台</div>
     <div><div class="logo-nm">台股波段<br>智慧交易</div><div class="logo-vr" id="version">v1.0.0</div></div>
@@ -129,7 +146,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 <!-- Main -->
 <div class="body">
   <div class="top">
-    <div class="top-l" id="page-title">總覽</div>
+    <div class="top-l">
+      <div class="hamburger" onclick="toggleSide()">☰</div>
+      <span id="page-title">總覽</span>
+    </div>
     <div class="top-r">
       <span id="tw-time" style="font-size:11px;color:var(--t3)"></span>
       <button class="btn" onclick="fetchState()">↻ 刷新</button>
@@ -272,6 +292,17 @@ function go(id){
   if(id==='perf'&&_state)renderPerf(_state.win_rate||{});
   if(id==='market'&&_state)renderMarket(_state);
   if(id==='diag')fetchDiag();
+  closeSide();
+}
+
+// Mobile sidebar drawer
+function toggleSide(){
+  document.getElementById('side').classList.toggle('open');
+  document.getElementById('side-backdrop').classList.toggle('open');
+}
+function closeSide(){
+  document.getElementById('side').classList.remove('open');
+  document.getElementById('side-backdrop').classList.remove('open');
 }
 
 // Fetch
