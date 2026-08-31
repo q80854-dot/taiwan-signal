@@ -245,6 +245,16 @@ def _fetch_tpex() -> Optional[Dict]:
                     result = _parse_tpex_json(body, "tpex_official_cffi")
                 except Exception as parse_err:
                     logger.warning(f"TPEX {label}: JSON 解析失敗 - {parse_err}")
+                    # ★ 新增：2026-08-31——index_summary 這個新路徑回傳的不是 404，
+                    # 標題確認是「上櫃股價指數收盤行情」，代表頁面本身是對的，只是
+                    # o=json 參數沒有生效，回傳的是完整 HTML 而不是 JSON。這裡直接
+                    # 在拿到的 HTML 原始碼裡用 regex 找頁面 JS 實際呼叫的 AJAX 網址
+                    # （通常是同目錄下另一個 .php，帶著不同的參數組合），印出來看。
+                    if "index_summary" in url:
+                        import re
+                        ajax_hits = re.findall(r'[\w./]*\.php\?[^"\'\s\\]{0,120}', body)
+                        uniq = list(dict.fromkeys(ajax_hits))[:20]
+                        logger.info(f"TPEX index_summary 頁面內找到的 .php AJAX 網址候選: {uniq}")
             if result:
                 logger.info(f"TPEX 官方({label}): {result['price']}")
                 return result
