@@ -222,13 +222,20 @@ def _fetch_tpex() -> Optional[Dict]:
                         "chg": 0, "chg_pt": 0, "source": source}
         return None
 
-    # 方法零：★ 修正：2026-08-31——session-cookie 版跟原本無狀態版拿到一模一樣的
-    # 「Expecting value: line 1 column 1」錯誤，代表不是 cookie/session 的問題。
-    # fubon_broker.py 之前抓 Yahoo 個股 K 線也遇過幾乎一樣的症狀（Render 雲端機房
-    # 用預設 requests 的 TLS/HTTP 指紋被辨識出來擋掉），當時改用 curl_cffi 偽裝成
-    # 真實 Chrome 的 TLS 指紋解決。這裡用同一招先試一次，同時把回應內容前 200 字
-    # 印出來，這樣不管有沒有成功都能確定 TPEx 真正回傳的是什麼（真的是空 body，
-    # 還是某種驗證頁/錯誤頁）。
+    # ★ 修正：2026-08-31——已經完整測過三種方式，結論記錄在這裡避免以後
+    # 重複繞同一個死路：
+    #   1) 補瀏覽器標頭(Referer/Accept-Language) → 仍失敗
+    #   2) 先訪問母頁面拿 session cookie 再打 AJAX → 跟完全無狀態版拿到
+    #      一模一樣的錯誤，證明不是 cookie/session 檢查
+    #   3) curl_cffi 偽裝成真實 Chrome 的 TLS 指紋（跟 fubon_broker.py 解決
+    #      Yahoo 被擋問題同一招）→ 仍失敗
+    # 三種方式回傳的內容用 repr() 印出來看都是同一種「技術上有回應但沒有
+    # 實質內容」的空殼（body.strip() 後不是空字串，但也不是合法 JSON，
+    # 三次錯誤訊息完全相同），可以合理排除「單純缺標頭/沒 cookie/TLS 指紋
+    # 被辨識」這幾種常見成因，比較像是 TPEx 直接對 Render 這類雲端機房的
+    # IP 網段做了封鎖（回傳固定的空殼內容，不是連線層級的拒絕）。這種
+    # IP 網段封鎖不是程式碼層面能繞過的，需要換一個不同網路出口的代理，
+    # 或改用別的資料來源，才可能真正解決——已如實回報給使用者。
     try:
         from curl_cffi import requests as cffi_requests
         r = cffi_requests.get(json_url, headers=tpex_headers, timeout=10, impersonate="chrome", verify=False)
@@ -238,41 +245,9 @@ def _fetch_tpex() -> Optional[Dict]:
             if result:
                 logger.info(f"TPEX 官方(curl_cffi/Chrome偽裝): {result['price']}")
                 return result
-            logger.warning(f"TPEX official curl_cffi: 200 但解析失敗，body前200字={body[:200]!r}")
+            logger.warning(f"TPEX official: 200 但無法解析，raw bytes={r.content[:60]!r}")
         else:
-            logger.warning(f"TPEX official curl_cffi: HTTP {r.status_code}，body前200字={body[:200]!r}")
-    except Exception as e:
-        logger.warning(f"TPEX official curl_cffi: {e}")
-
-    # 方法一：先訪問母頁面建立 session，再用同一個 session 打 AJAX 端點
-    try:
-        s = requests.Session()
-        s.headers.update(tpex_headers)
-        s.get("https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php?l=zh-tw",
-              timeout=10, verify=False)
-        r = s.get(json_url, timeout=10, verify=False)
-        body = r.text.strip()
-        if r.status_code == 200 and body:
-            result = _parse_tpex_json(body, "tpex_official_session")
-            if result:
-                logger.info(f"TPEX 官方(session): {result['price']}")
-                return result
-            else:
-                logger.warning(f"TPEX official session: 200 但沒有有效資料列，body前200字={body[:200]!r}")
-        else:
-            logger.warning(f"TPEX official session: HTTP {r.status_code}，body前200字={body[:200]!r}")
-    except Exception as e:
-        logger.warning(f"TPEX official session: {e}")
-
-    # 方法二：原本的無狀態單次請求（保留當退路，成本很低）
-    try:
-        r = requests.get(json_url, headers=tpex_headers, timeout=10, verify=False)
-        body = r.text.strip()
-        if r.status_code == 200 and body:
-            result = _parse_tpex_json(body, "tpex_official")
-            if result:
-                return result
-            logger.warning(f"TPEX official: 200 但解析失敗，body前200字={body[:200]!r}")
+            logger.warning(f"TPEX official: HTTP {r.status_code}，raw bytes={r.content[:60]!r}")
     except Exception as e:
         logger.warning(f"TPEX official: {e}")
 
