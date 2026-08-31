@@ -222,38 +222,32 @@ def _fetch_tpex() -> Optional[Dict]:
                         "chg": 0, "chg_pt": 0, "source": source}
         return None
 
-    # ★ 修正：2026-08-31——已經完整測過三種方式，結論記錄在這裡避免以後
-    # 重複繞同一個死路：
-    #   1) 補瀏覽器標頭(Referer/Accept-Language) → 仍失敗
-    #   2) 先訪問母頁面拿 session cookie 再打 AJAX → 跟完全無狀態版拿到
-    #      一模一樣的錯誤，證明不是 cookie/session 檢查
-    #   3) curl_cffi 偽裝成真實 Chrome 的 TLS 指紋（跟 fubon_broker.py 解決
-    #      Yahoo 被擋問題同一招）→ 仍失敗
-    # 三種方式回傳的內容用 repr() 印出來看都是同一種「技術上有回應但沒有
-    # 實質內容」的空殼（body.strip() 後不是空字串，但也不是合法 JSON，
-    # 三次錯誤訊息完全相同），可以合理排除「單純缺標頭/沒 cookie/TLS 指紋
-    # 被辨識」這幾種常見成因，比較像是 TPEx 直接對 Render 這類雲端機房的
-    # IP 網段做了封鎖（回傳固定的空殼內容，不是連線層級的拒絕）。這種
-    # IP 網段封鎖不是程式碼層面能繞過的，需要換一個不同網路出口的代理，
-    # 或改用別的資料來源，才可能真正解決——已如實回報給使用者。
+    # ★ 修正：2026-08-31——原本一直以為是「Render 雲端 IP 被反爬蟲擋掉」，
+    # 補了瀏覽器標頭、session cookie、curl_cffi 偽裝 Chrome TLS 指紋三種方式
+    # 都還是拿到同一個錯誤，才發現問題根本不是被擋——把回應內容印出來看，
+    # 三次都拿到的其實是「HTTP 200 + TPEx 自己的 404 找不到頁面」的 HTML
+    # （標題是「404 - 證券櫃檯買賣中心」），代表 market_summary/summary_result.php
+    # 這個舊網址本身已經失效/被 TPEx 官網改版移除了，跟雲端 IP 完全無關。
+    # 從 TPEx 官網搜到現在對應的新頁面路徑是 aftertrading/index_summary/
+    # summary.php（原本的 market_summary 已改名 index_summary），這裡改試
+    # 同樣命名慣例、換路徑的 AJAX JSON 端點。
+    new_json_url = f"https://www.tpex.org.tw/web/stock/aftertrading/index_summary/summary.php?l=zh-tw&d={date_param}&o=json"
+
     try:
         from curl_cffi import requests as cffi_requests
-        r = cffi_requests.get(json_url, headers=tpex_headers, timeout=10, impersonate="chrome", verify=False)
-        body = r.text.strip()
-        # ★ 修正：2026-08-31——之前 json.loads 解析失敗會直接拋例外，蓋掉了
-        # 想印出來看的 raw bytes 診斷訊息（永遠只看到 JSONDecodeError 的
-        # 「Expecting value...」，看不到實際內容）。這裡把「拿到 raw bytes」
-        # 跟「嘗試解析」分成兩段，解析失敗也一定會先印出 raw bytes 是什麼。
-        logger.info(f"TPEX official raw: HTTP {r.status_code}, len={len(r.content)}, raw={r.content[:80]!r}")
-        result = None
-        if r.status_code == 200 and body:
-            try:
-                result = _parse_tpex_json(body, "tpex_official_cffi")
-            except Exception as parse_err:
-                logger.warning(f"TPEX official: JSON 解析失敗 - {parse_err}")
-        if result:
-            logger.info(f"TPEX 官方(curl_cffi/Chrome偽裝): {result['price']}")
-            return result
+        for label, url in (("index_summary(新路徑)", new_json_url), ("market_summary(舊路徑)", json_url)):
+            r = cffi_requests.get(url, headers=tpex_headers, timeout=10, impersonate="chrome", verify=False)
+            body = r.text.strip()
+            logger.info(f"TPEX {label} raw: HTTP {r.status_code}, len={len(r.content)}, raw={r.content[:80]!r}")
+            result = None
+            if r.status_code == 200 and body:
+                try:
+                    result = _parse_tpex_json(body, "tpex_official_cffi")
+                except Exception as parse_err:
+                    logger.warning(f"TPEX {label}: JSON 解析失敗 - {parse_err}")
+            if result:
+                logger.info(f"TPEX 官方({label}): {result['price']}")
+                return result
     except Exception as e:
         logger.warning(f"TPEX official: {e}")
 
