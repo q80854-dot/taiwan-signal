@@ -193,46 +193,68 @@ def _fetch_twii() -> Optional[Dict]:
 
 def _fetch_tpex() -> Optional[Dict]:
     """TPEX 官方 API 抓上櫃指數"""
-    # ★ 修正：2026-08-31——官方 API 從雲端主機（Render）呼叫時常回傳
-    # 200 但空 body（"Expecting value: line 1 column 1"），推測是輕量
-    # bot 檢查擋掉沒有瀏覽器標頭的請求，補上 Referer/Accept-Language
-    # 等常見瀏覽器標頭再試一次。
-    # ★ 修正：2026-08-31（優先處理）——官方爬蟲從 Render 一直被擋（見下方），
-    # 改成優先用富果 API 抓 TPEx 指數（需金鑰，已在 Render 環境變數設好且驗證有效），
-    # 這是走商用 API 通道，不會遇到雲端 IP 被反爬蟲擋掉的問題，抓不到才退回舊方法。
-    # 注意：symbolId 原本猜 "TPEx" 被富果 API 回 404（代碼不存在），
-    # 目前先保留這個猜測當第一次嘗試，同時觸發 _fugle_discover_indices()
-    # 把富果真正的指數代碼清單印進 log，之後要根據 log 內容改成正確代碼。
-    fg = _fetch_fugle_index("TPEx")
-    if fg and 50 < fg["price"] < 5000:
-        logger.info(f"TPEX 富果: {fg['price']:.2f}（{fg['chg']:+.2f}%）")
-        fg["source"] = "fugle"
-        return fg
-
+    # ★ 修正：2026-08-31——已用富果 API 實際查證過富果的「指數」清單
+    # （market=TSE/OTC/不帶market 三種都查過，共185筆全部屬於 TWSE 加權指數
+    # 家族，沒有任何一筆名稱含「櫃」字），證實富果的商用 API 根本沒有涵蓋
+    # TPEx/上櫃指數這個資料，不是代碼猜錯，是這條路本身走不通，故不再嘗試。
+    #
+    # 改成先試「先訪問母頁面拿 session cookie，再用同一個 session 呼叫
+    # AJAX JSON 端點」——原本的請求是完全無狀態的單次 GET，如果 TPEx 網站
+    # 用的是「先發 session cookie、AJAX 端點驗證 cookie 才回真資料」這種
+    # 常見反爬蟲機制（而不是單純擋 Render 的雲端 IP），這樣做就可能繞過去。
     tpex_headers = {
         **HEADERS,
         "Referer": "https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php",
         "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
     }
+    today = datetime.now().strftime("%Y%m%d")
+    date_param = f"{today[:4]}/{today[4:6]}/{today[6:]}"
+    json_url = f"https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php?l=zh-tw&d={date_param}&o=json"
+
+    def _parse_tpex_json(text: str, source: str) -> Optional[Dict]:
+        d = __import__("json").loads(text)
+        items = d.get("aaData", [])
+        if items:
+            row = items[0]
+            p = float(str(row[1]).replace(",", "")) if len(row) > 1 else 0
+            if 50 < p < 5000:
+                return {"price": round(p, 2), "prev": round(p, 2),
+                        "chg": 0, "chg_pt": 0, "source": source}
+        return None
+
+    # 方法一：先訪問母頁面建立 session，再用同一個 session 打 AJAX 端點
     try:
-        today = datetime.now().strftime("%Y%m%d")
-        url   = f"https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php?l=zh-tw&d={today[:4]}/{today[4:6]}/{today[6:]}&o=json"
-        r = requests.get(url, headers=tpex_headers, timeout=10, verify=False)
+        s = requests.Session()
+        s.headers.update(tpex_headers)
+        s.get("https://www.tpex.org.tw/web/stock/aftertrading/market_summary/summary_result.php?l=zh-tw",
+              timeout=10, verify=False)
+        r = s.get(json_url, timeout=10, verify=False)
         if r.status_code == 200 and r.text.strip():
-            d = r.json()
-            items = d.get("aaData", [])
-            if items:
-                # 上櫃指數通常在第一行
-                row = items[0]
-                p = float(str(row[1]).replace(",","")) if len(row) > 1 else 0
-                if 50 < p < 5000:
-                    return {"price": round(p,2), "prev": round(p,2),
-                            "chg": 0, "chg_pt": 0, "source": "tpex_official"}
+            result = _parse_tpex_json(r.text, "tpex_official_session")
+            if result:
+                logger.info(f"TPEX 官方(session): {result['price']}")
+                return result
+            else:
+                logger.warning(f"TPEX official session: 200 但沒有有效資料列 - {r.text[:200]}")
+        else:
+            logger.warning(f"TPEX official session: HTTP {r.status_code}，body長度={len(r.text.strip())}")
+    except Exception as e:
+        logger.warning(f"TPEX official session: {e}")
+
+    # 方法二：原本的無狀態單次請求（保留當退路，成本很低）
+    try:
+        r = requests.get(json_url, headers=tpex_headers, timeout=10, verify=False)
+        if r.status_code == 200 and r.text.strip():
+            result = _parse_tpex_json(r.text, "tpex_official")
+            if result:
+                return result
     except Exception as e:
         logger.warning(f"TPEX official: {e}")
 
-    # yfinance 備用 —— ★ 修正：2026-08-31 移除確認不存在的 "^TPEX"
+    # 方法三：yfinance 備用 —— ★ 修正：2026-08-31 移除確認不存在的 "^TPEX"
     # （Yahoo 回 404 Quote not found），只保留 "^TWOII" 嘗試。
+    # 注意：已知 ^TWOII 跟官方櫃買指數有約 5~6% 落差（例如 2026-08-28 官方
+    # 收盤 402.83，^TWOII 同期只有 389.41），只是最後一道保底、不完全準確。
     if YFINANCE_OK:
         for sym in ["^TWOII"]:
             try:
@@ -243,7 +265,7 @@ def _fetch_tpex() -> Optional[Dict]:
                     if 50 < p < 5000:
                         return {"price": round(p,2), "prev": round(pv,2),
                                 "chg": round((p-pv)/pv*100,2), "chg_pt": round(p-pv,2),
-                                "source": f"yfinance_{sym}"}
+                                "source": f"yfinance_{sym}_approx"}
                 time.sleep(0.2)
             except Exception as e:
                 logger.warning(f"TPEX yfinance {sym}: {e}")
