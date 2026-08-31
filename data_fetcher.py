@@ -32,6 +32,39 @@ HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 # 擋掉的 TWSE/TPEX 官方網頁爬蟲。這是需要金鑰的商用 API，走的是完全不同的
 # 網路路徑/驗證方式，不會有「Render 雲端 IP 被反爬蟲擋掉」這種問題。
 # 金鑰已確認在 Render 環境變數設定且有效（/api/diagnostics 驗證過）。
+_fugle_index_discovery_done = False
+
+def _fugle_discover_indices() -> None:
+    """
+    ★ 除錯用：2026-08-31——第一版猜測的指數代碼「TAIEX」「TPEx」被富果 API
+    回 404（代碼不存在），只有 /stock/intraday/quote/{symbol} 這個端點本身是對的，
+    symbolId 猜錯了。這裡呼叫富果的 tickers 列表端點（?type=INDEX）各查一次
+    上市(TSE)/上櫃(OTC) 的指數清單，把回傳的真實 symbolId 印進 log，
+    只在程序啟動後執行一次，用來從正式環境紀錄找出正確代碼，
+    找到後應該把結果直接寫死進 _fetch_fugle_index 的呼叫端，並移除這段除錯碼。
+    """
+    global _fugle_index_discovery_done
+    if _fugle_index_discovery_done or not FUGLE_API_KEY:
+        return
+    _fugle_index_discovery_done = True
+    for market in ("TSE", "OTC"):
+        try:
+            r = requests.get(
+                f"{FUBON_PUBLIC_BASE}/stock/intraday/tickers",
+                headers={**HEADERS, "X-API-KEY": FUGLE_API_KEY},
+                params={"market": market, "type": "INDEX"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                data = r.json().get("data", [])
+                sample = [{"symbol": it.get("symbol"), "name": it.get("name")} for it in data[:15]]
+                logger.info(f"Fugle 指數清單 market={market}: 共{len(data)}筆，前15筆={sample}")
+            else:
+                logger.warning(f"Fugle 指數清單 market={market}: HTTP {r.status_code} - {r.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Fugle 指數清單 market={market}: {e}")
+
+
 def _fetch_fugle_index(symbol: str) -> Optional[Dict]:
     """富果 API 抓單一指數（TAIEX=加權指數 / TPEx=上櫃指數）"""
     if not FUGLE_API_KEY:
@@ -54,6 +87,7 @@ def _fetch_fugle_index(symbol: str) -> Optional[Dict]:
             logger.warning(f"Fugle {symbol}: HTTP 200 但無有效價格欄位 - {r.text[:200]}")
         else:
             logger.warning(f"Fugle {symbol}: HTTP {r.status_code} - {r.text[:200]}")
+            _fugle_discover_indices()
     except Exception as e:
         logger.warning(f"Fugle {symbol}: {e}")
     return None
@@ -84,7 +118,9 @@ def _fetch_twii() -> Optional[Dict]:
     TWII_MIN, TWII_MAX = 3000, 150000
 
     # 方法零：富果 API（TAIEX，需金鑰，走商用 API 不受雲端 IP 反爬蟲限制，優先嘗試）
-    fg = _fetch_fugle_index("TAIEX")
+    # ★ 修正：2026-08-31——symbolId 原本猜 "TAIEX" 被富果 API 回 404，
+    # 改用富果自家網站確認過的正確代碼 IX0001（發行量加權股價指數）。
+    fg = _fetch_fugle_index("IX0001")
     if fg and TWII_MIN < fg["price"] < TWII_MAX:
         logger.info(f"TWII 富果: {fg['price']:.0f}（{fg['chg']:+.2f}%）")
         fg["source"] = "fugle"
@@ -158,6 +194,9 @@ def _fetch_tpex() -> Optional[Dict]:
     # ★ 修正：2026-08-31（優先處理）——官方爬蟲從 Render 一直被擋（見下方），
     # 改成優先用富果 API 抓 TPEx 指數（需金鑰，已在 Render 環境變數設好且驗證有效），
     # 這是走商用 API 通道，不會遇到雲端 IP 被反爬蟲擋掉的問題，抓不到才退回舊方法。
+    # 注意：symbolId 原本猜 "TPEx" 被富果 API 回 404（代碼不存在），
+    # 目前先保留這個猜測當第一次嘗試，同時觸發 _fugle_discover_indices()
+    # 把富果真正的指數代碼清單印進 log，之後要根據 log 內容改成正確代碼。
     fg = _fetch_fugle_index("TPEx")
     if fg and 50 < fg["price"] < 5000:
         logger.info(f"TPEX 富果: {fg['price']:.2f}（{fg['chg']:+.2f}%）")
