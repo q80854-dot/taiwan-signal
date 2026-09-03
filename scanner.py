@@ -98,25 +98,45 @@ class TWScanEngine:
         scanned_count = 0
         error_count   = 0
 
+        # ★ 修正：2026-09-03——原本這裡是完全序列化：一檔一檔掃、每檔掃完固定
+        # sleep(scan_delay_sec=1.5秒)，860 檔光是這個刻意的延遲就佔了約 21.5
+        # 分鐘，加上 fetch_all_timeframes() 內部週/日/時三個時間週期之間也各
+        # sleep 0.3 秒，是全市場掃描要跑快 40 分鐘的主因（實測延遲佔比超過
+        # 一半，真正花在對外部 API 請求/運算的時間反而是少數）。改成有限並行：
+        # 同一批次內最多同時處理 _SCAN_CONCURRENCY 檔，每檔之間仍保留一個小的
+        # 啟動間隔（SYSTEM["scan_delay_sec"]，已同步調降，見 config.py 說明），
+        # 避免瞬間對 yfinance/TWSE 打出
+        # 一大串同時發生的請求（這個專案先前就吃過 Yahoo/TPEx bot 防護的虧，
+        # 這裡刻意保守，不做無限制平行）。每檔本身仍然透過
+        # _scan_single_with_timeout 內部的獨立逾時保護（25秒不回應就放棄），
+        # 所以就算某一檔真的卡住，也不會拖住整批、更不會拖住整個 process
+        # （跟先前修的全站凍結是同一個保護機制，這裡只是把它包進並行工作）。
+        _SCAN_CONCURRENCY = 4
         for batch_idx, batch in enumerate(batches):
-            logger.info(f"批次 {batch_idx+1}/{len(batches)}（{len(batch)} 檔）")
-            for ticker in batch:
-                try:
-                    sig = self._scan_single_with_timeout(ticker, market_overview,
-                                            fetch_all_timeframes, fetch_stock_institutional,
-                                            generate_signal_tw, get_stock_info)
-                    if sig:
-                        all_signals.append(sig)
-                    scanned_count += 1
-                except concurrent.futures.TimeoutError:
-                    error_count += 1
-                    logger.warning(f"[{ticker}] 掃描逾時（{self._SCAN_SINGLE_TIMEOUT_SEC}秒），放棄這檔繼續下一檔")
-                except Exception as e:
-                    error_count += 1
-                    logger.warning(f"[{ticker}] 掃描錯誤: {e}")
-                time.sleep(SYSTEM["scan_delay_sec"])
+            logger.info(f"批次 {batch_idx+1}/{len(batches)}（{len(batch)} 檔，同時 {_SCAN_CONCURRENCY} 檔）")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=_SCAN_CONCURRENCY) as pool:
+                futures = {}
+                for ticker in batch:
+                    fut = pool.submit(self._scan_single_with_timeout, ticker, market_overview,
+                                       fetch_all_timeframes, fetch_stock_institutional,
+                                       generate_signal_tw, get_stock_info)
+                    futures[fut] = ticker
+                    time.sleep(SYSTEM["scan_delay_sec"])
+                for fut in concurrent.futures.as_completed(futures):
+                    ticker = futures[fut]
+                    try:
+                        sig = fut.result()
+                        if sig:
+                            all_signals.append(sig)
+                        scanned_count += 1
+                    except concurrent.futures.TimeoutError:
+                        error_count += 1
+                        logger.warning(f"[{ticker}] 掃描逾時（{self._SCAN_SINGLE_TIMEOUT_SEC}秒），放棄這檔繼續下一檔")
+                    except Exception as e:
+                        error_count += 1
+                        logger.warning(f"[{ticker}] 掃描錯誤: {e}")
             if batch_idx < len(batches) - 1:
-                time.sleep(3)
+                time.sleep(2)
             # ★ 修正：2026-09-03——每批次結束主動觸發一次 gc，儘早回收
             # yfinance/pandas 呼叫產生的暫時物件，降低 512MB 方案上長時間
             # 掃描（30+ 分鐘、1000+ 檔）累積的記憶體壓力。

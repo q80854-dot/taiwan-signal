@@ -7,7 +7,7 @@ data_fetcher.py v2.2
 ★ yfinance download 格式修正
 ★ 快取 5 分鐘更新
 """
-import time, logging, requests, warnings
+import time, logging, requests, warnings, threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List, Any
 
@@ -112,6 +112,13 @@ _cache: Dict = {}
 # 這裡加上簡單的容量上限（超過就砍掉最舊的項目），並且提供 _cache_clear_all()
 # 讓每次全市場掃描開始前主動清空一次，避免同一小時內重複手動觸發掃描時繼續疊加。
 _CACHE_MAX_ENTRIES = 400
+# ★ 修正：2026-09-03——scanner.py 把單檔序列掃描改成同一批次內最多 4 檔並行後，
+# 這個模組層級的 _cache dict 會被多個執行緒同時讀寫。單純的 `_cache[key] = ...`
+# 賦值在 CPython 的 GIL 保護下不會壞掉，但下面的容量上限清除邏輯（排序、逐一
+# pop）不是原子操作，多個執行緒同時觸發清除時可能互相干擾（不會 crash，因為
+# pop 有預設值，但可能清得比預期多或少）。加一個鎖只包住清除這段，平常寫入
+# 不用等鎖，只有真的超過上限時才需要互斥。
+_cache_lock = threading.Lock()
 
 def _cache_get(key, ttl):
     e = _cache.get(key)
@@ -120,9 +127,11 @@ def _cache_get(key, ttl):
 def _cache_set(key, data):
     _cache[key] = {"data": data, "ts": time.time()}
     if len(_cache) > _CACHE_MAX_ENTRIES:
-        oldest = sorted(_cache.keys(), key=lambda k: _cache[k]["ts"])[: len(_cache) - _CACHE_MAX_ENTRIES]
-        for k in oldest:
-            _cache.pop(k, None)
+        with _cache_lock:
+            if len(_cache) > _CACHE_MAX_ENTRIES:
+                oldest = sorted(_cache.keys(), key=lambda k: _cache[k]["ts"])[: len(_cache) - _CACHE_MAX_ENTRIES]
+                for k in oldest:
+                    _cache.pop(k, None)
     return data
 
 def _cache_clear(key):
@@ -484,10 +493,17 @@ def fetch_ohlcv(ticker: str, tf_key: str = "daily") -> Optional[Dict]:
 
 def fetch_all_timeframes(ticker: str) -> Optional[Dict]:
     result = {}
-    for tf_key in ["weekly", "daily", "hourly"]:
+    tf_keys = ["weekly", "daily", "hourly"]
+    for i, tf_key in enumerate(tf_keys):
         d = fetch_ohlcv(ticker, tf_key)
         if d: result[tf_key] = d
-        time.sleep(0.3)
+        # ★ 修正：2026-09-03——原本每個時間週期抓完都 sleep 0.3 秒，包含最後一個
+        # （hourly）抓完之後也白白等一次，這個 ticker 的所有工作其實都做完了，
+        # 這 0.3 秒純粹浪費（scanner.py 現在已改成多檔並行，每檔的總耗時
+        # 直接影響整體吞吐量，不需要的等待要拿掉）。只在還有下一個時間週期
+        # 要抓時才需要間隔。
+        if i < len(tf_keys) - 1:
+            time.sleep(0.3)
     return result if "daily" in result else None
 
 def fetch_batch_current_prices(tickers: List[str]) -> Dict[str, float]:
