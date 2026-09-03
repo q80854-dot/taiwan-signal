@@ -8,6 +8,21 @@ from config import SIGNAL_THRESHOLDS as THRESH, SYSTEM
 
 logger = logging.getLogger(__name__)
 
+# ★ 修正：2026-09-03——www.tpex.org.tw 的伺服器憑證缺少標準 X.509
+# 「Subject Key Identifier」欄位，較新版 OpenSSL/urllib3 在憑證鏈驗證時會直接
+# 判定失敗（SSLCertVerificationError: Missing Subject Key Identifier），這跟
+# 連線本身、跟資料是否正確完全無關，是 TPEx 官網憑證設定本身的已知瑕疵
+# （data_fetcher.py 抓 TPEx 指數時，同一個網域也遇過一連串 SSL/憑證/
+# Cloudflare 問題，最後同樣是放寬憑證驗證處理，見該檔 _fetch_tpex() 的說明）。
+# 這裡只在遇到這個特定 SSL 錯誤時才退回不驗證憑證重試一次；這支 API 只讀取
+# 公開的上櫃股票報價清單，不是登入、不是交易，沒有機敏資料會經過這條連線，
+# 關閉憑證驗證的風險可接受——總比每天全市場掃描直接漏掉全部上櫃股票好
+# （原本例外會被外層 try/except 吃掉、回傳空清單，代表當天所有上櫃股票
+# 都不會被掃描，且完全沒有清楚提示是「這個原因」造成的，只在 log 留一行
+# error）。
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 CACHE_PATH = "instance/stock_universe.json"
 CACHE_TTL  = 86400
 
@@ -134,7 +149,11 @@ def _fetch_twse_list() -> List[Dict]:
 
 def _fetch_tpex_list() -> List[Dict]:
     try:
-        r = requests.get(TPEX_LIST_URL, headers=HEADERS, timeout=15)
+        try:
+            r = requests.get(TPEX_LIST_URL, headers=HEADERS, timeout=15)
+        except requests.exceptions.SSLError as e:
+            logger.warning(f"_fetch_tpex_list: SSL 憑證驗證失敗（{e}），改用不驗證憑證重試一次")
+            r = requests.get(TPEX_LIST_URL, headers=HEADERS, timeout=15, verify=False)
         if r.status_code != 200:
             logger.warning(f"_fetch_tpex_list: HTTP {r.status_code} - {r.text[:200]}")
             return []
