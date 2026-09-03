@@ -186,6 +186,17 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         low_5d=min(lows[-5:]) if len(lows)>=5 else None; high_5d=max(highs[-5:]) if len(highs)>=5 else None
         mtf=check_multi_timeframe_tw(tf_data)
         direction=mtf.get("direction","none"); score=mtf.get("score",0)
+        # ★ 診斷用：2026-09-03——今天兩次全市場掃描（間隔52分鐘、大盤/三大法人
+        # 彙總數字完全相同）掃到的候選訊號數量差異巨大（123→2），且入選的個股
+        # 完全不同，目前懷疑是資料源（Yahoo/yfinance）在收盤後到資料完全定案
+        # 之間，個股最後一根日K有被事後修正/補齊的情況，但沒有直接證據。這裡
+        # 只在 direction!=none（代表已經接近或達到訊號門檻）時記一行診斷 log，
+        # 包含最後一根K棒的日期/收盤價，下次比對兩次掃描的原始分數/資料時間點
+        # 就有直接證據，而不是只能用大盤等間接數字推測。確認根因後應移除。
+        if direction != "none":
+            _last_date = (daily_data.get("dates") or [None])[-1]
+            logger.info(f"[SCORE] {ticker} dir={direction} score={score} "
+                        f"bar={_last_date} close={price}")
         if direction=="none" or score<THRESH["min_score"]: return None
         adx_val=mtf.get("adx_value",0)
         if adx_val<THRESH["min_adx"]: return None
