@@ -2,7 +2,7 @@
 scanner.py — 全市場掃描引擎 v1.0
 每日 16:30 盤後觸發，批次掃描 1000+ 檔台股
 """
-import time, logging, threading
+import time, logging, threading, concurrent.futures
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
@@ -70,7 +70,11 @@ class TWScanEngine:
 
         # 1. 市場總覽
         logger.info("Step 1/5: 抓取市場環境...")
-        market_overview = fetch_market_overview()
+        try:
+            market_overview = self._call_with_timeout(self._MARKET_OVERVIEW_TIMEOUT_SEC, fetch_market_overview)
+        except concurrent.futures.TimeoutError:
+            logger.error(f"fetch_market_overview 逾時（{self._MARKET_OVERVIEW_TIMEOUT_SEC}秒），本次改用空資料繼續掃描")
+            market_overview = {}
         self._check_market_status(market_overview)
 
         # 2. 品種清單
@@ -89,12 +93,15 @@ class TWScanEngine:
             logger.info(f"批次 {batch_idx+1}/{len(batches)}（{len(batch)} 檔）")
             for ticker in batch:
                 try:
-                    sig = self._scan_single(ticker, market_overview,
+                    sig = self._scan_single_with_timeout(ticker, market_overview,
                                             fetch_all_timeframes, fetch_stock_institutional,
                                             generate_signal_tw, get_stock_info)
                     if sig:
                         all_signals.append(sig)
                     scanned_count += 1
+                except concurrent.futures.TimeoutError:
+                    error_count += 1
+                    logger.warning(f"[{ticker}] 掃描逾時（{self._SCAN_SINGLE_TIMEOUT_SEC}秒），放棄這檔繼續下一檔")
                 except Exception as e:
                     error_count += 1
                     logger.warning(f"[{ticker}] 掃描錯誤: {e}")
@@ -171,7 +178,11 @@ class TWScanEngine:
                 if not ticker or not direction or not sl:
                     continue
                 gen_date = (sig.get("generated_at") or "")[:10]
-                data = fetch_ohlcv(ticker, "daily")
+                try:
+                    data = self._call_with_timeout(self._SCAN_SINGLE_TIMEOUT_SEC, fetch_ohlcv, ticker, "daily")
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"_resolve_pending_signals: {ticker} 資料抓取逾時，跳過本次結算")
+                    continue
                 if not data:
                     continue
                 dates, highs, lows = data.get("dates", []), data.get("highs", []), data.get("lows", [])
@@ -213,6 +224,37 @@ class TWScanEngine:
                 logger.warning(f"_resolve_pending_signals {sig.get('id')}: {e}")
         if resolved:
             logger.info(f"平倉結算：{resolved} 筆訊號已達停損/停利")
+
+    _SCAN_SINGLE_TIMEOUT_SEC = 25
+    _MARKET_OVERVIEW_TIMEOUT_SEC = 45
+
+    @staticmethod
+    def _call_with_timeout(timeout_sec, fn, *args, **kwargs):
+        """
+        ★ 新增：2026-09-03——這次修正上線後實測手動觸發一次全市場掃描，跑到約
+        批次 15/18 附近，Render 服務整個凍結超過 30 分鐘，連 /health 都打不通，
+        等於「單一次資料抓取卡住」直接讓整個網站掛掉。因為 gunicorn 只有 1 個
+        worker，data_fetcher.py 裡好幾個 yfinance 呼叫完全沒有設定任何逾時
+        （yf.Ticker(...).history(...) 沒有 timeout 參數），一旦某次請求連線
+        建立了但對方遲遲不回應（不是連線被拒絕、不是逾時例外——是真的卡住不動、
+        不拋錯、log 也完全靜默），Python 會無限期等待，連帶整個 process 都被
+        卡死。這裡提供一個共用的逾時包裝：把呼叫丟到獨立執行緒跑，最多等
+        timeout_sec 秒，逾時就直接放棄、拋出 TimeoutError 讓呼叫端可以繼續
+        下一步，不等底層卡住的執行緒真的結束（它是背景執行緒，不會阻止
+        process 退出，最壞情況只是背景多一條卡住的執行緒，總比整個網站掛掉好）。
+        """
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(fn, *args, **kwargs)
+            return future.result(timeout=timeout_sec)
+        finally:
+            executor.shutdown(wait=False)
+
+    def _scan_single_with_timeout(self, ticker, market_overview, fetch_tf, fetch_inst, gen_signal, get_info) -> Optional[Dict]:
+        return self._call_with_timeout(
+            self._SCAN_SINGLE_TIMEOUT_SEC, self._scan_single,
+            ticker, market_overview, fetch_tf, fetch_inst, gen_signal, get_info,
+        )
 
     def _scan_single(self, ticker, market_overview, fetch_tf, fetch_inst, gen_signal, get_info) -> Optional[Dict]:
         stock_info = get_info(ticker)
