@@ -2,7 +2,7 @@
 scanner.py — 全市場掃描引擎 v1.0
 每日 16:30 盤後觸發，批次掃描 1000+ 檔台股
 """
-import time, logging, threading, concurrent.futures
+import time, logging, threading, concurrent.futures, gc
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
@@ -57,9 +57,18 @@ class TWScanEngine:
         logger.info("═══ 開始每日全市場掃描 ═══")
 
         from stock_universe import get_scan_batches, get_stock_info
-        from data_fetcher   import fetch_all_timeframes, fetch_market_overview, fetch_stock_institutional
+        from data_fetcher   import fetch_all_timeframes, fetch_market_overview, fetch_stock_institutional, _cache_clear_all
         from signal_engine  import generate_signal_tw
         from state_store    import store
+
+        # ★ 修正：2026-09-03——每次全市場掃描開始前先清空 data_fetcher 的記憶體內快取，
+        # 避免同一小時內重複手動觸發掃描時，快取跨多次掃描疊加造成記憶體壓力
+        # （詳見 data_fetcher._cache_clear_all 註解，這是 Render 512MB 方案上
+        # instance 在掃描中途被平台自動重啟的主要懷疑原因）。
+        try:
+            _cache_clear_all()
+        except Exception as e:
+            logger.warning(f"_cache_clear_all: {e}")
 
         # 0. 結算舊訊號（見 _resolve_pending_signals 說明）
         logger.info("Step 0/5: 結算舊訊號的停損/停利...")
@@ -108,6 +117,10 @@ class TWScanEngine:
                 time.sleep(SYSTEM["scan_delay_sec"])
             if batch_idx < len(batches) - 1:
                 time.sleep(3)
+            # ★ 修正：2026-09-03——每批次結束主動觸發一次 gc，儘早回收
+            # yfinance/pandas 呼叫產生的暫時物件，降低 512MB 方案上長時間
+            # 掃描（30+ 分鐘、1000+ 檔）累積的記憶體壓力。
+            gc.collect()
 
         # 4. 過濾排序
         logger.info("Step 4/5: 過濾與排序...")

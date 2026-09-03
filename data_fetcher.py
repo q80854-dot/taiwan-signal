@@ -100,6 +100,18 @@ def _fetch_fugle_index(symbol: str) -> Optional[Dict]:
 
 # ══ 快取 ══
 _cache: Dict = {}
+# ★ 修正：2026-09-03——這個記憶體內快取字典原本沒有任何容量上限，也沒有主動
+# 清除機制：get 只是「過期就當沒快取」，過期的項目本身仍然留在 dict 裡佔記憶體，
+# 從來不會被移除。fetch_ohlcv() 每一檔股票、每個時間週期都會存一筆（key 是
+# f"ohlcv_{ticker}_{tf_key}"），TTL 又設到 3600 秒（見 config.SYSTEM["cache_ttl_sec"]）。
+# 全市場單次掃描就有 1000+ 檔，且掃描期間常常會手動重複觸發測試，導致這個字典
+# 在一小時內持續疊加、從未被清空。Render 這個方案只有 512MB 記憶體，實測發現
+# 掃描進行到一半（batch 12/18）時 Render 平台自己把 instance 重啟了（沒有對應的
+# 新 deploy），高度懷疑就是這個無上限的記憶體內快取把常駐記憶體撐爆、被平台判定
+# 記憶體超限而強制重啟，導致掃描被腰斬、當次訊號完全無法推播到 Telegram。
+# 這裡加上簡單的容量上限（超過就砍掉最舊的項目），並且提供 _cache_clear_all()
+# 讓每次全市場掃描開始前主動清空一次，避免同一小時內重複手動觸發掃描時繼續疊加。
+_CACHE_MAX_ENTRIES = 400
 
 def _cache_get(key, ttl):
     e = _cache.get(key)
@@ -107,10 +119,21 @@ def _cache_get(key, ttl):
 
 def _cache_set(key, data):
     _cache[key] = {"data": data, "ts": time.time()}
+    if len(_cache) > _CACHE_MAX_ENTRIES:
+        oldest = sorted(_cache.keys(), key=lambda k: _cache[k]["ts"])[: len(_cache) - _CACHE_MAX_ENTRIES]
+        for k in oldest:
+            _cache.pop(k, None)
     return data
 
 def _cache_clear(key):
     _cache.pop(key, None)
+
+def _cache_clear_all():
+    """在每次全市場掃描開始前呼叫，避免記憶體內快取跨多次掃描無限累積。"""
+    n = len(_cache)
+    _cache.clear()
+    if n:
+        logger.info(f"記憶體快取已清空（原有 {n} 筆，釋放記憶體）")
 
 # ════════════════════════════════════════════════
 # 台股加權指數（TWSE 官方 API 為主）
