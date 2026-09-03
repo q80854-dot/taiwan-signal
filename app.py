@@ -5,7 +5,7 @@ app.py — Flask 主應用 v1.2
 import sys, os, logging, threading
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request, send_from_directory
-from config import SYSTEM, TELEGRAM_BOT_TOKEN
+from config import SYSTEM, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
 
 logging.basicConfig(
     level=getattr(logging, SYSTEM["log_level"], logging.INFO),
@@ -134,6 +134,15 @@ def api_universe():
 
 @app.route("/api/scan/force", methods=["POST"])
 def api_force_scan():
+    # ★ 修正：2026-09-03——scanner.run_daily_scan() 現在有掃描鎖，重複觸發時
+    # 會直接跳過而不是疊加執行；這裡先檢查狀態，讓使用者連點按鈕時看到清楚的
+    # 「掃描進行中」訊息，而不是誤以為又開始了一次新的掃描。
+    try:
+        from scanner import scanner
+        if scanner.is_scanning:
+            return jsonify({"status": "already_scanning"})
+    except Exception:
+        pass
     threading.Thread(target=job_daily_scan, daemon=True).start()
     return jsonify({"status": "scanning_started"})
 
@@ -175,6 +184,14 @@ def telegram_webhook():
 
 @app.route("/api/webhook/set", methods=["POST"])
 def set_webhook():
+    # ★ 修正：2026-09-03——這個路由原本任何人都能呼叫，可以把機器人的 webhook
+    # 重新指向任意網址，等於能劫持所有使用者傳給 bot 的訊息（包含 /start 訂閱、
+    # 未來若有付費指令等）。加一層極簡驗證：呼叫者必須在 header 帶出跟
+    # TELEGRAM_BOT_TOKEN 相同的值，才允許變更 webhook（機主自己已經知道這組
+    # token，一般訪客不會知道）。
+    auth = request.headers.get("X-Admin-Token", "")
+    if not TELEGRAM_BOT_TOKEN or auth != TELEGRAM_BOT_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
     try:
         from telegram_bot import set_webhook as _sw
         data = request.get_json(); url = data.get("url", "")
@@ -214,6 +231,21 @@ def diagnostics():
             fugle_status = ("✅ " if _test["ok"] else "❌ ") + _test["detail"]
         except Exception as e:
             fugle_status = f"❌ 金鑰已設定，但檢測過程發生錯誤：{e}"
+    # ★ 修正：2026-09-03——使用者反映「訊號網站看得到、Telegram 卻收不到」，但
+    #   之前 /api/diagnostics 完全沒有揭露 Telegram 端的設定狀態（TELEGRAM_CHAT_ID
+    #   有沒有設定、訂閱名單裡有幾個人、admin 名單裡有沒有真的包含機主自己）。
+    #   這裡補上這些資訊（不外洩實際 chat_id 數值，只回傳布林值/數量），
+    #   讓機主自己就能查證設定是否正確，不用再靠翻 log 用猜的。
+    telegram_status = {
+        "telegram_chat_id_set":      bool(TELEGRAM_CHAT_ID),
+        "telegram_free_channel_set": bool(TELEGRAM_FREE_CHANNEL),
+        "telegram_paid_channel_set": bool(TELEGRAM_PAID_CHANNEL),
+    }
+    try:
+        from telegram_bot import get_subscriber_counts
+        telegram_status["subscribers"] = get_subscriber_counts()
+    except Exception as e:
+        telegram_status["subscribers"] = f"❌ 讀取失敗：{e}"
     return jsonify({
         "python":           sys.version[:20],
         "yfinance":         chk("yfinance"),
@@ -221,6 +253,7 @@ def diagnostics():
         "requests":         chk("requests"),
         "flask":            chk("flask"),
         "telegram_token":   bool(TELEGRAM_BOT_TOKEN),
+        **telegram_status,
         "fugle_api_key":    fugle_status,
         "template_dir":     TEMPLATE_DIR,
         "template_exists":  os.path.exists(os.path.join(TEMPLATE_DIR, "dashboard.html")),

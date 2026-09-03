@@ -18,10 +18,23 @@ BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 SUBSCRIBERS_PATH = "instance/subscribers.json"
 
 def _load_subscribers() -> Dict:
+    # ★ 修正：2026-09-03——原本檔案存在時就直接回傳檔案內容，如果那個檔案
+    # 是舊版邏輯建立的（沒有 "admin" 這個 key，或 admin 清單裡沒有
+    # TELEGRAM_CHAT_ID），管理者/機主本人就永遠收不到任何推播，而且完全
+    # 沒有錯誤訊息——這正是「網站看得到訊號、Telegram 卻收不到」的根因
+    # 之一。改成不管檔案內容是什麼，都強制把 TELEGRAM_CHAT_ID 併進
+    # admin 清單（有設定才併，避免塞進空字串），這樣機主一定會在收訊名單
+    # 裡，不必依賴 instance/subscribers.json 這個在 Render 上每次重新
+    # 部署就會被清空的暫存檔案有沒有剛好包含正確內容。
     if os.path.exists(SUBSCRIBERS_PATH):
         with open(SUBSCRIBERS_PATH, "r") as f:
-            return json.load(f)
-    return {"free": [], "paid": [], "admin": [TELEGRAM_CHAT_ID]}
+            data = json.load(f)
+    else:
+        data = {"free": [], "paid": [], "admin": []}
+    data.setdefault("admin", [])
+    if TELEGRAM_CHAT_ID and str(TELEGRAM_CHAT_ID) not in [str(a) for a in data["admin"]]:
+        data["admin"].append(str(TELEGRAM_CHAT_ID))
+    return data
 
 def _save_subscribers(data: Dict):
     os.makedirs("instance", exist_ok=True)
@@ -46,8 +59,28 @@ def remove_subscriber(chat_id: str):
 def is_paid_subscriber(chat_id: str) -> bool:
     return str(chat_id) in _load_subscribers().get("paid", [])
 
+def get_subscriber_counts() -> Dict:
+    # ★ 新增：2026-09-03——給 /api/diagnostics 用，讓機主不用連進伺服器看檔案
+    # 就能確認訂閱名單狀態（尤其 admin 清單裡有沒有真的包含自己的 chat_id）。
+    subs = _load_subscribers()
+    return {
+        "free":  len(subs.get("free", [])),
+        "paid":  len(subs.get("paid", [])),
+        "admin": len(subs.get("admin", [])),
+        "admin_includes_owner": bool(TELEGRAM_CHAT_ID) and str(TELEGRAM_CHAT_ID) in [str(a) for a in subs.get("admin", [])],
+    }
+
 def send_message(chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
+    # ★ 修正：2026-09-03——原本非 200 的回應完全沒有記錄任何內容，只回傳
+    # False，導致「訊號有沒有真的送到 Telegram」這件事在 log 裡完全看不到、
+    # 只能用猜的。現在失敗時會把 Telegram API 實際回傳的狀態碼跟錯誤內容
+    # （例如 chat not found、bot was blocked by the user、Unauthorized 等）
+    # 完整記錄下來，才能真正定位「網站看得到訊號、TG 卻收不到」是哪一種原因。
     if not TELEGRAM_BOT_TOKEN:
+        logger.error("send_message: TELEGRAM_BOT_TOKEN 未設定，無法發送")
+        return False
+    if not chat_id:
+        logger.error("send_message: chat_id 為空，無法發送")
         return False
     try:
         r = requests.post(
@@ -60,9 +93,11 @@ def send_message(chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
             },
             timeout=15,
         )
+        if r.status_code != 200:
+            logger.error(f"send_message 失敗：chat_id={chat_id} status={r.status_code} body={r.text[:500]}")
         return r.status_code == 200
     except Exception as e:
-        logger.error(f"send_message: {e}")
+        logger.error(f"send_message: chat_id={chat_id} exception={e}")
         return False
 
 def broadcast(text: str, tier: str = "free") -> int:
@@ -424,9 +459,15 @@ def push_signal(sig: Dict):
         broadcast(paid_msg, tier="paid")
 
     subs = _load_subscribers()
-    for admin_id in subs.get("admin", []):
-        send_message(admin_id, paid_msg)
-    logger.info(f"訊號推播：{sig.get('name','')} {sig.get('direction','')} score={sig['score']}")
+    admin_ids = subs.get("admin", [])
+    admin_ok  = sum(1 for admin_id in admin_ids if send_message(admin_id, paid_msg))
+    # ★ 修正：2026-09-03——把 admin 直送的成功/失敗數量記進 log，這樣機主
+    # 之後只要看 Render log 就能確認每一筆訊號到底有沒有真的送到自己手機，
+    # 不用再靠猜的。
+    logger.info(
+        f"訊號推播：{sig.get('name','')} {sig.get('direction','')} score={sig['score']} "
+        f"admin {admin_ok}/{len(admin_ids)}"
+    )
 
 # ══════════════════════════════════════════════
 # 系統警報
