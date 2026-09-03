@@ -211,13 +211,30 @@ def _classify_size(close, volume_lots) -> str:
     elif est > 100: return "中型股"
     return "小型股"
 
+# ★ 修正：2026-09-03——重大效能/記憶體 bug：get_stock_info() 每一檔股票都會呼叫
+# 一次 build_universe()，全市場單次掃描 1000+ 檔，代表這個函式一次掃描會被呼叫
+# 1000+ 次；先前每次呼叫都重新開檔、讀取、json.load() 整份全市場清單（上千筆
+# dict），再線性掃過去找一檔——不只是浪費 CPU/硬碟 IO，更是每次都在 Python heap
+# 上重新配置一份完整清單，用完馬上變垃圾等下次 GC，30 分鐘、1000+ 次的反覆配置/
+# 回收，很可能是 Render 512MB 方案上 instance 記憶體壓力、掃描中途被平台重啟的
+# 另一個（甚至更主要的）原因，跟 data_fetcher.py 那個無上限快取是同一類問題。
+# 這裡加一層簡單的行程內記憶體快取：只要硬碟快取沒過期，同一個 process 內直接
+# 回傳記憶體裡那份，不用每次都重新讀檔案、重新反序列化。
+_universe_mem_cache: Optional[List[Dict]] = None
+_universe_mem_cache_at: float = 0.0
+
 def build_universe(force_refresh=False) -> List[Dict]:
     """回傳 list of dict（取代原本的 DataFrame）"""
+    global _universe_mem_cache, _universe_mem_cache_at
     os.makedirs("instance", exist_ok=True)
     if not force_refresh and _is_cache_valid():
+        if _universe_mem_cache is not None and time.time() - _universe_mem_cache_at < CACHE_TTL:
+            return _universe_mem_cache
         logger.info("使用快取品種清單")
         with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            _universe_mem_cache = json.load(f)
+        _universe_mem_cache_at = time.time()
+        return _universe_mem_cache
 
     logger.info("下載全市場品種清單...")
     # ★ 修正：先把當天的處置股/注意股代號抓回來、填進 BLACKLIST_CODES，
@@ -234,7 +251,9 @@ def build_universe(force_refresh=False) -> List[Dict]:
 
     if not all_stocks:
         logger.error("無法下載品種清單，使用備份")
-        return _get_fallback_universe()
+        fallback = _get_fallback_universe()
+        _universe_mem_cache, _universe_mem_cache_at = fallback, time.time()
+        return fallback
 
     sector_map = _fetch_sector_info()
     if not sector_map:
@@ -259,6 +278,7 @@ def build_universe(force_refresh=False) -> List[Dict]:
     with open(CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False)
 
+    _universe_mem_cache, _universe_mem_cache_at = result, time.time()
     logger.info(f"品種清單: {len(result)} 檔")
     return result
 
