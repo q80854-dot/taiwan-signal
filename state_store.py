@@ -232,6 +232,13 @@ class StateStore:
 
     # ── 績效 ──
     def get_performance_summary(self) -> Dict:
+        # ★ 修正：2026-09-16——改成 Postgres 後才發現的新 bug：psycopg2 送 SQL 時會把
+        # 整段字串跑一次 Python 的 % 格式化來代入 %s 參數，SQL 內容裡原本寫死的
+        # LIKE 'tp%' 這個萬用字元 % 會被誤判成格式化佔位符，因為外面沒有對應的參數
+        # 可以代入，就丟出「tuple index out of range」——不是資料庫連線的問題，是
+        # 這段 SQL 字串裡的字面 % 跟 psycopg2 的參數代換機制衝突。SQLite 用 ? 佔位符
+        # 不會有這個問題，所以之前用 SQLite 從沒踩到。改成把 'tp%' 當成 bound
+        # parameter 傳進去（兩種後端都支援, 也更安全），而不是寫死在 SQL 字串裡。
         try:
             with self._conn() as conn:
                 row = conn.execute("""
@@ -239,10 +246,10 @@ class StateStore:
                            SUM(CASE WHEN result IN ('tp1','tp2','tp3') THEN 1 ELSE 0 END) as wins,
                            SUM(CASE WHEN result='sl' THEN 1 ELSE 0 END) as losses,
                            SUM(pnl_twd) as total_pnl,
-                           AVG(CASE WHEN result LIKE 'tp%' THEN pnl_twd ELSE NULL END) as avg_win,
+                           AVG(CASE WHEN result LIKE ? THEN pnl_twd ELSE NULL END) as avg_win,
                            AVG(CASE WHEN result='sl' THEN pnl_twd ELSE NULL END) as avg_loss
                     FROM signals WHERE status='closed'
-                """).fetchone()
+                """, ("tp%",)).fetchone()
             total=row["total"] or 0; wins=row["wins"] or 0; losses=row["losses"] or 0
             closed=wins+losses
             return {

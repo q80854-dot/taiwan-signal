@@ -247,6 +247,13 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         if adx_val<THRESH["min_adx"]: return None
         vol_ratio=mtf.get("vol_ratio",1.0)
         if vol_ratio<THRESH["min_vol_ratio"] and score<75: return None
+        # ★ 修正：2026-09-16——稽核發現 sell 方向的法人加權只有「外資賣超 → +5」
+        # 這一種情況，buy 方向卻同時有「外資買超 → +5」跟「外資賣超 → -5」兩種。
+        # 也就是說，一檔 sell(放空)訊號就算外資當天大買超（跟「放空」方向完全
+        # 相反的反向證據），分數也完全不會被扣，等於少了一半的法人風控保護，
+        # 這正是使用者說「發現很多訊號錯誤」時應該一併稽核到的不對稱問題。
+        # 這裡補上對稱的扣分規則：sell 訊號遇到外資買超（反向證據），比照 buy
+        # 訊號遇到外資賣超一樣扣 5 分。
         inst_signal=""; inst_score_bonus=0
         if inst_data:
             fn=inst_data.get("foreign_net",0); tn=inst_data.get("trust_net",0)
@@ -255,6 +262,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 elif fn<-200: inst_score_bonus-=5; inst_signal=f"外資賣超 {fn:+,}張 ⚠️"
             else:
                 if fn<-200: inst_score_bonus+=5; inst_signal=f"外資賣超 {fn:+,}張"
+                elif fn>200: inst_score_bonus-=5; inst_signal=f"外資買超 {fn:+,}張 ⚠️"
         score=min(100,score+inst_score_bonus)
         if score<THRESH["min_score"]: return None
         atr_info=daily_ind.get("atr",{}); atr=atr_info.get("value",price*0.02) or price*0.02
