@@ -44,6 +44,20 @@ def job_daily_scan():
         scanner.run_daily_scan()
     except Exception as e: logger.error(f"job_daily_scan: {e}", exc_info=True)
 
+def job_intraday_check():
+    # ★ 新增：2026-09-16——使用者質疑「盤中完全沒有掃描」，稽核後認為「盤中不找
+    # 新訊號」本身沒錯（波段策略本來就該用收盤後定案的日K找新進場點，盤中日K還
+    # 沒走完，提早用殘缺的K棒找訊號反而容易誤判/來回洗），但「已經推播出去、使用者
+    # 正在追蹤的訊號」如果盤中就已經到價，不該悶不吭聲等到隔天才讓使用者知道——
+    # 詳細原因見 scanner.py TWScanEngine.__init__ 裡的說明。這裡只做輕量的價格
+    # 比對+警示（見 check_intraday_price_alerts），不是另一次全市場掃描，資源成本
+    # 很小（只查詢目前追蹤中的幾檔，通常 <5 檔）。
+    logger.info("⏰ 盤中安全網檢查")
+    try:
+        from scanner import scanner
+        scanner.check_intraday_price_alerts()
+    except Exception as e: logger.error(f"job_intraday_check: {e}", exc_info=True)
+
 def job_refresh_universe():
     logger.info("⏰ 品種清單更新")
     try:
@@ -85,6 +99,9 @@ def job_scan_watchdog():
 def setup_scheduler():
     if not SCHEDULER_OK: return
     scheduler.add_job(job_morning_brief,    CronTrigger(hour=8,  minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="morning_brief",    replace_existing=True)
+    # ★ 新增：2026-09-16——盤中安全網，09:00-13:30 盤中每小時查一次已追蹤訊號是否
+    # 到價（10:00/11:00/12:00/13:00，共4次），見 job_intraday_check() 說明。
+    scheduler.add_job(job_intraday_check,   CronTrigger(hour="10,11,12,13", minute=0, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
     scheduler.add_job(job_daily_scan,       CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="daily_scan",       replace_existing=True)
     scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True)

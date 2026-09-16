@@ -38,6 +38,21 @@ class TWScanEngine:
         # Telegram，且更容易把上游 API 打到限流。這裡加一個簡單的執行鎖，掃描
         # 進行中時直接跳過，不會排隊等待（避免使用者連點時卡住一堆執行緒）。
         self._scan_lock:    threading.Lock = threading.Lock()
+        # ★ 新增：2026-09-16——使用者質疑「盤中完全沒有掃描」是否合理。查證業界
+        # 波段(swing)作法後，「盤前+盤後各檢查一次」本身是常見、正常的節奏，並非
+        # 這裡設計有誤；但那個節奏的前提是「使用者在券商那邊真的掛了停損限價單」，
+        # 券商會在盤中價格觸及時自動執行，不需要系統盯盤。這個專案目前只是「訊號
+        # 推播」，不會幫使用者自動下單（FUBON_CONFIG.auto_trade=False），使用者是否
+        # 真的在自己券商那邊掛了對應的停損單，系統無從得知也無法強制。也就是說，
+        # 如果使用者沒有另外掛停損單、只靠這個 Bot 的訊息操作，原本的設計會讓「今天
+        # 盤中已經跌破停損」這件事，要等到「明天」盤後掃描（用明天的日K高低點回頭
+        # 判斷）才會發現、推播——足足慢了一個交易日，這段時間帳戶已經暴露在遠超過
+        # 原訂 2% 的風險之下都不會有任何提醒。這裡加一層「盤中安全網」：只做價格比對
+        # +即時警示，不寫入資料庫、不影響 _resolve_pending_signals() 既有的權威結算
+        # 邏輯（那個仍然用日K高低點判斷，維持跟回測一致的績效計算方式），純粹是讓
+        # 使用者能在當天、而不是隔天才知道「這筆訊號已經到價」。同一筆訊號同一天只
+        # 警示一次，避免每小時洗版。
+        self._intraday_alerted: Dict = {"date": "", "ids": set()}
 
     @property
     def is_scanning(self) -> bool:
@@ -340,6 +355,60 @@ class TWScanEngine:
                 logger.warning(f"_resolve_pending_signals {sig.get('id')}: {e}")
         if resolved:
             logger.info(f"平倉結算：{resolved} 筆訊號已達停損/停利")
+
+    def check_intraday_price_alerts(self):
+        """
+        ★ 新增：2026-09-16——盤中安全網，見 __init__ 裡的說明。設計成排程每小時
+        呼叫一次（09:00-13:30 盤中），只做「現價 vs 已記錄的 SL/TP」比對跟即時
+        Telegram 警示，完全不寫資料庫、不呼叫 update_signal_result()——真正的
+        結算（含損益計算、寫回 status=closed）仍然只在 _resolve_pending_signals()
+        裡、用隔天的日K高低點做，兩者不會互相干擾或重複計入績效。
+        """
+        from state_store import store
+        from data_fetcher import fetch_batch_current_prices
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._intraday_alerted.get("date") != today:
+            self._intraday_alerted = {"date": today, "ids": set()}
+        pending = store.get_pending_signals()
+        if not pending:
+            return
+        tickers = list({s["ticker"] for s in pending if s.get("ticker")})
+        try:
+            prices = fetch_batch_current_prices(tickers)
+        except Exception as e:
+            logger.warning(f"check_intraday_price_alerts: 批次抓現價失敗: {e}")
+            return
+        if not prices:
+            return
+        alerted = 0
+        for sig in pending:
+            sig_id = sig.get("id")
+            ticker = sig.get("ticker")
+            if not sig_id or sig_id in self._intraday_alerted["ids"] or ticker not in prices:
+                continue
+            price = prices[ticker]
+            direction = sig.get("direction")
+            sl, tp1 = sig.get("stop_loss"), sig.get("tp1")
+            hit_sl = sl and ((direction == "buy" and price <= sl) or (direction == "sell" and price >= sl))
+            hit_tp1 = tp1 and ((direction == "buy" and price >= tp1) or (direction == "sell" and price <= tp1))
+            if not (hit_sl or hit_tp1):
+                continue
+            self._intraday_alerted["ids"].add(sig_id)
+            alerted += 1
+            try:
+                from telegram_bot import send_alert
+                if hit_sl:
+                    send_alert(
+                        f"🔴 盤中警示：{sig.get('name','')}（{sig.get('code','')}）現價 {price:.2f} 已觸及停損 {sl:.2f}\n"
+                        f"若尚未在券商端設定停損單，請儘速確認部位", "warning")
+                else:
+                    send_alert(
+                        f"✅ 盤中警示：{sig.get('name','')}（{sig.get('code','')}）現價 {price:.2f} 已觸及 TP1 {tp1:.2f}\n"
+                        f"可考慮依原計畫分批出場", "info")
+            except Exception as e:
+                logger.warning(f"check_intraday_price_alerts 通知失敗 {sig_id}: {e}")
+        if alerted:
+            logger.info(f"check_intraday_price_alerts: 本次盤中檢查發出 {alerted} 則警示")
 
     _SCAN_SINGLE_TIMEOUT_SEC = 25
     _MARKET_OVERVIEW_TIMEOUT_SEC = 45
