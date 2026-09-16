@@ -157,6 +157,25 @@ def broadcast(text: str, tier: str = "free") -> int:
 # ══════════════════════════════════════════════
 # 版本 C2 — 免費版訊號格式
 # ══════════════════════════════════════════════
+# ★ 新增：2026-09-16——risk_manager.py 的模組docstring明確記錄
+# check_weekend_gap 已被移除，稽核（含跟 Perplexity/ChatGPT/Gemini 三方
+# 交叉比對）一致認為這是現存風控缺口之一：job_daily_scan 是唯一產生新
+# 訊號的排程（週一~週五 16:30），如果訊號剛好在週四、週五（尤其連假前
+# 最後一個交易日）產生，接下來到下次盤後結算之間，系統完全沒有機制能
+# 提醒使用者「週末/連假期間大盤或個股可能已經跳空」。這裡先用最單純的
+# 「訊號產生日是週四或週五」規則加註提醒，不依賴額外的假日資料源；
+# 之後如果要更精準判斷「連假前最後一個交易日」，需要串接台股交易日曆，
+# 先用這個低成本版本補上「完全沒有提示」的缺口。
+def _weekend_gap_warning(now_tw: datetime) -> str:
+    if now_tw.weekday() in (3, 4):  # 3=週四, 4=週五
+        return (
+            "⚠️ <b>週末風險提醒</b>：訊號在週四/週五產生，下次盤後結算前"
+            "（含週末）系統無法監控盤中價格，若隔週一開盤跳空，可能直接"
+            "穿越停損價。建議進場部位酌情減碼，或等週一開盤確認走勢再進場。\n"
+        )
+    return ""
+
+
 def format_signal_free(sig: Dict) -> str:
     now_tw   = datetime.now(timezone(timedelta(hours=8)))
     isBuy    = sig["direction"] == "buy"
@@ -193,7 +212,8 @@ def format_signal_free(sig: Dict) -> str:
         + (f"{conds_fail}\n" if conds_fail else "")
         + f"━━━━━━━━━━━━━━━━━\n"
         f"⏰ 有效 {sig.get('expire_days',3)} 個交易日｜{now_tw.strftime('%m/%d %H:%M')}\n"
-        f"<i>💎 升級付費版解鎖 TP2/TP3 + 建議張數 + 法人動向</i>"
+        + _weekend_gap_warning(now_tw)
+        + f"<i>💎 升級付費版解鎖 TP2/TP3 + 建議張數 + 法人動向</i>"
     )
 
 # ══════════════════════════════════════════════
@@ -249,7 +269,8 @@ def format_signal_paid(sig: Dict) -> str:
         f"━━━━━━━━━━━━━━━━━\n"
         f"⏰ 有效 {sig.get('expire_days',3)} 個交易日｜"
         f"{now_tw.strftime('%m/%d %H:%M')}\n"
-        f"<i>⚠️ {DISCLAIMER}</i>"
+        + _weekend_gap_warning(now_tw)
+        + f"<i>⚠️ {DISCLAIMER}</i>"
     )
 
 # ══════════════════════════════════════════════

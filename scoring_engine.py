@@ -124,6 +124,13 @@ def score_sr(indicators, direction):
     elif dist<=3.0: return 0.60
     else: return 0.40
 
+# ★ 標記：2026-09-16——稽核（跟 Perplexity/ChatGPT/Gemini 三方交叉比對確認）
+# calc_composite_score() 是回測早期用過、跟實盤 signal_engine.py 評分邏輯
+# 不同套的獨立評分公式，backtester.py 已經改用跟實盤相同的函數（見該檔案
+# 註解），這個函數目前在整個程式庫（實盤與回測）都沒有任何呼叫者，是
+# deprecated 的死代碼，先保留原始程式碼但不要再新增呼叫——如果之後真的
+# 要用，必須先確認跟 signal_engine.py 的評分邏輯一致，否則會重蹈「回測
+# 跟實盤兩套邏輯」的覆轍。
 def calc_composite_score(indicators, direction, bull_tfs=None, bear_tfs=None):
     bull_tfs=bull_tfs or []; bear_tfs=bear_tfs or []
     scores={
@@ -145,6 +152,16 @@ def calc_composite_score(indicators, direction, bull_tfs=None, bear_tfs=None):
     return {"composite":composite,"breakdown":breakdown,"raw_scores":scores,
             "grade":"A" if composite>=80 else "B" if composite>=65 else "C" if composite>=50 else "D"}
 
+# ★ 標記：2026-09-16——稽核（跟 Perplexity/ChatGPT/Gemini 三方交叉比對確認）
+# kelly_position_size() 目前在整個程式庫沒有任何呼叫者，實際在用的是
+# signal_engine.calc_position_size()（帳戶規模×停損距離的固定風險%模型）。
+# 暫緩接入的原因：凱利公式需要準確的 win_rate/avg_rr，而目前的回測方法論
+# 還受限於 backtester.py docstring 承認的已知限制（無法用回測驗證多時框
+# 邏輯的真實效果，見該檔案），樣本數也可能不足以估出穩定的勝率——在
+# 這些前提還不成立時直接用凱利公式取代固定風險%，可能讓部位大小的波動
+# 比現在更難預期。建議：先累積至少3-6個月乾淨的實盤數據、驗證勝率估計
+# 穩定後，再考慮把這個函數接進 signal_engine.py，並且只當作風險上限的
+# 參考（例如半凱利封頂），不要直接取代現有的固定風險%模型。
 def kelly_position_size(win_rate, avg_rr, balance=None, half_kelly=True):
     balance=balance or ACCOUNT_BALANCE_TWD
     if win_rate<=0 or avg_rr<=0:
@@ -190,6 +207,16 @@ def calc_performance_metrics(equity_curve, trades=None):
             "win_rate":round(wr*100,1),"actual_rr":round(avg_win/avg_loss,2) if avg_loss>0 else 0,
             "max_consec_loss":max_consec,"n_trades":len(trades or []),"equity_start":equity_curve[0],"equity_end":equity_curve[-1]}
 
+# ★ 標記：2026-09-16——稽核（跟 Perplexity/ChatGPT/Gemini 三方交叉比對確認）
+# detect_regime() 目前在整個程式庫沒有任何呼叫者。系統現在對「大盤狀態」
+# 唯一的感知是 risk_manager.check_market_circuit_breaker()（跌幅/VIX粗略
+# 熔斷），沒有這裡定義的細緻趨勢狀態判斷（危機/高波動/多頭趨勢/空頭趨勢/
+# 盤整）去動態調整 size_multiplier 或限制 allowed_directions。這是一個
+# 寫得算完整、但完全沒接入實際流程的市場狀態感知模組，形同虛設。如果
+# 要啟用，建議接在 scanner.py run_daily_scan() 產生訊號之前，用回傳的
+# size_multiplier/allowed_directions 調整當次掃描的部位大小與可接受方向；
+# 接入前應該先用歷史資料驗證這個 regime 判斷本身的準確度，避免又是一套
+# 沒驗證過就上線的邏輯。
 def detect_regime(market_overview, indicators=None):
     twii_chg=float(market_overview.get("index",{}).get("twii",{}).get("chg",0) or 0)
     vix=float(market_overview.get("index",{}).get("vix",{}).get("price",20) or 20)

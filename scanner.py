@@ -8,7 +8,18 @@ from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-from config import SIGNAL_THRESHOLDS as THRESH, CIRCUIT_BREAKER as CB, SYSTEM, TELEGRAM_CONFIG
+from config import SIGNAL_THRESHOLDS as THRESH, CIRCUIT_BREAKER as CB, SYSTEM, TELEGRAM_CONFIG, \
+    CORRELATION_GROUPS, MAX_PER_CORRELATION_GROUP
+
+
+def _correlation_group_key(sector: str) -> str:
+    """★ 新增：2026-09-16——把 sig["sector"] 這個字串對應到 CORRELATION_GROUPS
+    裡定義的相關性群組（見 config.py 註解）。不在任何群組內的 sector 視為
+    自成一組，不會跟其他未分組的 sector 共用曝險上限。"""
+    for grp in CORRELATION_GROUPS:
+        if sector in grp:
+            return "|".join(grp)
+    return sector or "其他"
 
 # ★ 修正：2026-09-03——重大 bug：_check_market_status() 之前會直接
 # `THRESH["min_score"] = min(75, THRESH["min_score"] + 5)`，但 THRESH 就是
@@ -205,11 +216,19 @@ class TWScanEngine:
         # 訊號」的標的，同一檔要等前一筆訊號觸及停損/停利/逾期平倉後，才會再次
         # 出現在候選名單中。
         try:
-            active_tickers = {s.get("ticker") for s in store.get_pending_signals()}
+            _pending = store.get_pending_signals()
+            active_tickers = {s.get("ticker") for s in _pending}
+            # ★ 新增：2026-09-16——連同已在手上、尚未平倉的訊號的 sector 一起
+            # 傳給 _filter_and_rank()，讓相關性群組上限（MAX_PER_CORRELATION_GROUP）
+            # 是「含既有持倉」的真實曝險計算，而不是只看今天新掃出來的候選，
+            # 否則今天新增2檔半導體訊號時，系統不會知道你手上可能已經有2檔
+            # 半導體部位還沒平倉，等於上限形同虛設。
+            active_sectors = [s.get("sector", "") for s in _pending]
         except Exception as e:
             logger.warning(f"取得未平倉訊號清單失敗（不影響本次掃描繼續）: {e}")
             active_tickers = set()
-        filtered = self._filter_and_rank(all_signals, market_overview, active_tickers)
+            active_sectors = []
+        filtered = self._filter_and_rank(all_signals, market_overview, active_tickers, active_sectors)
         final_signals = filtered[:TELEGRAM_CONFIG["max_signals_per_day"]]
 
         self.signals_today = final_signals
@@ -466,7 +485,8 @@ class TWScanEngine:
             logger.warning(f"大盤偏弱 {twii_chg:.1f}%，提高門檻")
             THRESH["min_score"] = min(75, _BASE_MIN_SCORE + 5)
 
-    def _filter_and_rank(self, signals: List[Dict], market_overview: Dict, active_tickers: Optional[set] = None) -> List[Dict]:
+    def _filter_and_rank(self, signals: List[Dict], market_overview: Dict, active_tickers: Optional[set] = None,
+                          active_sectors: Optional[List[str]] = None) -> List[Dict]:
         if not signals: return []
         if active_tickers:
             before = len(signals)
@@ -504,7 +524,34 @@ class TWScanEngine:
                     sector_best[sec] = sig
             combined = list(sector_best.values())
         combined.sort(key=lambda x: x["score"], reverse=True)
-        return combined
+
+        # ★ 新增：2026-09-16——啟用 CORRELATION_GROUPS 相關性群組曝險上限（見
+        # config.py 註解、_correlation_group_key()）。同產業去重只能擋掉
+        # sector 字串完全相同的重複，擋不住「半導體」「AI概念」「電子零組件」
+        # 這種高度連動、但字串不同的產業同時塞滿持倉上限。這裡先用既有持倉的
+        # sector 把每個群組的計數初始化，再依分數高低依序納入新訊號，超過
+        # MAX_PER_CORRELATION_GROUP 的群組直接跳過該訊號（分數較低的同群組
+        # 訊號會被排除，不會影響其他群組）。
+        group_counts: Dict[str, int] = {}
+        for sec in (active_sectors or []):
+            key = _correlation_group_key(sec)
+            group_counts[key] = group_counts.get(key, 0) + 1
+
+        final: List[Dict] = []
+        excluded_by_group: List[str] = []
+        for sig in combined:
+            key = _correlation_group_key(sig.get("sector", ""))
+            if group_counts.get(key, 0) >= MAX_PER_CORRELATION_GROUP:
+                excluded_by_group.append(f"{sig.get('ticker')}({sig.get('sector')})")
+                continue
+            group_counts[key] = group_counts.get(key, 0) + 1
+            final.append(sig)
+        if excluded_by_group:
+            logger.info(
+                f"_filter_and_rank: 相關性群組曝險上限（同群組最多 {MAX_PER_CORRELATION_GROUP} 檔，"
+                f"含既有持倉）排除 {len(excluded_by_group)} 檔訊號：{excluded_by_group}"
+            )
+        return final
 
     def _push_signals(self, signals: List[Dict], market_overview: Dict, stats: Dict):
         # ★ 修正：2026-09-16——這是這次「訊號沒有及時傳到 TG」問題稽核出的最關鍵 bug：
