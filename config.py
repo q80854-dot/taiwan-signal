@@ -2,6 +2,7 @@
 config.py — 台股波段智慧交易系統 v1.0
 """
 import os
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -99,6 +100,41 @@ CORRELATION_GROUPS = [
 # （不論組內哪個sector字串）最多同時持有這個數量的部位（含已在手上的未平倉
 # 部位，不是只看當天新掃出來的候選）。
 MAX_PER_CORRELATION_GROUP = 2
+
+# ★ 新增：2026-09-16——回應稽核報告 B1（財報公布前後無風險過濾，risk_manager.py
+# 的模組說明明確承認過去移除了 check_earnings_risk）。這是三方 AI 交叉比對
+# （Perplexity/ChatGPT/Gemini）後排定的最高優先剩餘項目。
+#
+# 台灣上市櫃公司財報法定申報截止日是證交所/櫃買中心統一規定、對全市場公司
+# 都適用的固定日期（已用 WebSearch 查證 2026 年版本）：第一季季報 5/15、
+# 第二季（半年報）8/14、第三季季報 11/14，均為「季末後45日」；年度財報是
+# 「年度終了後3個月」，一般公司 3/31 前，實收資本額100億以上或金融保險業則
+# 提前到 3/15 前。這幾個日期不需要額外資料源就能100%準確判斷「現在是不是
+# 財報密集公告期」。
+#
+# 真正做到「某一檔股票精確哪一天公布財報」需要另外串接公開資訊觀測站(MOPS)
+# 的個股財報/重大訊息查詢，但那類 TWSE 端點在這個專案裡已經有過活生生的
+# 404失效前例（見 stock_universe.py 處置股清單的註解），與其冒著再引入一個
+# 不穩定資料源的風險去追求「精確到哪一檔」，這裡先用「全市場所有個股在同一
+# 個密集期都提高警覺（門檻微幅提高 + Telegram明確提示）」的保守、可驗證做法；
+# 之後如果要做到逐檔精確過濾，應該另外評估 MOPS 整合的可行性與穩定性。
+EARNINGS_SEASON_DEADLINES = [(3, 31), (5, 15), (8, 14), (11, 14)]
+EARNINGS_SEASON_LOOKBACK_DAYS = 14  # 涵蓋約10個交易日的密集公告期（截止日前最後衝刺最密集）
+
+
+def is_earnings_season(dt=None):
+    """回傳 dt（預設現在）是否落在上述任一財報申報截止日前 EARNINGS_SEASON_LOOKBACK_DAYS
+    天內（含截止日當天）。回傳 {"in_season": bool, "deadline": "MM/DD"|None, "days_left": int|None}。
+    只依賴固定日期計算，不需要任何外部資料源，年年適用、不會因為上游API失效而悄悄失效。"""
+    dt = dt or datetime.now()
+    today = dt.date()
+    for month, day in EARNINGS_SEASON_DEADLINES:
+        deadline = datetime(dt.year, month, day).date()
+        window_start = deadline - timedelta(days=EARNINGS_SEASON_LOOKBACK_DAYS)
+        if window_start <= today <= deadline:
+            return {"in_season": True, "deadline": f"{month}/{day}", "days_left": (deadline - today).days}
+    return {"in_season": False, "deadline": None, "days_left": None}
+
 
 WATCHLIST_CORE = {
     "0050.TW":   {"name": "元大台灣50",      "cat": "ETF",   "emoji": "📊", "priority": 1},

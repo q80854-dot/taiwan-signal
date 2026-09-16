@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
     TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL,
-    TELEGRAM_CONFIG, DISCLAIMER, SYSTEM,
+    TELEGRAM_CONFIG, DISCLAIMER, SYSTEM, is_earnings_season,
 )
 
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
@@ -176,6 +176,23 @@ def _weekend_gap_warning(now_tw: datetime) -> str:
     return ""
 
 
+# ★ 新增：2026-09-16——B1財報密集期提示（見 config.py is_earnings_season()
+# 註解，三方 AI 交叉比對後排定的最高優先剩餘項目）。這裡只提示「現在是
+# 全市場財報密集公告期」，不是「這檔股票確定會在這幾天公告財報」——後者
+# 需要逐檔精確的財報日期資料源，目前沒有串接（見 config.py 的取捨說明），
+# 提示文字刻意用「可能」而非「將會」，避免造成過度精確的錯誤印象。
+def _earnings_season_warning(now_tw: datetime) -> str:
+    season = is_earnings_season(now_tw)
+    if season["in_season"]:
+        return (
+            f"⚠️ <b>財報密集期提醒</b>：現在是法定財報申報截止日（{season['deadline']}，"
+            f"剩 {season['days_left']} 天）前的密集公告期，個股可能在任何時間點公告財報，"
+            "公告後股價跳空的機率較平時高，且本系統無法逐檔預先得知確切公告日期，"
+            "建議留意個股即將公告財報的消息，並酌情減碼或提高警覺。\n"
+        )
+    return ""
+
+
 def format_signal_free(sig: Dict) -> str:
     now_tw   = datetime.now(timezone(timedelta(hours=8)))
     isBuy    = sig["direction"] == "buy"
@@ -213,6 +230,7 @@ def format_signal_free(sig: Dict) -> str:
         + f"━━━━━━━━━━━━━━━━━\n"
         f"⏰ 有效 {sig.get('expire_days',3)} 個交易日｜{now_tw.strftime('%m/%d %H:%M')}\n"
         + _weekend_gap_warning(now_tw)
+        + _earnings_season_warning(now_tw)
         + f"<i>💎 升級付費版解鎖 TP2/TP3 + 建議張數 + 法人動向</i>"
     )
 
@@ -270,6 +288,7 @@ def format_signal_paid(sig: Dict) -> str:
         f"⏰ 有效 {sig.get('expire_days',3)} 個交易日｜"
         f"{now_tw.strftime('%m/%d %H:%M')}\n"
         + _weekend_gap_warning(now_tw)
+        + _earnings_season_warning(now_tw)
         + f"<i>⚠️ {DISCLAIMER}</i>"
     )
 

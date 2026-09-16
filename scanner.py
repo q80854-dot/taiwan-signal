@@ -9,7 +9,7 @@ from typing import List, Dict, Optional
 logger = logging.getLogger(__name__)
 
 from config import SIGNAL_THRESHOLDS as THRESH, CIRCUIT_BREAKER as CB, SYSTEM, TELEGRAM_CONFIG, \
-    CORRELATION_GROUPS, MAX_PER_CORRELATION_GROUP
+    CORRELATION_GROUPS, MAX_PER_CORRELATION_GROUP, is_earnings_season
 
 
 def _correlation_group_key(sector: str) -> str:
@@ -483,7 +483,19 @@ class TWScanEngine:
             logger.warning(f"大盤重挫 {twii_chg:.1f}%，本次只掃空單")
         elif status == "caution":
             logger.warning(f"大盤偏弱 {twii_chg:.1f}%，提高門檻")
-            THRESH["min_score"] = min(75, _BASE_MIN_SCORE + 5)
+        # ★ 新增：2026-09-16——B1財報密集期保護（見 config.py is_earnings_season()
+        # 註解）。跟大盤 caution 的門檻提升「取較大值、不相加」——過去
+        # THRESH["min_score"] += 5 曾經造成永久疊加的重大bug（見上方模組層級
+        # 註解），這裡刻意沿用同一個教訓：即使大盤 caution 跟財報密集期同時
+        # 成立，也只提高一次門檻，不會讓兩個原因疊加出一個更誇張的門檻。
+        bump = 5 if status == "caution" else 0
+        earnings = is_earnings_season()
+        if earnings["in_season"]:
+            logger.warning(f"財報密集申報期（最近一個法定截止日 {earnings['deadline']}，"
+                            f"剩 {earnings['days_left']} 天），提高門檻並於訊號中提示")
+            bump = max(bump, 5)
+        if bump:
+            THRESH["min_score"] = min(75, _BASE_MIN_SCORE + bump)
 
     def _filter_and_rank(self, signals: List[Dict], market_overview: Dict, active_tickers: Optional[set] = None,
                           active_sectors: Optional[List[str]] = None) -> List[Dict]:
