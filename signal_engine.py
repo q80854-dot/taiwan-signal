@@ -9,6 +9,7 @@ from config import (
     SIGNAL_THRESHOLDS as THRESH, SWING_PARAMS,
     CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD,
     COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION,
+    MAX_RISK_PER_TRADE,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,13 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
     # max_shares_map 沿用原本 max_lots_map 的分類上限精神（原本20/10/5/30張），改成等值的股數上限
     # （×1000），確保這層「大型股最多20張」的曝險保護仍然存在，只是允許中間值不必卡在整張邊界。
     # 注意：零股交易本身仍有實務限制（撮合時段/流動性跟整張不同，這裡沒有另外模擬），詳見文件說明。
+    # ★ 修正：2026-09-16——稽核時發現 risk_pct 預設值是寫死的字面常數 2.0，跟
+    # config.py 的 MAX_RISK_PER_TRADE=0.02 只是「數字剛好相同」，兩者並沒有真的
+    # 連在一起——以後如果改 config.py 的風險上限，這裡會完全沒反應，形成一個
+    # 「看起來可調、實際上調了沒用」的陷阱。改成直接從 config 讀，兩處數字
+    # 保證永遠一致。
     balance  = balance  or ACCOUNT_BALANCE_TWD
-    risk_pct = risk_pct or 2.0
+    risk_pct = risk_pct or (MAX_RISK_PER_TRADE * 100)
     max_risk = balance * risk_pct / 100
     sl_dist  = abs(price - stop_loss)
     if sl_dist <= 0 or price <= 0:
@@ -134,17 +140,34 @@ def check_multi_timeframe_tw(tf_data):
         if price > e120 * 1.005:   bull_score+=2; conds_met.append(f"突破半年線({e120:.1f}) ✓")
         elif price < e120 * 0.995: bear_score+=2; conds_met.append(f"跌破半年線({e120:.1f}) ✓")
         else: conds_fail.append(f"在半年線附近({e120:.1f})")
+    # ★ 修正：2026-09-16——稽核發現這幾個區塊原本只有「多頭方向」有加分規則，
+    # 空頭方向完全沒有對稱的加分，導致 sell 訊號的「本方理論最高分」實際上比
+    # buy 訊號低很多（連鎖影響到上面新公式假設的 MAX_ACTIVE_SCORE=12 只有 buy
+    # 摸得到，sell 頂多到 8 分，永遠評不到 A 級）。這裡補上對稱規則：
+    # RSI 超買（>75）比照超賣反彈(+2) 給空頭「超買反轉」+2；
+    # MACD 死叉比照金叉，給空頭 +1 額外加成。
     if 45<=rsi_val<=70:    bull_score+=1; conds_met.append(f"RSI {rsi_val:.0f} 多頭健康區 ✓")
     elif 30<=rsi_val<45:   bear_score+=1; conds_met.append(f"RSI {rsi_val:.0f} 空頭區 ✓")
-    elif rsi_val>75:       conds_fail.append(f"RSI {rsi_val:.0f} 過熱")
+    elif rsi_val>75:       bear_score+=2; conds_met.append(f"RSI {rsi_val:.0f} 超買反轉 ✓")
     elif rsi_val<30:       bull_score+=2; conds_met.append(f"RSI {rsi_val:.0f} 超賣反彈 ✓")
     if "bullish" in macd_bias:
         bull_score+=1; cross=macd_d.get("cross","")
         if cross=="MACD金叉": bull_score+=1; conds_met.append("MACD 金叉 ✓")
         else: conds_met.append("MACD 偏多 ✓")
-    elif "bearish" in macd_bias: bear_score+=1; conds_met.append("MACD 偏空 ✓")
+    elif "bearish" in macd_bias:
+        bear_score+=1; cross=macd_d.get("cross","")
+        if cross=="MACD死叉": bear_score+=1; conds_met.append("MACD 死叉 ✓")
+        else: conds_met.append("MACD 偏空 ✓")
     else: conds_fail.append("MACD 中性")
-    if vol_ratio>=THRESH["min_vol_ratio"]:  bull_score+=2; conds_met.append(f"量增({vol_ratio:.1f}x) ✓")
+    # ★ 修正：2026-09-16——稽核發現量增(vol_ratio)原本無條件只加到 bull_score，
+    # 即使當天所有其他指標都偏空、只有成交量放大，也會被硬塞進多頭分數，等於
+    # 「爆量下跌」這種明顯偏空的量價訊號反而幫多頭加分。改成比照下面 ADX
+    # 加成的寫法，加到「目前領先的一方」（跟 EMA/半年線/RSI/MACD 已經判斷出
+    # 的方向一致），量增才會是「確認當前趨勢」而不是「無條件挺多」。
+    if vol_ratio>=THRESH["min_vol_ratio"]:
+        if bull_score>=bear_score: bull_score+=2
+        else: bear_score+=2
+        conds_met.append(f"量增({vol_ratio:.1f}x) ✓")
     elif vol_ratio<0.7: conds_fail.append(f"量縮({vol_ratio:.1f}x)")
     if adx_val>=25:
         if bull_score>bear_score: bull_score+=1
@@ -242,8 +265,18 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         if pos["shares"]<=0: return None
         ema_ind=daily_ind.get("ema",{})
         ema5_val=ema_ind.get("e_fast") if ema_ind.get("valid") else None
-        entry_zone_low=round(min(price*0.98, ema5_val*0.99) if ema5_val else price*0.98, 2)
-        entry_zone_high=round(price*1.005,2)
+        # ★ 修正：2026-09-16——稽核發現這裡原本不分方向，buy/sell 都套同一組公式
+        # entry_zone=[price*0.98, price*1.005]（在目前價格下方回檔進場）。對 buy
+        # 是合理的（拉回進場），但對 sell（做空）完全反了——這個區間叫使用者在
+        # 「已經比現價低2%」的價位去放空，等於叫人追跌放空，跟正常的「反彈到
+        # 壓力區再空」邏輯相反。這裡補上方向判斷，sell 的進場區間改成現價上方
+        # （反彈進場）。
+        if direction=="buy":
+            entry_zone_low=round(min(price*0.98, ema5_val*0.99) if ema5_val else price*0.98, 2)
+            entry_zone_high=round(price*1.005,2)
+        else:
+            entry_zone_low=round(price*0.995,2)
+            entry_zone_high=round(max(price*1.02, ema5_val*1.01) if ema5_val else price*1.02, 2)
         sig_id=f"{ticker}_{direction}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         grade="A" if score>=85 else "B" if score>=75 else "C"
         action={"A":"🔥 強力訊號，建議進場","B":"✅ 良好訊號，可以考慮","C":"👀 待觀察，可小量試探"}[grade]

@@ -456,9 +456,37 @@ def fetch_market_index() -> Dict:
 # ════════════════════════════════════════════════
 # K線
 # ════════════════════════════════════════════════
+def _tw_trading_hours_now() -> bool:
+    """
+    ★ 新增：2026-09-16——判斷現在是不是台股盤中（週一~五 09:00~13:30，
+    Asia/Taipei）。用來讓 fetch_ohlcv 的快取在盤中比平常更快過期
+    （見下方 _effective_ohlcv_ttl 說明），跟盤中是否有「即時報價」無關
+    ——這裡抓的仍然是日K，只是讓「今天這根還在走的日K」在盤中不會被
+    卡在舊快取裡長達一小時不更新。
+    """
+    try:
+        now_tw = datetime.now(timezone.utc) + timedelta(hours=8)
+        if now_tw.weekday() >= 5:
+            return False
+        minutes = now_tw.hour * 60 + now_tw.minute
+        return 9 * 60 <= minutes <= 13 * 60 + 30
+    except Exception:
+        return False
+
+def _effective_ohlcv_ttl() -> int:
+    # ★ 新增：2026-09-16——稽核發現 fetch_ohlcv 的快取 TTL 固定 3600 秒
+    # （config.SYSTEM["cache_ttl_sec"]），不分盤中盤後一律套用同一個值。
+    # 本系統目前只在盤後 16:30 跑每日掃描，1小時快取原本問題不大；但
+    # /api 系列端點在使用者盤中打開網站查看個股時，也是呼叫同一個
+    # fetch_ohlcv，此時如果剛好命中舊快取，看到的「今天」這根日K收盤價
+    # 可能是一小時前的價格，跟使用者盤中緊盯行情的預期不符（「資訊更新
+    # 速度」問題之一）。這裡把盤中的快取時間縮短到 5 分鐘，盤後/非交易
+    # 日則維持原本 1 小時，避免非交易時段做沒必要的重複外部 API 請求。
+    return 300 if _tw_trading_hours_now() else SYSTEM["cache_ttl_sec"]
+
 def fetch_ohlcv(ticker: str, tf_key: str = "daily") -> Optional[Dict]:
     cache_k = f"ohlcv_{ticker}_{tf_key}"
-    if c := _cache_get(cache_k, SYSTEM["cache_ttl_sec"]):
+    if c := _cache_get(cache_k, _effective_ohlcv_ttl()):
         return c
     if not YFINANCE_OK:
         return None

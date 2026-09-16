@@ -70,35 +70,75 @@ def get_subscriber_counts() -> Dict:
         "admin_includes_owner": bool(TELEGRAM_CHAT_ID) and str(TELEGRAM_CHAT_ID) in [str(a) for a in subs.get("admin", [])],
     }
 
-def send_message(chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
+def send_message(chat_id: str, text: str, parse_mode: str = "HTML", _max_retries: int = 3) -> bool:
     # ★ 修正：2026-09-03——原本非 200 的回應完全沒有記錄任何內容，只回傳
     # False，導致「訊號有沒有真的送到 Telegram」這件事在 log 裡完全看不到、
     # 只能用猜的。現在失敗時會把 Telegram API 實際回傳的狀態碼跟錯誤內容
     # （例如 chat not found、bot was blocked by the user、Unauthorized 等）
     # 完整記錄下來，才能真正定位「網站看得到訊號、TG 卻收不到」是哪一種原因。
+    #
+    # ★ 修正：2026-09-16——這裡原本完全沒有重試機制，Telegram 429 限流
+    # （官方文件明確會回傳 retry_after 秒數，代表「等這麼久再送一定會成功」）
+    # 或暫時性網路逾時/5xx，之前都是直接放棄、回傳 False，讓呼叫端
+    # （scanner._push_signals）把這檔訊號直接算失敗，即使其實只要多等
+    # 幾秒重送就會成功——這是「訊號沒有及時傳到 TG」問題的另一個根因。
+    # 現在改成：429 時照 Telegram 回傳的 retry_after 等待後重試；5xx 或
+    # 逾時/連線錯誤這類暫時性問題用簡單的指數退避（1s, 2s, 4s）重試；
+    # 4xx（除429外，例如 chat not found、Unauthorized）是永久性錯誤，
+    # 重試也不會成功，直接放棄並記錄，不浪費時間。最多重試 _max_retries 次，
+    # 全部失敗才真的回傳 False，交由上層決定要不要警示機主。
     if not TELEGRAM_BOT_TOKEN:
         logger.error("send_message: TELEGRAM_BOT_TOKEN 未設定，無法發送")
         return False
     if not chat_id:
         logger.error("send_message: chat_id 為空，無法發送")
         return False
-    try:
-        r = requests.post(
-            f"{BASE_URL}/sendMessage",
-            json={
-                "chat_id":                  str(chat_id),
-                "text":                     text,
-                "parse_mode":               parse_mode,
-                "disable_web_page_preview": True,
-            },
-            timeout=15,
-        )
-        if r.status_code != 200:
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            r = requests.post(
+                f"{BASE_URL}/sendMessage",
+                json={
+                    "chat_id":                  str(chat_id),
+                    "text":                     text,
+                    "parse_mode":               parse_mode,
+                    "disable_web_page_preview": True,
+                },
+                timeout=15,
+            )
+            if r.status_code == 200:
+                return True
+            if r.status_code == 429:
+                try:
+                    retry_after = int(r.json().get("parameters", {}).get("retry_after", 3))
+                except Exception:
+                    retry_after = 3
+                retry_after = min(retry_after, 30)  # 避免單一訊號卡住整個掃描流程太久
+                logger.warning(f"send_message 429限流：chat_id={chat_id} 等待 {retry_after}s 後重試（第{attempt}次）")
+                if attempt <= _max_retries:
+                    time.sleep(retry_after)
+                    continue
+                logger.error(f"send_message 失敗：chat_id={chat_id} 429限流重試{_max_retries}次仍失敗")
+                return False
+            if r.status_code >= 500 and attempt <= _max_retries:
+                backoff = 2 ** (attempt - 1)
+                logger.warning(f"send_message {r.status_code}（伺服器端暫時性錯誤），{backoff}s 後重試（第{attempt}次）：chat_id={chat_id}")
+                time.sleep(backoff)
+                continue
             logger.error(f"send_message 失敗：chat_id={chat_id} status={r.status_code} body={r.text[:500]}")
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"send_message: chat_id={chat_id} exception={e}")
-        return False
+            return False
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            if attempt <= _max_retries:
+                backoff = 2 ** (attempt - 1)
+                logger.warning(f"send_message 網路暫時性錯誤，{backoff}s 後重試（第{attempt}次）：chat_id={chat_id} {e}")
+                time.sleep(backoff)
+                continue
+            logger.error(f"send_message: chat_id={chat_id} 重試{_max_retries}次後仍網路錯誤: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"send_message: chat_id={chat_id} exception={e}")
+            return False
 
 def broadcast(text: str, tier: str = "free") -> int:
     subs = _load_subscribers()

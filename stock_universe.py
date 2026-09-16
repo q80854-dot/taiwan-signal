@@ -43,6 +43,44 @@ BLACKLIST_KEYWORDS = ["全額交割", "處置股票", "注意股票", "下市", 
 #   現在由 _fetch_disposal_and_attention_codes() 在 build_universe() 時真正填入。
 BLACKLIST_CODES = set()
 
+# ★ 新增：2026-09-16——處置/注意股黑名單原本只有在「整份全市場清單」被完整重新
+# 下載時才會刷新（24小時 CACHE_TTL，或 refresh_universe_daily() 的每日 16:00
+# force_refresh），代表使用者若在非排程更新時間點手動觸發掃描（例如盤中、隔天
+# 一早才想到要補掃），用的可能是前一天下午更新的舊黑名單——期間如果有新股票被
+# 公告處置/注意，掃描完全不會排除它，這是安全相關的問題（處置股波動極端、
+# 不該被當成一般標的推薦進出場）。這裡讓黑名單有自己獨立的、短很多的新鮮度
+# （15分鐘），不再綁死在 24小時的全市場清單快取上；但也不能每次 build_universe()
+# 被呼叫就打一次 API——get_stock_info() 在一次全市場掃描裡會被呼叫上千次，
+# 這裡额外加一個時間戳門檻，實際的 HTTP 請求最多每 15 分鐘才真正發生一次。
+_BLACKLIST_TTL = 900
+_blacklist_refreshed_at = 0.0
+
+def _refresh_blacklist_if_stale():
+    global BLACKLIST_CODES, _blacklist_refreshed_at
+    if time.time() - _blacklist_refreshed_at < _BLACKLIST_TTL:
+        return
+    fresh = _fetch_disposal_and_attention_codes()
+    if fresh:
+        BLACKLIST_CODES = fresh
+        _blacklist_refreshed_at = time.time()
+    else:
+        # 刷新失敗時沿用舊名單（總比完全沒有黑名單好），但仍然更新時間戳，
+        # 避免短時間內因為上游 API 持續失敗而每次呼叫都重打一次
+        _blacklist_refreshed_at = time.time()
+        if BLACKLIST_CODES:
+            logger.warning("_refresh_blacklist_if_stale: 處置/注意股清單刷新失敗，沿用舊名單")
+        else:
+            logger.warning("_refresh_blacklist_if_stale: 處置/注意股清單刷新失敗且無舊名單可沿用")
+
+def _filter_blacklist(universe: List[Dict]) -> List[Dict]:
+    if not BLACKLIST_CODES:
+        return universe
+    filtered = [s for s in universe if s.get("code") not in BLACKLIST_CODES]
+    removed = len(universe) - len(filtered)
+    if removed:
+        logger.info(f"_filter_blacklist: 依最新處置/注意名單即時排除 {removed} 檔（不受全市場清單24小時快取影響）")
+    return filtered
+
 def _fetch_disposal_and_attention_codes() -> set:
     """
     抓 TWSE 官方「公布處置股票」(punish) + 「當日公布注意股票」(notice) 的即時名單，
@@ -227,24 +265,21 @@ def build_universe(force_refresh=False) -> List[Dict]:
     """回傳 list of dict（取代原本的 DataFrame）"""
     global _universe_mem_cache, _universe_mem_cache_at
     os.makedirs("instance", exist_ok=True)
+
+    # 黑名單有自己獨立、短很多的新鮮度門檻，不管全市場清單本身有沒有過期都先檢查
+    # （見上方 _refresh_blacklist_if_stale 說明），並套用在下面每一條回傳路徑上。
+    _refresh_blacklist_if_stale()
+
     if not force_refresh and _is_cache_valid():
         if _universe_mem_cache is not None and time.time() - _universe_mem_cache_at < CACHE_TTL:
-            return _universe_mem_cache
+            return _filter_blacklist(_universe_mem_cache)
         logger.info("使用快取品種清單")
         with open(CACHE_PATH, "r", encoding="utf-8") as f:
             _universe_mem_cache = json.load(f)
         _universe_mem_cache_at = time.time()
-        return _universe_mem_cache
+        return _filter_blacklist(_universe_mem_cache)
 
     logger.info("下載全市場品種清單...")
-    # ★ 修正：先把當天的處置股/注意股代號抓回來、填進 BLACKLIST_CODES，
-    #   _fetch_twse_list() 才過濾得掉——這個集合原本從沒被寫入過。
-    global BLACKLIST_CODES
-    fresh_blacklist = _fetch_disposal_and_attention_codes()
-    if fresh_blacklist:
-        BLACKLIST_CODES = fresh_blacklist
-    else:
-        logger.warning("處置/注意股票清單抓取失敗，本次沿用舊名單（可能為空）")
     tse  = _fetch_twse_list()
     tpex = _fetch_tpex_list()
     all_stocks = tse + tpex

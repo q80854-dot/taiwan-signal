@@ -86,11 +86,46 @@ class TWScanEngine:
             market_overview = {}
         self._check_market_status(market_overview)
 
+        # ★ 新增：2026-09-16——risk_manager.check_daily_loss_limit() / check_max_positions()
+        # 這兩個熔斷檢查先前雖然定義完整，但稽核發現整個專案裡「從來沒有任何地方呼叫」，
+        # 只在 /api/state 給網站顯示一個數字，今日虧損真的超過帳戶 6% 上限、或活躍持倉數
+        # 真的達到上限時，系統仍然會繼續產生並推播新訊號——熔斷保護形同虛設。這裡在批次
+        # 掃描開始前實際檢查一次：任一熔斷觸發就跳過本次 Step 2/3（不產生新訊號），但
+        # Step 0 的舊訊號結算、Step 5 的（空）推播仍正常執行，並推播一則警示讓機主知道
+        # 今天為什麼沒有新訊號，而不是誤以為系統掛了。
+        skip_new_signals = False
+        try:
+            from risk_manager import check_daily_loss_limit, check_max_positions
+            active_signals = store.get_pending_signals()
+            daily_loss = check_daily_loss_limit()
+            max_pos    = check_max_positions(active_signals)
+            block_msgs = []
+            if daily_loss.get("exceeded"):
+                skip_new_signals = True
+                block_msgs.append(daily_loss.get("message", "今日虧損達上限"))
+            if max_pos.get("exceeded"):
+                skip_new_signals = True
+                block_msgs.append(max_pos.get("message", "持倉數達上限"))
+            if skip_new_signals:
+                logger.warning(f"風控熔斷觸發，本次掃描跳過產生新訊號：{'；'.join(block_msgs)}")
+                try:
+                    from telegram_bot import send_alert
+                    send_alert("🛑 風控熔斷，今日暫停產生新訊號\n" + "\n".join(block_msgs), "warning")
+                except Exception as e:
+                    logger.warning(f"風控熔斷通知推播失敗: {e}")
+        except Exception as e:
+            logger.warning(f"risk_manager 熔斷檢查失敗（不影響本次掃描繼續）: {e}", exc_info=True)
+
         # 2. 品種清單
         logger.info("Step 2/5: 建立掃描清單...")
-        batches       = get_scan_batches(batch_size=SYSTEM["scan_batch_size"])
-        total_tickers = sum(len(b) for b in batches)
-        logger.info(f"共 {total_tickers} 檔，分 {len(batches)} 批")
+        if skip_new_signals:
+            batches       = []
+            total_tickers = 0
+            logger.warning("風控熔斷中，本次跳過批次掃描（Step 2/3）")
+        else:
+            batches       = get_scan_batches(batch_size=SYSTEM["scan_batch_size"])
+            total_tickers = sum(len(b) for b in batches)
+            logger.info(f"共 {total_tickers} 檔，分 {len(batches)} 批")
 
         # 3. 批次掃描
         logger.info("Step 3/5: 開始批次掃描...")
@@ -219,6 +254,7 @@ class TWScanEngine:
                 if not data:
                     continue
                 dates, highs, lows = data.get("dates", []), data.get("highs", []), data.get("lows", [])
+                hit_this_signal = False
                 for i, d in enumerate(dates):
                     if not d or d <= gen_date:
                         continue  # 只看訊號產生「之後」的K棒，當天本身不算平倉
@@ -242,6 +278,7 @@ class TWScanEngine:
                         from risk_manager import record_signal_loss
                         record_signal_loss(pnl)
                     resolved += 1
+                    hit_this_signal = True
                     try:
                         from telegram_bot import send_alert
                         result_zh = {"sl": "🔴 停損", "tp1": "✅ 停利一", "tp2": "✅ 停利二", "tp3": "🎯 停利三"}.get(result, result)
@@ -253,6 +290,37 @@ class TWScanEngine:
                     except Exception as e:
                         logger.warning(f"_resolve_pending_signals 通知失敗 {sig.get('id')}: {e}")
                     break
+                # ★ 新增：2026-09-16——CIRCUIT_BREAKER.signal_expire_days（預設3天）先前
+                # 只是 config 裡定義的一個數字，從來沒有任何程式碼真的檢查它，導致沒觸及
+                # 停損停利的舊訊號會永遠留在 pending 清單裡，state_store.get_pending_signals()
+                # 隨時間無限增長，每次掃描前的結算階段耗時也跟著線性變慢（這是 Agent 稽核
+                # 抓出的高優先度問題）。這裡補上真正的逾期判斷：訊號產生已超過 expire_days
+                # 天、期間內都沒有觸及停損/任何停利，就強制以「最新收盤價」平倉結算，
+                # 標記 result='expired'（不計入勝率的贏/輸，backtester/get_performance_summary
+                # 的勝率算式只認 tp*/sl，expired 不會被誤記成任何一種），確保 pending 清單
+                # 跟今日虧損上限的計算都反映真實現況，而不是被早就過期的舊訊號撐大。
+                if not hit_this_signal and gen_date:
+                    try:
+                        gen_dt = datetime.strptime(gen_date, "%Y-%m-%d")
+                    except ValueError:
+                        gen_dt = None
+                    expire_days = CB.get("signal_expire_days", 3)
+                    if gen_dt and (datetime.now(timezone.utc).replace(tzinfo=None) - gen_dt).days >= expire_days:
+                        closes = data.get("closes", [])
+                        last_close = closes[-1] if closes else (sig.get("entry_price") or sig.get("current_price") or 0)
+                        entry  = sig.get("entry_price") or sig.get("current_price") or last_close
+                        shares = sig.get("suggested_lots") or 1
+                        pnl     = calc_tw_pnl(entry, last_close, direction, shares) if entry else 0
+                        pnl_pct = round(pnl / (entry * shares) * 100, 2) if entry and shares else 0
+                        store.update_signal_result(sig["id"], "expired", last_close, pnl, pnl_pct)
+                        if pnl < 0:
+                            from risk_manager import record_signal_loss
+                            record_signal_loss(pnl)
+                        resolved += 1
+                        logger.info(
+                            f"_resolve_pending_signals: {sig.get('name','')}（{ticker}）"
+                            f"超過 {expire_days} 天未觸及停損/停利，強制以現價 {last_close:.2f} 平倉（expired）"
+                        )
             except Exception as e:
                 logger.warning(f"_resolve_pending_signals {sig.get('id')}: {e}")
         if resolved:
@@ -349,15 +417,49 @@ class TWScanEngine:
         return combined
 
     def _push_signals(self, signals: List[Dict], market_overview: Dict, stats: Dict):
+        # ★ 修正：2026-09-16——這是這次「訊號沒有及時傳到 TG」問題稽核出的最關鍵 bug：
+        # 原本整個函式只包在同一個 try/except 裡，代表「每日總結報告」格式化失敗，
+        # 或者「任何一檔」訊號推播失敗（Telegram API 逾時、429 限流、網路錯誤……），
+        # 都會讓 for 迴圈直接被例外中斷，當天排在後面、原本完全正常的訊號全部
+        # 不會送出，而且沒有任何警示——使用者只會發現「今天 Telegram 什麼都沒收到」，
+        # 卻無法分辨是「今天真的沒訊號」還是「系統生成了訊號但推播中途死掉」。
+        # 這裡把「總結報告」和「每一檔訊號」都各自包一層 try/except，任何一個失敗
+        # 只跳過那一個、不影響其他訊號，並且失敗時額外呼叫 send_alert 通知機主，
+        # 讓失敗變成看得到的警示，而不是沉默漏推。
         try:
-            from telegram_bot import push_signal, send_daily_report
-            send_daily_report(signals, market_overview, stats)
-            time.sleep(1)
-            for sig in signals:
-                push_signal(sig)
-                time.sleep(0.5)
+            from telegram_bot import push_signal, send_daily_report, send_alert
         except Exception as e:
-            logger.error(f"_push_signals: {e}")
+            logger.error(f"_push_signals: 無法載入 telegram_bot，本次全部訊號未推播: {e}", exc_info=True)
+            return
+
+        try:
+            send_daily_report(signals, market_overview, stats)
+        except Exception as e:
+            logger.error(f"_push_signals: 每日總結報告推播失敗: {e}", exc_info=True)
+            try:
+                send_alert(f"⚠️ 每日總結報告推播失敗：{e}", "warning")
+            except Exception as e2:
+                logger.error(f"_push_signals: 總結報告失敗警示也送不出去: {e2}")
+
+        time.sleep(1)
+        push_failures = []
+        for sig in signals:
+            try:
+                push_signal(sig)
+            except Exception as e:
+                push_failures.append(sig.get("name") or sig.get("code") or sig.get("ticker") or "?")
+                logger.error(f"_push_signals: 訊號推播失敗 {sig.get('ticker')}: {e}", exc_info=True)
+            time.sleep(0.5)
+
+        if push_failures:
+            try:
+                send_alert(
+                    f"⚠️ 今日有 {len(push_failures)} 檔訊號推播失敗：{'、'.join(push_failures)}\n"
+                    f"請至網站確認這幾檔的進出場資訊",
+                    "warning",
+                )
+            except Exception as e:
+                logger.error(f"_push_signals: 推播失敗警示本身也送不出去: {e}")
 
     def get_today_signals(self) -> List[Dict]:
         return self.signals_today

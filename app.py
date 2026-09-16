@@ -51,11 +51,43 @@ def job_refresh_universe():
         refresh_universe_daily()
     except Exception as e: logger.error(f"job_refresh_universe: {e}")
 
+def job_scan_watchdog():
+    # ★ 新增：2026-09-16——稽核時發現過一次長達 5.5 天（2026-09-03 17:00 UTC～
+    # 2026-09-09 03:34 UTC）完全無 log 的服務停擺，期間 3 個交易日完全沒有掃描
+    # /推播，而且是使用者自己發現的，系統本身完全沒有機制會主動通知——這正是
+    # 「資訊更新速度」問題裡最嚴重的一種：不是慢，是整個停了都不知道。這裡在
+    # 每日 16:30 掃描理論上早該完成的時間點（17:00）自我檢查一次：如果
+    # scanner.last_scan_at 的日期不是今天，代表當天的排程掃描沒有實際跑完
+    # （不管是 process 被平台重啟、程式卡死、還是排程器本身失效），主動推播
+    # 一則警示給機主，讓這類問題幾分鐘內就能被發現，不用再等好幾天才注意到。
+    # 註：這個 watchdog 本身仍跑在同一個 process 內，如果整個 process 直接
+    # 掛掉（像上次那樣），watchdog 也不會觸發——那種情況要靠 Render
+    # healthCheckPath 設定讓平台自動偵測並重啟，兩者互補、缺一不可。
+    logger.info("⏰ 排程健康檢查")
+    try:
+        from scanner import scanner
+        from telegram_bot import send_alert
+        today = datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
+        last  = (scanner.last_scan_at or "")[:10]
+        if last != today:
+            msg = (
+                f"🚨 排程異常：預定 16:30 的每日掃描今天（{today}）似乎沒有執行\n"
+                f"最後一次掃描時間：{scanner.last_scan_at or '從未執行過'}\n"
+                f"請檢查 Render 服務狀態，或至網站手動觸發「立即掃描」"
+            )
+            logger.error(f"job_scan_watchdog: 今日掃描未執行，last_scan_at={scanner.last_scan_at}")
+            send_alert(msg, "error")
+        else:
+            logger.info(f"job_scan_watchdog: 今日掃描已正常執行 last_scan_at={scanner.last_scan_at}")
+    except Exception as e:
+        logger.error(f"job_scan_watchdog: {e}", exc_info=True)
+
 def setup_scheduler():
     if not SCHEDULER_OK: return
     scheduler.add_job(job_morning_brief,    CronTrigger(hour=8,  minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="morning_brief",    replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
     scheduler.add_job(job_daily_scan,       CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="daily_scan",       replace_existing=True)
+    scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True)
     scheduler.add_job(lambda: logger.debug("❤️ 心跳"), "interval", hours=1, id="heartbeat")
     scheduler.start()
     logger.info("✅ 排程器已啟動")

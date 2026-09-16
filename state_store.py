@@ -115,11 +115,18 @@ class StateStore:
         except Exception as e:
             logger.error(f"get_recent_signals: {e}"); return []
 
-    def get_pending_signals(self) -> List[Dict]:
+    def get_pending_signals(self, limit: int = 500) -> List[Dict]:
+        # ★ 修正：2026-09-16——原本這裡沒有 LIMIT，理論上會隨著 expire_days 從未真正
+        # 被執行（見 scanner._resolve_pending_signals 新增的逾期強制平倉邏輯）而無限增長，
+        # 每次掃描前的結算階段就要逐筆重新抓歷史K棒判斷停損停利，耗時隨筆數線性增加。
+        # 現在 scanner.py 已經會主動把超過 signal_expire_days 天還沒觸價的訊號強制平倉，
+        # 這裡的 LIMIT 是第二層保險，避免萬一結算邏輯本身出錯時筆數還是失控增長。
         try:
             with self._conn() as conn:
                 rows = conn.execute(
-                    "SELECT * FROM signals WHERE status='active' AND result='pending' ORDER BY generated_at DESC"
+                    "SELECT * FROM signals WHERE status='active' AND result='pending' "
+                    "ORDER BY generated_at DESC LIMIT ?",
+                    (limit,)
                 ).fetchall()
             return [dict(r) for r in rows]
         except Exception as e:
