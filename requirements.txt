@@ -6,3 +6,4 @@ requests
 APScheduler
 pytz
 python-dotenv
+psycopg2-binary

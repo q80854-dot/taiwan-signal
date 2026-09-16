@@ -1,8 +1,22 @@
 """
-state_store.py — SQLite 資料庫管理 v1.0
+state_store.py — 資料庫管理 v2.0（SQLite / Postgres 雙後端）
 儲存：訊號記錄、績效統計、掃描歷史、meta 資料
+
+★ 修正：2026-09-16——使用者要求核對歷年訊號時發現：Render 上這個 Web Service
+沒有掛 Persistent Disk，SQLite 檔案路徑（instance/twstock.db）是容器本機的
+暫存空間，每次重新部署（本專案至今已部署15次以上）容器都會重建、SQLite檔案
+就會被清空歸零。這代表 get_performance_summary() 的勝率/已平倉筆數統計，
+事實上從系統上線以來從未真正累積過——不是策略打不贏，是這個統計數字實際上
+幾乎沒被量測過。使用者選擇方案B：改用 Render Postgres（真正的持久化資料庫，
+不隨部署清空、不受容器重建影響）。
+
+做法：有設定 DATABASE_URL 環境變數（Render Postgres 會自動提供）就走 Postgres，
+沒有設定（例如本機開發、或環境變數還沒接上）則自動退回原本的 SQLite 行為，
+兩種模式下對外的方法簽章、回傳格式完全一致，app.py/scanner.py 等呼叫端
+不需要跟著修改。
 """
 import sqlite3, json, logging, os
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional, Any
 from config import SYSTEM
@@ -10,20 +24,71 @@ from config import SYSTEM
 logger = logging.getLogger(__name__)
 DB_PATH = SYSTEM["db_path"]
 
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_PG = bool(DATABASE_URL)
+
+if USE_PG:
+    import psycopg2
+    import psycopg2.extras
+    # Render/一般雲端供應商常給 "postgres://" 開頭的連線字串，
+    # psycopg2 本身可以接受，但保留正規化以避免未來換成需要 "postgresql://" 的工具時出錯。
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+
+class _CursorShim:
+    """讓呼叫端可以繼續用 conn.execute(...)（沿用 SQLite 的寫法），
+    內部依後端轉成 psycopg2 的 cursor.execute(...)，並把 '?' 佔位符轉成 '%s'。"""
+    def __init__(self, raw, is_pg: bool):
+        self._raw = raw          # sqlite3.Connection 或 psycopg2 cursor
+        self._pg = is_pg
+
+    def execute(self, sql: str, params: tuple = ()):
+        if self._pg:
+            self._raw.execute(sql.replace("?", "%s"), params)
+            return self._raw
+        return self._raw.execute(sql, params)
+
+    def executescript(self, sql: str):
+        # psycopg2 cursor.execute 可以一次送出多個以 ; 分隔的 DDL 陳述句，不需要 executescript
+        if self._pg:
+            self._raw.execute(sql)
+        else:
+            self._raw.executescript(sql)
+
 
 class StateStore:
     def __init__(self):
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        if not USE_PG:
+            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         self._init_db()
 
+    @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        return conn
+        if USE_PG:
+            raw_conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+            cur = raw_conn.cursor()
+            try:
+                yield _CursorShim(cur, True)
+                raw_conn.commit()
+            except Exception:
+                raw_conn.rollback()
+                raise
+            finally:
+                cur.close()
+                raw_conn.close()
+        else:
+            raw_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+            raw_conn.row_factory = sqlite3.Row
+            try:
+                with raw_conn:
+                    yield _CursorShim(raw_conn, False)
+            finally:
+                raw_conn.close()
 
     def _init_db(self):
-        with self._conn() as conn:
-            conn.executescript("""
+        if USE_PG:
+            ddl = """
                 CREATE TABLE IF NOT EXISTS signals (
                     id            TEXT PRIMARY KEY,
                     ticker        TEXT, code TEXT, name TEXT, sector TEXT,
@@ -31,11 +96,37 @@ class StateStore:
                     current_price REAL, entry_price REAL,
                     stop_loss     REAL, tp1 REAL, tp2 REAL, tp3 REAL,
                     sl_pct        REAL, tp1_pct REAL, tp2_pct REAL,
-                    -- ★ 修正：2026-08-30（第二輪）——這個欄位名字是舊制（1000股=1張）留下來的，
-                    -- 但 signal_engine.calc_position_size() 改用零股(股數)為單位後，這裡實際存的
-                    -- 是股數，不是張數。沒有重新命名欄位是為了不動到既有 production DB 的 schema
-                    -- （SQLite ALTER COLUMN 風險/複雜度不成比例），純粹是欄位名稱歷史遺留，
-                    -- 讀寫這個欄位時請當作股數處理，不要照字面當成張數。
+                    suggested_lots INTEGER, risk_twd REAL, risk_pct REAL,
+                    position_value REAL, roundtrip_cost REAL,
+                    vol_ratio     REAL, adx_value REAL, rsi_value REAL,
+                    inst_signal   TEXT, weekly_bias TEXT,
+                    reason_brief  TEXT, reason_full TEXT,
+                    result        TEXT DEFAULT 'pending',
+                    close_price   REAL, pnl_twd REAL DEFAULT 0, pnl_pct REAL DEFAULT 0,
+                    status        TEXT DEFAULT 'active',
+                    generated_at  TEXT, closed_at TEXT, raw_json TEXT
+                );
+                CREATE TABLE IF NOT EXISTS scan_history (
+                    id            SERIAL PRIMARY KEY,
+                    scan_date     TEXT, scanned INTEGER, signals_found INTEGER,
+                    signals_sent  INTEGER, duration_min REAL, errors INTEGER, created_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY, value TEXT, updated_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_signals_ticker  ON signals(ticker);
+                CREATE INDEX IF NOT EXISTS idx_signals_date    ON signals(generated_at);
+                CREATE INDEX IF NOT EXISTS idx_signals_status  ON signals(status);
+            """
+        else:
+            ddl = """
+                CREATE TABLE IF NOT EXISTS signals (
+                    id            TEXT PRIMARY KEY,
+                    ticker        TEXT, code TEXT, name TEXT, sector TEXT,
+                    direction     TEXT, score REAL, grade TEXT,
+                    current_price REAL, entry_price REAL,
+                    stop_loss     REAL, tp1 REAL, tp2 REAL, tp3 REAL,
+                    sl_pct        REAL, tp1_pct REAL, tp2_pct REAL,
                     suggested_lots INTEGER, risk_twd REAL, risk_pct REAL,
                     position_value REAL, roundtrip_cost REAL,
                     vol_ratio     REAL, adx_value REAL, rsi_value REAL,
@@ -57,23 +148,29 @@ class StateStore:
                 CREATE INDEX IF NOT EXISTS idx_signals_ticker  ON signals(ticker);
                 CREATE INDEX IF NOT EXISTS idx_signals_date    ON signals(generated_at);
                 CREATE INDEX IF NOT EXISTS idx_signals_status  ON signals(status);
-            """)
-        logger.info(f"資料庫初始化：{DB_PATH}")
+            """
+        with self._conn() as conn:
+            conn.executescript(ddl)
+        logger.info(f"資料庫初始化：{'Postgres（持久化）' if USE_PG else DB_PATH}")
 
     # ── 訊號 ──
     def save_signal(self, sig: Dict) -> bool:
         try:
+            cols = ("id,ticker,code,name,sector,direction,score,grade,"
+                    "current_price,entry_price,stop_loss,tp1,tp2,tp3,"
+                    "sl_pct,tp1_pct,tp2_pct,suggested_lots,risk_twd,risk_pct,"
+                    "position_value,roundtrip_cost,vol_ratio,adx_value,rsi_value,"
+                    "inst_signal,weekly_bias,reason_brief,reason_full,"
+                    "result,close_price,pnl_twd,status,generated_at,raw_json")
+            col_list = cols.split(",")
+            if USE_PG:
+                update_clause = ",".join(f"{c}=EXCLUDED.{c}" for c in col_list if c != "id")
+                sql = (f"INSERT INTO signals ({cols}) VALUES ({','.join(['?']*len(col_list))}) "
+                       f"ON CONFLICT (id) DO UPDATE SET {update_clause}")
+            else:
+                sql = f"INSERT OR REPLACE INTO signals ({cols}) VALUES ({','.join(['?']*len(col_list))})"
             with self._conn() as conn:
-                conn.execute("""
-                    INSERT OR REPLACE INTO signals (
-                        id,ticker,code,name,sector,direction,score,grade,
-                        current_price,entry_price,stop_loss,tp1,tp2,tp3,
-                        sl_pct,tp1_pct,tp2_pct,suggested_lots,risk_twd,risk_pct,
-                        position_value,roundtrip_cost,vol_ratio,adx_value,rsi_value,
-                        inst_signal,weekly_bias,reason_brief,reason_full,
-                        result,close_price,pnl_twd,status,generated_at,raw_json
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """, (
+                conn.execute(sql, (
                     sig["id"],sig["ticker"],sig.get("code",""),sig["name"],sig.get("sector",""),
                     sig["direction"],sig["score"],sig.get("grade",""),
                     sig["current_price"],sig["entry_price"],sig["stop_loss"],
@@ -187,9 +284,13 @@ class StateStore:
 
     def set_meta(self, key: str, value: Any):
         try:
+            if USE_PG:
+                sql = ("INSERT INTO meta(key,value,updated_at) VALUES(?,?,?) "
+                       "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at")
+            else:
+                sql = "INSERT OR REPLACE INTO meta(key,value,updated_at) VALUES(?,?,?)"
             with self._conn() as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta(key,value,updated_at) VALUES(?,?,?)",
+                conn.execute(sql,
                     (key, json.dumps(value,ensure_ascii=False), datetime.now(timezone.utc).isoformat())
                 )
         except Exception as e: logger.error(f"set_meta: {e}")
