@@ -160,8 +160,30 @@ def check_multi_timeframe_tw(tf_data):
     direction = "buy" if bull_score>=5 and bull_score>bear_score else "sell" if bear_score>=5 and bear_score>bull_score else "none"
     if direction=="none": score=0
     else:
-        total=bull_score+bear_score; active=bull_score if direction=="buy" else bear_score
-        base=(active/max(total,1))*60+30
+        # ★ 修正：2026-09-16——使用者回報「交易訊號幾乎都錯誤」，追查後發現原本
+        # base=(active/max(total,1))*60+30 是用「本方分數佔（本方+對方）分數的
+        # 比例」換算信心分數。這個公式有嚴重瑕疵：只要對方（bear_score 或
+        # bull_score，視方向而定）剛好是 0——這在成交量稀薄、盤整的ETF/債券型
+        # ETF 身上非常常見，只是各項指標剛好落在中性區、不代表趨勢真的強——
+        # active/total 就會等於 1.0，不論本方分數是剛好卡在最低門檻 5 分（勉強
+        # 達標，缺乏強力佐證）還是滿分 12 分（真正多重確認），都會算出 base=90，
+        # 再加小時線共振 +10 直接封頂 100 分、評級(A)「🔥 強力訊號，建議進場」。
+        # 結果是大量勉強達標、證據薄弱的邊緣訊號被貼上跟真正多重確認訊號一樣的
+        # 最高信心標籤（實測 2026-09-09 單次掃描：338 檔候選中絕大多數 ETF 都
+        # 顯示 score=100，包含債券型ETF這種波動極小、理論上很少會多指標同時
+        # 共振的標的），使用者完全無法從分數判斷訊號品質，這正是訊號品質差的
+        # 根本原因。
+        # 修正後直接用「本方分數 ÷ 該方向理論最高分」換算，分數只反映本方證據
+        # 的絕對強度，不再受「對方剛好是 0」這種巧合影響；對方若真的有分數（有
+        # 反向證據），已經透過 bull_score>bear_score 的方向判定、以及週線逆勢時
+        # 直接扣減本方分數（上面第 155-158 行）反映在 active 裡，不需要再疊加一
+        # 次比例懲罰。理論最高本方分數：EMA(3)+半年線(2)+RSI(最高2)+MACD含金叉
+        # (2)+爆量(2)+ADX加成(1) = 12。修正後，剛好卡門檻的 bull_score=5 只會
+        # 算出 55 分（低於 min_score=65，會被 generate_signal_tw() 正常過濾掉，
+        # 不會再被推播），必須有更多指標真的同向確認才能達到 65 分以上。
+        MAX_ACTIVE_SCORE = 12
+        active = bull_score if direction=="buy" else bear_score
+        base = 30 + (active/MAX_ACTIVE_SCORE)*60
         resonance="hourly" in results and (("bullish" in results["hourly"].get("ema",{}).get("bias","") and direction=="buy") or ("bearish" in results["hourly"].get("ema",{}).get("bias","") and direction=="sell"))
         if resonance: base+=10
         score=min(100,int(base))
