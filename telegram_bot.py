@@ -231,6 +231,11 @@ def format_signal_free(sig: Dict) -> str:
         f"⏰ 有效 {sig.get('expire_days',3)} 個交易日｜{now_tw.strftime('%m/%d %H:%M')}\n"
         + _weekend_gap_warning(now_tw)
         + _earnings_season_warning(now_tw)
+        # ★ 修正：2026-09-16——稽核發現免費版訊號訊息完全沒有包含 DISCLAIMER，
+        # 只有付費版有。免費版依「先免費推廣後付費化」的商業模式，使用者基數
+        # 只會更大，「僅供參考、不構成投資建議、盈虧自負」這類風險揭露文字
+        # 沒有理由只出現在付費版——這裡補上，跟付費版用同一份 DISCLAIMER。
+        + f"<i>⚠️ {DISCLAIMER}</i>\n"
         + f"<i>💎 升級付費版解鎖 TP2/TP3 + 建議張數 + 法人動向</i>"
     )
 
@@ -580,6 +585,7 @@ def handle_update(update: Dict) -> Optional[str]:
             f"🔥 A級（85+）強力建議\n"
             f"✅ B級（75+）良好訊號\n"
             f"👀 C級（65+）觀察機會\n\n"
+            f"/fill 代號 價格 — 回報實際成交價（例：/fill 2330 985.5）\n"
             f"/help — 使用說明\n"
             f"/upgrade — 升級付費版\n\n"
             f"<i>{DISCLAIMER}</i>"
@@ -595,6 +601,37 @@ def handle_update(update: Dict) -> Optional[str]:
             "💰 月費：TWD 299\n"
             "📧 聯絡管理員升級"
         )
+    elif cmd == "/fill":
+        # ★ 新增：2026-09-16——回應三方AI交叉比對中ChatGPT提出的建議：讓使用者
+        # 可以回報實際成交價，用來累積「訊號參考價 vs 實際成交價」的真實滑價
+        # 資料（見 state_store.py actual_entry_price/get_slippage_stats() 說明），
+        # 而不是像現在只能在 DISCLAIMER 裡誠實承認「不知道滑價多少」。
+        parts = text.split()
+        if len(parts) < 3:
+            return "用法：/fill 股票代號 實際成交價\n例如：/fill 2330 985.5\n（會記錄在你目前該檔最新一筆未平倉訊號上，用來幫助未來校正系統的滑價估計）"
+        code_arg = parts[1].strip()
+        try:
+            actual_price = float(parts[2])
+        except ValueError:
+            return "價格格式錯誤，請輸入數字，例如：/fill 2330 985.5"
+        if actual_price <= 0:
+            return "價格必須大於 0。"
+        from state_store import store
+        pending = store.get_pending_signals()
+        matches = [s for s in pending if s.get("code") == code_arg or str(s.get("ticker", "")).startswith(code_arg)]
+        if not matches:
+            return f"找不到代號 {code_arg} 目前有效（未平倉）的訊號，請確認代號是否正確。"
+        matches.sort(key=lambda s: s.get("generated_at", ""), reverse=True)
+        sig = matches[0]
+        if not store.record_actual_fill(sig["id"], actual_price):
+            return "記錄失敗，請稍後再試。"
+        ref_price = sig.get("entry_price") or sig.get("current_price") or 0
+        slip_txt = ""
+        if ref_price:
+            sign = 1 if sig.get("direction") == "buy" else -1
+            slip_pct = round(sign * (actual_price - ref_price) / ref_price * 100, 2)
+            slip_txt = f"（與訊號參考價 {ref_price} 相比，滑價 {slip_pct:+.2f}%）"
+        return f"✅ 已記錄 {sig.get('name', '')} {code_arg} 實際成交價 {actual_price}{slip_txt}\n感謝回報，這筆資料會用於未來校正系統的滑價估計。"
     elif cmd == "/help":
         return (
             f"📖 <b>使用說明</b>\n\n"
@@ -603,6 +640,9 @@ def handle_update(update: Dict) -> Optional[str]:
             f"美股昨收｜外資動向｜持倉追蹤｜今日計畫\n\n"
             f"📊 16:45 盤後選股報告\n"
             f"今日大盤｜法人動向｜選股訊號｜明日計畫\n\n"
+            f"💡 <b>/fill 代號 價格</b>\n"
+            f"收到訊號後，如果你有實際下單，可以回報實際成交價（例：/fill 2330 985.5），"
+            f"幫助我們累積真實滑價資料，未來讓績效統計更貼近你的實際結果。\n\n"
             f"<i>{DISCLAIMER}</i>"
         )
     return None

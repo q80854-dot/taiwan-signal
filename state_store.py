@@ -151,7 +151,30 @@ class StateStore:
             """
         with self._conn() as conn:
             conn.executescript(ddl)
+        # ★ 新增：2026-09-16——回應三方AI交叉比對（Perplexity/ChatGPT/Gemini）中
+        # ChatGPT提出的建議：訊號的「參考價位」（產生訊號當下的價格，即現有的
+        # entry_price/current_price欄位）跟「使用者實際成交價」目前是同一個概念，
+        # 完全沒有欄位可以承載後者，導致B4（滑價未被評估）長期想做的「用真實
+        # 成交價校正滑價估計」永遠無法真正開始——這裡加一個新欄位承接使用者
+        # 之後透過Telegram /fill 指令回報的實際成交價，現有表格已經在正式環境
+        # 運作過、不能用 DROP TABLE 重建，所以用 ALTER TABLE ADD COLUMN 做
+        # 遷移，且對「這個欄位是不是已經加過」做防呆（見 _migrate_add_column），
+        # 避免每次啟動都重複執行或在欄位已存在時噴錯。
+        self._migrate_add_column("signals", "actual_entry_price", "REAL")
         logger.info(f"資料庫初始化：{'Postgres（持久化）' if USE_PG else DB_PATH}")
+
+    def _migrate_add_column(self, table: str, column: str, coltype: str):
+        try:
+            with self._conn() as conn:
+                if USE_PG:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {coltype}")
+                else:
+                    existing = conn.execute(f"PRAGMA table_info({table})").fetchall()
+                    col_names = {row["name"] for row in existing}
+                    if column not in col_names:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+        except Exception as e:
+            logger.warning(f"_migrate_add_column({table}.{column}): {e}")
 
     # ── 訊號 ──
     def save_signal(self, sig: Dict) -> bool:
@@ -212,6 +235,45 @@ class StateStore:
         except Exception as e:
             logger.error(f"get_recent_signals: {e}"); return []
 
+    # ★ 新增：2026-09-16——見上方 _init_db() 的 actual_entry_price 欄位說明。
+    def record_actual_fill(self, sig_id: str, actual_price: float) -> bool:
+        try:
+            with self._conn() as conn:
+                conn.execute("UPDATE signals SET actual_entry_price=? WHERE id=?", (actual_price, sig_id))
+            return True
+        except Exception as e:
+            logger.error(f"record_actual_fill: {e}"); return False
+
+    def get_slippage_stats(self) -> Dict:
+        """統計目前累積到的「訊號參考價 vs 使用者實際成交價」滑價資料。
+        買進時，實際成交價高於參考價＝多付（正滑價）；賣出(放空)時，實際成交價
+        低於參考價＝滑價。回傳的 avg_slippage_pct 是正值代表平均而言使用者的
+        實際成交比訊號參考價差，負值代表平均而言比參考價好。樣本數不足前
+        （建議至少30筆以上）不應該拿這個數字去改動任何風控參數，只作為觀察用。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT direction, entry_price, actual_entry_price FROM signals "
+                    "WHERE actual_entry_price IS NOT NULL AND entry_price IS NOT NULL AND entry_price != 0"
+                ).fetchall()
+            rows = [dict(r) for r in rows]
+            diffs = []
+            for r in rows:
+                sign = 1 if r["direction"] == "buy" else -1
+                diffs.append(sign * (r["actual_entry_price"] - r["entry_price"]) / r["entry_price"] * 100)
+            if not diffs:
+                return {"count": 0, "avg_slippage_pct": None, "note": "尚無使用者回報的實際成交價資料"}
+            return {
+                "count": len(diffs),
+                "avg_slippage_pct": round(sum(diffs) / len(diffs), 3),
+                "max_slippage_pct": round(max(diffs), 3),
+                "min_slippage_pct": round(min(diffs), 3),
+                "note": "樣本數<30前僅供觀察，不建議用來調整風控參數" if len(diffs) < 30 else "",
+            }
+        except Exception as e:
+            logger.error(f"get_slippage_stats: {e}")
+            return {"count": 0, "avg_slippage_pct": None, "note": "查詢失敗"}
+
     def get_pending_signals(self, limit: int = 500) -> List[Dict]:
         # ★ 修正：2026-09-16——原本這裡沒有 LIMIT，理論上會隨著 expire_days 從未真正
         # 被執行（見 scanner._resolve_pending_signals 新增的逾期強制平倉邏輯）而無限增長，
@@ -260,10 +322,48 @@ class StateStore:
                 "avg_win":    round(row["avg_win"]  or 0,0),
                 "avg_loss":   round(row["avg_loss"] or 0,0),
                 "recent_trades": self.get_recent_signals(20),
+                # ★ 新增：2026-09-16——三方AI交叉比對後續修正，見 get_slippage_stats()
+                # 與 get_winrate_by_weekly_bias() 的定義說明。掛在 /api/performance
+                # 既有回應裡，不需要另外開新端點，網站/未來分析都能直接拿到。
+                "slippage_stats": self.get_slippage_stats(),
+                "winrate_by_weekly_bias": self.get_winrate_by_weekly_bias(),
             }
         except Exception as e:
             logger.error(f"get_performance_summary: {e}")
-            return {"total":0,"wins":0,"losses":0,"win_rate":0,"total_pnl":0,"recent_trades":[]}
+            return {"total":0,"wins":0,"losses":0,"win_rate":0,"total_pnl":0,"recent_trades":[],
+                     "slippage_stats":{"count":0,"avg_slippage_pct":None},"winrate_by_weekly_bias":{}}
+
+    # ★ 新增：2026-09-16——回應稽核報告 D 部分（回測沒有真正驗證多時框/週線
+    # 邏輯）的短期低成本方案：weekly_bias 欄位其實從一開始就已經跟著每筆訊號
+    # 存進資料庫（見 save_signal 的 cols 清單），只是從來沒有人真的把它拿出來
+    # 跟後續的實際損益做交叉統計——這裡補上這個查詢，讓「週線多頭的訊號勝率
+    # 是不是真的比週線中性/空頭高」這個問題，可以直接用實盤累積的資料回答，
+    # 不需要動回測引擎、也不需要重建歷史多時框資料集。累積筆數不足時（建議
+    # 至少每組20筆以上）不應該拿來做任何參數調整的依據，純觀察用。
+    def get_winrate_by_weekly_bias(self) -> Dict:
+        try:
+            with self._conn() as conn:
+                rows = conn.execute("""
+                    SELECT weekly_bias,
+                           COUNT(*) as closed,
+                           SUM(CASE WHEN result IN ('tp1','tp2','tp3') THEN 1 ELSE 0 END) as wins
+                    FROM signals WHERE status='closed' AND weekly_bias IS NOT NULL AND weekly_bias != ''
+                    GROUP BY weekly_bias
+                """).fetchall()
+            out = {}
+            for r in rows:
+                r = dict(r)
+                closed = r["closed"] or 0
+                wins = r["wins"] or 0
+                out[r["weekly_bias"]] = {
+                    "closed": closed, "wins": wins,
+                    "win_rate": round(wins / max(closed, 1) * 100, 1),
+                    "note": "樣本數<20前僅供觀察" if closed < 20 else "",
+                }
+            return out
+        except Exception as e:
+            logger.error(f"get_winrate_by_weekly_bias: {e}")
+            return {}
 
     # ── 掃描歷史 ──
     def save_scan_history(self, stats: Dict):

@@ -23,7 +23,7 @@ def calc_trade_cost(price, shares, direction):
             "tax": round(tax,0), "total_cost": round(total_cost,0),
             "cost_pct": round(total_cost/total_value*100,3) if total_value else 0}
 
-def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="中型股"):
+def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="中型股", avg_volume_lots=None):
     # ★ 修正：2026-08-30（第一輪）——投資人回測報告核對數字時發現：舊版「lots = max(1, ...)」不管
     # 風險預算(2%)或單一部位資金上限(30%)換算出來是多少，最少一定強迫買1張。股價較高、或停損距離
     # 較寬的標的（例如當時的 6669.TW），换算下來连0.1張都不到，也照樣被塞進1張，等於這筆交易的實際
@@ -54,8 +54,26 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
     raw_shares = min(raw_shares, max_shares_by_cap)
     max_shares_map = {"大型股":20000,"中型股":10000,"小型股":5000,"ETF":30000}
     shares = min(max_shares_map.get(size_cat,10000), math.floor(raw_shares))
+    # ★ 新增：2026-09-16——ChatGPT在三方交叉比對（Perplexity/ChatGPT/Gemini）中
+    # 提出、經評估後採納的建議：部位大小過去只看帳戶風險預算(2%)換算出來的股數，
+    # 完全沒檢查這個股數是不是已經佔該股票當日成交量一個不合理的比例——小型股
+    # 如果建議部位過大，使用者實際下單可能自己把價格打高/打低，形成自己造成的
+    # 滑價，讓風報比在下單當下就被侵蝕。這裡用 stock_universe.py 既有的
+    # volume_lots（該股票最近一次品種清單更新時的當日成交張數，是流動性的粗略
+    # 代理值，不是嚴格的多日移動平均，之後如果要更精確可以改成真正的多日均量）
+    # 把建議部位上限訂在「不超過當日成交量的10%」，這是常見的保守零售/量化
+    # 交易實務準則，用來避免自己的委託單造成過大的價格衝擊。只在呼叫端有提供
+    # avg_volume_lots 時才套用，沒提供時維持原本行為，不會因為缺這筆資料就
+    # 完全算不出部位。
+    liquidity_capped = False
+    if avg_volume_lots:
+        liquidity_cap_shares = math.floor(avg_volume_lots * SHARES_PER_LOT * 0.10)
+        if liquidity_cap_shares < shares:
+            shares = liquidity_cap_shares
+            liquidity_capped = True
     if shares < 1:
-        return {"shares":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,"breakeven_pct":0}
+        return {"shares":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,
+                "breakeven_pct":0,"liquidity_capped":liquidity_capped}
     position_value = shares * price
     buy_cost  = calc_trade_cost(price, shares, "buy")
     sell_cost = calc_trade_cost(price, shares, "sell")
@@ -69,6 +87,7 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
         "margin_pct":     round(position_value / balance * 100, 1),
         "roundtrip_cost": round(roundtrip, 0),
         "breakeven_pct":  round(roundtrip / position_value * 100, 3) if position_value else 0,
+        "liquidity_capped": liquidity_capped,
     }
 
 def calc_stop_loss_tw(direction, price, atr, indicators, size_cat="中型股", low_5d=None, high_5d=None):
@@ -285,8 +304,10 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             return None
         tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
         if tp_info["rr1"]<THRESH["min_rr"]: return None
-        pos=calc_position_size(price,sl,size_cat=size_cat)
+        pos=calc_position_size(price,sl,size_cat=size_cat,avg_volume_lots=stock_info.get("volume_lots"))
         if pos["shares"]<=0: return None
+        if pos.get("liquidity_capped"):
+            logger.info(f"[{ticker}] 建議部位因流動性上限（當日成交量10%）被下修至 {pos['shares']} 股")
         ema_ind=daily_ind.get("ema",{})
         ema5_val=ema_ind.get("e_fast") if ema_ind.get("valid") else None
         # ★ 修正：2026-09-16——稽核發現這裡原本不分方向，buy/sell 都套同一組公式
@@ -311,7 +332,8 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                      f"MACD {'多' if 'bullish' in daily_ind.get('macd',{}).get('bias','') else '空'}頭動能\n"
                      f"【量能】{vol_desc}\n【趨勢】{weekly_desc} / ADX {adx_val:.0f}\n"
                      f"【法人】{inst_signal or '資料更新中'}\n"
-                     f"【風控】止損 {round(abs(price-sl)/price*100,1)}%，TP1 盈虧比 1:{tp_info['rr1']}")
+                     f"【風控】止損 {round(abs(price-sl)/price*100,1)}%，TP1 盈虧比 1:{tp_info['rr1']}"
+                     + ("\n【流動性】建議部位已因當日成交量偏低而下修，請留意實際下單時的滑價" if pos.get("liquidity_capped") else ""))
         reason_brief=(f"{ema_ind.get('alignment','')} + {vol_desc}\n"
                       f"止損 {round(abs(price-sl)/price*100,1)}% / TP1 +{round(abs(tp_info['tp1']-price)/price*100,1)}%")
         signal={
