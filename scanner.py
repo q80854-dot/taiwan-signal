@@ -179,7 +179,22 @@ class TWScanEngine:
 
         # 4. 過濾排序
         logger.info("Step 4/5: 過濾與排序...")
-        filtered = self._filter_and_rank(all_signals, market_overview)
+        # ★ 新增：2026-09-16——使用者要求逐一核對歷史訊號實際結果時發現：群益台灣
+        # 精選高息(00919.TW) 在 09-10、09-14、09-15 被連續推薦了三次 buy，全友
+        # (2305.TW) 09-09、09-11、09-14、09-15 被推薦了四次——不是系統認為這檔
+        # 特別好才連續強調，是舊評分公式讓大量候選同分，「今天恰好又擠進前2名」
+        # 純屬巧合；就算評分公式已經修正，同一檔標的只要連續幾天都符合門檻，
+        # 沒有機制阻止它每天都被重複推播，使用者等於在同一檔還沒平倉的部位上
+        # 被反覆提醒「進場」，容易誤以為是三個獨立、加倍確認的機會，實際上是
+        # 同一個部位的風險被重複計入。這裡在排序前先排除「目前已有未平倉/未結算
+        # 訊號」的標的，同一檔要等前一筆訊號觸及停損/停利/逾期平倉後，才會再次
+        # 出現在候選名單中。
+        try:
+            active_tickers = {s.get("ticker") for s in store.get_pending_signals()}
+        except Exception as e:
+            logger.warning(f"取得未平倉訊號清單失敗（不影響本次掃描繼續）: {e}")
+            active_tickers = set()
+        filtered = self._filter_and_rank(all_signals, market_overview, active_tickers)
         final_signals = filtered[:TELEGRAM_CONFIG["max_signals_per_day"]]
 
         self.signals_today = final_signals
@@ -382,8 +397,14 @@ class TWScanEngine:
             logger.warning(f"大盤偏弱 {twii_chg:.1f}%，提高門檻")
             THRESH["min_score"] = min(75, _BASE_MIN_SCORE + 5)
 
-    def _filter_and_rank(self, signals: List[Dict], market_overview: Dict) -> List[Dict]:
+    def _filter_and_rank(self, signals: List[Dict], market_overview: Dict, active_tickers: Optional[set] = None) -> List[Dict]:
         if not signals: return []
+        if active_tickers:
+            before = len(signals)
+            signals = [s for s in signals if s.get("ticker") not in active_tickers]
+            removed = before - len(signals)
+            if removed:
+                logger.info(f"_filter_and_rank: 排除 {removed} 檔已有未平倉訊號的重複標的（見上方新增說明）")
         if market_overview.get("market_status") == "stop":
             signals = [s for s in signals if s["direction"] == "sell"]
         # 同產業去重（只留最高分）

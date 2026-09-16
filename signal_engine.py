@@ -259,6 +259,22 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         if score<THRESH["min_score"]: return None
         atr_info=daily_ind.get("atr",{}); atr=atr_info.get("value",price*0.02) or price*0.02
         sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)
+        # ★ 新增：2026-09-16——使用者要求逐一核對歷史訊號的實際結果，核對時發現
+        # 全友(2305.TW) 09-09/09-11/09-14 三次進場，SL 都是同一個 33.9（結構性
+        # 支撐位 nearest_support，不是隨每天股價重算的 ATR 停損），但同一段時間
+        # 股價從 35 噴到 45，停損距離從約 3% 悄悄擴大到近 25%——calc_stop_loss_tw()
+        # 裡 low_5d/nearest_support 的「往外擴」保護（見上方函式），設計原意是
+        # 避免停損卡在雜訊區間，但沒有對「擴大後的停損距離」設任何上限，遇到
+        # 股價已經噴出、離結構性支撐很遠的個股，就會算出一個風險已經沒有意義
+        # 的巨大停損（TP1都要漲快50%才會到），這種訊號與其說是「風險定義清楚的
+        # 波段進場點」，不如說是「追高」。這裡補一道明確上限：停損距離超過現價
+        # 12%，代表這檔已經噴出太遠、不是好的風險定義進場點，直接跳過不出訊號，
+        # 而不是硬塞一個名義上有停損、實際上跟樂透差不多的訊號。
+        sl_dist_pct = abs(price - sl) / price * 100 if price else 0
+        if sl_dist_pct > 12:
+            logger.info(f"[{ticker}] 停損距離 {sl_dist_pct:.1f}%（SL={sl}, 現價={price}）過寬，"
+                        f"代表已離結構性支撐/壓力太遠、不是好的風險定義進場點，跳過本次訊號")
+            return None
         tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
         if tp_info["rr1"]<THRESH["min_rr"]: return None
         pos=calc_position_size(price,sl,size_cat=size_cat)
