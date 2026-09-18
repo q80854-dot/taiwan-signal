@@ -2,7 +2,7 @@
 app.py — Flask 主應用 v1.2
 修正：改用 send_from_directory 繞過 Jinja2 解析 dashboard.html
 """
-import sys, os, logging, threading
+import sys, os, signal, logging, threading
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request, send_from_directory
 from config import SYSTEM, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
@@ -96,6 +96,41 @@ def job_scan_watchdog():
     except Exception as e:
         logger.error(f"job_scan_watchdog: {e}", exc_info=True)
 
+def job_pre_scan_restart():
+    # ★ 新增：2026-09-18——2026-09-03 已發生過一次、2026-09-18 又重演的同一種
+    # 故障：本服務是 Render 0.5c/512MB 方案，即使 data_fetcher._cache 已經加了
+    # 400 筆上限（見 2026-09-03 那次修正），實測用 Render memory_usage 指標
+    # 確認：2026-09-18 08:25（當天掃描都還沒開始）常駐記憶體就已經
+    # 512,888,830 bytes，而 512MB 方案的實際上限是 536,870,900 bytes——閒置時
+    # 就已經用掉約 95%，掃描一開始再疊加（yfinance/pandas 大量 DataFrame 物件
+    # 造成的 CPython/glibc malloc 記憶體碎片化，不是 _cache 字典本身能解釋的，
+    # gc.collect() 也無法讓 glibc 把已釋放但碎片化的記憶體真的還給作業系統），
+    # 15 分鐘內就衝破上限，Render 平台直接把整個 container 判定超限、強制重啟
+    # ——這次是 08:45（掃描才跑到 18 批中的第 10~11 批），當天所有已找到的
+    # 訊號（含好幾檔 A 級）全部遺失、沒有推播到 Telegram，使用者只收到 17:00
+    # job_scan_watchdog 事後才發出的異常警示。
+    #
+    # 治本地重寫整個掃描的記憶體使用方式風險太高（本機沒有能重現 880 檔即時
+    # 行情負載的測試環境可驗證改動是否安全），這裡改用業界常見、風險低很多的
+    # 作法：讓 gunicorn 這個唯一的 worker process，在每天掃描「開始之前」
+    # （16:15——refresh_universe 16:00 已跑完、daily_scan 16:30 還沒開始的
+    # 安全空檔）自己送 SIGTERM 結束自己。gunicorn master 偵測到 worker 程序
+    # 消失後會自動生一個全新 worker（跟 gunicorn 內建 --timeout/--max-requests
+    # 的自我回收機制原理完全一樣），讓 16:30 的掃描從乾淨的記憶體基準（實測
+    # 重啟後約 98MB）開始跑，而不是從已經逼近上限的 ~490MB 開始，大幅拉開
+    # OOM 前的安全餘裕。若 16:15 當下剛好有掃描正在進行中（例如使用者從
+    # 網站手動觸發「立即掃描」），則跳過本次重啟，避免腰斬正在跑的掃描。
+    logger.info("⏰ 掃描前記憶體重置檢查")
+    try:
+        from scanner import scanner
+        if scanner.is_scanning:
+            logger.warning("job_pre_scan_restart: 目前有掃描正在進行中，跳過本次重啟")
+            return
+        logger.info("job_pre_scan_restart: 主動重啟 worker 以重置記憶體基準（16:30 掃描前）")
+        os.kill(os.getpid(), signal.SIGTERM)
+    except Exception as e:
+        logger.error(f"job_pre_scan_restart: {e}", exc_info=True)
+
 def setup_scheduler():
     if not SCHEDULER_OK: return
     scheduler.add_job(job_morning_brief,    CronTrigger(hour=8,  minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="morning_brief",    replace_existing=True)
@@ -103,6 +138,10 @@ def setup_scheduler():
     # 到價（10:00/11:00/12:00/13:00，共4次），見 job_intraday_check() 說明。
     scheduler.add_job(job_intraday_check,   CronTrigger(hour="10,11,12,13", minute=0, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
+    # ★ 新增：2026-09-18——見 job_pre_scan_restart() 說明，在每日掃描前主動
+    # 重啟一次 worker、重置記憶體基準，預防跟 2026-09-03/2026-09-18 同一種
+    # 掃描到一半被 Render 平台強制重啟、訊號整批遺失的問題。
+    scheduler.add_job(job_pre_scan_restart, CronTrigger(hour=16, minute=15, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="pre_scan_restart",  replace_existing=True)
     scheduler.add_job(job_daily_scan,       CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="daily_scan",       replace_existing=True)
     scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True)
     scheduler.add_job(lambda: logger.debug("❤️ 心跳"), "interval", hours=1, id="heartbeat")

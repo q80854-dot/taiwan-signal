@@ -7,7 +7,7 @@ data_fetcher.py v2.2
 ★ yfinance download 格式修正
 ★ 快取 5 分鐘更新
 """
-import time, logging, requests, warnings, threading
+import time, gc, logging, requests, warnings, threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List, Any
 
@@ -141,6 +141,13 @@ def _cache_clear_all():
     """在每次全市場掃描開始前呼叫，避免記憶體內快取跨多次掃描無限累積。"""
     n = len(_cache)
     _cache.clear()
+    # ★ 新增：2026-09-18——單獨清空 _cache 字典本身省下的記憶體有限（字典
+    # 上限只有 400 筆），真正的風險是掃描期間大量 yfinance/pandas DataFrame
+    # 物件產生的 CPython 記憶體碎片化（詳見 app.py job_pre_scan_restart() 的
+    # 說明，那才是治本作法）。這裡加一次 gc.collect() 純粹是低成本的順手優化
+    # ——能回收掉已經沒有任何參照、但還沒被 CPython 世代回收器排到的物件，
+    # 不會讓 glibc 把記憶體還給作業系統，所以不能單靠這個解決 OOM 問題。
+    gc.collect()
     if n:
         logger.info(f"記憶體快取已清空（原有 {n} 筆，釋放記憶體）")
 
