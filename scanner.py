@@ -3,7 +3,7 @@ scanner.py — 全市場掃描引擎 v1.0
 每日 16:30 盤後觸發，批次掃描 1000+ 檔台股
 """
 import time, logging, threading, concurrent.futures, gc
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -12,14 +12,33 @@ from config import SIGNAL_THRESHOLDS as THRESH, CIRCUIT_BREAKER as CB, SYSTEM, T
     CORRELATION_GROUPS, MAX_PER_CORRELATION_GROUP, is_earnings_season
 
 
-def _correlation_group_key(sector: str) -> str:
+def _correlation_group_key(sector: str, ticker: str = "") -> str:
     """★ 新增：2026-09-16——把 sig["sector"] 這個字串對應到 CORRELATION_GROUPS
     裡定義的相關性群組（見 config.py 註解）。不在任何群組內的 sector 視為
-    自成一組，不會跟其他未分組的 sector 共用曝險上限。"""
+    自成一組，不會跟其他未分組的 sector 共用曝險上限。
+
+    ★ 修正：2026-09-18——使用者反映「這幾天訊號一直失敗/一直是0個」，稽核發現
+    2026-09-17 全市場掃描 815 檔、193 檔通過評分門檻，_filter_and_rank() 卻把
+    193 檔全部濾成 0 檔推播。追出來的高度可疑成因：sector 抓取失敗時（
+    stock_universe._fetch_sector_info() 打 TWSE 產業分類 API，這個專案已經
+    證實這類 TWSE 端點會 404/失敗，見 2026-08-30 同產業去重那次的對應防呆）
+    原本的寫法會讓所有「不明產業」的候選全部落進同一個共用的「其他」桶，
+    跟 MAX_PER_CORRELATION_GROUP（=2）比較——如果剛好有 2 筆既有持倉的
+    sector 資料本身就是空字串（例如 ETF 類标的常常沒有明確產業分類），這個
+    「其他」桶在還沒看任何一檔新候選之前就已經滿了，之後所有 sector 同樣
+    抓取失敗的新候選，不管分數多高，全部會被判定「曝險已滿」直接跳過——而
+    這個「曝險已滿」的判斷其實是假的，因為我們根本不知道這些標的實際上是
+    不是真的同產業/高度連動，只是「不知道」而已。「不知道」不該被當成
+    「已知且相同」來共用同一個曝險上限。這裡把不明 sector 的 fallback 改成
+    用 ticker 讓每一檔自成一組（等於對「不明產業」的標的完全不設相關性上限
+    ——沒有可靠的分類資訊時，寧可不限制，也不要用假分組誤傷彼此完全無關的
+    候選）。"""
     for grp in CORRELATION_GROUPS:
         if sector in grp:
             return "|".join(grp)
-    return sector or "其他"
+    if not sector:
+        return f"__unknown_sector__:{ticker}" if ticker else "其他"
+    return sector
 
 # ★ 修正：2026-09-03——重大 bug：_check_market_status() 之前會直接
 # `THRESH["min_score"] = min(75, THRESH["min_score"] + 5)`，但 THRESH 就是
@@ -40,7 +59,21 @@ class TWScanEngine:
     def __init__(self):
         self.signals_today: List[Dict] = []
         self.scan_count:    int        = 0
+        # ★ 修正：2026-09-18——last_scan_at 原本只存在記憶體裡，process 一
+        # 重啟（不管是部署、還是 2026-09-03/2026-09-18 那種被平台強制重啟的
+        # 情況）就歸零，job_scan_watchdog() 因此在重啟後的第一次檢查會誤判
+        # 成「最後一次掃描時間：從未執行過」——即使前幾天掃描明明都正常跑完，
+        # 只是process換了一個新的而已。這裡啟動時改成從 DB 的 meta 表讀回
+        # 上次真正掃描完成的時間，讓這個狀態能跨越 process 重啟存活，
+        # watchdog 的警示訊息才會準確反映「真的有多久沒掃描」，而不是「這個
+        # process活了多久」。用 try/except 包住，DB 在啟動當下還沒準備好時
+        # 不影響其餘啟動流程。
         self.last_scan_at:  str        = ""
+        try:
+            from state_store import store
+            self.last_scan_at = store.get_meta("last_scan_at", "") or ""
+        except Exception as e:
+            logger.warning(f"TWScanEngine.__init__: 讀取 last_scan_at 失敗（不影響啟動）: {e}")
         self.scan_errors:   List[str]  = []
         # ★ 修正：2026-09-03——原本 run_daily_scan() 沒有任何「正在掃描中」的鎖，
         # 如果排程的每日掃描（16:30）跟手動觸發的 /api/scan/force（或使用者連點
@@ -223,17 +256,29 @@ class TWScanEngine:
             # 是「含既有持倉」的真實曝險計算，而不是只看今天新掃出來的候選，
             # 否則今天新增2檔半導體訊號時，系統不會知道你手上可能已經有2檔
             # 半導體部位還沒平倉，等於上限形同虛設。
-            active_sectors = [s.get("sector", "") for s in _pending]
+            # ★ 修正：2026-09-18——原本只傳 sector 字串，_correlation_group_key()
+            # 拿不到 ticker，sector 抓取失敗（空字串）的既有持倉全部會被歸進
+            # 同一個共用的「其他」桶，見 _correlation_group_key() 說明的那個
+            # bug。這裡改傳完整的 _pending（含 ticker），讓 fallback 能用
+            # ticker 讓每筆不明產業的持倉自成一組。
+            active_positions = _pending
         except Exception as e:
             logger.warning(f"取得未平倉訊號清單失敗（不影響本次掃描繼續）: {e}")
             active_tickers = set()
-            active_sectors = []
-        filtered = self._filter_and_rank(all_signals, market_overview, active_tickers, active_sectors)
+            active_positions = []
+        filtered = self._filter_and_rank(all_signals, market_overview, active_tickers, active_positions)
         final_signals = filtered[:TELEGRAM_CONFIG["max_signals_per_day"]]
 
         self.signals_today = final_signals
         self.scan_count   += 1
         self.last_scan_at  = datetime.now(timezone.utc).isoformat()
+        # ★ 修正：2026-09-18——同步寫回 DB meta 表，見 __init__() 說明，讓
+        # job_scan_watchdog() 在 process 重啟後也能讀到「真正」的上次掃描
+        # 時間，不會誤報「從未執行過」。
+        try:
+            store.set_meta("last_scan_at", self.last_scan_at)
+        except Exception as e:
+            logger.warning(f"寫回 last_scan_at 失敗（不影響本次掃描結果）: {e}")
 
         for sig in final_signals:
             store.save_signal(sig)
@@ -390,6 +435,7 @@ class TWScanEngine:
             self._intraday_alerted = {"date": today, "ids": set()}
         pending = store.get_pending_signals()
         if not pending:
+            logger.info("check_intraday_price_alerts: 目前無未平倉訊號，跳過本次盤中檢查")
             return
         tickers = list({s["ticker"] for s in pending if s.get("ticker")})
         try:
@@ -397,8 +443,22 @@ class TWScanEngine:
         except Exception as e:
             logger.warning(f"check_intraday_price_alerts: 批次抓現價失敗: {e}")
             return
+        # ★ 新增：2026-09-18——使用者反映「盤中資訊根本沒有跳出來」。稽核發現這個
+        # 函式原本「沒異常就完全沉默」：抓不到現價、現價字典整包是空的、或現價
+        # 抓到了但沒有任何一檔真的觸及SL/TP，三種情況在log裡完全一樣（什麼都不
+        # 印），事後沒辦法分辨「今天盤中真的很平靜」還是「這個安全網其實根本沒
+        # 在運作」。這裡不管有沒有觸發警示，都先記清楚「要查幾檔、實際查到幾檔」，
+        # 之後才好判斷問題出在資料源還是真的沒事發生。
+        logger.info(f"check_intraday_price_alerts: 追蹤 {len(tickers)} 檔，成功取得現價 {len(prices)} 檔")
         if not prices:
+            logger.warning(
+                "check_intraday_price_alerts: fetch_batch_current_prices 回傳空結果，"
+                "本次無法比對現價（可能是資料源逾時/被擋，不代表盤中真的沒有變化）"
+            )
             return
+        missing = [t for t in tickers if t not in prices]
+        if missing:
+            logger.warning(f"check_intraday_price_alerts: 以下 {len(missing)} 檔沒有抓到現價，本次未納入比對: {missing}")
         alerted = 0
         for sig in pending:
             sig_id = sig.get("id")
@@ -428,6 +488,19 @@ class TWScanEngine:
                 logger.warning(f"check_intraday_price_alerts 通知失敗 {sig_id}: {e}")
         if alerted:
             logger.info(f"check_intraday_price_alerts: 本次盤中檢查發出 {alerted} 則警示")
+
+        # ★ 新增：2026-09-18——見上方說明，使用者反映盤中除了早上「請留意止損位」
+        # 這句制式提醒外，整天完全看不到任何實際數字，只有真的觸及SL/TP才會
+        # 收到訊息。這裡在盤中安全網的4次檢查中固定挑中午12:00那一次，額外送一則
+        # 現況總覽（現價相對SL/TP的位置），其餘3次維持原本的靜默比對，避免同一件
+        # 事一天推4次造成疲勞轟炸、也避免大幅增加額外的API負擔。
+        now_tw = datetime.now(timezone.utc) + timedelta(hours=8)
+        if now_tw.hour == 12:
+            try:
+                from telegram_bot import send_intraday_digest
+                send_intraday_digest(pending, prices)
+            except Exception as e:
+                logger.warning(f"check_intraday_price_alerts: 盤中現況總覽推播失敗: {e}")
 
     _SCAN_SINGLE_TIMEOUT_SEC = 25
     _MARKET_OVERVIEW_TIMEOUT_SEC = 45
@@ -498,14 +571,20 @@ class TWScanEngine:
             THRESH["min_score"] = min(75, _BASE_MIN_SCORE + bump)
 
     def _filter_and_rank(self, signals: List[Dict], market_overview: Dict, active_tickers: Optional[set] = None,
-                          active_sectors: Optional[List[str]] = None) -> List[Dict]:
+                          active_positions: Optional[List[Dict]] = None) -> List[Dict]:
+        # ★ 新增：2026-09-18——使用者反映訊號連續好幾天是0個，稽核 09-17 的
+        # log 發現「發現：193 → 篩選後：0」，但這個函式原本除了「相關性群組
+        # 排除」跟「重複標的排除」各自的log，沒有印出每個階段各自的存活數量，
+        # 事後很難判斷是哪一關把候選清空的。這裡在函式開頭跟每個階段後都印一次
+        # 數量，之後同樣情況發生時，從log就能直接看出是哪一關的問題。
+        logger.info(f"_filter_and_rank: 輸入 {len(signals)} 檔候選")
         if not signals: return []
         if active_tickers:
             before = len(signals)
             signals = [s for s in signals if s.get("ticker") not in active_tickers]
             removed = before - len(signals)
             if removed:
-                logger.info(f"_filter_and_rank: 排除 {removed} 檔已有未平倉訊號的重複標的（見上方新增說明）")
+                logger.info(f"_filter_and_rank: 排除 {removed} 檔已有未平倉訊號的重複標的（見上方新增說明），剩 {len(signals)} 檔")
         if market_overview.get("market_status") == "stop":
             signals = [s for s in signals if s["direction"] == "sell"]
         # 同產業去重（只留最高分）
@@ -536,6 +615,7 @@ class TWScanEngine:
                     sector_best[sec] = sig
             combined = list(sector_best.values())
         combined.sort(key=lambda x: x["score"], reverse=True)
+        logger.info(f"_filter_and_rank: 同產業去重後剩 {len(combined)} 檔")
 
         # ★ 新增：2026-09-16——啟用 CORRELATION_GROUPS 相關性群組曝險上限（見
         # config.py 註解、_correlation_group_key()）。同產業去重只能擋掉
@@ -544,15 +624,22 @@ class TWScanEngine:
         # sector 把每個群組的計數初始化，再依分數高低依序納入新訊號，超過
         # MAX_PER_CORRELATION_GROUP 的群組直接跳過該訊號（分數較低的同群組
         # 訊號會被排除，不會影響其他群組）。
+        # ★ 修正：2026-09-18——見 _correlation_group_key() 說明的重大 bug：
+        # sector 空字串的既有持倉原本會被歸進共用的「其他」桶，可能還沒看
+        # 任何新候選就把桶塞滿，導致之後所有 sector 同樣不明的新候選被誤判
+        # 「曝險已滿」。這裡改用 _correlation_group_key(sector, ticker) 讓
+        # 不明產業的持倉/候選各自獨立，不再共用假的曝險上限。
         group_counts: Dict[str, int] = {}
-        for sec in (active_sectors or []):
-            key = _correlation_group_key(sec)
+        for pos in (active_positions or []):
+            key = _correlation_group_key(pos.get("sector", ""), pos.get("ticker", ""))
             group_counts[key] = group_counts.get(key, 0) + 1
+        if group_counts:
+            logger.info(f"_filter_and_rank: 既有持倉曝險群組初始計數 {group_counts}")
 
         final: List[Dict] = []
         excluded_by_group: List[str] = []
         for sig in combined:
-            key = _correlation_group_key(sig.get("sector", ""))
+            key = _correlation_group_key(sig.get("sector", ""), sig.get("ticker", ""))
             if group_counts.get(key, 0) >= MAX_PER_CORRELATION_GROUP:
                 excluded_by_group.append(f"{sig.get('ticker')}({sig.get('sector')})")
                 continue
@@ -563,6 +650,7 @@ class TWScanEngine:
                 f"_filter_and_rank: 相關性群組曝險上限（同群組最多 {MAX_PER_CORRELATION_GROUP} 檔，"
                 f"含既有持倉）排除 {len(excluded_by_group)} 檔訊號：{excluded_by_group}"
             )
+        logger.info(f"_filter_and_rank: 最終輸出 {len(final)} 檔")
         return final
 
     def _push_signals(self, signals: List[Dict], market_overview: Dict, stats: Dict):

@@ -555,6 +555,53 @@ def push_signal(sig: Dict):
     )
 
 # ══════════════════════════════════════════════
+# 盤中持倉現況總覽（12:00 台北時間，見 scanner.check_intraday_price_alerts）
+# ══════════════════════════════════════════════
+def send_intraday_digest(pending: List[Dict], prices: Dict[str, float]):
+    """★ 新增：2026-09-18——使用者反映盤中「請留意止損位」的制式提醒之外，
+    整天看不到任何實際數字，只有真的觸及SL/TP才會收到訊息，感覺像系統整天
+    沒在動。這裡固定每天中午12:00送一次持倉現況總覽，讓現價、以及現價落在
+    停損/停利區間的相對位置實際被看見，而不是只被告知「請留意」卻沒有任何
+    可以參考的數字。抓不到現價的標的仍會列出、標示「—」，不會整筆略過造成
+    使用者誤以為那筆訊號不存在了。"""
+    if not pending:
+        return
+    lines = []
+    for s in pending[:10]:
+        ticker    = s.get("ticker")
+        price     = prices.get(ticker)
+        sl, tp1   = s.get("stop_loss"), s.get("tp1")
+        direction = s.get("direction")
+        icon      = "📈" if direction == "buy" else "📉"
+        if price and sl and tp1 and (sl != tp1):
+            # 用「現價在 SL→TP1 這段區間裡走了多遠」粗略表示風險位置，
+            # 0% = 剛好在停損、100% = 剛好在TP1，僅供參考，不是精確風控指標。
+            rng = tp1 - sl
+            pos_pct = (price - sl) / rng * 100
+            pos_pct = max(0, min(100, pos_pct))
+            price_str = f"現價 {price:.2f}（距停損/停利區間 {pos_pct:.0f}%）"
+        elif price:
+            price_str = f"現價 {price:.2f}"
+        else:
+            price_str = "現價暫時抓不到（—）"
+        lines.append(
+            f"  ▪ {s.get('name','')}（{s.get('code','')}）{icon}\n"
+            f"     {price_str}｜SL {sl:.2f}｜TP1 {tp1:.2f}" if sl and tp1 else
+            f"  ▪ {s.get('name','')}（{s.get('code','')}）{icon} {price_str}"
+        )
+    msg = (
+        "📍 <b>盤中持倉現況</b>（12:00）\n"
+        + "\n".join(lines) + "\n"
+        "<i>現價來源：yfinance，可能有延遲，僅供參考</i>"
+    )
+    subs = _load_subscribers()
+    for admin_id in subs.get("admin", []):
+        send_message(admin_id, msg)
+    broadcast(msg, tier="free")
+    broadcast(msg, tier="paid")
+    logger.info("盤中持倉現況總覽已發送")
+
+# ══════════════════════════════════════════════
 # 系統警報
 # ══════════════════════════════════════════════
 def send_alert(message: str, level: str = "info"):
