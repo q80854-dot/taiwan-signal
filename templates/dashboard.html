@@ -117,6 +117,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 /* Toast */
 .toast{position:fixed;bottom:20px;right:20px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:10px 16px;font-size:12px;color:var(--t1);z-index:999;animation:slidein .3s ease}
 @keyframes slidein{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+/* Freshness badge — 顯示資料來源最後更新時間跟新鮮度，全站時間一律換算成台北時區顯示，
+   避免像舊版那樣直接印 UTC 時間，跟畫面上其他台北時間的時鐘對不起來、造成混淆。 */
+.fresh-badge{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--t3);padding:3px 8px;border:1px solid var(--bd);border-radius:20px;background:var(--s2)}
+.fresh-dot{width:6px;height:6px;border-radius:50%;background:var(--t3);flex-shrink:0}
+.fresh-dot.ok{background:var(--G)}
+.fresh-dot.warn{background:var(--Y)}
+.fresh-dot.stale{background:var(--R);animation:blink 1.2s ease-in-out infinite}
+@media(max-width:640px){.fresh-badge{display:none}}
+/* Source tag on index chips when the value fell back to a degraded/error source */
+.idx-src{font-size:9px;color:var(--Y);margin-top:1px}
+.idx-src.err{color:var(--R)}
 </style>
 </head>
 <body>
@@ -151,6 +162,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
       <span id="page-title">總覽</span>
     </div>
     <div class="top-r">
+      <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
       <span id="tw-time" style="font-size:11px;color:var(--t3)"></span>
       <button class="btn" onclick="fetchState()">↻ 刷新</button>
       <button class="btn primary" onclick="forceScan()">⚡ 立即掃描</button>
@@ -273,6 +285,64 @@ const clr=(v)=>v>0?'var(--G)':v<0?'var(--R)':'var(--t3)';
 const setEl=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const setColor=(id,c)=>{const e=document.getElementById(id);if(e)e.style.color=c;};
 
+// ★ 修正：2026-09-19——舊版把後端傳來的 UTC ISO 時間字串直接切片印出（例如
+// last_scan_time.slice(11,16)+' UTC'），跟畫面右上角即時跳動的台北時間時鐘
+// 顯示在同一頁，兩者時區不同、又沒有標示清楚，非常容易讓人誤讀「現在幾點」
+// 或誤以為資料比實際更舊/更新。這裡統一用這兩個 helper 把任何 ISO 時間字串
+// 轉成台北時間文字，以及算出「距離現在幾分鐘/幾小時」，全站時間顯示只走這裡。
+function taipeiParts(iso){
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return null;
+  // Intl.DateTimeFormat 用 formatToParts 逐欄位取值，避免依賴 toLocaleString
+  // 組出來的完整字串格式（不同瀏覽器/locale 標點符號、AM/PM 位置不保證一致，
+  // 直接切字串容易切錯）。
+  const fmt=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Taipei',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
+  const parts={};
+  fmt.formatToParts(d).forEach(p=>{parts[p.type]=p.value;});
+  return parts;
+}
+function toTaipeiStr(iso){
+  if(!iso)return null;
+  try{
+    const p=taipeiParts(iso);
+    if(!p)return null;
+    const hh=p.hour==='24'?'00':p.hour;
+    return `${p.month}/${p.day} ${hh}:${p.minute}`;
+  }catch(e){return null;}
+}
+function toTaipeiHM(iso){
+  if(!iso)return null;
+  try{
+    const p=taipeiParts(iso);
+    if(!p)return null;
+    const hh=p.hour==='24'?'00':p.hour;
+    return `${hh}:${p.minute}`;
+  }catch(e){return null;}
+}
+function ageMinutes(iso){
+  if(!iso)return null;
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return null;
+  return Math.max(0,Math.round((Date.now()-d.getTime())/60000));
+}
+function ageLabel(mins){
+  if(mins===null||mins===undefined)return '—';
+  if(mins<1)return '剛剛';
+  if(mins<60)return mins+'分鐘前';
+  return Math.floor(mins/60)+'小時前';
+}
+// 全站資料新鮮度徽章：綠(<=6分鐘，對齊後端 market_overview 5分鐘快取)／
+// 黃(<=20分鐘，可能是盤後或快取延遲)／紅(更久，或完全沒抓到資料，提醒使用者
+// 現在看到的數字可能不是最新的，而不是讓使用者誤以為系統一直都是即時的)。
+function updateFreshBadge(iso){
+  const dot=document.getElementById('fresh-dot'),txt=document.getElementById('fresh-text');
+  if(!dot||!txt)return;
+  const mins=ageMinutes(iso);
+  if(mins===null){dot.className='fresh-dot';txt.textContent='資料時間未知';return;}
+  dot.className='fresh-dot '+(mins<=6?'ok':mins<=20?'warn':'stale');
+  txt.textContent='資料 '+(toTaipeiStr(iso)||'—')+'（'+ageLabel(mins)+'）';
+}
+
 // Clock
 function updateClock(){
   const tw=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Taipei'}));
@@ -355,6 +425,7 @@ function renderAll(d){
   renderIndex(d.market_overview?.index||{});renderKPIs(d);
   renderLatestSignals(d.active_signals||[]);renderMarketSummary(d.market_overview||{});
   renderSidebar(d);document.getElementById('version').textContent='v'+(d.version||'1.0.0');
+  updateFreshBadge(d.market_overview?.fetched_at);
 }
 
 function renderIndex(idx){
@@ -362,6 +433,21 @@ function renderIndex(idx){
     const d=idx[key]||{};const p=d.price;
     setEl(valId,p?parseFloat(p).toLocaleString('zh-TW',{maximumFractionDigits:2}):'—');
     if(chgId){const el=document.getElementById(chgId);if(el&&d.chg!==undefined){el.textContent=chgStr(d.chg);el.style.color=clr(d.chg);}}
+    // ★ 新增：2026-09-19——每個指數實際上有多個資料來源（富果/TWSE官方/yfinance
+    // 各期間 fallback，見 data_fetcher.py），來源字串本身早就存在後端回傳的
+    // json裡（d.source），但前端從來沒有顯示過，使用者完全看不出眼前這個數字
+    // 是主要來源正常抓到、還是已經 fallback 到備援來源、甚至是抓取失敗的預設值
+    // （source==="error"）。這裡在數值下方補一行小字標示，抓取失敗時額外標紅。
+    const chipEl=document.getElementById(valId)?.closest('.idx-chip');
+    if(chipEl){
+      let srcEl=chipEl.querySelector('.idx-src');
+      const isErr=d.source==='error'||!p;
+      if(isErr||( d.source && d.source!=='fugle' && d.source!=='twse_official')){
+        if(!srcEl){srcEl=document.createElement('div');srcEl.className='idx-src';chipEl.appendChild(srcEl);}
+        srcEl.className='idx-src'+(isErr?' err':'');
+        srcEl.textContent=isErr?'⚠ 來源異常':'備援來源';
+      }else if(srcEl){srcEl.remove();}
+    }
   });
   const fn=_state?.market_overview?.foreign?.net_buy_twd||0;
   setEl('foreign-val',(fn>=0?'買超':'賣超')+Math.abs(fn/1e8).toFixed(0)+'億');
@@ -377,7 +463,8 @@ function renderKPIs(d){
   const wrPct=wr.win_rate??0;setEl('win-rate',wrPct?safeN(wrPct,1)+'%':'—%');
   setEl('wr-sub',wr.wins!==undefined?`${wr.wins}勝/${wr.losses}負`:'尚無記錄');
   setEl('scan-count',safe(d.scan_count,0));
-  setEl('last-scan-top',d.last_scan_time?'最後：'+d.last_scan_time.slice(11,16)+' UTC':'尚未掃描');
+  const scanHM=toTaipeiHM(d.last_scan_time);
+  setEl('last-scan-top',scanHM?'最後：'+scanHM+'（'+ageLabel(ageMinutes(d.last_scan_time))+'）':'尚未掃描');
 }
 
 function renderLatestSignals(sigs){
@@ -455,7 +542,7 @@ function renderMarketSummary(mo){
       <div style="display:flex;justify-content:space-between"><span>情緒分數</span><span style="color:var(--B)">${safeN(mo.sentiment_score,0)} / 100（${safe(mo.sentiment_zh)}）</span></div>
       <div style="display:flex;justify-content:space-between"><span>VIX</span><span style="color:${(mo.index?.vix?.price||20)>30?'var(--R)':(mo.index?.vix?.price||20)>20?'var(--Y)':'var(--G)'}">${safeN(mo.index?.vix?.price,1)}</span></div>
       <div style="display:flex;justify-content:space-between"><span>外資動向</span><span style="color:${fn>=0?'var(--G)':'var(--R)'}">${fn>=0?'買超':'賣超'} ${Math.abs(fn/1e8).toFixed(0)} 億</span></div>
-      <div style="display:flex;justify-content:space-between"><span>數據更新</span><span style="color:var(--t3)">${(mo.fetched_at||'').slice(11,19)} UTC</span></div>
+      <div style="display:flex;justify-content:space-between"><span>數據更新</span><span style="color:var(--t3)">${toTaipeiHM(mo.fetched_at)||'—'} 台北（${ageLabel(ageMinutes(mo.fetched_at))}）</span></div>
     </div>`;
 }
 
@@ -480,8 +567,10 @@ function renderHistory(d){
   tbody.innerHTML=sigs.map(s=>{
     const res=s.result==='tp1'?'<span class="tag green">TP1</span>':s.result==='tp2'?'<span class="tag green">TP2</span>':s.result==='sl'?'<span class="tag red">SL</span>':'<span class="tag blue">待結算</span>';
     const pnl=s.pnl_twd||0;
+    const genP=s.generated_at?taipeiParts(s.generated_at):null;
+    const genDate=genP?`${new Date(s.generated_at).getFullYear()}/${genP.month}/${genP.day}`:'—';
     return `<tr>
-      <td>${(s.generated_at||'').slice(0,10)}</td>
+      <td>${genDate}</td>
       <td><b>${s.name}</b>（${s.code||''}）</td>
       <td style="color:var(--t3)">${safe(s.sector)}</td>
       <td><span class="tag ${s.direction==='buy'?'green':'red'}">${s.direction==='buy'?'多':'空'}</span></td>
@@ -519,7 +608,8 @@ function renderPerf(wr){
 
 function renderSidebar(d){
   setEl('market-session-side',d.market_session?.session_zh||'—');
-  setEl('last-scan-side',d.last_scan_time?'掃描：'+d.last_scan_time.slice(5,16)+' UTC':'尚未掃描');
+  const scanStr=toTaipeiStr(d.last_scan_time);
+  setEl('last-scan-side',scanStr?'掃描：'+scanStr+'（'+ageLabel(ageMinutes(d.last_scan_time))+'）':'尚未掃描');
 }
 
 function toast(msg){
