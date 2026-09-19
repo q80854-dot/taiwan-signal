@@ -176,7 +176,21 @@ def kelly_position_size(win_rate, avg_rr, balance=None, half_kelly=True):
             "kelly_raw":round((win_rate*avg_rr-loss_rate)/avg_rr*100,2),"edge":round(win_rate*avg_rr-loss_rate,4)}
 
 def calc_performance_metrics(equity_curve, trades=None):
+    # ★ 修正：2026-09-19——稽核發現這個函式在「資金歸零/穿倉」（equity 跌到 <=0）
+    # 的極端情境下會直接 crash，不是回傳一個難看的數字而已：
+    #  1) peak 若曾經是 <=0，(peak-v)/peak 會除以0或除以負數，drawdown 失真。
+    #  2) returns 逐筆用前一天equity當分母，若中途某天equity<=0，同樣除以0。
+    #  3) 最關鍵：total_ret<=-1（等於整體虧光或更慘）時，1+total_ret<=0，
+    #     Python對「負數的浮點數次方（非整數指數）」不會報錯，而是安靜地
+    #     回傳一個complex（複數），接下來 round(annual_ret*100,2) 對complex
+    #     呼叫 round() 才會真的丟 TypeError 把整個函式炸掉——這個函式是
+    #     backtester.py 全市場批次回測會呼叫的（見 backtester.py:148），單一
+    #     一檔股票在回測期間出現穿倉情境，就會讓整批回測job當掉、卡在
+    #     "running" 或被外層try/except吞成 "error"，使用者拿不到任何結果。
+    #     這裡全面補上防禦：equity<=0 一律視為無效資料，不讓後面的算式繼續跑。
     if not equity_curve or len(equity_curve)<2: return {"valid":False}
+    if any(v<=0 for v in equity_curve):
+        return {"valid":False,"reason":"equity_curve 出現歸零或負值（穿倉），無法計算績效指標"}
     peak=equity_curve[0]; max_dd=0.0
     for v in equity_curve:
         if v>peak: peak=v
@@ -190,7 +204,7 @@ def calc_performance_metrics(equity_curve, trades=None):
     else: sharpe=0
     total_ret=(equity_curve[-1]-equity_curve[0])/equity_curve[0]
     n_days=max(len(equity_curve),1)
-    annual_ret=round((1+total_ret)**(252/n_days)-1,4) if n_days>0 else 0
+    annual_ret=round((1+total_ret)**(252/n_days)-1,4) if n_days>0 and (1+total_ret)>0 else (-1.0 if (1+total_ret)<=0 else 0)
     calmar=round(annual_ret/max_dd,3) if max_dd>0 and math.isfinite(annual_ret/max_dd) else 0
     wins=[t for t in (trades or []) if t.get("pnl_twd",t.get("pnl",0))>0]
     losses=[t for t in (trades or []) if t.get("pnl_twd",t.get("pnl",0))<0]

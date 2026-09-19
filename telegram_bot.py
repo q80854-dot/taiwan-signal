@@ -2,11 +2,22 @@
 telegram_bot.py v3.0 — 版本 C2 格式
 訊號格式：一眼看懂版（表格 + 分區清晰）
 """
-import logging, requests, time, json, os
+import logging, requests, time, json, os, threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
+
+# ★ 修正：2026-09-19——稽核發現 _load_subscribers/_save_subscribers 是單純的
+# 讀檔→改記憶體→寫檔，沒有任何鎖。如果同一個process內有兩個thread幾乎同時
+# 呼叫 add_subscriber/remove_subscriber（例如兩個使用者同時操作、或webhook
+# 跟排程job剛好交錯），會出現經典的 read-modify-write race：後寫入的那個會
+# 覆蓋掉先寫入的那個沒讀到的變更，導致某個使用者的訂閱/退訂動作憑空消失。
+# 這裡加一個 process 內的 Lock 包住「讀取整份檔案→修改→寫回」這整段操作，
+# 避免同一個 process 內的兩個thread互相覆蓋（跨process/跨instance的檔案鎖
+# 不在這個修正範圍內，但這個專案目前是單一Render instance，足夠處理實際
+# 會發生的情境）。
+_subscribers_lock = threading.Lock()
 
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
@@ -42,19 +53,21 @@ def _save_subscribers(data: Dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def add_subscriber(chat_id: str, tier: str = "free"):
-    subs = _load_subscribers()
-    chat_id = str(chat_id)
-    if chat_id not in subs.get(tier, []):
-        subs.setdefault(tier, []).append(chat_id)
-        _save_subscribers(subs)
+    with _subscribers_lock:
+        subs = _load_subscribers()
+        chat_id = str(chat_id)
+        if chat_id not in subs.get(tier, []):
+            subs.setdefault(tier, []).append(chat_id)
+            _save_subscribers(subs)
 
 def remove_subscriber(chat_id: str):
-    subs = _load_subscribers()
-    chat_id = str(chat_id)
-    for tier in subs:
-        if chat_id in subs[tier]:
-            subs[tier].remove(chat_id)
-    _save_subscribers(subs)
+    with _subscribers_lock:
+        subs = _load_subscribers()
+        chat_id = str(chat_id)
+        for tier in subs:
+            if chat_id in subs[tier]:
+                subs[tier].remove(chat_id)
+        _save_subscribers(subs)
 
 def is_paid_subscriber(chat_id: str) -> bool:
     return str(chat_id) in _load_subscribers().get("paid", [])
@@ -197,6 +210,15 @@ def format_signal_free(sig: Dict) -> str:
     now_tw   = datetime.now(timezone(timedelta(hours=8)))
     isBuy    = sig["direction"] == "buy"
     dir_str  = "📈 做多" if isBuy else "📉 做空"
+    # ★ 修正：2026-09-19——稽核發現止損/停利的▼▲箭頭原本寫死（止損固定▼、停利
+    # 固定▲），這在 buy（做多）沒問題：止損在現價下方、停利在現價上方。但 sell
+    # （做空）方向幾何完全相反——止損在現價「上方」（漲上去才停損）、停利在現價
+    # 「下方」（跌下去才獲利），sl_pct/tp*_pct 本身又是用 abs() 存的正數（見
+    # signal_engine.py），不會自動反映方向，所以做空訊號目前箭頭是反的。這裡改成
+    # 依方向決定箭頭。目前 ENABLE_SHORT_SIGNALS=False，做空訊號還沒有在推播，但
+    # 這是未來重啟做空前必須修好的既有bug，先在這裡修掉。
+    sl_arrow = "▼" if isBuy else "▲"
+    tp_arrow = "▲" if isBuy else "▼"
     grade_em = {"A": "🔥", "B": "✅", "C": "👀"}.get(sig.get("grade", "C"), "📊")
     chg      = sig.get("change_pct", 0)
     chg_str  = f"{'▲' if chg >= 0 else '▼'}{abs(chg):.2f}%"
@@ -216,8 +238,8 @@ def format_signal_free(sig: Dict) -> str:
         f"━━━━━━━━━━━━━━━━━\n"
         f"　　　　<b>價格</b>　　　　　<b>漲跌幅</b>　<b>盈虧比</b>\n"
         f"📍進場　{sig.get('entry_zone_low',0):.2f} ~ {sig.get('entry_zone_high',0):.2f}\n"
-        f"🛑止損　<b>{sig['stop_loss']:.2f}</b>　　　　▼{sig.get('sl_pct',0):.1f}%\n"
-        f"🥇TP1　<b>{sig['tp1']:.2f}</b>　　　　▲{sig.get('tp1_pct',0):.1f}%　1:{sig.get('rr1',1.5)}\n"
+        f"🛑止損　<b>{sig['stop_loss']:.2f}</b>　　　　{sl_arrow}{sig.get('sl_pct',0):.1f}%\n"
+        f"🥇TP1　<b>{sig['tp1']:.2f}</b>　　　　{tp_arrow}{sig.get('tp1_pct',0):.1f}%　1:{sig.get('rr1',1.5)}\n"
         f"🥈TP2　<tg-spoiler>升級付費版解鎖</tg-spoiler>\n"
         f"🥉TP3　<tg-spoiler>升級付費版解鎖</tg-spoiler>\n"
         f"━━━━━━━━━━━━━━━━━\n"
@@ -246,6 +268,9 @@ def format_signal_paid(sig: Dict) -> str:
     now_tw   = datetime.now(timezone(timedelta(hours=8)))
     isBuy    = sig["direction"] == "buy"
     dir_str  = "📈 做多" if isBuy else "📉 做空"
+    # ★ 修正：2026-09-19——跟 format_signal_free 同一個箭頭方向bug，見上方註解。
+    sl_arrow = "▼" if isBuy else "▲"
+    tp_arrow = "▲" if isBuy else "▼"
     grade_em = {"A": "🔥", "B": "✅", "C": "👀"}.get(sig.get("grade", "C"), "📊")
     chg      = sig.get("change_pct", 0)
     chg_str  = f"{'▲' if chg >= 0 else '▼'}{abs(chg):.2f}%"
@@ -266,10 +291,10 @@ def format_signal_paid(sig: Dict) -> str:
         f"━━━━━━━━━━━━━━━━━\n"
         f"　　　　<b>價格</b>　　　　　<b>漲跌幅</b>　<b>盈虧比</b>\n"
         f"📍進場　{sig.get('entry_zone_low',0):.2f} ~ {sig.get('entry_zone_high',0):.2f}\n"
-        f"🛑止損　<b>{sig['stop_loss']:.2f}</b>　　　　▼{sig.get('sl_pct',0):.1f}%\n"
-        f"🥇TP1　<b>{sig['tp1']:.2f}</b>　　　　▲{sig.get('tp1_pct',0):.1f}%　1:{sig.get('rr1',1.5)}　出1/3\n"
-        f"🥈TP2　<b>{sig.get('tp2',0):.2f}</b>　　　　▲{sig.get('tp2_pct',0):.1f}%　1:{sig.get('rr2',2.5)}　出1/3\n"
-        f"🥉TP3　<b>{sig.get('tp3',0):.2f}</b>　　　　▲{sig.get('tp3_pct',0):.1f}%　1:{sig.get('rr3',4.0)}　出1/3\n"
+        f"🛑止損　<b>{sig['stop_loss']:.2f}</b>　　　　{sl_arrow}{sig.get('sl_pct',0):.1f}%\n"
+        f"🥇TP1　<b>{sig['tp1']:.2f}</b>　　　　{tp_arrow}{sig.get('tp1_pct',0):.1f}%　1:{sig.get('rr1',1.5)}　出1/3\n"
+        f"🥈TP2　<b>{sig.get('tp2',0):.2f}</b>　　　　{tp_arrow}{sig.get('tp2_pct',0):.1f}%　1:{sig.get('rr2',2.5)}　出1/3\n"
+        f"🥉TP3　<b>{sig.get('tp3',0):.2f}</b>　　　　{tp_arrow}{sig.get('tp3_pct',0):.1f}%　1:{sig.get('rr3',4.0)}　出1/3\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"📦 <b>倉位建議</b>\n"
         f"建議　<b>{sig.get('suggested_lots',1)} 張</b>　"
@@ -487,6 +512,12 @@ def _generate_tomorrow_plan(signals: List[Dict], market_overview: Dict) -> Dict:
     status  = market_overview.get("market_status", "normal")
     fn      = market_overview.get("foreign", {}).get("net_buy_twd", 0) or 0
     buy_cnt = len([s for s in signals if s["direction"] == "buy"])
+    # ★ 修正：2026-09-19——稽核發現明日計畫的 full 文字只統計 buy_cnt、完全沒提
+    # 做空機會數，即使未來 ENABLE_SHORT_SIGNALS 重啟、signals 裡真的出現 sell
+    # 訊號，這段文字也只會顯示「N 個做多機會」，讓使用者誤以為系統沒抓到放空
+    # 機會。目前 ENABLE_SHORT_SIGNALS=False，所以現階段 sell_cnt 必為0、無實際
+    # 影響，但這裡先補上，避免未來重啟做空後又出現一個新的「介面沒同步」問題。
+    sell_cnt = len([s for s in signals if s["direction"] == "sell"])
     top_sig = max(signals, key=lambda x: x["score"], default=None) if signals else None
 
     if score >= 65 and fn >= 0 and status == "normal":
@@ -510,7 +541,7 @@ def _generate_tomorrow_plan(signals: List[Dict], market_overview: Dict) -> Dict:
             f"整體方向：{direction}\n"
             f"市場情緒：{score}/100\n"
             f"外資：{'買超' if fn>=0 else '賣超'}{abs(fn)/1e8:.1f}億\n\n"
-            f"今日 {buy_cnt} 個做多機會\n"
+            f"今日 {buy_cnt} 個做多機會" + (f"、{sell_cnt} 個做空機會" if sell_cnt else "") + "\n"
             f"策略：{strategy}\n\n"
             f"重點標的：\n"
             + "\n".join(

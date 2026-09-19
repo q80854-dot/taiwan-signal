@@ -243,8 +243,16 @@ def _fetch_sector_info() -> Dict[str, str]:
         logger.warning(f"_fetch_sector_info: {e}")
         return {}
 
+# ★ 修正：2026-09-19——稽核發現這裡漏乘 1000：volume_lots 是「張」（1張=1000股，
+# 見上面 build_universe 組資料時 "volume_lots": round(vol/1000, 0)，vol 本身已經是
+# 「股數」），但這裡直接拿 volume_lots（張數）乘 close 去估「年化成交金額」，等於
+# 少算了 1000 倍的股數換算。實際影響：像台積電這種大型股，估出來的 est 會被低估
+# 1000倍，導致幾乎所有股票都被誤判成「小型股」，而 size_cat 又會餵進
+# risk_manager.py 的 SWING_PARAMS 去決定停損/停利/移動停損的參數，等於全市場的
+# 風控參數長期套錯一組（本該用大型股的寬鬆停損，卻套用小型股的參數）。這裡補回
+# 缺的 ×1000（張→股）。
 def _classify_size(close, volume_lots) -> str:
-    est = close * volume_lots * 250 / 1e8
+    est = close * volume_lots * 1000 * 250 / 1e8
     if est > 500: return "大型股"
     elif est > 100: return "中型股"
     return "小型股"

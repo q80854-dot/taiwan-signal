@@ -95,14 +95,20 @@ def calc_macd(closes):
     sig=ema(ml,sigp)
     if sig is None: return {"valid":False}
     cur=ml[-1]; hist=round(cur-sig,6)
-    prev_sig=ema(ml[:-1],sigp); prev_hist=(ml[-2]-prev_sig) if prev_sig and len(ml)>=2 else 0
+    # ★ 修正：2026-09-19——稽核發現這裡用 `if prev_sig`（truthy檢查）而不是
+    # `if prev_sig is not None`。prev_sig 是EMA計算出來的浮點數，理論上可能剛好
+    # 算出 0.0（雖然極罕見）——這種情況下 `if prev_sig` 會判定為False，跟「prev_sig
+    # 真的是None（資料不足）」混在一起處理，導致 prev_hist 被硬設成0、cross（金叉/
+    # 死叉判斷）被跳過，即使當下數據其實足夠、也算出了一個合法的0.0。改成明確用
+    # `is not None`，只把「真的沒算出來」跟「算出來剛好是0」分開處理。
+    prev_sig=ema(ml[:-1],sigp); prev_hist=(ml[-2]-prev_sig) if prev_sig is not None and len(ml)>=2 else 0
     hg=hist>prev_hist; hp=hist>0
     if hp and hg:   status,bias,score="多頭動能增強","bullish",2
     elif hp:        status,bias,score="多頭動能減弱","bullish_weak",1
     elif not hg:    status,bias,score="空頭動能增強","bearish",-2
     else:           status,bias,score="空頭動能減弱","bearish_weak",-1
     cross="無交叉"
-    if prev_sig and len(ml)>=2:
+    if prev_sig is not None and len(ml)>=2:
         ph=ml[-2]-prev_sig
         if ph<0 and hist>0: cross="MACD金叉"
         elif ph>0 and hist<0: cross="MACD死叉"
