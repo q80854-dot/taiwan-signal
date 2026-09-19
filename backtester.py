@@ -3,7 +3,7 @@ backtester.py — 台股波段版 v1.0
 修正：pnl 改台股股數計算（含手續費+證交稅）
 移除：外匯 pip/lot 計算、外匯黑名單
 """
-import logging, time, math
+import logging, time, math, bisect
 from datetime import datetime, timezone
 from typing import Dict, List
 from config import ACCOUNT_BALANCE_TWD, SIGNAL_THRESHOLDS as THRESH, COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION
@@ -25,10 +25,18 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
     ★ 修正：改為直接呼叫 signal_engine 的 check_multi_timeframe_tw() / calc_stop_loss_tw() /
     calc_take_profits_tw() / calc_position_size()，跟 scanner.py 每天盤後真正在跑的邏輯用同一套，
     不再是 scoring_engine.calc_composite_score() 那套只有回測在用、實盤從未呼叫過的獨立評分法。
-    已知限制：這裡逐根 K 棒重建的 tf_data 只有 "daily"，沒有同步重建歷史上每一根 K 棒當下的週線/
-    小時線資料，所以回測出來的是策略的「日線骨架」表現，週線確認趨勢那段加分/降分在回測裡不會生效
-    （但實盤在 TIMEFRAMES 修正後會生效）。要做到完全對齊，需要另外建置逐根對齊的週線/小時線歷史資料，
-    這裡先讓回測至少用同一套進場評分與出場機制，而不是兩套完全不同的策略。
+    ★ 修正：2026-09-19——原本這裡逐根K棒重建的 tf_data 只有 "daily"，沒有同步重建歷史上每一根
+    K棒當下的週線資料，所以回測出來的是策略的「日線骨架」表現，週線確認趨勢那段加分/降分（尤其是
+    「週線偏空/偏多、逆勢扣分」那段，見 signal_engine.check_multi_timeframe_tw）在回測裡完全不會
+    生效，但實盤每天真的有套用。稽核 2026-09-19 的TW50回測結果時發現這是解讀「做空為什麼只有14.8%
+    勝率」的一個重要混淆因子：79%的做空交易是真的觸發停損（不是樣本尾端強制平倉的假象），代表
+    很多做空進場點本身就是在對抗當下更大格局的多頭趨勢——而這正是「週線確認」設計出來要擋掉的
+    情況，但回測沒有真的套用這一層過濾，所以回測結果可能比「週線確認有生效」的真實情況更悲觀。
+    這裡改成額外抓一次真正的週線歷史（fetch_ohlcv weekly，跟實盤 TIMEFRAMES 設定一樣抓5年），
+    用日期對齊：每根日K往回看，只納入「週線起始日 <= 這根日K日期」的週線資料，模擬「當下那一天，
+    系統看得到的週線資料範圍」，讓回測跟實盤用的是同一套多時框判斷，不再是只有日線的簡化版。
+    小時線因為 yfinance 只提供約90天的小時資料、回測用的1年日線窗口大半時間根本抓不到對應的
+    小時歷史，這裡先不處理，維持原本「回測不含小時共振」的已知限制。
     """
     from data_fetcher   import fetch_ohlcv
     from signal_engine  import check_multi_timeframe_tw, calc_stop_loss_tw, calc_take_profits_tw, calc_position_size
@@ -40,6 +48,23 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
     if not data or len(data.get("closes",[]))<60:
         return {"error":f"{ticker} 歷史數據不足（需60根日線）"}
     closes=data["closes"]; highs=data["highs"]; lows=data["lows"]; opens=data["opens"]; volumes=data["volumes"]
+    dates=data.get("dates",[])
+    weekly_raw=fetch_ohlcv(ticker,"weekly")
+    w_dates  =weekly_raw.get("dates",[])   if weekly_raw else []
+    w_closes =weekly_raw.get("closes",[])  if weekly_raw else []
+    w_highs  =weekly_raw.get("highs",[])   if weekly_raw else []
+    w_lows   =weekly_raw.get("lows",[])    if weekly_raw else []
+    w_opens  =weekly_raw.get("opens",[])   if weekly_raw else []
+    w_volumes=weekly_raw.get("volumes",[]) if weekly_raw else []
+    def _weekly_asof(day_date):
+        """回傳「這根日K當下」看得到的週線切片（週線起始日<=day_date的所有週線K棒）。
+        資料不足20根週線就回傳None，交給 check_multi_timeframe_tw 內部的valid檢查決定
+        要不要採用，行為上等同於實盤時週線資料不足的狀況。"""
+        if not w_dates or not day_date: return None
+        w_idx=bisect.bisect_right(w_dates, day_date)
+        if w_idx<20: return None
+        return {"closes":w_closes[:w_idx],"highs":w_highs[:w_idx],"lows":w_lows[:w_idx],
+                "opens":w_opens[:w_idx],"volumes":w_volumes[:w_idx]}
     try:
         from stock_universe import get_stock_info
         info=get_stock_info(ticker); size_cat=info.get("size_cat","中型股") if info else "中型股"
@@ -58,6 +83,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
     #   sqrt(252) 年化、回撤計算就都會是對的。
     for i in range(LOOKBACK,n):
         wd={"closes":closes[:i],"highs":highs[:i],"lows":lows[:i],"opens":opens[:i],"volumes":volumes[:i]}
+        day_date=dates[i] if i<len(dates) else None
         price=closes[i]
         just_exited=False
         if open_trade:
@@ -79,7 +105,10 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
                                 "bar_in":open_trade["bar"],"bar_out":i,"hold_days":i-open_trade["bar"]})
                 open_trade=None; just_exited=True
         if open_trade is None and not just_exited:
-            mtf=check_multi_timeframe_tw({"daily":wd})
+            tf_data_bt={"daily":wd}
+            w_slice=_weekly_asof(day_date)
+            if w_slice: tf_data_bt["weekly"]=w_slice
+            mtf=check_multi_timeframe_tw(tf_data_bt)
             direction=mtf.get("direction","none")
             if direction!="none":
                 score=mtf.get("score",0)
