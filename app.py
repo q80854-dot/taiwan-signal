@@ -134,9 +134,15 @@ def job_pre_scan_restart():
 def setup_scheduler():
     if not SCHEDULER_OK: return
     scheduler.add_job(job_morning_brief,    CronTrigger(hour=8,  minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="morning_brief",    replace_existing=True)
-    # ★ 新增：2026-09-16——盤中安全網，09:00-13:30 盤中每小時查一次已追蹤訊號是否
-    # 到價（10:00/11:00/12:00/13:00，共4次），見 job_intraday_check() 說明。
-    scheduler.add_job(job_intraday_check,   CronTrigger(hour="10,11,12,13", minute=0, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True)
+    # ★ 新增：2026-09-16——盤中安全網，查已追蹤訊號是否到價，見 job_intraday_check() 說明。
+    # ★ 調整：2026-09-19——使用者反映盤中只查4次（10/11/12/13點整）太少、涵蓋不到
+    # 9:00-10:00開盤這一小時、也涵蓋不到13:00-13:30收盤前這半小時，而且兩次檢查
+    # 間隔長達1小時，反應太慢。改成 09:00-13:30 全交易時段每30分鐘查一次（共10次：
+    # 9:00/9:30/10:00/10:30/11:00/11:30/12:00/12:30/13:00/13:30），完整涵蓋開盤到
+    # 收盤。這仍然只是「現價 vs 已追蹤訊號的SL/TP」輕量比對（通常<5檔），不是重新
+    # 掃描全市場找新訊號——為什麼不能在盤中重新掃描找新訊號，見 scanner.py
+    # check_intraday_price_alerts() 開頭的說明。
+    scheduler.add_job(job_intraday_check,   CronTrigger(hour="9-13", minute="0,30", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
     # ★ 新增：2026-09-18——見 job_pre_scan_restart() 說明，在每日掃描前主動
     # 重啟一次 worker、重置記憶體基準，預防跟 2026-09-03/2026-09-18 同一種
