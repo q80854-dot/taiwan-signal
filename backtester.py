@@ -120,6 +120,21 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
     wins=[t for t in trades if t["result"] in ("tp1","tp2")]
     losses=[t for t in trades if t["result"]=="sl"]
     init_bal=initial_balance or ACCOUNT_BALANCE_TWD
+    # ★ 新增：2026-09-19——使用者反映策略不只做多、放空也是策略的一部分，要求
+    # 詳細檢測放空這邊是否可行。原本這裡只回傳「不分方向」混在一起的勝率/損益，
+    # 沒辦法回答「做多跟做空分開看，表現是不是有系統性差異」這個問題。這裡在
+    # truncate成trades[-30:]之前，先用完整的trades（不是截斷後的30筆）分別
+    # 算一份buy/sell各自的勝率、筆數、損益，讓run_full_backtest_tw()可以在
+    # 多檔加總時，把兩個方向的統計分開呈現，而不是混在一起看不出方向性的差異。
+    def _dir_stats(direction):
+        d_trades=[t for t in trades if t["direction"]==direction]
+        d_wins=[t for t in d_trades if t["result"] in ("tp1","tp2")]
+        d_losses=[t for t in d_trades if t["result"]=="sl"]
+        return {"n_trades":len(d_trades),"n_wins":len(d_wins),"n_losses":len(d_losses),
+                "win_rate":round(len(d_wins)/max(len(d_wins)+len(d_losses),1)*100,1),
+                "total_pnl_twd":round(sum(t["pnl_twd"] for t in d_trades),0),
+                "avg_pnl_twd":round(sum(t["pnl_twd"] for t in d_trades)/max(len(d_trades),1),0)}
+    by_direction={"buy":_dir_stats("buy"),"sell":_dir_stats("sell")}
     return {"ticker":ticker,"n_bars":n,"n_trades":len(trades),"n_wins":len(wins),"n_losses":len(losses),
             "win_rate":round(len(wins)/max(len(wins)+len(losses),1)*100,1),
             "total_pnl_twd":round(sum(t["pnl_twd"] for t in trades),0),
@@ -129,6 +144,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
             "sharpe":metrics.get("sharpe",0),"max_drawdown":metrics.get("max_drawdown",0),
             "calmar":metrics.get("calmar",0),"annual_return":metrics.get("annual_return",0),
             "max_consec_loss":metrics.get("max_consec_loss",0),
+            "by_direction":by_direction,
             "equity_curve":equity,"trades":trades[-30:],"min_score_used":min_score,
             "grade":metrics.get("sharpe_grade","—"),"dd_grade":metrics.get("dd_grade","—"),
             "completed_at":datetime.now(timezone.utc).isoformat()}
@@ -196,18 +212,45 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             "stability":round(sum(1 for w in window_results if w["win_rate"]>=50)/max(len(window_results),1)*100,1),
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
-def run_full_backtest_tw(tickers=None, min_score=65.0) -> Dict:
+def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
     from stock_universe import get_tw50_components
     targets=tickers or get_tw50_components(); results=[]
     logger.info(f"[BT] 批量回測 {len(targets)} 檔")
-    for ticker in targets:
+    for idx,ticker in enumerate(targets):
         try:
             r=backtest_symbol_tw(ticker,min_score=min_score)
             if "error" not in r: results.append(r)
+            # ★ 新增：2026-09-19——這個函式現在會被 app.py 包成背景執行緒跑（50檔
+            # 全部跑完可能要幾分鐘），加一個可選的進度回呼，讓外層可以把「跑到第
+            # 幾檔」寫回 state_store，之後才能做一個查詢進度的API，而不是完全黑箱、
+            # 使用者只能等一個不知道要多久的結果。
+            if progress_cb:
+                try: progress_cb(idx+1, len(targets), ticker)
+                except Exception: pass
             time.sleep(1.0)
         except Exception as e: logger.error(f"[BT] {ticker} 失敗: {e}")
     results.sort(key=lambda x:x.get("sharpe",0),reverse=True)
+    # ★ 新增：2026-09-19——使用者要求詳細檢測「做空是否可行」，不能只看不分方向
+    # 混在一起的勝率。這裡把所有檔位的 by_direction（見 backtest_symbol_tw 修正）
+    # 加總成一份跨50檔的buy/sell總體統計，直接回答「多空兩個方向，統計上表現
+    # 是否有系統性差異」這個問題。
+    agg={"buy":{"n_trades":0,"n_wins":0,"n_losses":0,"total_pnl_twd":0},
+         "sell":{"n_trades":0,"n_wins":0,"n_losses":0,"total_pnl_twd":0}}
+    for r in results:
+        bd=r.get("by_direction",{})
+        for d in ("buy","sell"):
+            s=bd.get(d,{})
+            agg[d]["n_trades"]+=s.get("n_trades",0)
+            agg[d]["n_wins"]+=s.get("n_wins",0)
+            agg[d]["n_losses"]+=s.get("n_losses",0)
+            agg[d]["total_pnl_twd"]+=s.get("total_pnl_twd",0)
+    for d in ("buy","sell"):
+        wl=agg[d]["n_wins"]+agg[d]["n_losses"]
+        agg[d]["win_rate"]=round(agg[d]["n_wins"]/max(wl,1)*100,1)
+        agg[d]["avg_pnl_twd"]=round(agg[d]["total_pnl_twd"]/max(agg[d]["n_trades"],1),0)
     return {"total":len(results),"completed_at":datetime.now(timezone.utc).isoformat(),
+            "by_direction_aggregate":agg,
             "leaderboard":[{"ticker":r["ticker"],"win_rate":r["win_rate"],"sharpe":r["sharpe"],
                             "max_drawdown":r["max_drawdown"],"total_pnl_twd":r["total_pnl_twd"],
-                            "return_pct":r["return_pct"],"grade":r["grade"],"n_trades":r["n_trades"]} for r in results],"details":results}
+                            "return_pct":r["return_pct"],"grade":r["grade"],"n_trades":r["n_trades"],
+                            "by_direction":r.get("by_direction",{})} for r in results],"details":results}

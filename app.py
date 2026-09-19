@@ -263,6 +263,52 @@ def api_walkforward(ticker: str):
         return jsonify(walk_forward_backtest_tw(t))
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+# ★ 新增：2026-09-19——使用者要求對整套策略（含做多/做空兩個方向）做「非常
+# 詳細的檢測並測驗」，不能只靠邏輯推演回答「可不可行」，需要真的拿歷史資料跑
+# 一次回測。backtester.run_full_backtest_tw() 原本就有、但從沒接過路由，直接
+# 同步呼叫的話（TW50共50檔，每檔序列fetch+計算+1秒間隔）跑完可能要好幾分鐘，
+# 會超過 gunicorn 120秒逾時被砍斷。這裡比照 job_daily_scan 的背景執行緒模式：
+# /run 立刻回傳、實際工作丟到背景執行緒跑，進度跟最終結果都寫進 state_store
+# 的 meta（get_meta/set_meta 本來就有，last_scan_at 也是這樣做持久化的），
+# /result 隨時可以查目前進度或拿到已完成的結果，不用整個request卡住等。
+_full_backtest_running = threading.Event()
+
+def _run_full_backtest_bg(min_score):
+    from state_store import store
+    if _full_backtest_running.is_set():
+        return
+    _full_backtest_running.set()
+    try:
+        from backtester import run_full_backtest_tw
+        store.set_meta("full_backtest_progress", {"status": "running", "done": 0, "total": 0, "ticker": ""})
+        def _cb(done, total, ticker):
+            store.set_meta("full_backtest_progress", {"status": "running", "done": done, "total": total, "ticker": ticker})
+        result = run_full_backtest_tw(min_score=min_score, progress_cb=_cb)
+        store.set_meta("full_backtest_result", result)
+        store.set_meta("full_backtest_progress", {"status": "done", "done": result.get("total", 0), "total": result.get("total", 0), "ticker": ""})
+        logger.info(f"[BT] 批量回測完成，共 {result.get('total',0)} 檔有效結果")
+    except Exception as e:
+        logger.error(f"_run_full_backtest_bg: {e}", exc_info=True)
+        store.set_meta("full_backtest_progress", {"status": "error", "error": str(e)})
+    finally:
+        _full_backtest_running.clear()
+
+@app.route("/api/backtest/full/run", methods=["POST"])
+def api_backtest_full_run():
+    if _full_backtest_running.is_set():
+        return jsonify({"status": "already_running"})
+    min_score = request.args.get("min_score", default=65.0, type=float)
+    threading.Thread(target=_run_full_backtest_bg, args=(min_score,), daemon=True).start()
+    return jsonify({"status": "started", "min_score": min_score, "note": "TW50成分股，背景執行，用 /api/backtest/full/result 查進度"})
+
+@app.route("/api/backtest/full/result")
+def api_backtest_full_result():
+    from state_store import store
+    return jsonify({
+        "progress": store.get_meta("full_backtest_progress", {"status": "never_run"}),
+        "result": store.get_meta("full_backtest_result", None),
+    })
+
 # ── Telegram Webhook ──
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
