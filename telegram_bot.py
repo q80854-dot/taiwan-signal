@@ -206,60 +206,39 @@ def _earnings_season_warning(now_tw: datetime) -> str:
     return ""
 
 
-def format_signal_free(sig: Dict) -> str:
-    now_tw   = datetime.now(timezone(timedelta(hours=8)))
-    isBuy    = sig["direction"] == "buy"
-    dir_str  = "📈 做多" if isBuy else "📉 做空"
-    # ★ 修正：2026-09-19——稽核發現止損/停利的▼▲箭頭原本寫死（止損固定▼、停利
-    # 固定▲），這在 buy（做多）沒問題：止損在現價下方、停利在現價上方。但 sell
-    # （做空）方向幾何完全相反——止損在現價「上方」（漲上去才停損）、停利在現價
-    # 「下方」（跌下去才獲利），sl_pct/tp*_pct 本身又是用 abs() 存的正數（見
-    # signal_engine.py），不會自動反映方向，所以做空訊號目前箭頭是反的。這裡改成
-    # 依方向決定箭頭。目前 ENABLE_SHORT_SIGNALS=False，做空訊號還沒有在推播，但
-    # 這是未來重啟做空前必須修好的既有bug，先在這裡修掉。
-    sl_arrow = "▼" if isBuy else "▲"
-    tp_arrow = "▲" if isBuy else "▼"
-    grade_em = {"A": "🔥", "B": "✅", "C": "👀"}.get(sig.get("grade", "C"), "📊")
-    chg      = sig.get("change_pct", 0)
-    chg_str  = f"{'▲' if chg >= 0 else '▼'}{abs(chg):.2f}%"
-    weekly_zh = {
-        "bullish":        "週線多頭✓",
-        "strong_bullish": "週線強多✓✓",
-        "bearish":        "週線空頭",
-        "neutral":        "週線橫盤",
-    }.get(sig.get("weekly_bias", "neutral"), "—")
-    conds_met  = "\n".join(f"  ▪ {c}" for c in sig.get("conditions_met",  [])[:4])
-    conds_fail = "\n".join(f"  ⚠️ {c}" for c in sig.get("conditions_fail", [])[:2])
+def _data_age_str(sig: Dict, now_tw: datetime) -> str:
+    """★ 新增：2026-09-19——排版/準確性整修的一部分。之前訊息只印訊息「發送」
+    時間（now_tw），使用者無法分辨這是即時報價還是昨晚就算好、拖到現在才送出
+    的舊資料。這裡改用 generated_at（訊號實際產生的時間，見 signal_engine.py）
+    算出資料年齡，清楚標示「資料時間」而不是「送出時間」，兩者不一定相同。"""
+    gen = sig.get("generated_at")
+    if not gen:
+        return now_tw.strftime("%m/%d %H:%M")
+    try:
+        gen_dt = datetime.fromisoformat(gen.replace("Z", "+00:00"))
+        gen_tw = gen_dt.astimezone(timezone(timedelta(hours=8)))
+        age_min = max(0, int((now_tw - gen_tw).total_seconds() // 60))
+        age_str = f"（{age_min}分鐘前）" if age_min < 60 else f"（{age_min//60}小時前）"
+        return gen_tw.strftime("%m/%d %H:%M") + age_str
+    except Exception:
+        return now_tw.strftime("%m/%d %H:%M")
 
-    return (
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"{grade_em} <b>{sig.get('grade','C')}級｜{sig['name']} {sig.get('code','')}｜{sig.get('sector','—')}</b>\n"
-        f"{dir_str}　現價 <b>{sig['current_price']:.2f}</b>（{chg_str}）\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"　　　　<b>價格</b>　　　　　<b>漲跌幅</b>　<b>盈虧比</b>\n"
-        f"📍進場　{sig.get('entry_zone_low',0):.2f} ~ {sig.get('entry_zone_high',0):.2f}\n"
-        f"🛑止損　<b>{sig['stop_loss']:.2f}</b>　　　　{sl_arrow}{sig.get('sl_pct',0):.1f}%\n"
-        f"🥇TP1　<b>{sig['tp1']:.2f}</b>　　　　{tp_arrow}{sig.get('tp1_pct',0):.1f}%　1:{sig.get('rr1',1.5)}\n"
-        f"🥈TP2　<tg-spoiler>升級付費版解鎖</tg-spoiler>\n"
-        f"🥉TP3　<tg-spoiler>升級付費版解鎖</tg-spoiler>\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"📊 {sig['score']}分｜ADX {sig.get('adx_value',0):.0f}｜"
-        f"RSI {sig.get('rsi_value',50):.0f}｜量比 {sig.get('vol_ratio',1):.1f}x\n"
-        f"✅ {weekly_zh}\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        + (f"✅ 確認條件：\n{conds_met}\n" if conds_met else "")
-        + (f"{conds_fail}\n" if conds_fail else "")
-        + f"━━━━━━━━━━━━━━━━━\n"
-        f"⏰ 有效 {sig.get('expire_days',3)} 個交易日｜{now_tw.strftime('%m/%d %H:%M')}\n"
-        + _weekend_gap_warning(now_tw)
-        + _earnings_season_warning(now_tw)
-        # ★ 修正：2026-09-16——稽核發現免費版訊號訊息完全沒有包含 DISCLAIMER，
-        # 只有付費版有。免費版依「先免費推廣後付費化」的商業模式，使用者基數
-        # 只會更大，「僅供參考、不構成投資建議、盈虧自負」這類風險揭露文字
-        # 沒有理由只出現在付費版——這裡補上，跟付費版用同一份 DISCLAIMER。
-        + f"<i>⚠️ {DISCLAIMER}</i>\n"
-        + f"<i>💎 升級付費版解鎖 TP2/TP3 + 建議張數 + 法人動向</i>"
-    )
+
+# ★ 修正：2026-09-19——使用者指示「統一為付費版」：個別訊號推播不再區分
+# 免費/付費兩種格式，全部收訊者（含原本的免費名單）都收到完整版內容
+# （TP2/TP3、建議張數、法人動向）。原本的 format_signal_free()（帶
+# <tg-spoiler>升級付費版解鎖</tg-spoiler> 鎖住 TP2/TP3 的版本）已移除，
+# push_signal() 現在只用下面這個 format_signal_paid() 送給所有人。
+# TELEGRAM_FREE_CHANNEL/TELEGRAM_PAID_CHANNEL、subscribers 的 free/paid
+# 名單、is_paid_subscriber() 這些基礎設施刻意保留不刪，方便未來如果要
+# 重新拆分等級，不用重建整套訂閱名單。
+#
+# ★ 修正：2026-09-19——排版整修。舊版用全形空白「　」手動對齊出一個假表格
+# （「價格／漲跌幅／盈虧比」表頭 + 對應欄位）。全形空白對齊只在等寬字型下
+# 才會真的對齊，Telegram 在不同裝置（iOS/Android/桌面/不同字體設定）用的是
+# 非等寬字型，實際顯示出來欄位常常對不齊、看起來很亂——這正是使用者反映
+# 「版面美編」的根本原因。改成每行「圖示 標籤：數值（漲跌幅）」的單欄式
+# 排版，不依賴空白對齊，在任何字型/裝置下都維持一致、好讀。
 
 # ══════════════════════════════════════════════
 # 版本 C2 — 付費版完整訊號格式
@@ -268,7 +247,6 @@ def format_signal_paid(sig: Dict) -> str:
     now_tw   = datetime.now(timezone(timedelta(hours=8)))
     isBuy    = sig["direction"] == "buy"
     dir_str  = "📈 做多" if isBuy else "📉 做空"
-    # ★ 修正：2026-09-19——跟 format_signal_free 同一個箭頭方向bug，見上方註解。
     sl_arrow = "▼" if isBuy else "▲"
     tp_arrow = "▲" if isBuy else "▼"
     grade_em = {"A": "🔥", "B": "✅", "C": "👀"}.get(sig.get("grade", "C"), "📊")
@@ -280,46 +258,43 @@ def format_signal_paid(sig: Dict) -> str:
         "bearish":        "週線空頭",
         "neutral":        "週線橫盤",
     }.get(sig.get("weekly_bias", "neutral"), "—")
-    conds_met  = "\n".join(f"  ▪ {c}" for c in sig.get("conditions_met",  [])[:5])
-    conds_fail = "\n".join(f"  ⚠️ {c}" for c in sig.get("conditions_fail", [])[:3])
+    conds_met  = "\n".join(f"　▪️ {c}" for c in sig.get("conditions_met",  [])[:5])
+    conds_fail = "\n".join(f"　⚠️ {c}" for c in sig.get("conditions_fail", [])[:3])
     inst = sig.get("inst_signal", "") or "資料更新中"
 
     return (
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"{grade_em} <b>{sig.get('grade','C')}級｜{sig['name']} {sig.get('code','')}｜{sig.get('sector','—')}</b>\n"
-        f"{dir_str}　現價 <b>{sig['current_price']:.2f}</b>（{chg_str}）\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"　　　　<b>價格</b>　　　　　<b>漲跌幅</b>　<b>盈虧比</b>\n"
-        f"📍進場　{sig.get('entry_zone_low',0):.2f} ~ {sig.get('entry_zone_high',0):.2f}\n"
-        f"🛑止損　<b>{sig['stop_loss']:.2f}</b>　　　　{sl_arrow}{sig.get('sl_pct',0):.1f}%\n"
-        f"🥇TP1　<b>{sig['tp1']:.2f}</b>　　　　{tp_arrow}{sig.get('tp1_pct',0):.1f}%　1:{sig.get('rr1',1.5)}　出1/3\n"
-        f"🥈TP2　<b>{sig.get('tp2',0):.2f}</b>　　　　{tp_arrow}{sig.get('tp2_pct',0):.1f}%　1:{sig.get('rr2',2.5)}　出1/3\n"
-        f"🥉TP3　<b>{sig.get('tp3',0):.2f}</b>　　　　{tp_arrow}{sig.get('tp3_pct',0):.1f}%　1:{sig.get('rr3',4.0)}　出1/3\n"
-        f"━━━━━━━━━━━━━━━━━\n"
+        f"{grade_em} <b>{sig.get('grade','C')}級｜{sig['name']} {sig.get('code','')}</b>\n"
+        f"{sig.get('sector','—')}｜{dir_str}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"現價：<b>{sig['current_price']:.2f}</b>　{chg_str}\n"
+        f"📍 進場區：{sig.get('entry_zone_low',0):.2f} ~ {sig.get('entry_zone_high',0):.2f}\n"
+        f"🛑 止損：<b>{sig['stop_loss']:.2f}</b>　{sl_arrow}{sig.get('sl_pct',0):.1f}%\n"
+        f"🥇 TP1：<b>{sig['tp1']:.2f}</b>　{tp_arrow}{sig.get('tp1_pct',0):.1f}%　1:{sig.get('rr1',1.5)}　出1/3\n"
+        f"🥈 TP2：<b>{sig.get('tp2',0):.2f}</b>　{tp_arrow}{sig.get('tp2_pct',0):.1f}%　1:{sig.get('rr2',2.5)}　出1/3\n"
+        f"🥉 TP3：<b>{sig.get('tp3',0):.2f}</b>　{tp_arrow}{sig.get('tp3_pct',0):.1f}%　1:{sig.get('rr3',4.0)}　出1/3\n"
+        f"━━━━━━━━━━━━━━━\n"
         f"📦 <b>倉位建議</b>\n"
-        f"建議　<b>{sig.get('suggested_lots',1)} 張</b>　"
-        f"市值 TWD {sig.get('position_value',0):,}\n"
-        f"風險　TWD {sig.get('risk_twd',0):,}（{sig.get('risk_pct',0):.1f}%）\n"
-        f"費稅　TWD {sig.get('roundtrip_cost',0):,}\n"
-        f"━━━━━━━━━━━━━━━━━\n"
+        f"建議：<b>{sig.get('suggested_lots',1)} 張</b>　市值 TWD {sig.get('position_value',0):,}\n"
+        f"風險：TWD {sig.get('risk_twd',0):,}（{sig.get('risk_pct',0):.1f}%）\n"
+        f"費稅：TWD {sig.get('roundtrip_cost',0):,}\n"
+        f"━━━━━━━━━━━━━━━\n"
         f"👥 <b>法人動向</b>\n"
         f"{inst}\n"
-        f"━━━━━━━━━━━━━━━━━\n"
+        f"━━━━━━━━━━━━━━━\n"
         f"📊 <b>技術指標</b>\n"
         f"評分 {sig['score']}分｜ADX {sig.get('adx_value',0):.0f}｜"
         f"RSI {sig.get('rsi_value',50):.0f}｜量比 {sig.get('vol_ratio',1):.1f}x\n"
         f"✅ {weekly_zh}｜{sig.get('size_cat','—')}\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        + (f"✅ <b>確認條件：</b>\n{conds_met}\n" if conds_met else "")
+        + (f"━━━━━━━━━━━━━━━\n✅ <b>確認條件：</b>\n{conds_met}\n" if conds_met else "")
         + (f"⚠️ <b>注意：</b>\n{conds_fail}\n" if conds_fail else "")
-        + f"━━━━━━━━━━━━━━━━━\n"
+        + f"━━━━━━━━━━━━━━━\n"
         f"💡 {sig.get('reason_brief','—')}\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"⏰ 有效 {sig.get('expire_days',3)} 個交易日｜"
-        f"{now_tw.strftime('%m/%d %H:%M')}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🕐 資料時間：{_data_age_str(sig, now_tw)}\n"
+        f"⏰ 訊號有效 {sig.get('expire_days',3)} 個交易日\n"
         + _weekend_gap_warning(now_tw)
         + _earnings_season_warning(now_tw)
-        + f"<i>⚠️ {DISCLAIMER}</i>"
+        + f"<i>{DISCLAIMER}</i>"
     )
 
 # ══════════════════════════════════════════════
@@ -378,10 +353,10 @@ def send_morning_brief(market_overview: Dict):
         f"{emoji_s} <b>市場情緒：{mood}</b>（{score}/100）\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"🌏 <b>昨日美股收盤</b>\n"
-        f"S&P 500　　{fmt(sp500)}\n"
-        f"Nasdaq　　{fmt(nasdaq)}\n"
-        f"VIX　　　　{fmt(vix, 1)}\n"
-        f"美元指數　{fmt(dxy)}\n"
+        f"S&P 500：{fmt(sp500)}\n"
+        f"Nasdaq：{fmt(nasdaq)}\n"
+        f"VIX：{fmt(vix, 1)}\n"
+        f"美元指數：{fmt(dxy)}\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"🇹🇼 <b>加權指數（昨收）</b>\n"
         f"{fmt(twii, 0)}\n"
@@ -450,17 +425,21 @@ def send_daily_report(signals: List[Dict], market_overview: Dict, scan_stats: Di
         for i, s in enumerate(top3)
     ) if top3 else "  今日無高分訊號"
 
-    msg_base = (
+    # ★ 修正：2026-09-19——使用者指示「統一為付費版」：盤後集結報告不再拆成
+    # 「免費版摘要（msg_base，結尾寫『付費版查看完整分析』）」+「付費版完整清單
+    # （msg_paid）」兩份，一律組成同一份完整報告（含完整訊號清單、完整明日
+    # 計畫、DISCLAIMER），廣播給 free/paid 兩個名單跟 admin，內容完全一致。
+    msg = (
         f"📊 <b>盤後集結報告</b> {now_tw.strftime('%m/%d')}\n"
         f"⏰ 台北時間 {now_tw.strftime('%H:%M')}\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"🇹🇼 <b>今日大盤</b>\n"
-        f"加權指數　{twii_str}\n"
-        f"VIX　　　{vix.get('price',0):.1f}\n"
-        f"評語　　　{comment}\n"
+        f"加權指數：{twii_str}\n"
+        f"VIX：{vix.get('price',0):.1f}\n"
+        f"評語：{comment}\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"👥 <b>今日法人動向</b>\n"
-        f"{fn_em} 外資　{fn_str}\n"
+        f"{fn_em} 外資：{fn_str}\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"{emoji_s} <b>市場情緒：{mood}</b>（{score}/100）\n"
         f"━━━━━━━━━━━━━━━━━\n"
@@ -475,8 +454,7 @@ def send_daily_report(signals: List[Dict], market_overview: Dict, scan_stats: Di
         f"📋 <b>明日操作計畫</b>\n"
         f"{tomorrow['brief']}\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"⏱ 耗時 {scan_stats.get('duration_min',0):.1f} 分鐘\n"
-        f"<i>💎 付費版查看完整分析 + 建議張數</i>"
+        f"⏱ 耗時 {scan_stats.get('duration_min',0):.1f} 分鐘"
     )
 
     if signals:
@@ -489,21 +467,21 @@ def send_daily_report(signals: List[Dict], market_overview: Dict, scan_stats: Di
             f"建議{s.get('suggested_lots',1)}張"
             for i, s in enumerate(signals)
         )
-        msg_paid = (
-            msg_base
+        msg = (
+            msg
             + f"\n━━━━━━━━━━━━━━━━━\n"
-            f"💎 <b>完整訊號清單</b>\n\n{full_list}\n\n"
+            f"📋 <b>完整訊號清單</b>\n\n{full_list}\n\n"
             f"<b>明日完整計畫</b>\n{tomorrow['full']}\n\n"
-            f"<i>⚠️ {DISCLAIMER}</i>"
+            f"<i>{DISCLAIMER}</i>"
         )
     else:
-        msg_paid = msg_base
+        msg = msg + f"\n━━━━━━━━━━━━━━━━━\n<i>{DISCLAIMER}</i>"
 
     subs = _load_subscribers()
     for admin_id in subs.get("admin", []):
-        send_message(admin_id, msg_paid)
-    broadcast(msg_base, tier="free")
-    broadcast(msg_paid, tier="paid")
+        send_message(admin_id, msg)
+    broadcast(msg, tier="free")
+    broadcast(msg, tier="paid")
     logger.info(f"盤後集結報告已發送：{len(signals)} 個訊號")
 
 
@@ -561,13 +539,12 @@ def _generate_tomorrow_plan(signals: List[Dict], market_overview: Dict) -> Dict:
 # 推播個別訊號
 # ══════════════════════════════════════════════
 def push_signal(sig: Dict):
-    free_msg = format_signal_free(sig)
     paid_msg = format_signal_paid(sig)
 
     if TELEGRAM_FREE_CHANNEL:
-        send_message(TELEGRAM_FREE_CHANNEL, free_msg)
+        send_message(TELEGRAM_FREE_CHANNEL, paid_msg)
     else:
-        broadcast(free_msg, tier="free")
+        broadcast(paid_msg, tier="free")
     time.sleep(0.3)
     if TELEGRAM_PAID_CHANNEL:
         send_message(TELEGRAM_PAID_CHANNEL, paid_msg)
@@ -654,31 +631,27 @@ def handle_update(update: Dict) -> Optional[str]:
 
     if cmd == "/start":
         add_subscriber(chat_id, "free")
+        # ★ 修正：2026-09-19——使用者指示「統一為付費版」後，所有訂閱者收到的
+        # 訊號內容已經完全一致（TP1/TP2/TP3、建議張數、法人動向都有），不再有
+        # 「加購解鎖」這件事，所以歡迎詞跟 /upgrade 一併移除舊的升級推銷文字，
+        # 避免文字承諾（有東西可以升級）跟實際行為（大家收到的內容都一樣）
+        # 不一致，誤導使用者。
         return (
             f"👋 歡迎！<b>{SYSTEM['name']}</b>\n\n"
             f"📅 <b>推播時間</b>\n"
             f"🌅 08:45 盤前集結建議\n"
-            f"📊 16:45 盤後選股報告\n\n"
+            f"📊 16:45 盤後選股報告（完整訊號清單）\n\n"
             f"📊 <b>訊號等級</b>\n"
             f"🔥 A級（85+）強力建議\n"
             f"✅ B級（75+）良好訊號\n"
             f"👀 C級（65+）觀察機會\n\n"
             f"/fill 代號 價格 — 回報實際成交價（例：/fill 2330 985.5）\n"
-            f"/help — 使用說明\n"
-            f"/upgrade — 升級付費版\n\n"
+            f"/help — 使用說明\n\n"
             f"<i>{DISCLAIMER}</i>"
         )
     elif cmd == "/stop":
         remove_subscriber(chat_id)
         return "已取消訂閱。感謝使用！"
-    elif cmd == "/upgrade":
-        return (
-            "💎 <b>付費版功能</b>\n\n"
-            "免費版：基本訊號 + TP1\n"
-            "付費版：TP2/TP3 + 建議張數 + 法人動向 + 持倉追蹤 + 明日計畫\n\n"
-            "💰 月費：TWD 299\n"
-            "📧 聯絡管理員升級"
-        )
     elif cmd == "/fill":
         # ★ 新增：2026-09-16——回應三方AI交叉比對中ChatGPT提出的建議：讓使用者
         # 可以回報實際成交價，用來累積「訊號參考價 vs 實際成交價」的真實滑價
