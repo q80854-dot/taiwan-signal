@@ -9,7 +9,7 @@ from config import (
     SIGNAL_THRESHOLDS as THRESH, SWING_PARAMS,
     CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD,
     COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION,
-    MAX_RISK_PER_TRADE,
+    MAX_RISK_PER_TRADE, ENABLE_SHORT_SIGNALS,
 )
 
 logger = logging.getLogger(__name__)
@@ -262,6 +262,11 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             logger.info(f"[SCORE] {ticker} dir={direction} score={score} "
                         f"bar={_last_date} close={price}")
         if direction=="none" or score<THRESH["min_score"]: return None
+        # ★ 新增：2026-09-19——見 config.py ENABLE_SHORT_SIGNALS 的說明：TW50
+        # 真實回測顯示做空方向勝率只有14.8%（做多63.6%），且回測還沒算進真實
+        # 融券成本，暫停對外推播做空訊號，只做多，直到做空邏輯重新設計並驗證過。
+        if direction=="sell" and not ENABLE_SHORT_SIGNALS:
+            return None
         adx_val=mtf.get("adx_value",0)
         if adx_val<THRESH["min_adx"]: return None
         vol_ratio=mtf.get("vol_ratio",1.0)
