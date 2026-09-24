@@ -96,7 +96,23 @@ CIRCUIT_BREAKER = {
     "vix_extreme": 40, "vix_high": 30,
     "foreign_sell_stop": -50e8, "foreign_sell_caution": -20e8,
     "margin_change_warning": -5.0,
-    "max_daily_signals": 10, "signal_expire_days": 3,
+    "max_daily_signals": 10,
+    # ★ 修正：2026-09-24——使用者反映實盤「常常停損、很少停利」，追查後用
+    # /api/backtest/full 實跑 TW50 得到量化證據：做多勝出（tp1/tp2）交易平均
+    # 要花 11.9 個交易日才觸價，其中 88.8% 的獲利交易是在超過 3 天之後才觸價
+    # ——但 signal_expire_days 原本設 3，_resolve_pending_signals() 會在訊號
+    # 產生滿 3 個交易日、還沒摸到停損/停利時，直接用當下市價強制平倉、標記
+    # 「expired」。換句話說：backtest 拿來驗證策略勝率(59.4%)的邏輯，跟實盤
+    # 真正在跑的持倉規則，兩者對「能不能等到停利」這件事的假設完全不一致，
+    # 等於絕大多數backtest裡本來會贏的交易，實盤都還沒走到停利就被強制
+    # 平倉、常常小虧收場（這正是使用者這幾週實際看到的4筆結算訊號：2 筆
+    # sl + 2 筆 expired，4 戰全敗）。停損本身不受 expire_days 影響（sl 觸價
+    # 是即時判斷，不用等到期限），所以延長 expire_days 不會放大單筆虧損上限，
+    # 只是給真正會贏的訊號更多時間走到停利。改成 15 個交易日（約3週），
+    # 用同一份回測資料估算可以讓約 74.5% 的獲利交易在到期前真正觸及停利
+    # （3天只能接住 11.2%），是「多接住獲利」跟「不要放到無限久」之間的
+    # 合理折衷；之後有更多樣本可以再依實際結算數字微調。
+    "signal_expire_days": 15,
 }
 CB = CIRCUIT_BREAKER
 

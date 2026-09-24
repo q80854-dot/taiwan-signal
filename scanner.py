@@ -36,7 +36,15 @@ def _correlation_group_key(sector: str, ticker: str = "") -> str:
     for grp in CORRELATION_GROUPS:
         if sector in grp:
             return "|".join(grp)
-    if not sector:
+    # ★ 修正：2026-09-24——這裡原本只把「空字串」sector 視為不明產業、給每檔
+    # 自己的 key，但 stock_universe.build_universe() 實際上從來不會塞空字串
+    # ——sector_map.get(s["code"], "其他") 找不到分類時，預設值就是字面上的
+    # 「其他」這個字串（不是空字串）。結果就是真正常見的情況（TWSE 產業分類
+    # API 沒有 ETF/部分 OTC 標的的資料，預設落到「其他」）完全沒被這個 if
+    # 擋到，這些互不相干的標的還是全部共用同一個「其他」曝險桶，跟這次修正
+    # 想解決的問題一模一樣，只是換了個字串觸發不到判斷式。這裡把「其他」也
+    # 視為不明產業一併處理。
+    if not sector or sector == "其他":
         return f"__unknown_sector__:{ticker}" if ticker else "其他"
     return sector
 
@@ -624,11 +632,26 @@ class TWScanEngine:
             )
             combined = list(signals)
         else:
+            # ★ 修正：2026-09-24——稽核 2026-09-23 實際掃描log發現這一段還是有
+            # 同一類bug：上面 08-30 的防呆只擋得住「幾乎每一檔都同一個sector」
+            # 的極端情況（len(distinct_sectors)<=1）。但常見的實際情況是「有
+            # 幾檔真的有明確產業分類，但其餘大多數（尤其ETF/部分未分類個股）
+            # 全部落在stock_universe.build_universe()預設的「其他」」——這時
+            # distinct_sectors 至少有2個值，防呆不會觸發，但「其他」這個桶
+            # 底下可能塞了上百檔完全不相關的標的，下面這段「同sector只留最高
+            # 分1檔」的邏輯會把它們當成同一產業、只留1檔，實測 2026-09-23
+            # 135檔候選被這段壓到只剩2檔，是當天「篩選後只剩1個訊號」的主因
+            # （不是相關性群組上限——那一關同一天只多濾掉1檔）。改成「其他」/
+            # 空字串比照 _correlation_group_key() 的處理方式，用ticker讓每一
+            # 檔自成一組，不再被錯誤地當成「同產業」去重。真正的產業集中度
+            # 上限交給下面的相關性群組曝險上限（MAX_PER_CORRELATION_GROUP）
+            # 處理，那一關本來就是為了這個目的存在、而且已經修過同樣的bug。
             sector_best: Dict[str, Dict] = {}
             for sig in signals:
-                sec = sig.get("sector","其他")
-                if sec not in sector_best or sig["score"] > sector_best[sec]["score"]:
-                    sector_best[sec] = sig
+                raw_sec = sig.get("sector", "其他")
+                key = raw_sec if raw_sec and raw_sec != "其他" else f"__unknown_sector__:{sig.get('ticker','')}"
+                if key not in sector_best or sig["score"] > sector_best[key]["score"]:
+                    sector_best[key] = sig
             combined = list(sector_best.values())
         combined.sort(key=lambda x: x["score"], reverse=True)
         logger.info(f"_filter_and_rank: 同產業去重後剩 {len(combined)} 檔")
