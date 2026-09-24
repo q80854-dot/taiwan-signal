@@ -725,6 +725,44 @@ def fetch_foreign_total_flow() -> Dict:
 # 的資料來源：TWSE 官方「融資融券餘額」統計，抓全市場融資餘額的日增減幅度，
 # 融資餘額急縮通常代表市場情緒轉弱/斷頭賣壓，是波段操作常用的總經觀察指標
 # 之一，接進 fetch_market_overview() 讓 risk_manager 可以真正拿到資料做判斷。
+def _parse_margin_balance_response(data: Dict):
+    """回傳 (prev_bal, today_bal, date_str) 或 None（解析不到）。
+    ★ 修正：2026-09-24——這次為了用「真實資料」回測融資餘額指標，用 WebFetch
+    實際查證了 MI_MARGN 的真實回應結構：fields=["項目","買進","賣出",
+    "現金(券)償還","前日餘額","今日餘額"]（融資資訊放在資料列的「項目」欄位
+    值是「融資金額(仟元)」，不在表頭欄位名稱裡），發現原本的
+    _find_col(["融資","今日","餘額"]) 是在「表頭」裡找「融資」兩個字，但表頭
+    本身根本不含「融資」，這個比對永遠找不到、idx_today 永遠是 None——也就是
+    說這個函式自從被接上 risk_manager 以來，實際上一直回傳空字典，
+    CIRCUIT_BREAKER["margin_change_warning"] 這個熔斷指標從未真正抓到過資料。
+    這裡用查證過的真實欄位結構重寫比對邏輯，順便發現當日回應本身就同時
+    附「前日餘額」跟「今日餘額」，不需要再跨次呼叫拼接歷史就能算出當天漲跌%。"""
+    fields = data.get("fields", [])
+    tables = data.get("creditList") or data.get("data") or []
+    if not fields or not tables:
+        return None
+    def _find_col(keywords):
+        for i, f in enumerate(fields):
+            if all(k in f for k in keywords):
+                return i
+        return None
+    idx_today = _find_col(["今日餘額"]) or _find_col(["今日", "餘額"])
+    idx_prev  = _find_col(["前日餘額"]) or _find_col(["前日", "餘額"])
+    if idx_today is None:
+        return None
+    row = next((rw for rw in tables if len(rw) > 0 and "融資金額" in str(rw[0])), None)
+    if not row or idx_today >= len(row):
+        return None
+    def _pi(v):
+        try: return int(str(v).replace(",", ""))
+        except Exception: return None
+    today_bal = _pi(row[idx_today])
+    prev_bal = _pi(row[idx_prev]) if idx_prev is not None and idx_prev < len(row) else None
+    if today_bal is None:
+        return None
+    return prev_bal, today_bal, data.get("date", "")
+
+
 def fetch_margin_change() -> Dict:
     if c := _cache_get("margin_change", 3600): return c
     try:
@@ -734,40 +772,21 @@ def fetch_margin_change() -> Dict:
         if r.status_code != 200: return {}
         data = r.json()
         if data.get("stat") != "OK": return {}
-        # 這個端點的彙總表（"creditList" 或表格最後一列）欄位包含「融資餘額」
-        # 今日/前日數字，不同年度版型欄位順序可能微調，這裡用欄位名稱關鍵字
-        # （而不是寫死的欄位索引）尋找，降低未來版型變動就整個失效的風險。
-        tables = data.get("creditList") or data.get("data") or []
-        fields = data.get("fields", [])
-        today_bal, prev_bal = None, None
-        if fields and tables:
-            def _find_col(keywords):
-                for i, f in enumerate(fields):
-                    if all(k in f for k in keywords):
-                        return i
-                return None
-            idx_today = _find_col(["融資", "今日", "餘額"]) or _find_col(["融資餘額"])
-            row = tables[-1] if tables else None
-            if row and idx_today is not None and idx_today < len(row):
-                try:
-                    today_bal = int(str(row[idx_today]).replace(",", ""))
-                except Exception:
-                    today_bal = None
-        if today_bal is None:
+        parsed = _parse_margin_balance_response(data)
+        if not parsed:
             return {}
-        # ★ 修正：2026-09-24——「昨日餘額」原本打算存在 data_fetcher 模組層級的
-        # 記憶體內 _cache，但這個字典只存在單一 process 的生命週期內，Render
-        # 部署/OOM重啟（本專案已發生過多次，見 job_pre_scan_restart 等處說明）
-        # 都會讓它歸零，重啟後第一次算出來的漲跌幅會是假的0%，不是真的沒變化。
-        # 改存進 state_store 的 meta 表（跟其他持久化狀態同一個 Postgres），
-        # 才能跨部署/跨process正確算出「相對於上一個交易日」的真實增減幅度。
-        from state_store import store
-        date_str = data.get("date", today)
-        hist = store.get_meta("margin_balance_history", [])
-        prev_entry = next((h for h in reversed(hist) if h.get("date") != date_str), None)
-        chg_pct = round((today_bal - prev_entry["balance"]) / prev_entry["balance"] * 100, 2) if prev_entry else 0
-        hist = [h for h in hist if h.get("date") != date_str] + [{"date": date_str, "balance": today_bal}]
-        store.set_meta("margin_balance_history", hist[-10:])
+        prev_bal, today_bal, date_str = parsed
+        chg_pct = round((today_bal - prev_bal) / prev_bal * 100, 2) if prev_bal else 0
+        # 順手把每天的餘額存進 meta（供 /api/diagnostics 等處查閱連續趨勢用），
+        # 但 chg_pct 本身已經不依賴這份歷史——見上面 _parse_margin_balance_response
+        # 的說明，單一天的回應就同時有前日/今日兩個數字，不怕重啟後歸零。
+        try:
+            from state_store import store
+            hist = store.get_meta("margin_balance_history", [])
+            hist = [h for h in hist if h.get("date") != date_str] + [{"date": date_str, "balance": today_bal}]
+            store.set_meta("margin_balance_history", hist[-10:])
+        except Exception:
+            pass
         return _cache_set("margin_change", {
             "balance": today_bal, "chg_pct": chg_pct,
             "signal": "warning" if chg_pct <= CB.get("margin_change_warning", -5.0) else "normal",
@@ -775,6 +794,58 @@ def fetch_margin_change() -> Dict:
     except Exception as e:
         logger.warning(f"margin_change: {e}")
         return {}
+
+
+def backfill_margin_history(days_back: int = 400, progress_cb=None) -> Dict:
+    """回填真實歷史融資餘額日增減%（不是模擬資料），存進 state_store 的
+    margin_chg_daily_history 表，供 backtester.py 的總經回測直接查表使用。
+    ★ 2026-09-24——MI_MARGN 支援歷史 date= 查詢（已用 WebFetch 實測驗證過真的
+    能查到過去某天的資料），且單一天回應本身就同時附前一交易日/當日兩個
+    餘額，不用逐日往前串接。這裡只嘗試週一到週五的日期（台股週末不開盤，
+    直接跳過減少無謂的失敗請求），遇到假日 TWSE 會回傳 stat!=OK，一樣
+    優雅跳過、不中斷整個回填流程；已經回填過的日期會自動跳過，可安全重跑。"""
+    from state_store import store
+    covered = set(store.get_margin_chg_dates_covered())
+    today = datetime.now()
+    dates = []
+    d = today - timedelta(days=1)  # 從昨天開始往回抓，今天盤中的餘額可能還沒定案
+    while len(dates) < days_back:
+        if d.weekday() < 5:
+            dates.append(d)
+        d -= timedelta(days=1)
+    total = len(dates); done = 0; fetched = 0; skipped = 0; failed = 0
+    for dt in dates:
+        date_ymd = dt.strftime("%Y%m%d"); date_dash = dt.strftime("%Y-%m-%d")
+        done += 1
+        if date_dash in covered:
+            skipped += 1
+            if progress_cb:
+                try: progress_cb(done, total, f"[已回填,跳過] {date_dash}")
+                except Exception: pass
+            continue
+        try:
+            url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={date_ymd}&selectType=ALL"
+            r = requests.get(url, headers=HEADERS, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("stat") == "OK":
+                    parsed = _parse_margin_balance_response(data)
+                    if parsed:
+                        prev_bal, today_bal, _ = parsed
+                        if prev_bal:
+                            chg_pct = round((today_bal - prev_bal) / prev_bal * 100, 2)
+                            store.upsert_margin_chg_daily(date_dash, today_bal, chg_pct)
+                            fetched += 1
+                # stat != OK 通常代表當天不是交易日（假日），優雅跳過不算失敗
+        except Exception as e:
+            failed += 1
+            logger.warning(f"backfill_margin_history {date_dash}: {e}")
+        if progress_cb:
+            try: progress_cb(done, total, date_dash)
+            except Exception: pass
+        time.sleep(0.8)
+    return {"days_attempted": total, "days_fetched": fetched, "days_skipped_already_covered": skipped,
+            "days_failed": failed, "completed_at": datetime.now(timezone.utc).isoformat()}
 
 
 # ════════════════════════════════════════════════

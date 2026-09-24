@@ -96,6 +96,15 @@ class StateStore:
                     PRIMARY KEY (ticker, tf_key, bar_date)
                 );
                 CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_tf ON ohlcv_bars(ticker, tf_key, bar_date);
+                CREATE TABLE IF NOT EXISTS monthly_revenue_history (
+                    ticker TEXT, period TEXT, yoy_pct REAL, mom_pct REAL, market TEXT,
+                    updated_at TEXT,
+                    PRIMARY KEY (ticker, period)
+                );
+                CREATE INDEX IF NOT EXISTS idx_rev_hist_ticker ON monthly_revenue_history(ticker, period);
+                CREATE TABLE IF NOT EXISTS margin_chg_daily_history (
+                    bar_date TEXT PRIMARY KEY, balance BIGINT, chg_pct REAL, updated_at TEXT
+                );
                 CREATE TABLE IF NOT EXISTS signals (
                     id            TEXT PRIMARY KEY,
                     ticker        TEXT, code TEXT, name TEXT, sector TEXT,
@@ -134,6 +143,15 @@ class StateStore:
                     PRIMARY KEY (ticker, tf_key, bar_date)
                 );
                 CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_tf ON ohlcv_bars(ticker, tf_key, bar_date);
+                CREATE TABLE IF NOT EXISTS monthly_revenue_history (
+                    ticker TEXT, period TEXT, yoy_pct REAL, mom_pct REAL, market TEXT,
+                    updated_at TEXT,
+                    PRIMARY KEY (ticker, period)
+                );
+                CREATE INDEX IF NOT EXISTS idx_rev_hist_ticker ON monthly_revenue_history(ticker, period);
+                CREATE TABLE IF NOT EXISTS margin_chg_daily_history (
+                    bar_date TEXT PRIMARY KEY, balance INTEGER, chg_pct REAL, updated_at TEXT
+                );
                 CREATE TABLE IF NOT EXISTS signals (
                     id            TEXT PRIMARY KEY,
                     ticker        TEXT, code TEXT, name TEXT, sector TEXT,
@@ -507,6 +525,108 @@ class StateStore:
         except Exception as e:
             logger.warning(f"get_ohlcv_cache_stats: {e}")
             return {"tickers": 0, "bars": 0, "last_updated": None}
+
+    # ── 月營收歷史（回測用，真實歷史資料）──
+    # ★ 新增：2026-09-24——使用者明確要求「用真實資料回測，不要假數據」，
+    # 且要求把能補的都補上。原本 fundamentals.fetch_monthly_revenue_map() 只能
+    # 抓「當下這個月」的全市場快照，系統裡完全沒有月營收的歷史時間序列，導致
+    # 個股基本面硬性過濾這項功能完全沒辦法回測。這裡新增一張表持久化保存從
+    # MOPS歷史月營收頁面（t21sc03，見 fundamentals.py 說明）回填抓到的資料，
+    # 之後回測時可以用「當下那天，已經公告過的最新一期月營收」做真正的
+    # 事後（point-in-time）查詢，不是用未來才會公告的資料回頭作弊。
+    def upsert_monthly_revenue_history(self, rows: List[Dict]):
+        """rows: [{ticker,period,yoy_pct,mom_pct,market}, ...]，period 格式 'YYYY-MM'。"""
+        if not rows:
+            return
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            if USE_PG:
+                sql = ("INSERT INTO monthly_revenue_history(ticker,period,yoy_pct,mom_pct,market,updated_at) "
+                       "VALUES(?,?,?,?,?,?) ON CONFLICT (ticker,period) DO UPDATE SET "
+                       "yoy_pct=EXCLUDED.yoy_pct,mom_pct=EXCLUDED.mom_pct,market=EXCLUDED.market,"
+                       "updated_at=EXCLUDED.updated_at")
+            else:
+                sql = ("INSERT OR REPLACE INTO monthly_revenue_history"
+                       "(ticker,period,yoy_pct,mom_pct,market,updated_at) VALUES(?,?,?,?,?,?)")
+            with self._conn() as conn:
+                for r in rows:
+                    conn.execute(sql, (r["ticker"], r["period"], r.get("yoy_pct"),
+                                        r.get("mom_pct"), r.get("market",""), now))
+        except Exception as e:
+            logger.warning(f"upsert_monthly_revenue_history: {e}")
+
+    def get_monthly_revenue_periods_covered(self) -> List[str]:
+        """回傳已經回填過的期別清單（'YYYY-MM'），讓回填程式可以跳過已經抓過的
+        月份，重跑時不用重複打 MOPS，也不會因為中途失敗就要整個重來。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT period FROM monthly_revenue_history ORDER BY period"
+                ).fetchall()
+            return [r["period"] for r in rows]
+        except Exception as e:
+            logger.warning(f"get_monthly_revenue_periods_covered: {e}")
+            return []
+
+    def get_revenue_asof(self, ticker: str, max_period: str) -> Optional[Dict]:
+        """回傳某檔股票「在 max_period（含）之前，最新一期」的月營收資料——
+        對應回測裡「這一天系統看得到的最新已公告營收是哪一期」，見
+        fundamentals.check_fundamental_hard_filter_asof() 的申報時間差說明。"""
+        try:
+            with self._conn() as conn:
+                row = conn.execute(
+                    "SELECT period,yoy_pct,mom_pct FROM monthly_revenue_history "
+                    "WHERE ticker=? AND period<=? ORDER BY period DESC LIMIT 1",
+                    (ticker, max_period)
+                ).fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.warning(f"get_revenue_asof {ticker}: {e}")
+            return None
+
+    # ── 融資餘額每日歷史（回測用，真實歷史資料）──
+    # ★ 新增：2026-09-24——同上，原本 data_fetcher.fetch_margin_change() 只從
+    # 今天開始持久化「昨天餘額」，完全沒有歷史數列可以回測。這裡改成直接向
+    # TWSE MI_MARGN 用歷史日期查詢（已用 WebFetch 實測 date= 參數真的能查到
+    # 過去某天的資料，且單一天的回應本身就同時附「前日餘額」跟「今日餘額」，
+    # 不需要逐日往前串接），回填出一份「每個交易日的融資餘額日變動%」，
+    # 存進這張表供回測直接查表使用。
+    def upsert_margin_chg_daily(self, bar_date: str, balance: int, chg_pct: float):
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            if USE_PG:
+                sql = ("INSERT INTO margin_chg_daily_history(bar_date,balance,chg_pct,updated_at) "
+                       "VALUES(?,?,?,?) ON CONFLICT (bar_date) DO UPDATE SET "
+                       "balance=EXCLUDED.balance,chg_pct=EXCLUDED.chg_pct,updated_at=EXCLUDED.updated_at")
+            else:
+                sql = ("INSERT OR REPLACE INTO margin_chg_daily_history"
+                       "(bar_date,balance,chg_pct,updated_at) VALUES(?,?,?,?)")
+            with self._conn() as conn:
+                conn.execute(sql, (bar_date, balance, chg_pct, now))
+        except Exception as e:
+            logger.warning(f"upsert_margin_chg_daily {bar_date}: {e}")
+
+    def get_margin_chg_dates_covered(self) -> List[str]:
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT bar_date FROM margin_chg_daily_history ORDER BY bar_date"
+                ).fetchall()
+            return [r["bar_date"] for r in rows]
+        except Exception as e:
+            logger.warning(f"get_margin_chg_dates_covered: {e}")
+            return []
+
+    def get_margin_chg_map(self) -> Dict[str, float]:
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT bar_date,chg_pct FROM margin_chg_daily_history"
+                ).fetchall()
+            return {r["bar_date"]: r["chg_pct"] for r in rows}
+        except Exception as e:
+            logger.warning(f"get_margin_chg_map: {e}")
+            return {}
 
 
 store = StateStore()

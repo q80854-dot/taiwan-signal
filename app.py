@@ -377,6 +377,64 @@ def api_backtest_compare_result():
         "result": store.get_meta("compare_backtest_result", None),
     })
 
+# ★ 新增：2026-09-24——使用者看到第一版比較回測（只有TWII一項）差異很小之後，
+# 明確要求「用真實資料回測，不要假數據，能補的都補上」。融資餘額、個股月營收
+# 這兩項都查證出有真實的官方歷史資料來源可以回填（見 data_fetcher.
+# backfill_margin_history() / fundamentals.backfill_monthly_revenue_history()
+# 的說明），但這兩個回填都要對 TWSE/MOPS 發出幾百次逐日/逐月請求，一定會超過
+# gunicorn 逾時，所以比照 full_backtest / compare_backtest 同一套「背景執行緒
+# ＋ state_store meta 輪詢進度」模式，兩個回填包在同一個背景工作裡依序執行
+# （先融資、再月營收），一次觸發即可，不用管理兩條獨立的背景執行緒。
+_backfill_running = threading.Event()
+
+def _run_backfill_bg(margin_days_back, revenue_months_back):
+    from state_store import store
+    if _backfill_running.is_set():
+        return
+    _backfill_running.set()
+    try:
+        from data_fetcher import backfill_margin_history
+        from fundamentals import backfill_monthly_revenue_history
+        store.set_meta("backfill_progress", {"status": "running", "stage": "margin", "done": 0, "total": 0, "item": ""})
+        def _cb_margin(done, total, item):
+            store.set_meta("backfill_progress", {"status": "running", "stage": "margin", "done": done, "total": total, "item": item})
+        margin_result = backfill_margin_history(days_back=margin_days_back, progress_cb=_cb_margin)
+        store.set_meta("backfill_margin_result", margin_result)
+        store.set_meta("backfill_progress", {"status": "running", "stage": "monthly_revenue", "done": 0, "total": 0, "item": ""})
+        def _cb_rev(done, total, item):
+            store.set_meta("backfill_progress", {"status": "running", "stage": "monthly_revenue", "done": done, "total": total, "item": item})
+        revenue_result = backfill_monthly_revenue_history(months_back=revenue_months_back, progress_cb=_cb_rev)
+        store.set_meta("backfill_revenue_result", revenue_result)
+        store.set_meta("backfill_progress", {"status": "done", "stage": "done", "done": 1, "total": 1, "item": ""})
+        logger.info(f"[BACKFILL] 完成：融資 {margin_result.get('days_fetched',0)}天、"
+                    f"月營收 {revenue_result.get('total_rows_upserted',0)}筆（{revenue_result.get('months_fetched',0)}個月）")
+    except Exception as e:
+        logger.error(f"_run_backfill_bg: {e}", exc_info=True)
+        store.set_meta("backfill_progress", {"status": "error", "error": str(e)})
+    finally:
+        _backfill_running.clear()
+
+@app.route("/api/backfill/run", methods=["POST"])
+def api_backfill_run():
+    if _backfill_running.is_set():
+        return jsonify({"status": "already_running"})
+    margin_days_back = request.args.get("margin_days_back", default=400, type=int)
+    revenue_months_back = request.args.get("revenue_months_back", default=15, type=int)
+    threading.Thread(target=_run_backfill_bg, args=(margin_days_back, revenue_months_back), daemon=True).start()
+    return jsonify({"status": "started", "margin_days_back": margin_days_back, "revenue_months_back": revenue_months_back,
+                     "note": "依序回填融資餘額歷史(TWSE MI_MARGN)、個股月營收歷史(MOPS)，會需要一段時間"
+                             "（融資約幾百次逐日請求、月營收約幾十次逐月請求，中間都有延遲避免對官方站造成負擔），"
+                             "用 /api/backfill/result 查進度"})
+
+@app.route("/api/backfill/result")
+def api_backfill_result():
+    from state_store import store
+    return jsonify({
+        "progress": store.get_meta("backfill_progress", {"status": "never_run"}),
+        "margin_result": store.get_meta("backfill_margin_result", None),
+        "revenue_result": store.get_meta("backfill_revenue_result", None),
+    })
+
 # ── Telegram Webhook ──
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
@@ -461,6 +519,20 @@ def diagnostics():
         ohlcv_cache_status = store.get_ohlcv_cache_stats()
     except Exception as e:
         ohlcv_cache_status = {"error": str(e)}
+    # ★ 新增：2026-09-24——同理，讓融資餘額/月營收歷史回填「到底有沒有真的
+    # 回填到資料」也能直接從網站查證。
+    try:
+        from state_store import store
+        margin_dates = store.get_margin_chg_dates_covered()
+        revenue_periods = store.get_monthly_revenue_periods_covered()
+        macro_backfill_status = {
+            "margin_days_covered": len(margin_dates),
+            "margin_date_range": [margin_dates[0], margin_dates[-1]] if margin_dates else [],
+            "revenue_months_covered": len(revenue_periods),
+            "revenue_period_range": [revenue_periods[0], revenue_periods[-1]] if revenue_periods else [],
+        }
+    except Exception as e:
+        macro_backfill_status = {"error": str(e)}
     return jsonify({
         "python":           sys.version[:20],
         "yfinance":         chk("yfinance"),
@@ -471,6 +543,7 @@ def diagnostics():
         **telegram_status,
         "fugle_api_key":    fugle_status,
         "ohlcv_cache":      ohlcv_cache_status,
+        "macro_backfill":   macro_backfill_status,
         "template_dir":     TEMPLATE_DIR,
         "template_exists":  os.path.exists(os.path.join(TEMPLATE_DIR, "dashboard.html")),
         "scheduler_running":SCHEDULER_OK and scheduler.running if SCHEDULER_OK else False,
