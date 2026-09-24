@@ -89,6 +89,13 @@ class StateStore:
     def _init_db(self):
         if USE_PG:
             ddl = """
+                CREATE TABLE IF NOT EXISTS ohlcv_bars (
+                    ticker TEXT, tf_key TEXT, bar_date TEXT,
+                    open REAL, high REAL, low REAL, close REAL, volume BIGINT,
+                    updated_at TEXT,
+                    PRIMARY KEY (ticker, tf_key, bar_date)
+                );
+                CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_tf ON ohlcv_bars(ticker, tf_key, bar_date);
                 CREATE TABLE IF NOT EXISTS signals (
                     id            TEXT PRIMARY KEY,
                     ticker        TEXT, code TEXT, name TEXT, sector TEXT,
@@ -120,6 +127,13 @@ class StateStore:
             """
         else:
             ddl = """
+                CREATE TABLE IF NOT EXISTS ohlcv_bars (
+                    ticker TEXT, tf_key TEXT, bar_date TEXT,
+                    open REAL, high REAL, low REAL, close REAL, volume INTEGER,
+                    updated_at TEXT,
+                    PRIMARY KEY (ticker, tf_key, bar_date)
+                );
+                CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_tf ON ohlcv_bars(ticker, tf_key, bar_date);
                 CREATE TABLE IF NOT EXISTS signals (
                     id            TEXT PRIMARY KEY,
                     ticker        TEXT, code TEXT, name TEXT, sector TEXT,
@@ -418,6 +432,81 @@ class StateStore:
 
     def get_equity_curve(self) -> List[Dict]:
         return self.get_meta("equity_curve", [])
+
+    # ── K線持久化快取 ──
+    # ★ 新增：2026-09-24——回應使用者要求：fetch_ohlcv() 先前每次呼叫都對
+    # yfinance 重新下載整段歷史（daily 一年、weekly 五年、hourly 90天），
+    # 這是先前稽核就記錄過的「單次全市場掃描要7分鐘」最大瓶頸——只有進程內的
+    # 記憶體 TTL 快取（見 data_fetcher._cache），每次 Render 重新部署/重啟
+    # process 就整個歸零，隔天又要重新全部下載一次。改成把K棒存進這裡（跟
+    # signals 用同一個 Postgres，真正持久化、不隨部署清空），之後只需要對
+    # yfinance 要「上次快取日期之後」的新增K棒（通常1~2根），大幅縮短每檔
+    # 股票的等待時間，也降低對外部 API 的請求量/被限流風險。
+    def get_ohlcv_last_date(self, ticker: str, tf_key: str) -> Optional[str]:
+        try:
+            with self._conn() as conn:
+                row = conn.execute(
+                    "SELECT MAX(bar_date) as d FROM ohlcv_bars WHERE ticker=? AND tf_key=?",
+                    (ticker, tf_key)
+                ).fetchone()
+            return row["d"] if row and row["d"] else None
+        except Exception as e:
+            logger.warning(f"get_ohlcv_last_date {ticker}/{tf_key}: {e}")
+            return None
+
+    def upsert_ohlcv_bars(self, ticker: str, tf_key: str, bars: List[Dict]):
+        """bars: [{date,open,high,low,close,volume}, ...]。用 UPSERT，同一天
+        重複寫入（例如盤中抓到的當日殘缺K棒，收盤後再抓一次拿到定案數字）
+        會直接覆蓋掉舊值，不會產生重複列。"""
+        if not bars:
+            return
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            if USE_PG:
+                sql = ("INSERT INTO ohlcv_bars(ticker,tf_key,bar_date,open,high,low,close,volume,updated_at) "
+                       "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT (ticker,tf_key,bar_date) DO UPDATE SET "
+                       "open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,close=EXCLUDED.close,"
+                       "volume=EXCLUDED.volume,updated_at=EXCLUDED.updated_at")
+            else:
+                sql = ("INSERT OR REPLACE INTO ohlcv_bars"
+                       "(ticker,tf_key,bar_date,open,high,low,close,volume,updated_at) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)")
+            with self._conn() as conn:
+                for b in bars:
+                    conn.execute(sql, (ticker, tf_key, b["date"], b["open"], b["high"],
+                                        b["low"], b["close"], b["volume"], now))
+        except Exception as e:
+            logger.warning(f"upsert_ohlcv_bars {ticker}/{tf_key}: {e}")
+
+    def get_cached_ohlcv_bars(self, ticker: str, tf_key: str, limit: int = 300) -> List[Dict]:
+        """回傳依日期由舊到新排序的K棒清單，最多取最新 limit 根。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT bar_date,open,high,low,close,volume FROM ohlcv_bars "
+                    "WHERE ticker=? AND tf_key=? ORDER BY bar_date DESC LIMIT ?",
+                    (ticker, tf_key, limit)
+                ).fetchall()
+            rows = [dict(r) for r in rows]
+            rows.reverse()
+            return rows
+        except Exception as e:
+            logger.warning(f"get_cached_ohlcv_bars {ticker}/{tf_key}: {e}")
+            return []
+
+    def get_ohlcv_cache_stats(self) -> Dict:
+        """給 /api/diagnostics 用：目前快取涵蓋幾檔股票、最舊/最新更新時間，
+        讓「快取到底有沒有在運作」這件事可以直接從網站看到，不用查資料庫。"""
+        try:
+            with self._conn() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(DISTINCT ticker) as tickers, COUNT(*) as bars, "
+                    "MAX(updated_at) as last_updated FROM ohlcv_bars"
+                ).fetchone()
+            return dict(row) if row else {"tickers": 0, "bars": 0, "last_updated": None}
+        except Exception as e:
+            logger.warning(f"get_ohlcv_cache_stats: {e}")
+            return {"tickers": 0, "bars": 0, "last_updated": None}
 
 
 store = StateStore()

@@ -43,6 +43,20 @@ def check_foreign_flow(market_overview: Dict) -> Dict:
         return {"triggered":False,"level":"positive","net_buy_twd":nb,"message":f"✅ 外資買超 {nb/1e8:.0f}億，市場偏多"}
     return {"triggered":False,"level":"normal","net_buy_twd":nb}
 
+# ★ 新增：2026-09-24——見 data_fetcher.fetch_margin_change() 說明：
+# CB["margin_change_warning"] 原本只是設定檔裡一個從未被使用的數字，這裡
+# 補上對應的檢查函式，讓融資餘額急縮這個總經指標真正影響訊號信心度
+# （score_adj），跟既有的大盤漲跌/外資買賣超走同一套「熔斷=擋新單、
+# 警告=降低信心度」邏輯，而不是又額外發明一套規則。
+def check_margin_change(market_overview: Dict) -> Dict:
+    margin = market_overview.get("margin", {})
+    chg = float(margin.get("chg_pct", 0) or 0)
+    warn_th = CB.get("margin_change_warning", -5.0)
+    if chg <= warn_th:
+        return {"triggered": True, "level": "warning", "chg_pct": chg,
+                "message": f"⚠️ 融資餘額單日減少 {abs(chg):.1f}%，市場信心轉弱", "action": "reduce_confidence"}
+    return {"triggered": False, "level": "normal", "chg_pct": chg}
+
 def check_account_requirement(ticker: str, stock_info: Dict) -> Dict:
     # ★ 修正：2026-08-30——原本假設下單一定是整張(1000股)，用 price*1000*1.1 當最低門檻。
     # 現在 calc_position_size() 已經改用零股(股數)為單位下單，不再需要湊滿一張才能進場，
@@ -104,13 +118,14 @@ def check_price_spike(ticker: str, tf_data: Dict) -> Dict:
 def run_all_checks(ticker, stock_info, tf_data, market_overview, active_signals=None) -> Dict:
     if active_signals is None: active_signals=[]
     checks={
-        "market":     check_market_circuit_breaker(market_overview),
-        "foreign":    check_foreign_flow(market_overview),
-        "spike":      check_price_spike(ticker,tf_data),
-        "account":    check_account_requirement(ticker,stock_info),
-        "daily_loss": check_daily_loss_limit(),
-        "max_pos":    check_max_positions(active_signals),
-        "margin":     check_margin_usage(active_signals),
+        "market":       check_market_circuit_breaker(market_overview),
+        "foreign":      check_foreign_flow(market_overview),
+        "margin_chg":   check_margin_change(market_overview),
+        "spike":        check_price_spike(ticker,tf_data),
+        "account":      check_account_requirement(ticker,stock_info),
+        "daily_loss":   check_daily_loss_limit(),
+        "max_pos":      check_max_positions(active_signals),
+        "margin":       check_margin_usage(active_signals),
     }
     warnings=[]; blockers=[]; score_adj=0
     if checks["market"].get("level")=="extreme":  blockers.append(checks["market"]["message"])
@@ -120,6 +135,7 @@ def run_all_checks(ticker, stock_info, tf_data, market_overview, active_signals=
     if checks["spike"].get("spike"):              blockers.append(checks["spike"]["message"])
     if checks["market"].get("level")=="high":     warnings.append(checks["market"]["message"]); score_adj-=10
     if checks["foreign"].get("level")=="warning": warnings.append(checks["foreign"]["message"]); score_adj-=8
+    if checks["margin_chg"].get("triggered"):     warnings.append(checks["margin_chg"]["message"]); score_adj-=8
     if not checks["account"].get("sufficient"):   warnings.append(checks["account"]["message"]); score_adj-=20
     if checks["margin"].get("warning"):           warnings.append(checks["margin"]["message"]); score_adj-=5
     return {"status":"blocked" if blockers else "warning" if warnings else "clear",

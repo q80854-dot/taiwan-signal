@@ -611,6 +611,31 @@ class TWScanEngine:
                 logger.info(f"_filter_and_rank: 排除 {removed} 檔已有未平倉訊號的重複標的（見上方新增說明），剩 {len(signals)} 檔")
         if market_overview.get("market_status") == "stop":
             signals = [s for s in signals if s["direction"] == "sell"]
+
+        # ★ 新增：2026-09-24——使用者要求波段訊號不能只看技術面，個股基本面
+        # （月營收年增率）明顯衰退時要硬性排除，不管技術分數多高。放在同產業
+        # 去重「之前」執行，避免一檔基本面地雷因為技術分數最高、先佔走該產業
+        # 的去重名額，把真正該入選的同產業其他標的擠掉。找不到營收資料的標的
+        # （新股、資料源當天失敗）一律不擋，理由見 fundamentals.py 說明。
+        try:
+            from fundamentals import fetch_monthly_revenue_map, check_fundamental_hard_filter
+            revenue_map = fetch_monthly_revenue_map()
+            before = len(signals)
+            fundamentally_blocked = []
+            kept = []
+            for sig in signals:
+                chk = check_fundamental_hard_filter(sig.get("code", ""), revenue_map)
+                if chk["blocked"]:
+                    fundamentally_blocked.append(f"{sig.get('ticker')}（{chk['reason']}）")
+                else:
+                    kept.append(sig)
+            signals = kept
+            if fundamentally_blocked:
+                logger.info(f"_filter_and_rank: 基本面硬性過濾排除 {len(fundamentally_blocked)} 檔：{fundamentally_blocked}")
+            logger.info(f"_filter_and_rank: 基本面過濾後剩 {len(signals)}/{before} 檔")
+        except Exception as e:
+            logger.warning(f"_filter_and_rank: 基本面過濾失敗（不影響本次掃描，本次跳過基本面過濾）: {e}")
+
         # 同產業去重（只留最高分）
         # ★ 修正：2026-08-30——今天稽核程式碼時抓到一個還沒真的發生過、但影響非常大的
         #   潛在 bug：sig["sector"] 來自 stock_universe.py 的 _fetch_sector_info()，那個

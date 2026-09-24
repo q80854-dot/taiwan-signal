@@ -491,40 +491,124 @@ def _effective_ohlcv_ttl() -> int:
     # 日則維持原本 1 小時，避免非交易時段做沒必要的重複外部 API 請求。
     return 300 if _tw_trading_hours_now() else SYSTEM["cache_ttl_sec"]
 
+# ★ 新增：2026-09-24——見 state_store.py 的 ohlcv_bars 表說明。fetch_ohlcv()
+# 原本每次都對 yfinance 要整段歷史（daily 1年/weekly 5年/hourly 90天），
+# 是先前稽核記錄過的最大速度瓶頸（單次全市場掃描約7分鐘）。這裡改成兩層：
+# 持久化的 Postgres 快取（跨部署/跨process存活）當底層資料，只在快取缺資料
+# 或缺口太大（例如系統停機很久沒更新）時才整段重抓，平常只需要對 yfinance
+# 要「快取最新日期之後」的新增K棒（通常1~2根），下載量跟等待時間大幅縮小。
+# 模組層級的 _cache（TTL 5分鐘~1小時）維持在最外層，同一個 process 內短時間
+# 重複呼叫（例如同一次掃描不同函式都要同一檔的日K）仍然直接命中記憶體、
+# 連資料庫都不用查。
+_OHLCV_MAX_GAP_DAYS = {"daily": 30, "weekly": 90, "hourly": 10}
+
+def _yf_rows_to_bars(h, tf_key: str = "daily") -> List[Dict]:
+    # ★ 修正：2026-09-24——hourly 時框如果跟 daily/weekly 一樣只存日期（不含
+    # 時間），同一天內好幾根小時K會全部落在同一個 bar_date，寫進
+    # ohlcv_bars（PRIMARY KEY 是 ticker+tf_key+bar_date）就會互相覆蓋掉，
+    # 只留當天最後寫入的那一根，等於持久化之後小時線的盤中細節全部消失。
+    # 原本純記憶體版本沒有這個問題（dates 只是顯示用的標籤，closes/highs/lows
+    # 等數值陣列本身仍保留每一根），但這裡要拿 bar_date 當資料庫主鍵，必須
+    # 用足以區分同一天內每一根K棒的字串——hourly 用完整時間戳記，
+    # daily/weekly 維持只存日期（跟原本行為一致，也符合這兩種週期本來就是
+    # 一天最多一根的特性）。
+    use_time = tf_key == "hourly"
+    rows = []
+    for d, row in h.iterrows():
+        try:
+            o,hi,lo,c,v = float(row["Open"]),float(row["High"]),float(row["Low"]),float(row["Close"]),float(row["Volume"])
+        except Exception:
+            continue
+        if c <= 0:
+            continue
+        date_str = d.strftime("%Y-%m-%d %H:%M") if use_time else str(d.date())
+        rows.append({"date": date_str, "open": round(o,2), "high": round(hi,2),
+                      "low": round(lo,2), "close": round(c,2), "volume": int(v//1000)})
+    return rows
+
+def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
+    from state_store import store
+    tf = TIMEFRAMES.get(tf_key, TIMEFRAMES["daily"])
+    last_date = None
+    try:
+        last_date = store.get_ohlcv_last_date(ticker, tf_key)
+    except Exception as e:
+        logger.warning(f"_fetch_ohlcv_incremental {ticker}/{tf_key}: 讀取快取最新日期失敗: {e}")
+
+    # ★ 修正：2026-09-24——hourly 快取的 bar_date 現在含時間（"%Y-%m-%d %H:%M"，
+    # 見 _yf_rows_to_bars 說明），跟 daily/weekly 純日期格式不同，這裡取日期
+    # 部分來算距今天數/當作 yfinance start= 參數，兩種時框都能正確解析。
+    last_date_only = (last_date.split(" ")[0] if last_date else None)
+
+    need_full = last_date is None
+    if not need_full:
+        try:
+            gap_days = (datetime.now() - datetime.strptime(last_date_only, "%Y-%m-%d")).days
+            if gap_days > _OHLCV_MAX_GAP_DAYS.get(tf_key, 30):
+                need_full = True
+        except Exception:
+            need_full = True
+
+    if not YFINANCE_OK:
+        # 沒有 yfinance 可用時，退而求其次直接用資料庫裡現有的快取（可能是舊的，
+        # 總比完全沒資料好；真正的新鮮度問題會反映在 get_ohlcv_cache_stats()）。
+        need_full = False
+        if last_date is None:
+            return None
+    else:
+        try:
+            if need_full:
+                h = yf.Ticker(ticker).history(period=tf["period"], interval=tf["interval"], auto_adjust=True)
+            else:
+                # start 用「快取最後一天」當天（含）重抓，蓋掉可能因為盤中提早
+                # 抓取而不是定案收盤價/收盤K棒的那部分，其餘全部沿用快取，
+                # 不用重抓整段歷史。
+                h = yf.Ticker(ticker).history(start=last_date_only, interval=tf["interval"], auto_adjust=True)
+            if h is not None and not h.empty:
+                new_bars = _yf_rows_to_bars(h, tf_key)
+                if new_bars:
+                    store.upsert_ohlcv_bars(ticker, tf_key, new_bars)
+            elif need_full:
+                return None  # 整段重抓卻拿不到任何資料，這檔真的沒資料可用
+        except Exception as e:
+            logger.warning(f"_fetch_ohlcv_incremental {ticker}/{tf_key}: yfinance 抓取失敗（改用快取既有資料）: {e}")
+            if last_date is None:
+                return None
+
+    cached = store.get_cached_ohlcv_bars(ticker, tf_key, limit=tf["bars"] + 20)
+    cached = [b for b in cached if (b.get("volume") or 0) > 0][-tf["bars"]:]
+    if len(cached) < 20:
+        return None
+    closes  = [b["close"]  for b in cached]
+    opens   = [b["open"]   for b in cached]
+    highs   = [b["high"]   for b in cached]
+    lows    = [b["low"]    for b in cached]
+    volumes = [b["volume"] for b in cached]
+    dates   = [b["bar_date"] if "bar_date" in b else b["date"] for b in cached]
+    if not closes or closes[-1] <= 0:
+        return None
+    return {
+        "ticker": ticker, "tf_key": tf_key, "label": tf["label"],
+        "closes": closes, "opens": opens, "highs": highs, "lows": lows,
+        "volumes": volumes, "dates": dates,
+        "current_price": closes[-1],
+        "prev_close":    closes[-2] if len(closes)>1 else closes[-1],
+        "change_pct":    round((closes[-1]-closes[-2])/closes[-2]*100,2) if len(closes)>1 else 0,
+        "bar_count":     len(closes), "source": "ohlcv_cache",
+    }
+
 def fetch_ohlcv(ticker: str, tf_key: str = "daily") -> Optional[Dict]:
     cache_k = f"ohlcv_{ticker}_{tf_key}"
     if c := _cache_get(cache_k, _effective_ohlcv_ttl()):
         return c
-    if not YFINANCE_OK:
-        return None
-    tf = TIMEFRAMES.get(tf_key, TIMEFRAMES["daily"])
     try:
-        h = yf.Ticker(ticker).history(period=tf["period"], interval=tf["interval"], auto_adjust=True)
-        if h is None or h.empty or len(h) < 20:
-            return None
-        h = h[h["Volume"] > 0].tail(tf["bars"])
-        if len(h) < 20:
-            return None
-        closes  = [round(float(x),2) for x in h["Close"]]
-        opens   = [round(float(x),2) for x in h["Open"]]
-        highs   = [round(float(x),2) for x in h["High"]]
-        lows    = [round(float(x),2) for x in h["Low"]]
-        volumes = [int(x//1000) for x in h["Volume"]]
-        dates   = [str(d.date()) for d in h.index]
-        if not closes or closes[-1] <= 0:
-            return None
-        return _cache_set(cache_k, {
-            "ticker": ticker, "tf_key": tf_key, "label": tf["label"],
-            "closes": closes, "opens": opens, "highs": highs, "lows": lows,
-            "volumes": volumes, "dates": dates,
-            "current_price": closes[-1],
-            "prev_close":    closes[-2] if len(closes)>1 else closes[-1],
-            "change_pct":    round((closes[-1]-closes[-2])/closes[-2]*100,2) if len(closes)>1 else 0,
-            "bar_count":     len(closes), "source": "yfinance",
-        })
+        result = _fetch_ohlcv_incremental(ticker, tf_key)
     except Exception as e:
         logger.warning(f"fetch_ohlcv {ticker} {tf_key}: {e}")
         return None
+    if not result:
+        return None
+    return _cache_set(cache_k, result)
 
 def fetch_all_timeframes(ticker: str) -> Optional[Dict]:
     result = {}
@@ -632,6 +716,68 @@ def fetch_foreign_total_flow() -> Dict:
 
 
 # ════════════════════════════════════════════════
+# 融資餘額增減（CIRCUIT_BREAKER.margin_change_warning 熔斷指標）
+# ════════════════════════════════════════════════
+# ★ 新增：2026-09-24——使用者要求強化現有總經指標的權重。稽核發現
+# config.CIRCUIT_BREAKER["margin_change_warning"] 這個門檻值從一開始就定義
+# 在設定檔裡，但整個專案裡從來沒有任何資料抓取或檢查函式真正用到它——是一個
+# 「設計了、卻從未接線」的熔斷開關，等於一直沒有真正發揮作用。這裡補上真正
+# 的資料來源：TWSE 官方「融資融券餘額」統計，抓全市場融資餘額的日增減幅度，
+# 融資餘額急縮通常代表市場情緒轉弱/斷頭賣壓，是波段操作常用的總經觀察指標
+# 之一，接進 fetch_market_overview() 讓 risk_manager 可以真正拿到資料做判斷。
+def fetch_margin_change() -> Dict:
+    if c := _cache_get("margin_change", 3600): return c
+    try:
+        today = datetime.now().strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={today}&selectType=ALL"
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200: return {}
+        data = r.json()
+        if data.get("stat") != "OK": return {}
+        # 這個端點的彙總表（"creditList" 或表格最後一列）欄位包含「融資餘額」
+        # 今日/前日數字，不同年度版型欄位順序可能微調，這裡用欄位名稱關鍵字
+        # （而不是寫死的欄位索引）尋找，降低未來版型變動就整個失效的風險。
+        tables = data.get("creditList") or data.get("data") or []
+        fields = data.get("fields", [])
+        today_bal, prev_bal = None, None
+        if fields and tables:
+            def _find_col(keywords):
+                for i, f in enumerate(fields):
+                    if all(k in f for k in keywords):
+                        return i
+                return None
+            idx_today = _find_col(["融資", "今日", "餘額"]) or _find_col(["融資餘額"])
+            row = tables[-1] if tables else None
+            if row and idx_today is not None and idx_today < len(row):
+                try:
+                    today_bal = int(str(row[idx_today]).replace(",", ""))
+                except Exception:
+                    today_bal = None
+        if today_bal is None:
+            return {}
+        # ★ 修正：2026-09-24——「昨日餘額」原本打算存在 data_fetcher 模組層級的
+        # 記憶體內 _cache，但這個字典只存在單一 process 的生命週期內，Render
+        # 部署/OOM重啟（本專案已發生過多次，見 job_pre_scan_restart 等處說明）
+        # 都會讓它歸零，重啟後第一次算出來的漲跌幅會是假的0%，不是真的沒變化。
+        # 改存進 state_store 的 meta 表（跟其他持久化狀態同一個 Postgres），
+        # 才能跨部署/跨process正確算出「相對於上一個交易日」的真實增減幅度。
+        from state_store import store
+        date_str = data.get("date", today)
+        hist = store.get_meta("margin_balance_history", [])
+        prev_entry = next((h for h in reversed(hist) if h.get("date") != date_str), None)
+        chg_pct = round((today_bal - prev_entry["balance"]) / prev_entry["balance"] * 100, 2) if prev_entry else 0
+        hist = [h for h in hist if h.get("date") != date_str] + [{"date": date_str, "balance": today_bal}]
+        store.set_meta("margin_balance_history", hist[-10:])
+        return _cache_set("margin_change", {
+            "balance": today_bal, "chg_pct": chg_pct,
+            "signal": "warning" if chg_pct <= CB.get("margin_change_warning", -5.0) else "normal",
+        })
+    except Exception as e:
+        logger.warning(f"margin_change: {e}")
+        return {}
+
+
+# ════════════════════════════════════════════════
 # 市場總覽
 # ════════════════════════════════════════════════
 def fetch_market_overview() -> Dict:
@@ -640,6 +786,10 @@ def fetch_market_overview() -> Dict:
     overview["index"]         = fetch_market_index()
     overview["foreign"]       = fetch_foreign_total_flow()
     overview["institutional"] = fetch_institutional_flow()
+    # ★ 新增：2026-09-24——見 fetch_margin_change() 說明，把先前「定義了卻從
+    # 沒接線」的融資餘額增減熔斷指標，正式接進大盤情緒分數，跟大盤漲跌/VIX/
+    # 外資同一層級參與評分，而不是只停在 config 裡的一個死數字。
+    overview["margin"]        = fetch_margin_change()
     score = 50
     twii_chg = overview["index"].get("twii",{}).get("chg",0)
     score += 15 if twii_chg>1.5 else 8 if twii_chg>0.5 else 3 if twii_chg>0 else -15 if twii_chg<-1.5 else -8 if twii_chg<-0.5 else -3
@@ -647,6 +797,8 @@ def fetch_market_overview() -> Dict:
     score += 10 if vix_p<15 else 5 if vix_p<20 else -15 if vix_p>30 else -8 if vix_p>25 else 0
     fn = overview.get("foreign",{}).get("net_buy_twd",0)
     score += 15 if fn>50e8 else 8 if fn>10e8 else -15 if fn<-50e8 else -8 if fn<-10e8 else 0
+    margin_chg = overview.get("margin",{}).get("chg_pct", 0)
+    score += -12 if margin_chg <= CB.get("margin_change_warning", -5.0) else -5 if margin_chg <= -3 else 3 if margin_chg >= 3 else 0
     score = max(0, min(100, score))
     overview["sentiment_score"] = score
     overview["sentiment_zh"]    = "強烈看多" if score>=80 else "偏多" if score>=60 else "中性" if score>=40 else "偏空" if score>=20 else "強烈看空"
@@ -672,3 +824,85 @@ def get_market_session() -> Dict:
 
 def get_fubon_connection_status() -> Dict:
     return {"sdk_available":False,"connected":False,"api_key_set":bool(FUBON_API_KEY),"is_trading":_is_trading_session()}
+
+
+# ════════════════════════════════════════════════
+# 早盤前K線快取增量更新 + 完整性檢查
+# ════════════════════════════════════════════════
+# ★ 新增：2026-09-24——使用者要求「早盤還沒開始之前先掃描並比對是否和歷史
+# K線圖都正確，以後再去做其他動作」。這裡在每天開盤前（見 app.py
+# job_premarket_cache_refresh，排在 08:00，早於 09:00 開盤且晚於前一天
+# 收盤資料定案的時間）主動把全市場的K線快取補到最新，並對其中一小部分抽樣
+# 用「強制重抓、跳過快取」的方式再驗證一次，確保快取沒有壞掉/卡在舊資料——
+# 如果早盤前就先把這件事做完，16:30 的正式掃描就能直接吃現成的快取，
+# 不用再對 yfinance 重新下載，這是「掃描速度」跟「準確度」同時要顧到的原因：
+# 光是增量更新不夠，還要有一個獨立的驗證步驟確認更新真的成功、資料真的對。
+def premarket_cache_refresh(sample_validate: int = 20) -> Dict:
+    from stock_universe import build_universe
+    import concurrent.futures
+
+    universe = build_universe()
+    tickers = [s["ticker"] for s in universe]
+    total = len(tickers)
+    logger.info(f"premarket_cache_refresh: 開始更新 {total} 檔的K線快取")
+
+    success, failed = 0, []
+    _CONCURRENCY = 4  # 沿用 scanner.py 的保守並行數，避免早盤前就把 Render 512MB 方案的記憶體/外部API額度用光
+    for i in range(0, total, 50):
+        batch = tickers[i:i+50]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_CONCURRENCY) as pool:
+            futures = {pool.submit(fetch_ohlcv, t, "daily"): t for t in batch}
+            for fut in concurrent.futures.as_completed(futures):
+                t = futures[fut]
+                try:
+                    if fut.result():
+                        success += 1
+                    else:
+                        failed.append(t)
+                except Exception as e:
+                    failed.append(t)
+                    logger.warning(f"premarket_cache_refresh: {t} 更新失敗: {e}")
+        time.sleep(1)
+
+    # 抽樣完整性驗證：對已更新成功的標的隨機抽一小部分，跳過快取直接對
+    # yfinance 重抓最近5天，比對「快取裡的最新收盤價」是否跟「這次重抓到的
+    # 最新收盤價」一致，藉此驗證快取沒有卡在舊資料、或被寫壞。
+    import random
+    from state_store import store
+    validated_ok = validated_ticker_count = 0
+    mismatches = []
+    sample_pool = [t for t in tickers if t not in failed]
+    sample = random.sample(sample_pool, min(sample_validate, len(sample_pool))) if sample_pool else []
+    for t in sample:
+        try:
+            cached = store.get_cached_ohlcv_bars(t, "daily", limit=1)
+            if not cached:
+                continue
+            cached_close = cached[-1]["close"]
+            if not YFINANCE_OK:
+                continue
+            h = yf.Ticker(t).history(period="5d", interval="1d", auto_adjust=True)
+            if h is None or h.empty:
+                continue
+            fresh_close = round(float(h["Close"].iloc[-1]), 2)
+            validated_ticker_count += 1
+            # 千分之一以內的差異視為浮點數/資料源精度落差，不當成不一致
+            if abs(fresh_close - cached_close) / max(fresh_close, 0.01) < 0.001:
+                validated_ok += 1
+            else:
+                mismatches.append({"ticker": t, "cached": cached_close, "fresh": fresh_close})
+        except Exception as e:
+            logger.warning(f"premarket_cache_refresh 驗證 {t}: {e}")
+
+    stats = {
+        "total": total, "success": success, "failed_count": len(failed),
+        "failed_sample": failed[:20],
+        "validated": validated_ticker_count, "validated_ok": validated_ok,
+        "mismatches": mismatches,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    logger.info(
+        f"premarket_cache_refresh: 完成，成功 {success}/{total}（失敗 {len(failed)}），"
+        f"抽樣驗證 {validated_ticker_count} 檔，一致 {validated_ok} 檔，不一致 {len(mismatches)} 檔"
+    )
+    return stats

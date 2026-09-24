@@ -288,6 +288,30 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 if fn<-200: inst_score_bonus+=5; inst_signal=f"外資賣超 {fn:+,}張"
                 elif fn>200: inst_score_bonus-=5; inst_signal=f"外資買超 {fn:+,}張 ⚠️"
         score=min(100,score+inst_score_bonus)
+        # ★ 新增：2026-09-24——使用者要求強化現有總經指標的權重。稽核發現
+        # risk_manager.run_all_checks() 雖然定義了完整的 score_adj 邏輯（大盤
+        # 熔斷/外資賣超/融資急縮都會扣分），但整個專案裡從來沒有任何地方真正
+        # 呼叫它——是另一個「設計了、卻沒接線」的機制（跟 margin_change_warning
+        # 同一類問題）。這裡直接把大盤層級的總經檢查（跟持倉數量/帳戶餘額無關、
+        # 每檔訊號都適用的那幾項）接進評分，讓總經風險真正反映在訊號分數上，
+        # 而不是只停在 risk_manager.py 裡一段從未執行過的程式碼。
+        try:
+            from risk_manager import check_market_circuit_breaker, check_foreign_flow, check_margin_change
+            macro_adj = 0; macro_notes = []
+            mc = check_market_circuit_breaker(market_overview)
+            if mc.get("level") == "high":
+                macro_adj -= 10; macro_notes.append(mc["message"])
+            fc = check_foreign_flow(market_overview)
+            if fc.get("level") == "warning":
+                macro_adj -= 8; macro_notes.append(fc["message"])
+            gc_ = check_margin_change(market_overview)
+            if gc_.get("triggered"):
+                macro_adj -= 8; macro_notes.append(gc_["message"])
+            if macro_adj:
+                score = max(0, score + macro_adj)
+                logger.info(f"[{ticker}] 總經指標評分調整 {macro_adj:+d}：{'；'.join(macro_notes)}")
+        except Exception as e:
+            logger.warning(f"[{ticker}] 總經指標評分調整失敗（不影響本次訊號，維持原始分數）: {e}")
         if score<THRESH["min_score"]: return None
         atr_info=daily_ind.get("atr",{}); atr=atr_info.get("value",price*0.02) or price*0.02
         sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)

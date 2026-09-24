@@ -37,6 +37,27 @@ def job_morning_brief():
         send_morning_brief(fetch_market_overview())
     except Exception as e: logger.error(f"job_morning_brief: {e}")
 
+def job_premarket_cache_refresh():
+    # ★ 新增：2026-09-24——見 data_fetcher.premarket_cache_refresh() 說明。
+    # 排在 08:00（早於 09:00 開盤、晚於前一天收盤資料在 yfinance 定案的時間），
+    # 讓全市場K線快取在盤前就補到最新並驗證過一次，16:30 正式掃描時才能真正
+    # 吃到現成快取、不用重新對外部 API 下載整段歷史。
+    logger.info("⏰ 早盤前K線快取更新與完整性檢查")
+    try:
+        from data_fetcher import premarket_cache_refresh
+        from telegram_bot import send_alert
+        stats = premarket_cache_refresh()
+        msg = (f"🌅 早盤前資料檢查完成\n"
+               f"K線快取更新：{stats['success']}/{stats['total']} 檔成功"
+               + (f"（{stats['failed_count']} 檔失敗）" if stats['failed_count'] else "") + "\n"
+               f"抽樣完整性驗證：{stats['validated']} 檔，{stats['validated_ok']} 檔一致")
+        if stats["mismatches"]:
+            msg += f"\n⚠️ {len(stats['mismatches'])} 檔快取與最新資料不一致，已記錄於系統日誌，今日訊號請留意：" \
+                   + "、".join(m["ticker"] for m in stats["mismatches"][:10])
+        send_alert(msg, "warning" if stats["mismatches"] else "info")
+    except Exception as e:
+        logger.error(f"job_premarket_cache_refresh: {e}", exc_info=True)
+
 def job_daily_scan():
     logger.info("⏰ 全市場掃描")
     try:
@@ -133,6 +154,10 @@ def job_pre_scan_restart():
 
 def setup_scheduler():
     if not SCHEDULER_OK: return
+    # ★ 新增：2026-09-24——早盤前K線快取更新+完整性檢查，見 job_premarket_cache_refresh()
+    # 說明。排在 08:00，早於 08:45 的早盤摘要與 09:00 開盤，晚於前一天收盤資料在
+    # yfinance 定案的時間。
+    scheduler.add_job(job_premarket_cache_refresh, CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="premarket_cache_refresh", replace_existing=True)
     scheduler.add_job(job_morning_brief,    CronTrigger(hour=8,  minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="morning_brief",    replace_existing=True)
     # ★ 新增：2026-09-16——盤中安全網，查已追蹤訊號是否到價，見 job_intraday_check() 說明。
     # ★ 調整：2026-09-19——使用者反映盤中只查4次（10/11/12/13點整）太少、涵蓋不到
@@ -386,6 +411,13 @@ def diagnostics():
         telegram_status["subscribers"] = get_subscriber_counts()
     except Exception as e:
         telegram_status["subscribers"] = f"❌ 讀取失敗：{e}"
+    # ★ 新增：2026-09-24——讓K線持久化快取「有沒有真的在運作」可以直接從
+    # 網站查證，不用翻資料庫。見 state_store.get_ohlcv_cache_stats()。
+    try:
+        from state_store import store
+        ohlcv_cache_status = store.get_ohlcv_cache_stats()
+    except Exception as e:
+        ohlcv_cache_status = {"error": str(e)}
     return jsonify({
         "python":           sys.version[:20],
         "yfinance":         chk("yfinance"),
@@ -395,6 +427,7 @@ def diagnostics():
         "telegram_token":   bool(TELEGRAM_BOT_TOKEN),
         **telegram_status,
         "fugle_api_key":    fugle_status,
+        "ohlcv_cache":      ohlcv_cache_status,
         "template_dir":     TEMPLATE_DIR,
         "template_exists":  os.path.exists(os.path.join(TEMPLATE_DIR, "dashboard.html")),
         "scheduler_running":SCHEDULER_OK and scheduler.running if SCHEDULER_OK else False,
