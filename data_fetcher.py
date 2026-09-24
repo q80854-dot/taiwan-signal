@@ -727,40 +727,46 @@ def fetch_foreign_total_flow() -> Dict:
 # 之一，接進 fetch_market_overview() 讓 risk_manager 可以真正拿到資料做判斷。
 def _parse_margin_balance_response(data: Dict):
     """回傳 (prev_bal, today_bal, date_str) 或 None（解析不到）。
-    ★ 修正：2026-09-24——這次為了用「真實資料」回測融資餘額指標，用 WebFetch
-    實際查證了 MI_MARGN 的真實回應結構：fields=["項目","買進","賣出",
-    "現金(券)償還","前日餘額","今日餘額"]（融資資訊放在資料列的「項目」欄位
-    值是「融資金額(仟元)」，不在表頭欄位名稱裡），發現原本的
-    _find_col(["融資","今日","餘額"]) 是在「表頭」裡找「融資」兩個字，但表頭
-    本身根本不含「融資」，這個比對永遠找不到、idx_today 永遠是 None——也就是
-    說這個函式自從被接上 risk_manager 以來，實際上一直回傳空字典，
-    CIRCUIT_BREAKER["margin_change_warning"] 這個熔斷指標從未真正抓到過資料。
-    這裡用查證過的真實欄位結構重寫比對邏輯，順便發現當日回應本身就同時
-    附「前日餘額」跟「今日餘額」，不需要再跨次呼叫拼接歷史就能算出當天漲跌%。"""
-    fields = data.get("fields", [])
-    tables = data.get("creditList") or data.get("data") or []
-    if not fields or not tables:
-        return None
-    def _find_col(keywords):
-        for i, f in enumerate(fields):
-            if all(k in f for k in keywords):
-                return i
-        return None
-    idx_today = _find_col(["今日餘額"]) or _find_col(["今日", "餘額"])
-    idx_prev  = _find_col(["前日餘額"]) or _find_col(["前日", "餘額"])
-    if idx_today is None:
-        return None
-    row = next((rw for rw in tables if len(rw) > 0 and "融資金額" in str(rw[0])), None)
-    if not row or idx_today >= len(row):
+    ★ 二次修正：2026-09-24——第一次修正時用的是 WebFetch「摘要」回覆的錯誤
+    結構假設（誤以為頂層直接有 fields/creditList），部署後從 production log
+    證實 data.get("fields")/data.get("creditList") 在真實回應裡都是
+    None/[]，完全沒抓到資料。改用明確要求「逐字列出原始 raw JSON」的
+    WebFetch 查證後，確認真正結構其實是巢狀的：
+    頂層只有 stat / date / tables（tables 是陣列，每個元素才各自有自己的
+    fields 跟 data）。第一個 table（標題含「信用交易統計」）的 data 裡，
+    有一列第一欄是「融資金額(仟元)」，欄位依序對應
+    fields=["項目","買進","賣出","現金(券)償還","前日餘額","今日餘額"]，
+    也就是 idx 4=前日餘額、idx 5=今日餘額。這裡改成正確地走訪
+    data["tables"]，在各表自己的 fields/data 裡找目標列。"""
+    tables = data.get("tables") or []
+    if not tables:
         return None
     def _pi(v):
         try: return int(str(v).replace(",", ""))
         except Exception: return None
-    today_bal = _pi(row[idx_today])
-    prev_bal = _pi(row[idx_prev]) if idx_prev is not None and idx_prev < len(row) else None
-    if today_bal is None:
-        return None
-    return prev_bal, today_bal, data.get("date", "")
+    for tbl in tables:
+        fields = tbl.get("fields") or []
+        rows = tbl.get("data") or []
+        if not fields or not rows:
+            continue
+        def _find_col(keywords, _fields=fields):
+            for i, f in enumerate(_fields):
+                if all(k in f for k in keywords):
+                    return i
+            return None
+        idx_today = _find_col(["今日餘額"])
+        idx_prev  = _find_col(["前日餘額"])
+        if idx_today is None:
+            continue
+        row = next((rw for rw in rows if len(rw) > 0 and "融資金額" in str(rw[0])), None)
+        if not row or idx_today >= len(row):
+            continue
+        today_bal = _pi(row[idx_today])
+        prev_bal = _pi(row[idx_prev]) if idx_prev is not None and idx_prev < len(row) else None
+        if today_bal is None:
+            continue
+        return prev_bal, today_bal, data.get("date", "")
+    return None
 
 
 def fetch_margin_change() -> Dict:
@@ -778,8 +784,9 @@ def fetch_margin_change() -> Dict:
             return {}
         parsed = _parse_margin_balance_response(data)
         if not parsed:
-            logger.warning(f"margin_change: 解析不到資料，fields={data.get('fields')}，"
-                            f"creditList前2列={((data.get('creditList') or data.get('data') or [])[:2])}")
+            _tables = data.get("tables") or []
+            logger.warning(f"margin_change: 解析不到資料，tables數={len(_tables)}，"
+                            f"各table標題={[t.get('title') for t in _tables]}")
             return {}
         prev_bal, today_bal, date_str = parsed
         chg_pct = round((today_bal - prev_bal) / prev_bal * 100, 2) if prev_bal else 0
@@ -847,8 +854,9 @@ def backfill_margin_history(days_back: int = 400, progress_cb=None) -> Dict:
                             logger.warning(f"backfill_margin_history {date_dash}: 解析成功但沒有前日餘額(prev_bal)可算漲跌%，跳過")
                     elif diag_logged < 3:
                         diag_logged += 1
+                        _tables = data.get("tables") or []
                         logger.warning(f"backfill_margin_history {date_dash}: stat=OK但解析不到資料，"
-                                        f"fields={data.get('fields')}，資料列前2={((data.get('creditList') or data.get('data') or [])[:2])}")
+                                        f"tables數={len(_tables)}，各table標題={[t.get('title') for t in _tables]}")
                 elif diag_logged < 3:
                     diag_logged += 1
                     logger.warning(f"backfill_margin_history {date_dash}: stat={data.get('stat')!r}（可能是假日，也可能是被擋，先記錄前3筆方便判斷）")
