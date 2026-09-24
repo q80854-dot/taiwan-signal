@@ -5,10 +5,73 @@ backtester.py — 台股波段版 v1.0
 """
 import logging, time, math, bisect
 from datetime import datetime, timezone
-from typing import Dict, List
-from config import ACCOUNT_BALANCE_TWD, SIGNAL_THRESHOLDS as THRESH, COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION
+from typing import Dict, List, Optional
+from config import ACCOUNT_BALANCE_TWD, SIGNAL_THRESHOLDS as THRESH, COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION, CIRCUIT_BREAKER as CB
 
 logger = logging.getLogger(__name__)
+
+# ★ 新增：2026-09-24——使用者要求「用新增的東西（K線快取／總經權重／基本面硬性
+# 過濾）做詳細回測，跟過去策略比較勝率有沒有提升」。老實說清楚這三個新功能能不能
+# 被回測驗證：
+#   1) K線持久化快取（ohlcv_bars）：純基礎設施，不改變任何訊號判斷邏輯，只是把
+#      fetch_ohlcv() 的資料來源從「每次重新下載」換成「本地快取+增量更新」，回測
+#      跟實盤用的是同一份 fetch_ohlcv()，所以這裡的改動對回測結果完全沒有影響
+#      （唯一影響是回測跑起來變快，因為不用每檔都重新下載5年歷史）——不需要、
+#      也沒辦法用「勝率有沒有提升」來驗證這塊，這裡不對它做任何回測。
+#   2) 總經指標加權（signal_engine.generate_signal_tw 裡新增的 macro_adj 區塊）：
+#      backtester.backtest_symbol_tw() 呼叫的是 check_multi_timeframe_tw()，不是
+#      generate_signal_tw()，原本完全繞過這段新邏輯。這裡新增 use_macro_overlay
+#      參數，在回測迴圈裡「補」上這段調整——但只補得起大盤漲跌（TWII）這一項，
+#      因為：
+#        - 外資買賣超的歷史需要逐日呼叫 TWSE T86 API，這個專案自己的文件已經記錄
+#          這組 API 很容易逾時/不穩定，硬要回測成本高、資料品質沒把握，這裡不做。
+#        - 融資餘額的歷史數列是今天才剛開始持久化（state_store 的
+#          margin_balance_history），完全沒有回測用得到的歷史資料，只能往前累積、
+#          之後才有辦法做「事後驗證」，這裡也不做。
+#      所以這個「總經回測」只是「大盤熔斷（TWII）這一項有沒有效」的部分驗證，
+#      不是完整三項總經指標的驗證——這點會誠實告知使用者，不誇大回測涵蓋範圍。
+#   3) 個股基本面月營收硬性過濾：fetch_monthly_revenue_map() 只能拿到「當下這個月」
+#      全市場的營收，系統裡沒有任何歷史月營收時間序列，沒辦法回頭重建「這檔股票在
+#      2024年3月那天，月營收年增率是多少」——這裡沒有辦法回測，只能等之後每個月
+#      系統自己跑出來的資料累積成歷史數列，才有辦法回頭驗證。
+_twii_chg_cache: Dict = {}
+
+def _fetch_twii_change_map() -> Dict[str, float]:
+    """回傳 {日期字串: 當日大盤(TWII)漲跌%}，用來在回測裡重建「這一天，
+    如果 check_market_circuit_breaker() 有被套用，會不會觸發」。用 fetch_ohlcv
+    抓（跟系統其他地方抓K線走同一條路，也會吃到新的 ohlcv_bars 持久化快取），
+    不是另外發明一套抓取邏輯。"""
+    if _twii_chg_cache.get("map") is not None and time.time() - _twii_chg_cache.get("ts", 0) < 3600:
+        return _twii_chg_cache["map"]
+    try:
+        from data_fetcher import fetch_ohlcv
+        data = fetch_ohlcv("^TWII", "daily")
+        if not data or not data.get("dates"):
+            logger.warning("_fetch_twii_change_map: 抓不到 ^TWII 歷史資料，總經回測這部分會跳過（視同大盤正常）")
+            return {}
+        dates = data["dates"]; closes = data["closes"]
+        chg_map = {}
+        for i in range(1, len(closes)):
+            if closes[i-1]:
+                chg_map[dates[i]] = round((closes[i] - closes[i-1]) / closes[i-1] * 100, 2)
+        _twii_chg_cache["map"] = chg_map
+        _twii_chg_cache["ts"] = time.time()
+        return chg_map
+    except Exception as e:
+        logger.warning(f"_fetch_twii_change_map: {e}")
+        return {}
+
+def _macro_score_adj(day_date: Optional[str], twii_chg_map: Dict[str, float]) -> int:
+    """複製 signal_engine.generate_signal_tw() 裡那段 macro_adj 的邏輯，但只用
+    大盤(TWII)這一項（見上方說明：外資、融資這兩項回測沒有可用的歷史資料）。
+    跟 risk_manager.check_market_circuit_breaker() 用同一組門檻(CB)，"high"
+    等級一樣扣10分，維持跟實盤一致的規則，不是另外發明一套。"""
+    if not day_date or day_date not in twii_chg_map:
+        return 0
+    twii_chg = twii_chg_map[day_date]
+    if twii_chg <= CB["twii_drop_caution"]:
+        return -10
+    return 0
 
 # ★ 修正：2026-08-30（第二輪）——跟 signal_engine.calc_position_size() 的修正配套：不再假設倉位
 # 一定是「張」(1000股)的整數倍，改直接吃股數。calc_tw_pnl 的 shares 參數現在就是股數本身，
@@ -20,7 +83,7 @@ def calc_tw_pnl(entry, close, direction, shares):
     sell_tax=close*shares*TAX_RATE_SELL
     return round(gross-buy_fee-sell_fee-sell_tax,0)
 
-def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
+def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False) -> Dict:
     """
     ★ 修正：改為直接呼叫 signal_engine 的 check_multi_timeframe_tw() / calc_stop_loss_tw() /
     calc_take_profits_tw() / calc_position_size()，跟 scanner.py 每天盤後真正在跑的邏輯用同一套，
@@ -71,7 +134,8 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
     except Exception:
         size_cat="中型股"
     n=len(closes); LOOKBACK=130; trades=[]; equity=[balance]; open_trade=None
-    logger.info(f"[BT] {ticker} 開始回測，共 {n} 根日線，size_cat={size_cat}")
+    twii_chg_map=_fetch_twii_change_map() if use_macro_overlay else {}
+    logger.info(f"[BT] {ticker} 開始回測，共 {n} 根日線，size_cat={size_cat}，use_macro_overlay={use_macro_overlay}")
     # ★ 修正：2026-08-30——投資人報告核對數字時發現 Sharpe/最大回撤嚴重失真的根因：equity_curve
     #   原本只在「每次平倉當下」才記一筆，不是每根K棒都記。calc_performance_metrics() 卻把這條
     #   equity_curve 相鄰兩點的報酬率當「逐日報酬」處理、年化時乘上 sqrt(252)——但兩個平倉點之間
@@ -112,6 +176,10 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
             direction=mtf.get("direction","none")
             if direction!="none":
                 score=mtf.get("score",0)
+                if use_macro_overlay:
+                    macro_adj=_macro_score_adj(day_date, twii_chg_map)
+                    if macro_adj:
+                        score=max(0,score+macro_adj)
                 if score>=min_score:
                     adx_val=mtf.get("adx_value",0)
                     if adx_val>=THRESH["min_adx"]:
@@ -176,6 +244,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None) -> Dict:
             "by_direction":by_direction,
             "equity_curve":equity,"trades":trades[-30:],"min_score_used":min_score,
             "grade":metrics.get("sharpe_grade","—"),"dd_grade":metrics.get("dd_grade","—"),
+            "use_macro_overlay":use_macro_overlay,
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
 def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=None) -> Dict:
@@ -241,13 +310,13 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             "stability":round(sum(1 for w in window_results if w["win_rate"]>=50)/max(len(window_results),1)*100,1),
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
-def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
+def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_macro_overlay=False) -> Dict:
     from stock_universe import get_tw50_components
     targets=tickers or get_tw50_components(); results=[]
-    logger.info(f"[BT] 批量回測 {len(targets)} 檔")
+    logger.info(f"[BT] 批量回測 {len(targets)} 檔，use_macro_overlay={use_macro_overlay}")
     for idx,ticker in enumerate(targets):
         try:
-            r=backtest_symbol_tw(ticker,min_score=min_score)
+            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay)
             if "error" not in r: results.append(r)
             # ★ 新增：2026-09-19——這個函式現在會被 app.py 包成背景執行緒跑（50檔
             # 全部跑完可能要幾分鐘），加一個可選的進度回呼，讓外層可以把「跑到第
@@ -277,9 +346,56 @@ def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict
         wl=agg[d]["n_wins"]+agg[d]["n_losses"]
         agg[d]["win_rate"]=round(agg[d]["n_wins"]/max(wl,1)*100,1)
         agg[d]["avg_pnl_twd"]=round(agg[d]["total_pnl_twd"]/max(agg[d]["n_trades"],1),0)
+    n_trades_total=sum(r.get("n_trades",0) for r in results)
+    n_wins_total=sum(r.get("n_wins",0) for r in results)
+    overall_win_rate=round(n_wins_total/max(n_wins_total+sum(r.get("n_losses",0) for r in results),1)*100,1)
+    avg_sharpe=round(sum(r.get("sharpe",0) for r in results)/max(len(results),1),2)
+    avg_return_pct=round(sum(r.get("return_pct",0) for r in results)/max(len(results),1),2)
     return {"total":len(results),"completed_at":datetime.now(timezone.utc).isoformat(),
+            "use_macro_overlay":use_macro_overlay,
+            "overall_win_rate":overall_win_rate,"n_trades_total":n_trades_total,
+            "avg_sharpe":avg_sharpe,"avg_return_pct":avg_return_pct,
             "by_direction_aggregate":agg,
             "leaderboard":[{"ticker":r["ticker"],"win_rate":r["win_rate"],"sharpe":r["sharpe"],
                             "max_drawdown":r["max_drawdown"],"total_pnl_twd":r["total_pnl_twd"],
                             "return_pct":r["return_pct"],"grade":r["grade"],"n_trades":r["n_trades"],
                             "by_direction":r.get("by_direction",{})} for r in results],"details":results}
+
+
+# ★ 新增：2026-09-24——使用者這次明確要求「用新增的東西做詳細回測，跟過去策略
+# 比較勝率/準確度有沒有提升」。這裡把「有沒有大盤總經加權」的兩次全市場回測
+# 包成一個函式，跑兩輪 run_full_backtest_tw()（一輪 use_macro_overlay=False
+# 當作「過去策略」基準，一輪 True 當作「新策略」），回傳兩邊的整體統計＋差異，
+# 讓使用者不用自己手動比對兩次個別的回測結果。
+def run_comparison_backtest_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
+    from stock_universe import get_tw50_components
+    targets=tickers or get_tw50_components()
+    def _cb_baseline(done,total,ticker):
+        if progress_cb: progress_cb(done,total*2,f"[基準/舊策略] {ticker}")
+    def _cb_overlay(done,total,ticker):
+        if progress_cb: progress_cb(total+done,total*2,f"[新策略/總經加權] {ticker}")
+    baseline=run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb_baseline,use_macro_overlay=False)
+    overlay =run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb_overlay, use_macro_overlay=True)
+    def _delta(a,b): return round(b-a,2)
+    comparison={
+        "win_rate_before":baseline.get("overall_win_rate",0),
+        "win_rate_after":overlay.get("overall_win_rate",0),
+        "win_rate_delta":_delta(baseline.get("overall_win_rate",0),overlay.get("overall_win_rate",0)),
+        "n_trades_before":baseline.get("n_trades_total",0),
+        "n_trades_after":overlay.get("n_trades_total",0),
+        "avg_sharpe_before":baseline.get("avg_sharpe",0),
+        "avg_sharpe_after":overlay.get("avg_sharpe",0),
+        "avg_sharpe_delta":_delta(baseline.get("avg_sharpe",0),overlay.get("avg_sharpe",0)),
+        "avg_return_pct_before":baseline.get("avg_return_pct",0),
+        "avg_return_pct_after":overlay.get("avg_return_pct",0),
+        "avg_return_pct_delta":_delta(baseline.get("avg_return_pct",0),overlay.get("avg_return_pct",0)),
+        "by_direction_before":baseline.get("by_direction_aggregate",{}),
+        "by_direction_after":overlay.get("by_direction_aggregate",{}),
+        "scope_note":("此比較僅涵蓋「大盤(TWII)熔斷」這一項總經指標的回測驗證——"
+                       "K線持久化快取是純基礎設施不影響訊號邏輯（不需要回測）；"
+                       "外資買賣超歷史資料需逐日查詢TWSE API、成本高且不穩定，此處未回測；"
+                       "融資餘額與個股月營收歷史數列今天才剛開始累積，系統中尚無可回測的歷史資料，"
+                       "僅能持續累積後續才能做事後驗證。"),
+    }
+    return {"completed_at":datetime.now(timezone.utc).isoformat(),"min_score":min_score,
+            "n_tickers":len(targets),"baseline":baseline,"overlay":overlay,"comparison":comparison}

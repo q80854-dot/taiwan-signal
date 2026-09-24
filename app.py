@@ -334,6 +334,49 @@ def api_backtest_full_result():
         "result": store.get_meta("full_backtest_result", None),
     })
 
+# ★ 新增：2026-09-24——使用者要求「用這次新增的東西（K線快取／總經加權／基本面
+# 硬性過濾）做詳細回測，跟過去策略比較勝率有沒有提升」。沿用上面 full_backtest
+# 的背景執行緒＋state_store meta 輪詢模式（同樣道理：這次要跑兩輪TW50回測，
+# 時間是full_backtest的兩倍，一定會超過gunicorn逾時，不能同步做）。
+_compare_backtest_running = threading.Event()
+
+def _run_compare_backtest_bg(min_score):
+    from state_store import store
+    if _compare_backtest_running.is_set():
+        return
+    _compare_backtest_running.set()
+    try:
+        from backtester import run_comparison_backtest_tw
+        store.set_meta("compare_backtest_progress", {"status": "running", "done": 0, "total": 0, "ticker": ""})
+        def _cb(done, total, ticker):
+            store.set_meta("compare_backtest_progress", {"status": "running", "done": done, "total": total, "ticker": ticker})
+        result = run_comparison_backtest_tw(min_score=min_score, progress_cb=_cb)
+        store.set_meta("compare_backtest_result", result)
+        store.set_meta("compare_backtest_progress", {"status": "done", "done": 1, "total": 1, "ticker": ""})
+        logger.info(f"[BT] 策略比較回測完成：勝率 {result['comparison']['win_rate_before']}% → {result['comparison']['win_rate_after']}%")
+    except Exception as e:
+        logger.error(f"_run_compare_backtest_bg: {e}", exc_info=True)
+        store.set_meta("compare_backtest_progress", {"status": "error", "error": str(e)})
+    finally:
+        _compare_backtest_running.clear()
+
+@app.route("/api/backtest/compare/run", methods=["POST"])
+def api_backtest_compare_run():
+    if _compare_backtest_running.is_set():
+        return jsonify({"status": "already_running"})
+    min_score = request.args.get("min_score", default=65.0, type=float)
+    threading.Thread(target=_run_compare_backtest_bg, args=(min_score,), daemon=True).start()
+    return jsonify({"status": "started", "min_score": min_score,
+                     "note": "TW50成分股，新舊策略各跑一輪（約為 full/run 兩倍時間），用 /api/backtest/compare/result 查進度"})
+
+@app.route("/api/backtest/compare/result")
+def api_backtest_compare_result():
+    from state_store import store
+    return jsonify({
+        "progress": store.get_meta("compare_backtest_progress", {"status": "never_run"}),
+        "result": store.get_meta("compare_backtest_result", None),
+    })
+
 # ── Telegram Webhook ──
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
