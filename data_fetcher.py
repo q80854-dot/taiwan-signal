@@ -769,11 +769,17 @@ def fetch_margin_change() -> Dict:
         today = datetime.now().strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={today}&selectType=ALL"
         r = requests.get(url, headers=HEADERS, timeout=15)
-        if r.status_code != 200: return {}
+        if r.status_code != 200:
+            logger.warning(f"margin_change: HTTP {r.status_code}，body前200字={r.text[:200]!r}")
+            return {}
         data = r.json()
-        if data.get("stat") != "OK": return {}
+        if data.get("stat") != "OK":
+            logger.warning(f"margin_change: stat={data.get('stat')!r}，回應keys={list(data.keys())}")
+            return {}
         parsed = _parse_margin_balance_response(data)
         if not parsed:
+            logger.warning(f"margin_change: 解析不到資料，fields={data.get('fields')}，"
+                            f"creditList前2列={((data.get('creditList') or data.get('data') or [])[:2])}")
             return {}
         prev_bal, today_bal, date_str = parsed
         chg_pct = round((today_bal - prev_bal) / prev_bal * 100, 2) if prev_bal else 0
@@ -813,7 +819,7 @@ def backfill_margin_history(days_back: int = 400, progress_cb=None) -> Dict:
         if d.weekday() < 5:
             dates.append(d)
         d -= timedelta(days=1)
-    total = len(dates); done = 0; fetched = 0; skipped = 0; failed = 0
+    total = len(dates); done = 0; fetched = 0; skipped = 0; failed = 0; diag_logged = 0
     for dt in dates:
         date_ymd = dt.strftime("%Y%m%d"); date_dash = dt.strftime("%Y-%m-%d")
         done += 1
@@ -836,6 +842,20 @@ def backfill_margin_history(days_back: int = 400, progress_cb=None) -> Dict:
                             chg_pct = round((today_bal - prev_bal) / prev_bal * 100, 2)
                             store.upsert_margin_chg_daily(date_dash, today_bal, chg_pct)
                             fetched += 1
+                        elif diag_logged < 3:
+                            diag_logged += 1
+                            logger.warning(f"backfill_margin_history {date_dash}: 解析成功但沒有前日餘額(prev_bal)可算漲跌%，跳過")
+                    elif diag_logged < 3:
+                        diag_logged += 1
+                        logger.warning(f"backfill_margin_history {date_dash}: stat=OK但解析不到資料，"
+                                        f"fields={data.get('fields')}，資料列前2={((data.get('creditList') or data.get('data') or [])[:2])}")
+                elif diag_logged < 3:
+                    diag_logged += 1
+                    logger.warning(f"backfill_margin_history {date_dash}: stat={data.get('stat')!r}（可能是假日，也可能是被擋，先記錄前3筆方便判斷）")
+            else:
+                if diag_logged < 3:
+                    diag_logged += 1
+                    logger.warning(f"backfill_margin_history {date_dash}: HTTP {r.status_code}，body前200字={r.text[:200]!r}")
                 # stat != OK 通常代表當天不是交易日（假日），優雅跳過不算失敗
         except Exception as e:
             failed += 1
