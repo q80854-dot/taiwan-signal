@@ -211,10 +211,15 @@ def _parse_revenue_tables(html_text: str) -> List[Dict]:
     return results
 
 
+_rev_diag_logged = 0  # ★ 新增：2026-09-25——domain改對(mopsov)後不再404，但解析不到
+# 任何資料列，需要一次性看清楚真實HTML長什麼樣才能修解析邏輯。只記錄前2次，
+# 避免洗版log（15個月×2市場=30次呼叫，不需要每次都印）。
+
 def fetch_historical_monthly_revenue_month(west_year: int, month: int, market: str) -> List[Dict]:
     """market: 'sii'(上市) 或 'otc'(上櫃)。回傳 [{ticker,period,yoy_pct,mom_pct,market}]，
     period 格式 'YYYY-MM'（西元年）。抓不到（尚未公告、格式解析不到、被擋）
     一律回傳空清單，優雅降級，不中斷整個回填流程。"""
+    global _rev_diag_logged
     roc_year = west_year - 1911
     period = f"{west_year}-{month:02d}"
     url = _REV_HIST_URL_TMPL.format(market=market, roc_year=roc_year, month=month)
@@ -227,6 +232,27 @@ def fetch_historical_monthly_revenue_month(west_year: int, month: int, market: s
         html_text = r.content.decode("big5", errors="ignore")
         rows = _parse_revenue_tables(html_text)
         if not rows:
+            if _rev_diag_logged < 2:
+                _rev_diag_logged += 1
+                parser = _RevenueTableParser()
+                try:
+                    parser.feed(html_text)
+                except Exception as e:
+                    logger.warning(f"fetch_historical_monthly_revenue_month {period}/{market} 診斷: HTMLParser本身丟例外: {e}")
+                has_code_kw = "公司代號" in html_text
+                has_yoy_kw = "去年同月" in html_text
+                idx = html_text.find("公司代號")
+                snippet = html_text[max(0, idx-50):idx+300] if idx >= 0 else "(找不到「公司代號」這個關鍵字)"
+                first_rows_preview = []
+                for ti, table in enumerate(parser.tables[:5]):
+                    first_rows_preview.append(f"table{ti}(共{len(table)}列): 第0列={table[0] if table else '(空)'}")
+                logger.warning(
+                    f"fetch_historical_monthly_revenue_month {period}/{market} 診斷: "
+                    f"html長度={len(html_text)}，含「公司代號」={has_code_kw}，含「去年同月」={has_yoy_kw}，"
+                    f"parser找到{len(parser.tables)}個table\n"
+                    f"「公司代號」附近原文片段: {snippet!r}\n"
+                    f"各table第0列預覽: {first_rows_preview}"
+                )
             logger.warning(f"fetch_historical_monthly_revenue_month {period}/{market}: 頁面存在但解析不到任何資料列（可能是該月尚未公告或版面變動）")
             return []
         return [{"ticker": row["code"], "period": period, "yoy_pct": row["yoy_pct"],
