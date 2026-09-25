@@ -154,8 +154,16 @@ class _RevenueTableParser(HTMLParser):
         elif tag in ("td", "th"): self._in_cell = True; self._cur_cell = []
 
     def handle_endtag(self, tag):
+        # ★ 修正：2026-09-25——見上方2026-09-25診斷紀錄：真實MOPS頁面偶爾有
+        # 不成對的收尾標籤（例如多一個孤立的</td>，html.parser本身不會驗證
+        # 標籤是否成對），導致這裡收到</td>時self._cur_cell其實已經是None
+        # （不在任何<td>裡面），原本"".join(self._cur_cell)對None呼叫join
+        # 直接丟TypeError("can only join an iterable")，被外層_parse_revenue_
+        #_tables()的except吞掉變成「解析失敗」，白白浪費掉一個原本抓到34個
+        # table、內容完全正常的頁面。這裡加防呆：cur_cell是None時就跳過，不
+        # 讓一個不成對標籤拖垮整頁解析。
         if tag in ("td", "th"):
-            if self._cur_row is not None:
+            if self._cur_row is not None and self._cur_cell is not None:
                 self._cur_row.append("".join(self._cur_cell).strip())
             self._in_cell = False; self._cur_cell = None
         elif tag == "tr":
