@@ -122,7 +122,20 @@ def fetch_monthly_revenue_map() -> Dict[str, Dict]:
 # 存取——用跟下面 _fetch_tpex_monthly_revenue() 同一套 curl_cffi 偽裝瀏覽器
 # TLS 指紋的方式直接向正式站請求（正式站在 Render，跟這裡的 WebFetch 是
 # 完全不同的網路路徑）。
-_REV_HIST_URL_TMPL = "https://mops.twse.com.tw/nas/t21/{market}/t21sc03_{roc_year}_{month}_0.html"
+# ★ 修正：2026-09-25——部署後實測回填15個月×2個市場全部回傳HTTP 404
+# （production log 全部命中，不是「部分月份尚未公告」那種零星404，是
+# 100%命中，代表網址本身就錯）。用WebFetch直接測試 mops.twse.com.tw
+# 這個domain（新版MOPS）的t21路徑，2024/2025年份的月份一樣404，判斷
+# domain本身錯誤；改用WebSearch交叉比對，找到多筆搜尋引擎確實索引到
+# mopsov.twse.com.tw（「舊版」公開資訊觀測站）這個domain下同樣路徑的
+# 真實存在頁面（包含精確比對過的113_1、114_11、115_4等年月，含sii跟
+# otc兩個市場），確認這組歷史月營收彙總表其實是掛在舊版MOPS
+# （mopsov.twse.com.tw）底下，不是新版（mops.twse.com.tw）——這是
+# 先前查證時的判斷錯誤。mopsov.twse.com.tw本身會被WebFetch工具自己的
+# robots.txt政策擋掉（見上方說明，這是WebFetch工具限制，不代表伺服器端
+# 真的拒絕），所以沒辦法用WebFetch直接驗證回應內容，改成部署後直接用正式站
+# 的curl_cffi實測（走完全不同的網路路徑）驗證是否真的能拿到資料。
+_REV_HIST_URL_TMPL = "https://mopsov.twse.com.tw/nas/t21/{market}/t21sc03_{roc_year}_{month}_0.html"
 
 
 class _RevenueTableParser(HTMLParser):
