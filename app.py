@@ -30,6 +30,13 @@ except ImportError:
 
 # ── 排程任務 ──
 def job_morning_brief():
+    # ★ 新增：2026-09-25——同 job_daily_scan 的修正：國定假日當天沒有開盤，
+    # 早盤摘要照常推播會誤導使用者以為今天有交易，見 config.py
+    # TW_MARKET_HOLIDAYS 的說明。
+    from data_fetcher import get_market_session
+    if get_market_session().get("session") == "holiday":
+        logger.info("⏰ 早盤摘要：今天是國定假日休市，跳過本次推播")
+        return
     logger.info("⏰ 早盤摘要")
     try:
         from data_fetcher import fetch_market_overview
@@ -42,6 +49,12 @@ def job_premarket_cache_refresh():
     # 排在 08:00（早於 09:00 開盤、晚於前一天收盤資料在 yfinance 定案的時間），
     # 讓全市場K線快取在盤前就補到最新並驗證過一次，16:30 正式掃描時才能真正
     # 吃到現成快取、不用重新對外部 API 下載整段歷史。
+    # ★ 新增：2026-09-25——國定假日當天沒有新的收盤資料需要補，跳過避免浪費
+    # 資源，見 config.py TW_MARKET_HOLIDAYS 的說明。
+    from data_fetcher import get_market_session
+    if get_market_session().get("session") == "holiday":
+        logger.info("⏰ 早盤前K線快取更新：今天是國定假日休市，跳過本次更新")
+        return
     logger.info("⏰ 早盤前K線快取更新與完整性檢查")
     try:
         from data_fetcher import premarket_cache_refresh
@@ -59,6 +72,19 @@ def job_premarket_cache_refresh():
         logger.error(f"job_premarket_cache_refresh: {e}", exc_info=True)
 
 def job_daily_scan():
+    # ★ 新增：2026-09-25——使用者反映「今天（中秋節）沒開盤」，稽核發現排程
+    # 的 CronTrigger 只設 day_of_week="mon-fri"，平日國定假日一樣會照常觸發
+    # 全市場掃描（見 config.py TW_MARKET_HOLIDAYS、data_fetcher.py
+    # get_market_session() 的說明）。這裡在真正開始掃描前先查一次是否為
+    # 國定假日休市日，是的話直接跳過，不浪費一次全市場掃描的資源，也避免
+    # watchdog 誤以為「今天沒掃描」而發假警報（job_scan_watchdog 只看
+    # last_scan_at 的日期，這裡跳過的話 watchdog 仍可能誤報，需要同步處理，
+    # 見 job_scan_watchdog 的對應修正）。
+    from data_fetcher import get_market_session
+    session = get_market_session()
+    if session.get("session") == "holiday":
+        logger.info(f"⏰ 全市場掃描：今天是國定假日休市（{session.get('taipei_time')}），跳過本次掃描")
+        return
     logger.info("⏰ 全市場掃描")
     try:
         from scanner import scanner
@@ -73,6 +99,13 @@ def job_intraday_check():
     # 詳細原因見 scanner.py TWScanEngine.__init__ 裡的說明。這裡只做輕量的價格
     # 比對+警示（見 check_intraday_price_alerts），不是另一次全市場掃描，資源成本
     # 很小（只查詢目前追蹤中的幾檔，通常 <5 檔）。
+    # ★ 新增：2026-09-25——同 job_daily_scan 的修正，國定假日（平日）要跳過，
+    # 見 config.py TW_MARKET_HOLIDAYS 的說明。
+    from data_fetcher import get_market_session
+    session = get_market_session()
+    if session.get("session") == "holiday":
+        logger.info(f"⏰ 盤中安全網檢查：今天是國定假日休市，跳過本次檢查")
+        return
     logger.info("⏰ 盤中安全網檢查")
     try:
         from scanner import scanner
@@ -98,6 +131,13 @@ def job_scan_watchdog():
     # 註：這個 watchdog 本身仍跑在同一個 process 內，如果整個 process 直接
     # 掛掉（像上次那樣），watchdog 也不會觸發——那種情況要靠 Render
     # healthCheckPath 設定讓平台自動偵測並重啟，兩者互補、缺一不可。
+    # ★ 新增：2026-09-25——同 job_daily_scan 的修正：國定假日當天 job_daily_scan
+    # 會主動跳過（見上方說明），這裡如果不一起跳過，watchdog 會誤以為「今天
+    # 掃描沒跑」而發假警報。用同一份 config.py TW_MARKET_HOLIDAYS 判斷。
+    from data_fetcher import get_market_session
+    if get_market_session().get("session") == "holiday":
+        logger.info("⏰ 排程健康檢查：今天是國定假日休市，今日本就不會有掃描，跳過本次檢查")
+        return
     logger.info("⏰ 排程健康檢查")
     try:
         from scanner import scanner

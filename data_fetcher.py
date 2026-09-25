@@ -21,7 +21,7 @@ except ImportError:
     YFINANCE_OK = False
 
 import os
-from config import TIMEFRAMES, SYSTEM, CIRCUIT_BREAKER as CB
+from config import TIMEFRAMES, SYSTEM, CIRCUIT_BREAKER as CB, TW_MARKET_HOLIDAYS
 
 FUBON_API_KEY = os.getenv("FUBON_API_KEY", "")
 FUGLE_API_KEY = os.getenv("FUGLE_API_KEY", "")
@@ -906,9 +906,27 @@ def fetch_market_overview() -> Dict:
     overview["is_trading"]      = _is_trading_session()
     return _cache_set("market_overview", overview)
 
+# ★ 新增：2026-09-25——見 config.py TW_MARKET_HOLIDAYS 的說明。原本
+# _is_trading_session()/get_market_session() 都只判斷「是不是週末」，平日
+# 國定假日（如中秋、端午）會被誤判成開盤。這裡統一用這個 helper 查詢，
+# 找不到當年度清單時退回只用週末判斷並記一次警告 log（用 module-level set
+# 記錄已經警告過的年份，避免每次呼叫都洗版 log）。
+_holiday_warned_years = set()
+def _is_tw_market_holiday(now) -> bool:
+    year = now.year
+    date_str = now.strftime("%Y-%m-%d")
+    holidays = TW_MARKET_HOLIDAYS.get(year)
+    if holidays is None:
+        if year not in _holiday_warned_years:
+            _holiday_warned_years.add(year)
+            logger.warning(f"_is_tw_market_holiday: config.TW_MARKET_HOLIDAYS 沒有 {year} 年的休市日清單，"
+                            f"目前只用「是否週末」判斷開盤，平日遇到國定假日會誤判成開盤，需要手動補上該年度清單")
+        return False
+    return date_str in holidays
+
 def _is_trading_session() -> bool:
     now = datetime.now(timezone(timedelta(hours=8)))
-    return now.weekday() < 5 and 540 <= now.hour*60+now.minute <= 810
+    return now.weekday() < 5 and 540 <= now.hour*60+now.minute <= 810 and not _is_tw_market_holiday(now)
 
 def fetch_stock_institutional(code: str, date_str=None) -> Dict:
     return fetch_institutional_flow(date_str).get(code, {})
@@ -917,6 +935,7 @@ def get_market_session() -> Dict:
     now = datetime.now(timezone(timedelta(hours=8)))
     m   = now.hour*60+now.minute
     if now.weekday()>=5: return {"session":"weekend","session_zh":"週末休市","is_open":False,"taipei_time":now.strftime("%H:%M")}
+    if _is_tw_market_holiday(now): return {"session":"holiday","session_zh":"國定假日休市","is_open":False,"taipei_time":now.strftime("%H:%M")}
     if 540<=m<=810:      return {"session":"trading", "session_zh":"交易時段","is_open":True, "taipei_time":now.strftime("%H:%M")}
     if m<540:            return {"session":"pre_market","session_zh":"盤前",  "is_open":False,"taipei_time":now.strftime("%H:%M")}
     return               {"session":"after_market","session_zh":"盤後",      "is_open":False,"taipei_time":now.strftime("%H:%M")}
