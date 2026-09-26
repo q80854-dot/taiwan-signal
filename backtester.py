@@ -443,13 +443,34 @@ def run_comparison_backtest_tw(tickers=None, min_score=65.0, progress_cb=None) -
         "avg_return_pct_delta":_delta(baseline.get("avg_return_pct",0),overlay.get("avg_return_pct",0)),
         "by_direction_before":baseline.get("by_direction_aggregate",{}),
         "by_direction_after":overlay.get("by_direction_aggregate",{}),
+        # ★ 修正：2026-09-26（稽核 finding #6）——原本這裡寫「個股層級(T86)雖支援
+        # 但換算全市場金額需要逐股乘價格加總、成本與風險不成比例，此項不做」，
+        # 這個理由其實是講錯了目標：signal_engine.check_multi_timeframe_tw()
+        # 裡實際會用到的個股法人加減分（±5，見該檔案298-307行）根本不需要換算
+        # 成「金額」，直接比較 fetch_stock_institutional() 回傳的個股外資買賣超
+        # 「張數」是否 >200／<-200 即可，跟這裡原本講的「逐股乘價格加總」是
+        # 兩件不同的事——這條理由沒有正確反映「為什麼沒做」。真正的原因是：
+        # data_fetcher.fetch_institutional_flow(date_str) 雖然技術上支援查
+        # 任意歷史日期，但這是「每次呼叫對 TWSE 發一次即時請求」的介面，而
+        # _fetch_margin_chg_map() 的既有設計原則明確是「回測不該在迴圈裡對
+        # TWSE 發出幾百次即時請求，那是回填腳本的工作，回測這裡只負責查表」
+        # （見上方 _fetch_margin_chg_map() 說明）——法人買賣超目前沒有像融資
+        # 餘額(MI_MARGN)或月營收(MOPS)那樣的歷史回填腳本/資料表，要合規地把
+        # 個股法人加減分納入回測，需要先建一支法人資料的歷史回填腳本（比照
+        # backfill_margin_history()），而不是在這裡的回測迴圈裡直接即時查
+        # T86。這是尚未做的基礎建設，不是技術上做不到，先誠實記錄，之後若要
+        # 補上，入口點在這裡跟 backtest_symbol_tw()/backtest_symbol_tw_partial()
+        # 的進場邏輯（等 macro_adj 一樣加一項 inst_adj）。
         "scope_note":("此比較涵蓋：大盤(TWII)熔斷（yfinance真實歷史指數）、融資餘額日增減"
                        "（TWSE MI_MARGN真實歷史回填）、個股月營收硬性過濾（MOPS真實歷史回填，"
-                       "point-in-time查詢避免看未來資料）。仍未涵蓋：外資買賣超——市場總計端點"
-                       "(BFI82U)實測不支援歷史日期查詢，個股層級(T86)雖支援但換算全市場金額需要"
-                       "逐股乘價格加總、成本與風險不成比例，此項不做。K線持久化快取是純基礎設施，"
-                       "不影響訊號邏輯，不需要回測。若融資/月營收回填尚未執行，這兩項在比較中會"
-                       "跟沒有異常一樣（不生效，不是假裝觸發），不會虛增差異。"),
+                       "point-in-time查詢避免看未來資料）。仍未涵蓋：個股法人買賣超±5分加減分"
+                       "（見 signal_engine.check_multi_timeframe_tw）——目前沒有像融資餘額/月營收"
+                       "那樣的歷史回填資料表，只能即時查詢單日 TWSE T86，違反「回測迴圈不對外部"
+                       "API發出幾百次即時請求」的既有設計原則（見 backtester._fetch_margin_chg_map()"
+                       "說明），需要先建立法人資料歷史回填腳本才能合規補上，目前尚未實作。K線"
+                       "持久化快取是純基礎設施，不影響訊號邏輯，不需要回測。若融資/月營收回填"
+                       "尚未執行，這兩項在比較中會跟沒有異常一樣（不生效，不是假裝觸發），"
+                       "不會虛增差異。"),
     }
     return {"completed_at":datetime.now(timezone.utc).isoformat(),"min_score":min_score,
             "n_tickers":len(targets),"baseline":baseline,"overlay":overlay,"comparison":comparison}
