@@ -779,6 +779,16 @@ def _parse_margin_balance_response(data: Dict):
 MARGIN_CHANGE_OK_TTL = 3600       # 成功結果快取1小時
 MARGIN_CHANGE_FAIL_TTL = 300      # 失敗結果也快取5分鐘，避免無負向快取造成的重試風暴
 
+# ★ 修正：2026-09-26（稽核發現）——原本失敗時回傳空 dict {}，跟 tpex 舊版一樣
+# 「靜默消失」，前端/下游沒有任何訊號可以區分「今天剛好是非交易日/假日本來就
+# 沒資料」跟「API 真的壞了」。改成失敗時也明確帶 source=="error"/"no_data"，
+# 呼應 _fetch_tpex() 的 fail-closed 精神；同時保留 chg_pct 這個 key（值固定
+# 為 0），讓既有 `overview.get("margin",{}).get("chg_pct", 0)` 呼叫端行為不變。
+def _margin_fail(reason: str) -> Dict:
+    return {"chg_pct": 0, "balance": 0, "signal": "no_data", "source": "error",
+            "reason": reason, "fetched_at": datetime.now().isoformat(timespec="seconds")}
+
+
 def fetch_margin_change() -> Dict:
     if c := _cache_get("margin_change", MARGIN_CHANGE_OK_TTL):
         return c
@@ -793,17 +803,19 @@ def fetch_margin_change() -> Dict:
         r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             logger.warning(f"margin_change: HTTP {r.status_code}，body前200字={r.text[:200]!r}")
-            return _cache_set("margin_change_fail", {})
+            return _cache_set("margin_change_fail", _margin_fail(f"http_{r.status_code}"))
         data = r.json()
         if data.get("stat") != "OK":
             logger.warning(f"margin_change: stat={data.get('stat')!r}，回應keys={list(data.keys())}")
-            return _cache_set("margin_change_fail", {})
+            # TWSE 對非交易日（週末/假日）通常回 stat!="OK"，這是預期中的「今天沒資料」，
+            # 不是故障；reason 用 no_trading_day 跟真正的 API 異常區分開。
+            return _cache_set("margin_change_fail", _margin_fail("no_trading_day_or_not_published"))
         parsed = _parse_margin_balance_response(data)
         if not parsed:
             _tables = data.get("tables") or []
             logger.warning(f"margin_change: 解析不到資料，tables數={len(_tables)}，"
                             f"各table標題={[t.get('title') for t in _tables]}")
-            return _cache_set("margin_change_fail", {})
+            return _cache_set("margin_change_fail", _margin_fail("parse_failed"))
         prev_bal, today_bal, date_str = parsed
         chg_pct = round((today_bal - prev_bal) / prev_bal * 100, 2) if prev_bal else 0
         # 順手把每天的餘額存進 meta（供 /api/diagnostics 等處查閱連續趨勢用），
@@ -824,7 +836,7 @@ def fetch_margin_change() -> Dict:
         })
     except Exception as e:
         logger.warning(f"margin_change: {e}")
-        return _cache_set("margin_change_fail", {})
+        return _cache_set("margin_change_fail", _margin_fail(f"exception:{e}"))
 
 
 def backfill_margin_history(days_back: int = 400, progress_cb=None) -> Dict:

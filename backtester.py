@@ -565,6 +565,15 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
         price=closes[i]
         realized_pnl_today=0.0
         if open_trade:
+            # ★ 同K棒觸價順序假設（2026-09-26 補上文件化，邏輯本身未變）：
+            # 日K資料無法知道同一天內「先漲到TP還是先跌到停損」的真實順序，
+            # 這裡採保守假設——同一根K棒只要停損價與任何TP價「同時」滿足觸價
+            # 條件，一律優先判定停損成交（下方 hit_stop 檢查在 TP 迴圈之前，
+            # 且用 if/else 互斥），不會有一天內同時記錄「先出停損又出TP」的
+            # 矛盾結果。這會讓回測結果偏向低估獲利/高估虧損（比真實情況更保守），
+            # 但避免了「同一天同時停損又停利」這種不可能發生於真實單一部位的
+            # 假象。日後若要提高精度，應改用小時線或更細週期資料判斷真實順序，
+            # 而不是放寬這個假設。
             d=open_trade["direction"]; cur_sl=open_trade["current_sl"]
             hit_stop=(d=="buy" and lows[i]<=cur_sl) or (d=="sell" and highs[i]>=cur_sl)
             if hit_stop and open_trade["shares_remaining"]>0:
