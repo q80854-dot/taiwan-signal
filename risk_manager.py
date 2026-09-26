@@ -11,51 +11,77 @@ from config import CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_
 
 logger = logging.getLogger(__name__)
 
+# ★ 修正：2026-09-26（稽核發現，回應「fail-open 比模型不準更危險」的問題）——
+# check_market_circuit_breaker / check_foreign_flow / check_margin_change 這三個
+# 熔斷輸入原本在資料缺失時，都是安靜地把缺的值當成一個「看起來正常」的預設值
+# （twii_chg=0、vix=20、net_buy_twd=0、chg_pct=0），下面的判斷完全無法區分
+# 「市場真的平盤/沒事」跟「上游資料根本沒抓到」，等於把「不知道」直接偽裝成
+# 「沒事」回傳給呼叫端。這裡統一補上 data_available 欄位：用「這個來源字典裡
+# 有沒有預期的 key」而不是「值是不是 0」來判斷資料是否真的存在，讓
+# get_system_status() 與訊號推播都能看見「這次判斷是建立在缺資料之上」，
+# 而不是被無聲吞掉。level 也新增 "unknown"，跟既有的 extreme/high/warning/
+# normal/positive 分開，避免呼叫端誤把「不知道」當「normal」處理。
 def check_market_circuit_breaker(market_overview: Dict) -> Dict:
-    # ★ 修正：2026-08-30——twii_chg/vix 缺資料時原本直接安靜地當成 0%／20（正常），
-    #   跟「大盤真的平盤、VIX真的是20」在下面的判斷完全沒有差別——但這裡是決定
-    #   要不要暫停所有多單的熔斷機制，資料缺失被當成「一切正常」比報錯更危險。
-    #   這裡先把「資料本身是不是真的缺失」記下來，之後如果熔斷機制在該觸發的
-    #   時候沒觸發，才有辦法從 log 判斷是「市場真的沒事」還是「上游資料就是空的」。
-    idx=market_overview.get("index",{}); twii=idx.get("twii",{})
-    if not twii:
-        logger.warning("check_market_circuit_breaker: market_overview 缺少 twii 資料，twii_chg 會當作 0% 處理")
-    if not idx.get("vix"):
-        logger.warning("check_market_circuit_breaker: market_overview 缺少 vix 資料，vix 會當作 20 處理")
-    twii_chg=float(twii.get("chg",0) or 0); vix=float(idx.get("vix",{}).get("price",20) or 20)
+    idx=market_overview.get("index",{}); twii=idx.get("twii",{}); vix_d=idx.get("vix",{})
+    twii_available = bool(twii) and twii.get("source") != "error"
+    vix_available   = bool(vix_d) and vix_d.get("source") != "error"
+    if not twii_available:
+        logger.warning("check_market_circuit_breaker: market_overview 缺少 twii 資料，twii_chg 會當作 0% 處理，並標記 data_available=False")
+    if not vix_available:
+        logger.warning("check_market_circuit_breaker: market_overview 缺少 vix 資料，vix 會當作 20 處理，並標記 data_available=False")
+    data_available = twii_available and vix_available
+    twii_chg=float(twii.get("chg",0) or 0); vix=float(vix_d.get("price",20) or 20)
     if twii_chg<=CB["twii_drop_stop"] or vix>=CB["vix_extreme"]:
-        return {"triggered":True,"level":"extreme","twii_chg":twii_chg,"vix":vix,
+        return {"triggered":True,"level":"extreme","twii_chg":twii_chg,"vix":vix,"data_available":data_available,
                 "message":f"🚨 大盤重挫 {twii_chg:.1f}% / VIX {vix:.0f}，暫停所有多單","action":"stop_buy"}
     if twii_chg<=CB["twii_drop_caution"] or vix>=CB["vix_high"]:
-        return {"triggered":True,"level":"high","twii_chg":twii_chg,"vix":vix,
+        return {"triggered":True,"level":"high","twii_chg":twii_chg,"vix":vix,"data_available":data_available,
                 "message":f"⚠️ 大盤偏弱 {twii_chg:.1f}%，謹慎操作","action":"reduce_confidence"}
-    return {"triggered":False,"level":"normal","twii_chg":twii_chg,"vix":vix}
+    if not data_available:
+        return {"triggered":False,"level":"unknown","twii_chg":twii_chg,"vix":vix,"data_available":False,
+                "message":"⚠️ 大盤/VIX 資料目前取不到，熔斷判斷可能不可靠"}
+    return {"triggered":False,"level":"normal","twii_chg":twii_chg,"vix":vix,"data_available":True}
 
 def check_foreign_flow(market_overview: Dict) -> Dict:
-    foreign=market_overview.get("foreign",{}); nb=float(foreign.get("net_buy_twd",0) or 0)
+    foreign=market_overview.get("foreign",{})
+    data_available="net_buy_twd" in foreign
+    nb=float(foreign.get("net_buy_twd",0) or 0)
+    if not data_available:
+        logger.warning("check_foreign_flow: market_overview 缺少 foreign 資料，net_buy_twd 會當作 0 處理，並標記 data_available=False")
     if nb<=CB["foreign_sell_stop"]:
-        return {"triggered":True,"level":"extreme","net_buy_twd":nb,
+        return {"triggered":True,"level":"extreme","net_buy_twd":nb,"data_available":data_available,
                 "message":f"🚨 外資賣超 {abs(nb)/1e8:.0f}億，暫停多單","action":"stop_buy"}
     if nb<=CB["foreign_sell_caution"]:
-        return {"triggered":True,"level":"warning","net_buy_twd":nb,
+        return {"triggered":True,"level":"warning","net_buy_twd":nb,"data_available":data_available,
                 "message":f"⚠️ 外資賣超 {abs(nb)/1e8:.0f}億，降低信心度","action":"reduce_confidence"}
+    if not data_available:
+        return {"triggered":False,"level":"unknown","net_buy_twd":nb,"data_available":False,
+                "message":"⚠️ 外資買賣超資料目前取不到"}
     if nb>=20e8:
-        return {"triggered":False,"level":"positive","net_buy_twd":nb,"message":f"✅ 外資買超 {nb/1e8:.0f}億，市場偏多"}
-    return {"triggered":False,"level":"normal","net_buy_twd":nb}
+        return {"triggered":False,"level":"positive","net_buy_twd":nb,"data_available":True,"message":f"✅ 外資買超 {nb/1e8:.0f}億，市場偏多"}
+    return {"triggered":False,"level":"normal","net_buy_twd":nb,"data_available":True}
 
 # ★ 新增：2026-09-24——見 data_fetcher.fetch_margin_change() 說明：
 # CB["margin_change_warning"] 原本只是設定檔裡一個從未被使用的數字，這裡
 # 補上對應的檢查函式，讓融資餘額急縮這個總經指標真正影響訊號信心度
 # （score_adj），跟既有的大盤漲跌/外資買賣超走同一套「熔斷=擋新單、
 # 警告=降低信心度」邏輯，而不是又額外發明一套規則。
+# ★ 修正：2026-09-26（稽核發現）——同上，補 data_available 判斷，見本函式群
+# 開頭的說明。
 def check_margin_change(market_overview: Dict) -> Dict:
     margin = market_overview.get("margin", {})
+    data_available = "chg_pct" in margin
     chg = float(margin.get("chg_pct", 0) or 0)
     warn_th = CB.get("margin_change_warning", -5.0)
+    if not data_available:
+        logger.warning("check_margin_change: market_overview 缺少 margin 資料，chg_pct 會當作 0% 處理，並標記 data_available=False")
     if chg <= warn_th:
-        return {"triggered": True, "level": "warning", "chg_pct": chg,
+        return {"triggered": True, "level": "warning", "chg_pct": chg, "data_available": data_available,
                 "message": f"⚠️ 融資餘額單日減少 {abs(chg):.1f}%，市場信心轉弱", "action": "reduce_confidence"}
-    return {"triggered": False, "level": "normal", "chg_pct": chg}
+    if not data_available:
+        return {"triggered": False, "level": "unknown", "chg_pct": chg, "data_available": False,
+                "message": "⚠️ 融資餘額資料目前取不到"}
+    return {"triggered": False, "level": "normal", "chg_pct": chg, "data_available": True}
 
 def check_account_requirement(ticker: str, stock_info: Dict) -> Dict:
     # ★ 修正：2026-08-30——原本假設下單一定是整張(1000股)，用 price*1000*1.1 當最低門檻。
@@ -138,6 +164,15 @@ def run_all_checks(ticker, stock_info, tf_data, market_overview, active_signals=
     if checks["margin_chg"].get("triggered"):     warnings.append(checks["margin_chg"]["message"]); score_adj-=8
     if not checks["account"].get("sufficient"):   warnings.append(checks["account"]["message"]); score_adj-=20
     if checks["margin"].get("warning"):           warnings.append(checks["margin"]["message"]); score_adj-=5
+    # ★ 新增：2026-09-26（稽核發現，fail-closed 補強）——market/foreign/margin_chg
+    # 這三個熔斷輸入若標記 level=="unknown"（資料抓不到，見上面各 check_* 函式的
+    # data_available 判斷），代表這筆訊號的總經/風控判斷是建立在不完整資料上。
+    # 這裡不直接擋單（這些本來就是輔助性的總經疊加，不是唯一進場依據，稽核報告
+    # s3 也指出目前疊加對回測沒有展現可測量改善，貿然全部改成 blocker 過度激進），
+    # 但至少扣一點信心分並讓警告訊息可見，不再讓「不知道」被完全靜默吞成「沒事」。
+    for _k in ("market","foreign","margin_chg"):
+        if checks[_k].get("level")=="unknown":
+            warnings.append(checks[_k]["message"]); score_adj-=3
     return {"status":"blocked" if blockers else "warning" if warnings else "clear",
             "warnings":warnings,"blockers":blockers,"checks":checks,"score_adj":score_adj,"can_signal":len(blockers)==0}
 
@@ -147,6 +182,7 @@ def get_system_status(market_overview: Dict) -> Dict:
     twii_chg=market_cb.get("twii_chg",0); vix=market_cb.get("vix",20); score=100
     if market_cb.get("level")=="extreme":   score-=50; st="大盤重挫"; cl="red"
     elif market_cb.get("level")=="high":    score-=25; st="大盤偏弱"; cl="orange"
+    elif market_cb.get("level")=="unknown": st="大盤資料異常"; cl="orange"
     elif twii_chg>1.0:                      score+=10; st="大盤強勢"; cl="green"
     else:                                   st="正常";  cl="green"
     if foreign.get("level")=="extreme":    score-=20
@@ -156,5 +192,11 @@ def get_system_status(market_overview: Dict) -> Dict:
     cat_advice={}
     for cat in ["ETF","半導體","AI概念","金融保險","航運","生技醫療"]:
         cat_advice[cat]="✅ 適合交易" if score>=70 else "⚠️ 謹慎" if score>=40 else "🔴 觀望"
+    # ★ 新增：2026-09-26（稽核發現）——原本這裡完全沒有揭露「這次環境評分是不是
+    # 建立在缺資料上」，儀表板/使用者只會看到一個看起來正常的分數，不知道背後
+    # 大盤或外資資料其實剛好抓不到。data_issues 讓前端可以額外提示。
+    data_issues=[m for m in (market_cb.get("message") if market_cb.get("level")=="unknown" else None,
+                              foreign.get("message") if foreign.get("level")=="unknown" else None) if m]
     return {"env_score":score,"env_status":st,"env_color":cl,"twii_chg":twii_chg,"vix":vix,
-            "can_trade":score>=50,"category_advice":cat_advice,"daily_loss":daily,"foreign_signal":foreign.get("message","")}
+            "can_trade":score>=50,"category_advice":cat_advice,"daily_loss":daily,
+            "foreign_signal":foreign.get("message",""),"data_issues":data_issues}
