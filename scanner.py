@@ -578,6 +578,14 @@ class TWScanEngine:
         THRESH["min_score"] = _BASE_MIN_SCORE
         if status == "stop":
             logger.warning(f"大盤重挫 {twii_chg:.1f}%，本次只掃空單")
+        elif status == "data_error":
+            # ★ 修正：2026-09-26（稽核 finding #2）——大盤指數資料抓不到時的新狀態，
+            # 見 data_fetcher.fetch_market_index() 的說明。can_trade 已經在
+            # fetch_market_overview() 被設成 False，signal_engine.generate_signal_tw()
+            # 會直接因此擋掉所有新訊號（見該函式 can_trade 檢查），這裡只需要留下
+            # 明確的 log，方便事後排查「今天為什麼完全沒訊號」時一眼看出是資料問題
+            # 而不是策略本身沒找到機會。
+            logger.warning(f"大盤指數資料異常（twii.source=='error'），本次暫停所有新倉")
         elif status == "caution":
             logger.warning(f"大盤偏弱 {twii_chg:.1f}%，提高門檻")
         # ★ 新增：2026-09-16——B1財報密集期保護（見 config.py is_earnings_season()

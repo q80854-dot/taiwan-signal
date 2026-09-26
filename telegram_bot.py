@@ -323,9 +323,14 @@ def send_morning_brief(market_overview: Dict):
     fn_em  = "💚" if fn >= 0 else "❤️"
 
     status_zh = {
-        "stop":    "🔴 大盤重挫，今日以觀望為主",
-        "caution": "🟠 大盤偏弱，謹慎控制倉位",
-        "normal":  "🟢 大盤正常，依訊號操作",
+        "stop":       "🔴 大盤重挫，今日以觀望為主",
+        "caution":    "🟠 大盤偏弱，謹慎控制倉位",
+        "normal":     "🟢 大盤正常，依訊號操作",
+        # ★ 修正：2026-09-26（稽核 finding #2）——data_fetcher.fetch_market_index()
+        # 新增的 "data_error" 狀態（大盤指數資料抓不到，不是真的大盤正常也不是
+        # 真的重挫），這裡補上對應文字，避免這個狀態出現時 .get() 沒 match 到
+        # 靜默變成空字串，讓使用者看不出「今天沒有新訊號」是因為資料異常。
+        "data_error": "⚠️ 大盤指數資料異常，今日暫停新倉",
     }.get(market_overview.get("market_status", "normal"), "")
 
     from state_store import store

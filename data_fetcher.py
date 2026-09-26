@@ -445,8 +445,23 @@ def fetch_market_index() -> Dict:
         result["gold"] = gold
 
     # 8. 大盤狀態
-    twii_chg = result.get("twii", {}).get("chg", 0)
-    if twii_chg <= CB["twii_drop_stop"]:
+    # ★ 修正：2026-09-26（稽核發現，finding #2）——_fetch_twii() 在所有來源都失敗時
+    # 回傳 {"price":0,...,"chg":0,"source":"error"}（fail-closed 的字典，故意用0
+    # 讓「抓不到」可被偵測），但這裡原本只看 twii_chg 的數值，chg=0 一律落入
+    # else 分支判成 "normal"——等於把「大盤資料完全抓不到」跟「大盤今天真的持平」
+    # 混為一談，讓下面 can_trade / scanner._check_market_status() 的兩層保護
+    # （大盤重挫只掃空單、大盤偏弱提高門檻）在資料層失敗時悄悄失效，反而顯示
+    # 「大盤正常」這種最不該在資料有問題時出現的訊息。改成先檢查
+    # twii.source=="error"，資料缺失時明確標成獨立的 "data_error" 狀態（不是
+    # normal/caution/stop 三者之一），下面 fetch_market_overview() 會把
+    # can_trade 設成 False，跟 twii_drop_stop 觸發時一樣禁止新倉，理由是
+    # 「不知道大盤現況」跟「已知大盤重挫」一樣都不該讓系統誤判成可以正常進場。
+    twii_source = result.get("twii", {}).get("source", "")
+    twii_chg    = result.get("twii", {}).get("chg", 0)
+    if twii_source == "error":
+        result["market_status"]    = "data_error"
+        result["market_status_zh"] = "⚠️ 大盤指數資料異常，暫停新倉"
+    elif twii_chg <= CB["twii_drop_stop"]:
         result["market_status"]    = "stop"
         result["market_status_zh"] = f"大盤重挫 {twii_chg:.1f}%，暫停多單"
     elif twii_chg <= CB["twii_drop_caution"]:
@@ -940,7 +955,12 @@ def fetch_market_overview() -> Dict:
     score = max(0, min(100, score))
     overview["sentiment_score"] = score
     overview["sentiment_zh"]    = "強烈看多" if score>=80 else "偏多" if score>=60 else "中性" if score>=40 else "偏空" if score>=20 else "強烈看空"
-    overview["can_trade"]       = overview["index"].get("market_status","normal") != "stop"
+    # ★ 修正：2026-09-26（稽核 finding #2）——can_trade 原本只在 market_status=="stop"
+    # 才關閉，但 market_status 現在可能是 "data_error"（大盤指數資料完全抓不到，
+    # 見上面 fetch_market_index() 的說明），這種情況一樣要 fail-closed 關閉
+    # can_trade，不然 signal_engine.generate_signal_tw() 那層 can_trade 檢查
+    # （見該檔案該函式）在資料異常時仍會放行產生新訊號。
+    overview["can_trade"]       = overview["index"].get("market_status","normal") not in ("stop","data_error")
     overview["market_status"]   = overview["index"].get("market_status","normal")
     overview["is_trading"]      = _is_trading_session()
     return _cache_set("market_overview", overview)
