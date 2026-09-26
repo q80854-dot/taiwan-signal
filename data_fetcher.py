@@ -403,9 +403,16 @@ def fetch_market_index() -> Dict:
     result["twii"] = _fetch_twii()
 
     # 2. 上櫃指數
+    # ★ 修正：2026-09-26（稽核發現）——原本兩層備援（TPEx官方cffi/yfinance
+    # ^TWOII）都失敗時，這裡完全不寫入 "tpex" 這個 key，導致 /api/state 裡
+    # 這個指標整個消失、沒有任何「取不到」的訊號，跟 twii 抓不到時仍會回
+    # {"price":0,...,"source":"error"} 的做法不一致，下游（前端、
+    # /api/diagnostics、任何未來直接讀 idx["tpex"] 的程式）都無法區分
+    # 「本來就沒有這個欄位」跟「今天剛好抓不到」。改成失敗時也明確寫入一筆
+    # source=="error" 的字典，讓 fail 狀態可見（fail-closed 精神：寧可顯示
+    # 明確錯誤，不要靜默消失）。
     tpex = _fetch_tpex()
-    if tpex:
-        result["tpex"] = tpex
+    result["tpex"] = tpex if tpex else {"price": 0, "prev": 0, "chg": 0, "chg_pt": 0, "source": "error"}
 
     # 3. VIX（強制重新抓）
     _cache_clear("idx_vix")
@@ -769,25 +776,34 @@ def _parse_margin_balance_response(data: Dict):
     return None
 
 
+MARGIN_CHANGE_OK_TTL = 3600       # 成功結果快取1小時
+MARGIN_CHANGE_FAIL_TTL = 300      # 失敗結果也快取5分鐘，避免無負向快取造成的重試風暴
+
 def fetch_margin_change() -> Dict:
-    if c := _cache_get("margin_change", 3600): return c
+    if c := _cache_get("margin_change", MARGIN_CHANGE_OK_TTL):
+        return c
+    # 失敗負向快取：用獨立的 key，TTL 較短，讓失敗狀態本身也不會每次呼叫都重打 API，
+    # 但又不會像成功結果一樣快取到 1 小時（見稽核報告 s2/s5：無負向快取會讓每次
+    # /api/state 被打開都對外部 TWSE API 重複發送請求，且無退避機制）。
+    if fc := _cache_get("margin_change_fail", MARGIN_CHANGE_FAIL_TTL):
+        return fc
     try:
         today = datetime.now().strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={today}&selectType=ALL"
         r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             logger.warning(f"margin_change: HTTP {r.status_code}，body前200字={r.text[:200]!r}")
-            return {}
+            return _cache_set("margin_change_fail", {})
         data = r.json()
         if data.get("stat") != "OK":
             logger.warning(f"margin_change: stat={data.get('stat')!r}，回應keys={list(data.keys())}")
-            return {}
+            return _cache_set("margin_change_fail", {})
         parsed = _parse_margin_balance_response(data)
         if not parsed:
             _tables = data.get("tables") or []
             logger.warning(f"margin_change: 解析不到資料，tables數={len(_tables)}，"
                             f"各table標題={[t.get('title') for t in _tables]}")
-            return {}
+            return _cache_set("margin_change_fail", {})
         prev_bal, today_bal, date_str = parsed
         chg_pct = round((today_bal - prev_bal) / prev_bal * 100, 2) if prev_bal else 0
         # 順手把每天的餘額存進 meta（供 /api/diagnostics 等處查閱連續趨勢用），
@@ -800,13 +816,15 @@ def fetch_margin_change() -> Dict:
             store.set_meta("margin_balance_history", hist[-10:])
         except Exception:
             pass
+        _cache_clear("margin_change_fail")
         return _cache_set("margin_change", {
             "balance": today_bal, "chg_pct": chg_pct,
             "signal": "warning" if chg_pct <= CB.get("margin_change_warning", -5.0) else "normal",
+            "source": "twse_official", "fetched_at": datetime.now().isoformat(timespec="seconds"),
         })
     except Exception as e:
         logger.warning(f"margin_change: {e}")
-        return {}
+        return _cache_set("margin_change_fail", {})
 
 
 def backfill_margin_history(days_back: int = 400, progress_cb=None) -> Dict:
@@ -884,8 +902,17 @@ def fetch_market_overview() -> Dict:
     overview = {"fetched_at": datetime.now(timezone.utc).isoformat()}
     overview["index"]         = fetch_market_index()
     overview["foreign"]       = fetch_foreign_total_flow()
-    overview["institutional"] = fetch_institutional_flow()
-    # ★ 新增：2026-09-24——見 fetch_margin_change() 說明，把先前「定義了卻從
+    # ★ 移除（稽核發現，2026-09-26）：這裡原本還有一行
+    # `overview["institutional"] = fetch_institutional_flow()`。
+    # fetch_institutional_flow() 沒帶 date_str 時，抓的是「今天全市場~1700檔
+    # 個股」的三大法人買賣超逐股明細（T86），跟 overview["foreign"] 的大盤總
+    # 外資買賣超金額（BFI82U）是完全不同的資料形狀，兩者不是同一件事的重複
+    # 欄位。全專案搜尋後確認 overview["institutional"] 從未被任何地方讀取
+    # （scanner.py 對個股法人資料是各自呼叫 fetch_stock_institutional() 走
+    # 自己的快取，跟這裡完全獨立），等於每 5 分鐘 market_overview 快取到期
+    # 就白白多打一次全市場 1700 檔的重量級 API 請求，卻沒有任何用途。
+    # 個股層級的法人資料查詢入口仍是 fetch_stock_institutional()，未受影響。
+    # 見 fetch_margin_change() 說明，把先前「定義了卻從
     # 沒接線」的融資餘額增減熔斷指標，正式接進大盤情緒分數，跟大盤漲跌/VIX/
     # 外資同一層級參與評分，而不是只停在 config 裡的一個死數字。
     overview["margin"]        = fetch_margin_change()
