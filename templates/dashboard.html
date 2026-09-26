@@ -428,6 +428,24 @@ function renderAll(d){
   updateFreshBadge(d.market_overview?.fetched_at);
 }
 
+// ★ 修正：2026-09-26（稽核發現）——原本這裡用同一個「是不是 fugle 或
+// twse_official」的條件套用在全部 7 個指標上，判斷是否顯示「備援來源」。
+// 但 VIX/DXY/S&P500/黃金/比特幣本來就只可能來自國際資料源（yfinance/
+// coingecko），從來沒有機會、也不應該去用 fugle/twse_official，結果這幾個
+// 指標無論抓取正常與否都被永久標成「備援來源」，等於這個警示標籤對這 5 個
+// 指標完全沒有鑑別度、只會誤導使用者以為它們一直在用降級來源。改成每個
+// 指標各自定義「正常（非備援）來源」清單，只有真的落到清單以外的來源
+// （例如 twii 從 fugle/twse_official 降到 yfinance_*，或 tpex 從
+// tpex_official_cffi 降到 yfinance_^TWOII_approx）才標「備援來源」。
+const IDX_PRIMARY_SOURCES={
+  twii:['fugle','twse_official'],
+  tpex:['tpex_official_cffi'],
+  vix:['yfinance'],
+  sp500:['yfinance'],
+  dxy:['yfinance'],
+  gold:['yfinance_GC=F'],
+  btc:['coingecko'],
+};
 function renderIndex(idx){
   [['twii','twii-val','twii-chg'],['tpex','tpex-val','tpex-chg'],['vix','vix-val','vix-chg'],['sp500','sp500-val','sp500-chg'],['dxy','dxy-val','dxy-chg'],['gold','gold-val','gold-chg'],['btc','btc-val','btc-chg']].forEach(([key,valId,chgId])=>{
     const d=idx[key]||{};const p=d.price;
@@ -442,7 +460,8 @@ function renderIndex(idx){
     if(chipEl){
       let srcEl=chipEl.querySelector('.idx-src');
       const isErr=d.source==='error'||!p;
-      if(isErr||( d.source && d.source!=='fugle' && d.source!=='twse_official')){
+      const primaries=IDX_PRIMARY_SOURCES[key]||[];
+      if(isErr||( d.source && !primaries.includes(d.source))){
         if(!srcEl){srcEl=document.createElement('div');srcEl.className='idx-src';chipEl.appendChild(srcEl);}
         srcEl.className='idx-src'+(isErr?' err':'');
         srcEl.textContent=isErr?'⚠ 來源異常':'備援來源';
