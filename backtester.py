@@ -226,8 +226,17 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
                                 high_5d=max(highs[max(0,i-5):i]) if i>=5 else None
                                 sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)
                                 tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
-                                if tp_info["rr1"]>=THRESH["min_rr"]:
-                                    pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat)
+                                # ★ 修正：2026-09-26——稽核發現回測跟實盤在進場過濾條件上有落差：
+                                # signal_engine.generate_signal_tw() 有「停損距離>12%就跳過（追高/
+                                # 已離結構性支撐太遠）」的過濾（見該檔案該函式），回測這裡完全沒有
+                                # 套用，導致回測會納入實盤根本不會進場的訊號，讓回測結果失真。這裡
+                                # 補上同一條件，跟實盤邏輯一致。同時 calc_position_size() 補上
+                                # avg_volume_lots，跟實盤一樣用該股均量做流動性上限，不然回測部位
+                                # 大小可能比實盤實際可成交的量還大。
+                                sl_dist_pct=abs(price-sl)/price*100 if price else 0
+                                if tp_info["rr1"]>=THRESH["min_rr"] and sl_dist_pct<=12:
+                                    pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat,
+                                                            avg_volume_lots=(info.get("volume_lots") if info else None))
                                     if pos["shares"]>0:
                                         open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"tp2":tp_info["tp2"],
                                                     "score":score,"shares":pos["shares"],"bar":i}
@@ -329,7 +338,13 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)
             tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
             if tp_info["rr1"]<THRESH["min_rr"]: continue
-            pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat)
+            # ★ 修正：2026-09-26——同 backtest_symbol_tw() 補上的兩項，跟實盤 generate_signal_tw()
+            # 對齊：停損距離>12%（追高過濾）就跳過；calc_position_size() 補上 avg_volume_lots
+            # 流動性上限。
+            sl_dist_pct=abs(price-sl)/price*100 if price else 0
+            if sl_dist_pct>12: continue
+            pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat,
+                                    avg_volume_lots=(info.get("volume_lots") if info else None))
             if pos["shares"]<=0: continue
             open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"score":score,"shares":pos["shares"],"bar":i}
         wins_w=len([t for t in test_trades if t["result"]=="tp1"])
@@ -636,8 +651,13 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
                                 high_5d=max(highs[max(0,i-5):i]) if i>=5 else None
                                 sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)
                                 tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
-                                if tp_info["rr1"]>=THRESH["min_rr"]:
-                                    pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat)
+                                # ★ 修正：2026-09-26——同 backtest_symbol_tw() 補上的兩項，跟實盤
+                                # generate_signal_tw() 對齊：停損距離>12%（追高過濾）就跳過；
+                                # calc_position_size() 補上 avg_volume_lots 流動性上限。
+                                sl_dist_pct=abs(price-sl)/price*100 if price else 0
+                                if tp_info["rr1"]>=THRESH["min_rr"] and sl_dist_pct<=12:
+                                    pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat,
+                                                            avg_volume_lots=(info.get("volume_lots") if info else None))
                                     shares_total=pos["shares"]
                                     if shares_total>0:
                                         leg1=shares_total//3; leg2=shares_total//3; leg3=shares_total-leg1-leg2
