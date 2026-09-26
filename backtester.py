@@ -108,7 +108,7 @@ def calc_tw_pnl(entry, close, direction, shares):
     sell_tax=close*shares*TAX_RATE_SELL
     return round(gross-buy_fee-sell_fee-sell_tax,0)
 
-def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False) -> Dict:
+def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None) -> Dict:
     """
     ★ 修正：改為直接呼叫 signal_engine 的 check_multi_timeframe_tw() / calc_stop_loss_tw() /
     calc_take_profits_tw() / calc_position_size()，跟 scanner.py 每天盤後真正在跑的邏輯用同一套，
@@ -202,7 +202,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
             tf_data_bt={"daily":wd}
             w_slice=_weekly_asof(day_date)
             if w_slice: tf_data_bt["weekly"]=w_slice
-            mtf=check_multi_timeframe_tw(tf_data_bt)
+            mtf=check_multi_timeframe_tw(tf_data_bt, disabled_factors=disabled_factors)
             direction=mtf.get("direction","none")
             fund_blocked=False
             if direction!="none" and use_fundamentals_filter and day_date:
@@ -344,13 +344,13 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             "stability":round(sum(1 for w in window_results if w["win_rate"]>=50)/max(len(window_results),1)*100,1),
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
-def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_macro_overlay=False, use_fundamentals_filter=False) -> Dict:
+def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None) -> Dict:
     from stock_universe import get_tw50_components
     targets=tickers or get_tw50_components(); results=[]
-    logger.info(f"[BT] 批量回測 {len(targets)} 檔，use_macro_overlay={use_macro_overlay}，use_fundamentals_filter={use_fundamentals_filter}")
+    logger.info(f"[BT] 批量回測 {len(targets)} 檔，use_macro_overlay={use_macro_overlay}，use_fundamentals_filter={use_fundamentals_filter}，disabled_factors={disabled_factors}")
     for idx,ticker in enumerate(targets):
         try:
-            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay,use_fundamentals_filter=use_fundamentals_filter)
+            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay,use_fundamentals_filter=use_fundamentals_filter,disabled_factors=disabled_factors)
             if "error" not in r: results.append(r)
             # ★ 新增：2026-09-19——這個函式現在會被 app.py 包成背景執行緒跑（50檔
             # 全部跑完可能要幾分鐘），加一個可選的進度回呼，讓外層可以把「跑到第
@@ -438,3 +438,278 @@ def run_comparison_backtest_tw(tickers=None, min_score=65.0, progress_cb=None) -
     }
     return {"completed_at":datetime.now(timezone.utc).isoformat(),"min_score":min_score,
             "n_tickers":len(targets),"baseline":baseline,"overlay":overlay,"comparison":comparison}
+
+
+# ★ 新增：2026-09-26——稽核報告中長期項目「因子/評分消融分析」。過去只知道
+# check_multi_timeframe_tw() 有 EMA排列/半年線突破/RSI/MACD/量增/ADX加成/
+# 週線逆勢懲罰 共7項會影響分數，但從來沒有量化過「拿掉某一項，勝率/報酬
+# 到底會不會變差、變好多少」——換句話說，不知道這7項裡哪些是真的有貢獻的
+# 訊號、哪些只是加了分數卻沒有實際預測力（甚至可能是雜訊）。做法：先用
+# 「全部因子都開啟」（=目前實盤真正在用的邏輯，等同 baseline）跑一次全市場
+# 回測，再逐一把每個因子丟進 signal_engine.check_multi_timeframe_tw() 的
+# disabled_factors 關掉、各自重跑一次回測，比較「拿掉這項之後」勝率/總報酬/
+# Sharpe 跟 baseline 的差異——差異越大（拿掉後表現變差越多），代表這項因子
+# 的邊際貢獻越高；如果拿掉某項之後表現反而變好或幾乎不變，代表這項因子目前
+# 的加分規則可能沒有實際預測力，值得之後重新檢視或調整權重。
+# 注意：因為是「開/關同一個因子共8輪全市場回測」，執行時間約為單次
+# run_full_backtest_tw 的 8 倍，一定會超過 gunicorn 逾時，app.py 比照
+# full_backtest/compare_backtest 用背景執行緒＋輪詢進度處理。
+def run_factor_ablation_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
+    from stock_universe import get_tw50_components
+    from signal_engine import FACTOR_KEYS
+    targets=tickers or get_tw50_components()
+    n_stages=len(FACTOR_KEYS)+1
+    def _cb(stage_idx, stage_label):
+        def _inner(done,total,ticker):
+            if progress_cb: progress_cb(stage_idx,n_stages,f"[{stage_label}] {ticker} ({done}/{total})")
+        return _inner
+    logger.info(f"[BT-ABLATION] 開始因子消融分析，共 {len(targets)} 檔 × {n_stages} 輪（baseline + {len(FACTOR_KEYS)} 個因子逐一關閉）")
+    baseline=run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb(0,"baseline 全因子開啟"))
+    factor_results={}
+    for i,factor in enumerate(FACTOR_KEYS):
+        r=run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb(i+1,f"關閉「{factor}」"),
+                                disabled_factors={factor})
+        factor_results[factor]=r
+    def _delta(a,b): return round(b-a,2)
+    factor_zh={"ema":"EMA排列","trend200":"半年線突破","rsi":"RSI區間","macd":"MACD動能",
+               "volume":"成交量確認","adx":"ADX趨勢強度加成","weekly":"週線逆勢懲罰"}
+    ablation_table=[]
+    base_wr=baseline.get("overall_win_rate",0); base_sharpe=baseline.get("avg_sharpe",0)
+    base_ret=baseline.get("avg_return_pct",0); base_n=baseline.get("n_trades_total",0)
+    for factor in FACTOR_KEYS:
+        r=factor_results[factor]
+        wr=r.get("overall_win_rate",0); sharpe=r.get("avg_sharpe",0); ret=r.get("avg_return_pct",0)
+        ablation_table.append({
+            "factor":factor,"factor_zh":factor_zh.get(factor,factor),
+            "win_rate_without":wr,"win_rate_delta_if_removed":_delta(base_wr,wr),
+            "avg_sharpe_without":sharpe,"avg_sharpe_delta_if_removed":_delta(base_sharpe,sharpe),
+            "avg_return_pct_without":ret,"avg_return_pct_delta_if_removed":_delta(base_ret,ret),
+            "n_trades_without":r.get("n_trades_total",0),
+            "interpretation":("移除後表現變差，此因子有正貢獻" if wr<base_wr
+                               else "移除後表現變好或持平，此因子目前的加分規則可能沒有實際預測力，建議重新檢視"),
+        })
+    ablation_table.sort(key=lambda x:x["win_rate_delta_if_removed"])
+    return {"completed_at":datetime.now(timezone.utc).isoformat(),"min_score":min_score,"n_tickers":len(targets),
+            "baseline":{"win_rate":base_wr,"avg_sharpe":base_sharpe,"avg_return_pct":base_ret,"n_trades_total":base_n},
+            "ablation_table":ablation_table,
+            "note":("每一列代表「把這個因子關掉之後」重跑全市場回測的結果，win_rate_delta_if_removed 等"
+                    "欄位＝baseline減去關閉後的數值，正值代表關掉後表現變差（該因子有貢獻），負值或接近0"
+                    "代表關掉後表現持平甚至變好（該因子目前可能沒有實際預測力）。此分析只消融評分因子本身，"
+                    "不涉及總經加權/基本面過濾（那兩項見 run_comparison_backtest_tw）。")}
+
+
+# ★ 新增：2026-09-26——稽核報告中長期項目「真正的分批出場回測邏輯」。系統
+# 每次推播訊號都明確跟使用者說 exit_plan="各1/3分批出場"（見 calc_take_profits_tw），
+# 但過去所有回測（backtest_symbol_tw/walk_forward_backtest_tw）跟實際的
+# /fill 損益追蹤，都是「單一出場價」模型：不管訊號寫的是分批出場，回測跟
+# 統計上都是「碰到 SL 就全部出場算輸，碰到 TP1 或 TP2（先碰到哪個就算哪個）
+# 就全部出場算贏」，2026-09-16 的稽核已經誠實揭露過這個落差（見 telegram_bot.py
+# 的揭露文字），但從未真正實作過分批出場的回測，所以顯示給使用者的勝率/
+# 總報酬其實都不是「如果真的照建議分批出場」會得到的數字。
+# 這裡新增一套真正逐段模擬的回測：
+#   - 部位依約 1/3、1/3、1/3（股數無法整除3時，餘數併入第三段）分成三段。
+#   - 價格碰到 TP1：出清第一段，剩餘部位停損移到「保本價」(=進場價)，之後
+#     即使反轉也不會讓已經到手的第一段獲利被侵蝕成整體虧損。
+#   - 價格碰到 TP2：出清第二段，剩餘（第三段）停損進一步移到 TP1（鎖住
+#     第一、二段+部分第三段的獲利）。
+#   - 價格碰到 TP3：出清最後一段，部位完全平倉。
+#   - 若當下停損價（原始SL，或移動後的保本價/TP1）被觸發，剩餘尚未出清的
+#     股數全部依當下停損價出場。
+#   - 同一天K棒的高低點若橫跨多段目標（日K圖無法得知盤中真實觸價順序），
+#     依序由近到遠檢查（跟本檔案其他函式對「同一根K棒內SL/TP先後」的既有
+#     簡化假設一致，不是這裡才新發明的方法論）。
+# 進場邏輯（訊號產生/停損停利計算/部位大小）完全複用跟實盤同一套
+# check_multi_timeframe_tw／calc_stop_loss_tw／calc_take_profits_tw／
+# calc_position_size，只有出場模擬邏輯不同，避免出現「回測用另一套進場
+# 判斷」的老問題。
+def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
+                                use_macro_overlay=False, use_fundamentals_filter=False) -> Dict:
+    from data_fetcher   import fetch_ohlcv
+    from signal_engine  import check_multi_timeframe_tw, calc_stop_loss_tw, calc_take_profits_tw, calc_position_size
+    from scoring_engine import calc_performance_metrics
+    min_score = min_score if min_score is not None else THRESH["min_score"]
+    balance=initial_balance or ACCOUNT_BALANCE_TWD
+    data=fetch_ohlcv(ticker,"daily")
+    if not data or len(data.get("closes",[]))<60:
+        return {"error":f"{ticker} 歷史數據不足（需60根日線）"}
+    closes=data["closes"]; highs=data["highs"]; lows=data["lows"]; opens=data["opens"]; volumes=data["volumes"]
+    dates=data.get("dates",[])
+    weekly_raw=fetch_ohlcv(ticker,"weekly")
+    w_dates  =weekly_raw.get("dates",[])   if weekly_raw else []
+    w_closes =weekly_raw.get("closes",[])  if weekly_raw else []
+    w_highs  =weekly_raw.get("highs",[])   if weekly_raw else []
+    w_lows   =weekly_raw.get("lows",[])    if weekly_raw else []
+    w_opens  =weekly_raw.get("opens",[])   if weekly_raw else []
+    w_volumes=weekly_raw.get("volumes",[]) if weekly_raw else []
+    def _weekly_asof(day_date):
+        if not w_dates or not day_date: return None
+        w_idx=bisect.bisect_right(w_dates, day_date)
+        if w_idx<20: return None
+        return {"closes":w_closes[:w_idx],"highs":w_highs[:w_idx],"lows":w_lows[:w_idx],
+                "opens":w_opens[:w_idx],"volumes":w_volumes[:w_idx]}
+    try:
+        from stock_universe import get_stock_info
+        info=get_stock_info(ticker); size_cat=info.get("size_cat","中型股") if info else "中型股"
+    except Exception:
+        size_cat="中型股"
+    n=len(closes); LOOKBACK=130; trades=[]; equity=[balance]; open_trade=None
+    twii_chg_map=_fetch_twii_change_map() if use_macro_overlay else {}
+    margin_chg_map=_fetch_margin_chg_map() if use_macro_overlay else {}
+    fund_code=ticker.split(".")[0] if use_fundamentals_filter else None
+    if use_fundamentals_filter:
+        from fundamentals import check_fundamental_hard_filter_asof
+    logger.info(f"[BT-PARTIAL] {ticker} 開始分批出場回測，共 {n} 根日線，size_cat={size_cat}")
+    for i in range(LOOKBACK,n):
+        wd={"closes":closes[:i],"highs":highs[:i],"lows":lows[:i],"opens":opens[:i],"volumes":volumes[:i]}
+        day_date=dates[i] if i<len(dates) else None
+        price=closes[i]
+        realized_pnl_today=0.0
+        if open_trade:
+            d=open_trade["direction"]; cur_sl=open_trade["current_sl"]
+            hit_stop=(d=="buy" and lows[i]<=cur_sl) or (d=="sell" and highs[i]>=cur_sl)
+            if hit_stop and open_trade["shares_remaining"]>0:
+                shares=open_trade["shares_remaining"]
+                pnl=calc_tw_pnl(open_trade["fill_price"],cur_sl,d,shares)
+                balance+=pnl; realized_pnl_today+=pnl
+                open_trade["legs"].append({"stage":"stop","price":cur_sl,"shares":shares,"pnl_twd":pnl})
+                open_trade["shares_remaining"]=0
+            else:
+                for stage,target_key in (("tp1","tp1"),("tp2","tp2"),("tp3","tp3")):
+                    if open_trade["shares_remaining"]<=0: break
+                    if open_trade["leg_done"][stage]: continue
+                    leg_shares=open_trade["leg_shares"][stage]
+                    if leg_shares<=0: continue
+                    tgt=open_trade[target_key]
+                    hit=(d=="buy" and highs[i]>=tgt) or (d=="sell" and lows[i]<=tgt)
+                    if not hit: break  # 未碰到較近的目標，後面更遠的目標當天不可能碰到
+                    pnl=calc_tw_pnl(open_trade["fill_price"],tgt,d,leg_shares)
+                    balance+=pnl; realized_pnl_today+=pnl
+                    open_trade["legs"].append({"stage":stage,"price":tgt,"shares":leg_shares,"pnl_twd":pnl})
+                    open_trade["leg_done"][stage]=True
+                    open_trade["shares_remaining"]-=leg_shares
+                    if stage=="tp1": open_trade["current_sl"]=open_trade["fill_price"]      # 移至保本
+                    elif stage=="tp2": open_trade["current_sl"]=open_trade["tp1"]           # 移至TP1鎖利
+            if open_trade["shares_remaining"]<=0:
+                legs=open_trade["legs"]
+                total_pnl=sum(l["pnl_twd"] for l in legs)
+                result="+".join(l["stage"] for l in legs) or "flat"
+                trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],
+                                "result":result,"pnl_twd":total_pnl,"shares":open_trade["shares_total"],
+                                "pnl_pct":round(total_pnl/max(balance-total_pnl,1)*100,2),
+                                "score":open_trade.get("score",0),"legs":legs,
+                                "n_legs_hit":sum(1 for l in legs if l["stage"]!="stop"),
+                                "bar_in":open_trade["bar"],"bar_out":i,"hold_days":i-open_trade["bar"]})
+                open_trade=None
+        if open_trade is None:
+            tf_data_bt={"daily":wd}
+            w_slice=_weekly_asof(day_date)
+            if w_slice: tf_data_bt["weekly"]=w_slice
+            mtf=check_multi_timeframe_tw(tf_data_bt)
+            direction=mtf.get("direction","none")
+            fund_blocked=False
+            if direction!="none" and use_fundamentals_filter and day_date:
+                fund_chk=check_fundamental_hard_filter_asof(fund_code, day_date)
+                fund_blocked=fund_chk.get("blocked", False)
+            if direction!="none" and not fund_blocked:
+                score=mtf.get("score",0)
+                if use_macro_overlay:
+                    macro_adj=_macro_score_adj(day_date, twii_chg_map, margin_chg_map)
+                    if macro_adj: score=max(0,score+macro_adj)
+                if score>=min_score:
+                    adx_val=mtf.get("adx_value",0)
+                    if adx_val>=THRESH["min_adx"]:
+                        vol_ratio=mtf.get("vol_ratio",1.0)
+                        if not(vol_ratio<THRESH["min_vol_ratio"] and score<75):
+                            daily_ind=mtf.get("entry_indicators",{})
+                            atr=daily_ind.get("atr",{}).get("value",0) or price*0.02
+                            if atr:
+                                low_5d=min(lows[max(0,i-5):i]) if i>=5 else None
+                                high_5d=max(highs[max(0,i-5):i]) if i>=5 else None
+                                sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)
+                                tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
+                                if tp_info["rr1"]>=THRESH["min_rr"]:
+                                    pos=calc_position_size(price,sl,balance=balance,size_cat=size_cat)
+                                    shares_total=pos["shares"]
+                                    if shares_total>0:
+                                        leg1=shares_total//3; leg2=shares_total//3; leg3=shares_total-leg1-leg2
+                                        if leg1<=0:  # 部位太小無法真正分三段，退化為單段（全部併入tp3段）
+                                            leg1=0; leg2=0; leg3=shares_total
+                                        open_trade={"direction":direction,"fill_price":price,
+                                                    "tp1":tp_info["tp1"],"tp2":tp_info["tp2"],"tp3":tp_info["tp3"],
+                                                    "current_sl":sl,"score":score,
+                                                    "shares_total":shares_total,"shares_remaining":shares_total,
+                                                    "leg_shares":{"tp1":leg1,"tp2":leg2,"tp3":leg3},
+                                                    "leg_done":{"tp1":False,"tp2":False,"tp3":False},
+                                                    "legs":[],"bar":i}
+        if open_trade and open_trade["shares_remaining"]>0:
+            unreal=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade["shares_remaining"])
+            equity.append(balance+unreal)
+        else:
+            equity.append(balance)
+    if open_trade and open_trade["shares_remaining"]>0:
+        d=open_trade["direction"]; cp=closes[-1]; shares=open_trade["shares_remaining"]
+        pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares)
+        balance+=pnl
+        legs=open_trade["legs"]+[{"stage":"forced_close","price":cp,"shares":shares,"pnl_twd":pnl}]
+        total_pnl=sum(l["pnl_twd"] for l in legs)
+        trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],
+                        "result":"+".join(l["stage"] for l in legs),"pnl_twd":total_pnl,
+                        "shares":open_trade["shares_total"],"pnl_pct":round(total_pnl/max(balance,1)*100,2),
+                        "score":open_trade.get("score",0),"legs":legs,
+                        "n_legs_hit":sum(1 for l in legs if l["stage"] not in ("stop","forced_close")),
+                        "bar_in":open_trade["bar"],"bar_out":n-1,"hold_days":n-1-open_trade["bar"]})
+    metrics=calc_performance_metrics(equity,trades)
+    wins=[t for t in trades if t["pnl_twd"]>0]
+    losses=[t for t in trades if t["pnl_twd"]<=0]
+    init_bal=initial_balance or ACCOUNT_BALANCE_TWD
+    full3_exits=[t for t in trades if t.get("n_legs_hit",0)==3]
+    return {"ticker":ticker,"n_bars":n,"n_trades":len(trades),"n_wins":len(wins),"n_losses":len(losses),
+            "win_rate":round(len(wins)/max(len(trades),1)*100,1),
+            "total_pnl_twd":round(sum(t["pnl_twd"] for t in trades),0),
+            "initial_balance":init_bal,"final_balance":round(balance,0),
+            "return_pct":round((balance-init_bal)/init_bal*100,2),
+            "avg_hold_days":round(sum(t.get("hold_days",0) for t in trades)/max(len(trades),1),1),
+            "sharpe":metrics.get("sharpe",0),"max_drawdown":metrics.get("max_drawdown",0),
+            "calmar":metrics.get("calmar",0),"annual_return":metrics.get("annual_return",0),
+            "max_consec_loss":metrics.get("max_consec_loss",0),
+            "n_trades_full3_exit":len(full3_exits),
+            "pct_trades_full3_exit":round(len(full3_exits)/max(len(trades),1)*100,1),
+            "equity_curve":equity,"trades":trades[-30:],"min_score_used":min_score,
+            "grade":metrics.get("sharpe_grade","—"),"dd_grade":metrics.get("dd_grade","—"),
+            "method":"partial_exit_thirds_breakeven_trail",
+            "completed_at":datetime.now(timezone.utc).isoformat()}
+
+def run_full_backtest_tw_partial(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
+    from stock_universe import get_tw50_components
+    targets=tickers or get_tw50_components(); results=[]
+    for idx,ticker in enumerate(targets):
+        try:
+            r=backtest_symbol_tw_partial(ticker,min_score=min_score)
+            if "error" not in r: results.append(r)
+            if progress_cb:
+                try: progress_cb(idx+1,len(targets),ticker)
+                except Exception: pass
+            time.sleep(1.0)
+        except Exception as e: logger.error(f"[BT-PARTIAL] {ticker} 失敗: {e}")
+    results.sort(key=lambda x:x.get("sharpe",0),reverse=True)
+    n_trades_total=sum(r.get("n_trades",0) for r in results)
+    n_wins_total=sum(r.get("n_wins",0) for r in results)
+    overall_win_rate=round(n_wins_total/max(n_trades_total,1)*100,1)
+    avg_sharpe=round(sum(r.get("sharpe",0) for r in results)/max(len(results),1),2)
+    avg_return_pct=round(sum(r.get("return_pct",0) for r in results)/max(len(results),1),2)
+    pct_full3=round(sum(r.get("n_trades_full3_exit",0) for r in results)/max(n_trades_total,1)*100,1)
+    return {"total":len(results),"completed_at":datetime.now(timezone.utc).isoformat(),
+            "method":"partial_exit_thirds_breakeven_trail",
+            "overall_win_rate":overall_win_rate,"n_trades_total":n_trades_total,
+            "avg_sharpe":avg_sharpe,"avg_return_pct":avg_return_pct,
+            "pct_trades_full3_exit":pct_full3,
+            "note":("每筆交易依訊號公告的「各1/3分批出場」計畫實際模擬：第一段碰TP1出清＋停損移保本，"
+                    "第二段碰TP2出清＋停損移至TP1，第三段碰TP3出清或被移動後的停損打到。win_rate 定義"
+                    "為「整筆交易（三段加總）淨損益是否為正」，不是「有沒有碰到任一個TP」。可與"
+                    "run_full_backtest_tw()（單一出場價模型）的結果對照，量化過去「各1/3分批出場」"
+                    "文案跟實際回報數字之間的落差。"),
+            "leaderboard":[{"ticker":r["ticker"],"win_rate":r["win_rate"],"sharpe":r["sharpe"],
+                            "max_drawdown":r["max_drawdown"],"total_pnl_twd":r["total_pnl_twd"],
+                            "return_pct":r["return_pct"],"grade":r["grade"],"n_trades":r["n_trades"],
+                            "pct_trades_full3_exit":r.get("pct_trades_full3_exit",0)} for r in results],
+            "details":results}

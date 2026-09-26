@@ -124,8 +124,20 @@ def calc_take_profits_tw(direction, price, stop_loss, size_cat="中型股"):
             "rr1":params["tp1_rr"],"rr2":params["tp2_rr"],"rr3":params["tp3_rr"],
             "risk":round(risk,2),"risk_pct":round(risk/price*100,2),"exit_plan":"各1/3分批出場"}
 
-def check_multi_timeframe_tw(tf_data):
+# ★ 新增：2026-09-26——稽核報告中長期項目「因子/評分消融分析」。原本
+# check_multi_timeframe_tw() 的六個評分因子（EMA排列/半年線突破/RSI/MACD/
+# 量增/ADX加成/週線逆勢懲罰）全部寫死在同一段流程裡，沒有任何方式可以
+# 「單獨關掉某一項，看勝率/報酬有沒有掉」——想知道哪個因子真的有貢獻、
+# 哪個只是雜訊甚至扣分，只能改程式碼重新部署才能測，成本太高、也太危險
+# （改程式碼直接影響實盤評分）。這裡加一個 disabled_factors 參數（預設
+# None，等同完全不影響任何行為，實盤呼叫端不用改），backtester.py 的
+# run_factor_ablation_tw() 會逐一把每個因子丟進這裡、重跑整批回測，藉此
+# 量化每個因子對勝率/報酬的邊際貢獻，而不需要動到任何實盤程式碼路徑。
+FACTOR_KEYS = ("ema", "trend200", "rsi", "macd", "volume", "adx", "weekly")
+
+def check_multi_timeframe_tw(tf_data, disabled_factors=None):
     from indicators import calc_all_indicators
+    disabled = disabled_factors or set()
     results = {}
     for tf_key in ["weekly","daily","hourly"]:
         d = tf_data.get(tf_key)
@@ -151,11 +163,12 @@ def check_multi_timeframe_tw(tf_data):
         wk_ema = results["weekly"].get("ema",{})
         weekly_bias = wk_ema.get("bias","neutral") if wk_ema.get("valid") else "neutral"
     bull_score=0; bear_score=0; conds_met=[]; conds_fail=[]
-    if "bullish" in ema_bias:   bull_score+=3; conds_met.append(f"EMA {ema_d.get('alignment','')} ✓")
-    elif "bearish" in ema_bias: bear_score+=3; conds_met.append(f"EMA {ema_d.get('alignment','')} ✓")
-    else: conds_fail.append("EMA 方向不明")
+    if "ema" not in disabled:
+        if "bullish" in ema_bias:   bull_score+=3; conds_met.append(f"EMA {ema_d.get('alignment','')} ✓")
+        elif "bearish" in ema_bias: bear_score+=3; conds_met.append(f"EMA {ema_d.get('alignment','')} ✓")
+        else: conds_fail.append("EMA 方向不明")
     price = daily.get("current_price",0); e120 = ema_d.get("e120") or ema_d.get("e_trend",0)
-    if price > 0 and e120 > 0:
+    if "trend200" not in disabled and price > 0 and e120 > 0:
         if price > e120 * 1.005:   bull_score+=2; conds_met.append(f"突破半年線({e120:.1f}) ✓")
         elif price < e120 * 0.995: bear_score+=2; conds_met.append(f"跌破半年線({e120:.1f}) ✓")
         else: conds_fail.append(f"在半年線附近({e120:.1f})")
@@ -165,35 +178,39 @@ def check_multi_timeframe_tw(tf_data):
     # 摸得到，sell 頂多到 8 分，永遠評不到 A 級）。這裡補上對稱規則：
     # RSI 超買（>75）比照超賣反彈(+2) 給空頭「超買反轉」+2；
     # MACD 死叉比照金叉，給空頭 +1 額外加成。
-    if 45<=rsi_val<=70:    bull_score+=1; conds_met.append(f"RSI {rsi_val:.0f} 多頭健康區 ✓")
-    elif 30<=rsi_val<45:   bear_score+=1; conds_met.append(f"RSI {rsi_val:.0f} 空頭區 ✓")
-    elif rsi_val>75:       bear_score+=2; conds_met.append(f"RSI {rsi_val:.0f} 超買反轉 ✓")
-    elif rsi_val<30:       bull_score+=2; conds_met.append(f"RSI {rsi_val:.0f} 超賣反彈 ✓")
-    if "bullish" in macd_bias:
-        bull_score+=1; cross=macd_d.get("cross","")
-        if cross=="MACD金叉": bull_score+=1; conds_met.append("MACD 金叉 ✓")
-        else: conds_met.append("MACD 偏多 ✓")
-    elif "bearish" in macd_bias:
-        bear_score+=1; cross=macd_d.get("cross","")
-        if cross=="MACD死叉": bear_score+=1; conds_met.append("MACD 死叉 ✓")
-        else: conds_met.append("MACD 偏空 ✓")
-    else: conds_fail.append("MACD 中性")
+    if "rsi" not in disabled:
+        if 45<=rsi_val<=70:    bull_score+=1; conds_met.append(f"RSI {rsi_val:.0f} 多頭健康區 ✓")
+        elif 30<=rsi_val<45:   bear_score+=1; conds_met.append(f"RSI {rsi_val:.0f} 空頭區 ✓")
+        elif rsi_val>75:       bear_score+=2; conds_met.append(f"RSI {rsi_val:.0f} 超買反轉 ✓")
+        elif rsi_val<30:       bull_score+=2; conds_met.append(f"RSI {rsi_val:.0f} 超賣反彈 ✓")
+    if "macd" not in disabled:
+        if "bullish" in macd_bias:
+            bull_score+=1; cross=macd_d.get("cross","")
+            if cross=="MACD金叉": bull_score+=1; conds_met.append("MACD 金叉 ✓")
+            else: conds_met.append("MACD 偏多 ✓")
+        elif "bearish" in macd_bias:
+            bear_score+=1; cross=macd_d.get("cross","")
+            if cross=="MACD死叉": bear_score+=1; conds_met.append("MACD 死叉 ✓")
+            else: conds_met.append("MACD 偏空 ✓")
+        else: conds_fail.append("MACD 中性")
     # ★ 修正：2026-09-16——稽核發現量增(vol_ratio)原本無條件只加到 bull_score，
     # 即使當天所有其他指標都偏空、只有成交量放大，也會被硬塞進多頭分數，等於
     # 「爆量下跌」這種明顯偏空的量價訊號反而幫多頭加分。改成比照下面 ADX
     # 加成的寫法，加到「目前領先的一方」（跟 EMA/半年線/RSI/MACD 已經判斷出
     # 的方向一致），量增才會是「確認當前趨勢」而不是「無條件挺多」。
-    if vol_ratio>=THRESH["min_vol_ratio"]:
-        if bull_score>=bear_score: bull_score+=2
-        else: bear_score+=2
-        conds_met.append(f"量增({vol_ratio:.1f}x) ✓")
-    elif vol_ratio<0.7: conds_fail.append(f"量縮({vol_ratio:.1f}x)")
-    if adx_val>=25:
-        if bull_score>bear_score: bull_score+=1
-        elif bear_score>bull_score: bear_score+=1
-        conds_met.append(f"ADX {adx_val:.0f} 趨勢強 ✓")
-    elif adx_val<THRESH["min_adx"]: conds_fail.append(f"ADX {adx_val:.0f} 趨勢不足")
-    if weekly_bias!="neutral":
+    if "volume" not in disabled:
+        if vol_ratio>=THRESH["min_vol_ratio"]:
+            if bull_score>=bear_score: bull_score+=2
+            else: bear_score+=2
+            conds_met.append(f"量增({vol_ratio:.1f}x) ✓")
+        elif vol_ratio<0.7: conds_fail.append(f"量縮({vol_ratio:.1f}x)")
+    if "adx" not in disabled:
+        if adx_val>=25:
+            if bull_score>bear_score: bull_score+=1
+            elif bear_score>bull_score: bear_score+=1
+            conds_met.append(f"ADX {adx_val:.0f} 趨勢強 ✓")
+        elif adx_val<THRESH["min_adx"]: conds_fail.append(f"ADX {adx_val:.0f} 趨勢不足")
+    if "weekly" not in disabled and weekly_bias!="neutral":
         if bull_score>bear_score and "bearish" in weekly_bias:
             bull_score=max(0,bull_score-2); conds_fail.append("⚠️ 週線偏空，逆勢風險")
         elif bear_score>bull_score and "bullish" in weekly_bias:

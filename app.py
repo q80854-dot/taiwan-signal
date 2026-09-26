@@ -475,6 +475,92 @@ def api_backfill_result():
         "revenue_result": store.get_meta("backfill_revenue_result", None),
     })
 
+# ★ 新增：2026-09-26——稽核報告中長期項目「真正的分批出場回測邏輯」。比照
+# 上面 full_backtest/compare_backtest/backfill 同一套「背景執行緒＋
+# state_store meta 輪詢進度」模式（TW50全市場分批出場回測時間跟一般全市場
+# 回測差不多量級，仍會超過gunicorn同步逾時）。
+_partial_exit_bt_running = threading.Event()
+
+def _run_partial_exit_bt_bg(min_score):
+    from state_store import store
+    if _partial_exit_bt_running.is_set():
+        return
+    _partial_exit_bt_running.set()
+    try:
+        from backtester import run_full_backtest_tw_partial
+        store.set_meta("partial_exit_bt_progress", {"status": "running", "done": 0, "total": 0, "ticker": ""})
+        def _cb(done, total, ticker):
+            store.set_meta("partial_exit_bt_progress", {"status": "running", "done": done, "total": total, "ticker": ticker})
+        result = run_full_backtest_tw_partial(min_score=min_score, progress_cb=_cb)
+        store.set_meta("partial_exit_bt_result", result)
+        store.set_meta("partial_exit_bt_progress", {"status": "done", "done": result.get("total", 0), "total": result.get("total", 0), "ticker": ""})
+    except Exception as e:
+        logger.error(f"_run_partial_exit_bt_bg: {e}", exc_info=True)
+        store.set_meta("partial_exit_bt_progress", {"status": "error", "error": str(e)})
+    finally:
+        _partial_exit_bt_running.clear()
+
+@app.route("/api/backtest/partial_exit/run", methods=["POST"])
+def api_backtest_partial_exit_run():
+    if _partial_exit_bt_running.is_set():
+        return jsonify({"status": "already_running"})
+    min_score = request.args.get("min_score", default=65.0, type=float)
+    threading.Thread(target=_run_partial_exit_bt_bg, args=(min_score,), daemon=True).start()
+    return jsonify({"status": "started", "min_score": min_score,
+                     "note": "TW50成分股，用真正的「各1/3分批出場＋保本移動停損」模擬（非單一出場價簡化模型），"
+                             "背景執行，用 /api/backtest/partial_exit/result 查進度"})
+
+@app.route("/api/backtest/partial_exit/result")
+def api_backtest_partial_exit_result():
+    from state_store import store
+    return jsonify({
+        "progress": store.get_meta("partial_exit_bt_progress", {"status": "never_run"}),
+        "result": store.get_meta("partial_exit_bt_result", None),
+    })
+
+# ★ 新增：2026-09-26——稽核報告中長期項目「因子/評分消融分析」。同樣比照
+# 背景執行緒＋輪詢模式（baseline + 7個因子＝8輪全市場回測，時間約為單次
+# full_backtest的8倍）。
+_ablation_bt_running = threading.Event()
+
+def _run_ablation_bt_bg(min_score):
+    from state_store import store
+    if _ablation_bt_running.is_set():
+        return
+    _ablation_bt_running.set()
+    try:
+        from backtester import run_factor_ablation_tw
+        store.set_meta("ablation_bt_progress", {"status": "running", "stage": 0, "total_stages": 0, "detail": ""})
+        def _cb(stage_idx, total_stages, detail):
+            store.set_meta("ablation_bt_progress", {"status": "running", "stage": stage_idx, "total_stages": total_stages, "detail": detail})
+        result = run_factor_ablation_tw(min_score=min_score, progress_cb=_cb)
+        store.set_meta("ablation_bt_result", result)
+        store.set_meta("ablation_bt_progress", {"status": "done", "stage": 8, "total_stages": 8, "detail": ""})
+    except Exception as e:
+        logger.error(f"_run_ablation_bt_bg: {e}", exc_info=True)
+        store.set_meta("ablation_bt_progress", {"status": "error", "error": str(e)})
+    finally:
+        _ablation_bt_running.clear()
+
+@app.route("/api/backtest/ablation/run", methods=["POST"])
+def api_backtest_ablation_run():
+    if _ablation_bt_running.is_set():
+        return jsonify({"status": "already_running"})
+    min_score = request.args.get("min_score", default=65.0, type=float)
+    threading.Thread(target=_run_ablation_bt_bg, args=(min_score,), daemon=True).start()
+    return jsonify({"status": "started", "min_score": min_score,
+                     "note": "逐一關閉EMA/半年線/RSI/MACD/量增/ADX/週線confirm 共7個評分因子各跑一次全市場回測，"
+                             "量化每個因子對勝率的邊際貢獻，約為單次full_backtest的8倍時間，"
+                             "背景執行，用 /api/backtest/ablation/result 查進度"})
+
+@app.route("/api/backtest/ablation/result")
+def api_backtest_ablation_result():
+    from state_store import store
+    return jsonify({
+        "progress": store.get_meta("ablation_bt_progress", {"status": "never_run"}),
+        "result": store.get_meta("ablation_bt_result", None),
+    })
+
 # ── Telegram Webhook ──
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
