@@ -91,6 +91,16 @@ THRESH = SIGNAL_THRESHOLDS
 # True。
 ENABLE_SHORT_SIGNALS = False
 
+# ★ 修正：2026-09-26（稽核 finding #8，文件化澄清，未刪值/未變更行為）——
+# 下面每個分類的 "trail_stop" 欄位目前是死設定：signal_engine.calc_stop_loss_tw()/
+# calc_take_profits_tw()（唯一讀 SWING_PARAMS 的兩處，見該檔案）只用了
+# sl_atr_mult/tp1_rr/tp2_rr/tp3_rr 這四個 key，從未讀過 trail_stop，全專案
+# 也沒有其他地方讀取這個 key（backtest_symbol_tw_partial() 的移動停損邏輯是
+# 另外用 stage=="tp1"/"tp2" 硬寫的固定規則，見 backtester.py，沒有查這裡）。
+# 保留這個 key 是因為它記錄了「哪個規模類別原本設計上該有移動停損」的產品
+# 意圖，之後如果要把 backtester.py 那套「碰TP1移保本、碰TP2移TP1」的邏輯
+# 也接進實盤 signal_engine，這裡的 True/False 就是現成的分類依據；在那之前
+# 修改這個值不會對系統行為有任何影響，之後真的要用時記得同時更新這則註解。
 SWING_PARAMS = {
     "大型股": {"sl_atr_mult": 1.5, "tp1_rr": 1.5, "tp2_rr": 2.5, "tp3_rr": 4.0, "trail_stop": True},
     "中型股": {"sl_atr_mult": 2.0, "tp1_rr": 2.0, "tp2_rr": 3.0, "tp3_rr": 5.0, "trail_stop": True},

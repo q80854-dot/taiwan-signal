@@ -617,6 +617,15 @@ class TWScanEngine:
             removed = before - len(signals)
             if removed:
                 logger.info(f"_filter_and_rank: 排除 {removed} 檔已有未平倉訊號的重複標的（見上方新增說明），剩 {len(signals)} 檔")
+        # ★ 修正：2026-09-26（稽核 finding #7，文件化澄清，邏輯不變）——這裡寫的是
+        # 「大盤重挫時只留做空訊號」，但 config.py 的 ENABLE_SHORT_SIGNALS 目前是
+        # False，signal_engine.check_multi_timeframe_tw() 在這個開關關閉時，一開始
+        # 就不會產生 direction=="sell" 的訊號（見該檔案該函式），所以這一行實際
+        # 的效果是「大盤重挫時清空所有訊號」，不是字面上看起來的「只做空」。這是
+        # 目前正確、預期中的保守行為（大盤重挫时暫停一切新倉），保留這行是為了
+        # ENABLE_SHORT_SIGNALS 未來重新開啟時，這裡不用再改一次就能自動變回
+        # 「只留空單」的原始設計意圖；只是這裡留言澄清，避免日後誤以為這是漏掉
+        # 開發、忘記寫多單過濾的bug。
         if market_overview.get("market_status") == "stop":
             signals = [s for s in signals if s["direction"] == "sell"]
 

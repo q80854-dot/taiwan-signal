@@ -7,7 +7,7 @@ risk_manager.py — 台股波段版 v1.0
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List
-from config import CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS
+from config import CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_DAILY_RISK
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,13 @@ def record_signal_loss(loss_twd: float):
     _daily_loss["signal_count"]+=1
 
 def check_daily_loss_limit() -> Dict:
-    max_daily=ACCOUNT_BALANCE_TWD*0.06
+    # ★ 修正：2026-09-26（稽核 finding #4）——原本這裡寫死字面常數 0.06，
+    # 跟 config.py 的 MAX_DAILY_RISK=0.06 只是「數字剛好相同」，兩者沒有真的
+    # 連在一起：以後如果改 config.py 的每日虧損上限，這裡完全不會反應，
+    # 形成一個「看起來可調、實際上調了沒用」的陷阱（跟 signal_engine.
+    # calc_position_size() 2026-09-16 修正過的同一類問題）。改成直接從
+    # config 讀，兩處數字保證永遠一致。
+    max_daily=ACCOUNT_BALANCE_TWD*MAX_DAILY_RISK
     today=datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if _daily_loss["date"]!=today:
         return {"exceeded":False,"today_loss":0,"max_loss":round(max_daily,0),"remaining":round(max_daily,0)}
