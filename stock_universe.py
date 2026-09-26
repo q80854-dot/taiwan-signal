@@ -374,6 +374,31 @@ def _get_fallback_universe() -> List[Dict]:
 def refresh_universe_daily():
     universe = build_universe(force_refresh=True)
     logger.info(f"品種更新完成: {len(universe)} 檔")
+
+
+# ★ 新增：2026-09-26——使用者要調整 THRESH["min_avg_volume"]（目前 500 張）這個
+# 全市場掃描的流動性門檻，但在改之前想先知道「調到多少張，會多納入幾檔」。
+# 這裡提供一個唯讀診斷函式：抓一次全市場原始清單（跳過 sector 分類，因為這裡
+# 只是要算門檔分布，不需要產業資訊，可以省掉一次 API 呼叫加快回應），只套用
+# close>5 這條（跟正式流程一致，避免雞蛋水餃股混進統計），然後回傳在幾個候選
+# 門檻值下各自會納入幾檔，讓使用者能在真正修改 config.py 前先看到影響範圍。
+def get_volume_threshold_distribution(candidate_thresholds=None) -> Dict:
+    candidate_thresholds = candidate_thresholds or [500, 300, 200, 150, 100, 50, 0]
+    tse = _fetch_twse_list()
+    tpex = _fetch_tpex_list()
+    all_stocks = tse + tpex
+    priced = [s for s in all_stocks if s["close"] > 5]
+    result = {
+        "raw_total_tse": len(tse),
+        "raw_total_tpex": len(tpex),
+        "raw_total_after_price_filter": len(priced),
+        "current_threshold": THRESH["min_avg_volume"],
+        "by_threshold": {},
+    }
+    for t in candidate_thresholds:
+        n = sum(1 for s in priced if s["volume_lots"] >= t)
+        result["by_threshold"][str(t)] = n
+    return result
     return len(universe)
 
 # ── app.py 的 api_universe 路由需對應修改 ──

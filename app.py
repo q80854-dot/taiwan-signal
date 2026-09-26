@@ -601,6 +601,19 @@ def test_telegram():
 def health():
     return jsonify({"status": "ok", "version": SYSTEM["version"], "timestamp": datetime.now(timezone.utc).isoformat()})
 
+@app.route("/api/diagnostics/universe_thresholds")
+def diagnostics_universe_thresholds():
+    """★ 新增：2026-09-26——唯讀診斷端點，回答「均量門檻調到多少張，全市場掃描
+    會多納入幾檔股票」，供使用者在真正調整 config.py THRESH['min_avg_volume']
+    （目前500張）之前先看到實際影響範圍，不用用猜的。見 stock_universe.py
+    get_volume_threshold_distribution() 的說明。"""
+    try:
+        from stock_universe import get_volume_threshold_distribution
+        return jsonify(get_volume_threshold_distribution())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/diagnostics")
 def diagnostics():
     def chk(m):
