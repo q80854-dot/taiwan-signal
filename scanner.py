@@ -275,7 +275,32 @@ class TWScanEngine:
             active_tickers = set()
             active_positions = []
         filtered = self._filter_and_rank(all_signals, market_overview, active_tickers, active_positions)
-        final_signals = filtered[:TELEGRAM_CONFIG["max_signals_per_day"]]
+        # ★ 修正：2026-09-27——使用者回報系統顯示「已有14個持倉，暫停新增（上限5）」，
+        # 查證後發現這不是 _resolve_pending_signals() 逾期平倉邏輯失效（14筆訊號查
+        # 出來全部只有3天，遠低於 signal_expire_days=15，本來就還不該被強制平倉），
+        # 而是這裡的一個真正的bug：check_max_positions() 熔斷只在「整次掃描開始前」
+        # 檢查一次未平倉數是否已經 >= MAX_SIMULTANEOUS_POSITIONS（見上方 Step 2/5
+        # 之前的檢查），如果開始時数字還沒到上限（例如剩4個名額），熔斷不會觸發，
+        # 掃描就會照常進行到這裡——但這裡原本只用 TELEGRAM_CONFIG["max_signals_
+        # per_day"]（10）去截斷，跟 MAX_SIMULTANEOUS_POSITIONS（5）完全是兩個不
+        # 相關的數字，等於「這次掃描最多推播幾則」跟「總共最多能有幾個未平倉部位」
+        # 之間沒有任何關聯。2026-09-24 那次掃描開始時未平倉數還沒到5，但當天篩選後
+        # 找到的候選一路推到 max_signals_per_day=10 這個上限，一次性把未平倉數從個位數
+        # 推高到14，之後熔斷才在「已經超標」的狀態下持續擋住後續所有掃描——換句話說，
+        # 熔斷本身沒壞，是「單次掃描可以新增幾筆」原本就沒有真正跟持倉上限掛勾。這裡
+        # 補上第二層真正的上限：這次最多只能再新增 (MAX_SIMULTANEOUS_POSITIONS -
+        # 目前未平倉數) 筆，兩個上限取較小值，之後不管單次掃描候選再多，未平倉數永遠
+        # 不會超過 MAX_SIMULTANEOUS_POSITIONS。
+        from config import MAX_SIMULTANEOUS_POSITIONS
+        remaining_slots = max(0, MAX_SIMULTANEOUS_POSITIONS - len(active_positions))
+        signal_cap = min(TELEGRAM_CONFIG["max_signals_per_day"], remaining_slots)
+        final_signals = filtered[:signal_cap]
+        if len(filtered) > signal_cap:
+            logger.info(
+                f"run_daily_scan: 篩選後 {len(filtered)} 檔候選，但持倉上限只剩 "
+                f"{remaining_slots} 個名額（{len(active_positions)}/{MAX_SIMULTANEOUS_POSITIONS} 已佔用），"
+                f"本次只取分數最高的 {len(final_signals)} 檔，其餘留到下次未平倉數降低後再掃"
+            )
 
         self.signals_today = final_signals
         self.scan_count   += 1

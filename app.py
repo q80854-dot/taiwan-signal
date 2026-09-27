@@ -648,12 +648,14 @@ def diagnostics_fundamentals_extra():
 
 @app.route("/api/diagnostics/pending_signals")
 def diagnostics_pending_signals():
-    """★ 新增：2026-09-27——臨時診斷端點（用完即移除）。使用者反映系統回報
-    「已有14個持倉，暫停新增（上限5）」，需要查清楚這14筆 status='active' AND
-    result='pending' 的訊號到底是什麼、生成多久了，才能判斷是
-    _resolve_pending_signals() 的逾期強制平倉邏輯本身沒有正常執行，還是資料
-    本身有欄位缺失（例如 stop_loss 缺失導致被略過，見該函式 continue 那行）
-    讓這些訊號永遠不會被結算。"""
+    """★ 新增：2026-09-27——原本是臨時診斷端點，用來查清楚使用者回報的「已有14個
+    持倉，暫停新增（上限5）」是不是逾期平倉邏輯失效。查證結果：不是——14筆訊號
+    生成當時全部只有3天，遠低於 signal_expire_days=15，本來就還不該被強制平倉；
+    真正原因是 run_daily_scan() 裡「單次掃描最多新增幾筆」原本只受
+    TELEGRAM_CONFIG["max_signals_per_day"] 限制，跟 MAX_SIMULTANEOUS_POSITIONS
+    完全脫鉤，已在 scanner.py 修正（見該檔案 run_daily_scan() 的說明）。這個端點
+    留下來當常駐診斷用，方便之後隨時查目前未平倉訊號清單跟各自的天數，不用再
+    另外寫一次。"""
     try:
         from state_store import store
         from datetime import datetime, timezone
