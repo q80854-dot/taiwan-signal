@@ -653,6 +653,79 @@ class TWScanEngine:
         except Exception as e:
             logger.warning(f"_filter_and_rank: 基本面過濾失敗（不影響本次掃描，本次跳過基本面過濾）: {e}")
 
+        # ★ 新增：2026-09-27——使用者要求把「估值面(本益比/股價淨值比/殖利率) +
+        # 融券餘額/當沖比例（籌碼面風險）」接進評分邏輯（見 fundamentals.py
+        # fetch_valuation_map()/fetch_margin_short_map() 的資料擷取層說明）。
+        # 設計決定（跟月營收「硬性排除」不同，比照法人買賣超「加減分」模式）：
+        #   1) 融券餘額單日大幅增加（放空/避險力道增加，對 buy 訊號是反向證據）
+        #      →扣分；融券使用率接近限額（可能被迫回補、空方回補買盤是 buy 的
+        #      潛在助力）→加分。兩者都是「已經有明確方向性解釋」的訊號，比照
+        #      inst_data 的±5分寫成對稱規則（sell 訊號目前因 ENABLE_SHORT_SIGNALS
+        #      關閉不會被產生，但規則本身照樣寫成對稱，避免之後重新開放做空時
+        #      又要重蹈 inst_data 那次不對稱的覆轍）。
+        #   2) 估值面(PE/PB/殖利率) 跟大盤層級的當沖比重 overlay，目前只當「顯示
+        #      資訊」附掛在訊號上（reason_full 多一行），不影響分數——這兩塊還
+        #      沒有實測資料驗證過合理的加減分門檻/幅度，貿然訂一個數字去動分數
+        #      風險比「先只顯示」更高（跟這個專案一路的保守原則一致：ENABLE_
+        #      SHORT_SIGNALS 就是因為回測結果不好才關掉，不是先猜測再上線）。
+        try:
+            from fundamentals import fetch_margin_short_map, fetch_valuation_map, fetch_market_daytrading_overlay
+            margin_short_map = fetch_margin_short_map()
+            valuation_map = fetch_valuation_map()
+            daytrading_overlay = fetch_market_daytrading_overlay()
+            for sig in signals:
+                code = sig.get("code", "")
+                chip_adj = 0
+                chip_notes = []
+                ms = margin_short_map.get(code)
+                if ms:
+                    chg = ms.get("short_balance_chg")
+                    prev = ms.get("short_balance") - chg if (chg is not None and ms.get("short_balance") is not None) else None
+                    chg_pct = (chg / prev * 100) if (chg and prev and prev > 0) else None
+                    util = ms.get("short_utilization_pct")
+                    if sig["direction"] == "buy":
+                        if chg_pct is not None and chg_pct > 30 and chg > 20:
+                            chip_adj -= 3
+                            chip_notes.append(f"融券餘額單日+{chg_pct:.0f}%（空方力道增加）⚠️")
+                        elif chg_pct is not None and chg_pct < -30 and chg < -20:
+                            chip_adj += 2
+                            chip_notes.append(f"融券餘額單日{chg_pct:.0f}%（空方回補）")
+                        if util is not None and util >= 90:
+                            chip_adj += 2
+                            chip_notes.append(f"融券使用率{util:.0f}%接近限額（潛在回補買盤）")
+                    else:  # sell（目前 ENABLE_SHORT_SIGNALS=False 不會實際產生，規則對稱保留）
+                        if chg_pct is not None and chg_pct < -30 and chg < -20:
+                            chip_adj -= 3
+                            chip_notes.append(f"融券餘額單日{chg_pct:.0f}%（空方回補，反向證據）⚠️")
+                        elif chg_pct is not None and chg_pct > 30 and chg > 20:
+                            chip_adj += 2
+                            chip_notes.append(f"融券餘額單日+{chg_pct:.0f}%（空方力道增加）")
+                if chip_adj:
+                    sig["score"] = max(0, min(100, sig["score"] + chip_adj))
+                    logger.info(f"[{sig.get('ticker')}] 籌碼面評分調整 {chip_adj:+d}：{'；'.join(chip_notes)}")
+                val = valuation_map.get(code)
+                chip_display_lines = []
+                if chip_notes:
+                    chip_display_lines.append("【籌碼】" + "；".join(chip_notes))
+                if val and (val.get("pe") is not None or val.get("pb") is not None):
+                    chip_display_lines.append(
+                        f"【估值】PE={val.get('pe','—')} PB={val.get('pb','—')} 殖利率={val.get('yield_pct','—')}%"
+                    )
+                if daytrading_overlay:
+                    chip_display_lines.append(
+                        f"【當沖(大盤櫃買)】成交值占比 買{daytrading_overlay.get('buy_value_pct_of_market','—')}% "
+                        f"/ 賣{daytrading_overlay.get('sell_value_pct_of_market','—')}%"
+                    )
+                if chip_display_lines:
+                    sig["reason_full"] = sig.get("reason_full", "") + "\n" + "\n".join(chip_display_lines)
+                    sig["chip_risk_note"] = "；".join(chip_notes) if chip_notes else ""
+            before = len(signals)
+            signals = [s for s in signals if s["score"] >= THRESH["min_score"]]
+            if len(signals) != before:
+                logger.info(f"_filter_and_rank: 籌碼面評分調整後，{before - len(signals)} 檔跌破門檻被排除，剩 {len(signals)} 檔")
+        except Exception as e:
+            logger.warning(f"_filter_and_rank: 籌碼面評分調整失敗（不影響本次掃描，本次跳過）: {e}")
+
         # 同產業去重（只留最高分）
         # ★ 修正：2026-08-30——今天稽核程式碼時抓到一個還沒真的發生過、但影響非常大的
         #   潛在 bug：sig["sector"] 來自 stock_universe.py 的 _fetch_sector_info()，那個
