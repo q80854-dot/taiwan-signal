@@ -638,7 +638,11 @@ def diagnostics_fugle_index_list():
                 data = r.json().get("data", [])
                 matches = [{"symbol": it.get("symbol"), "name": it.get("name")}
                            for it in data if any(k in (it.get("name") or "") for k in ("櫃", "OTC", "上櫃"))]
-                out[label] = {"total": len(data), "otc_matches": matches}
+                # ★ 修正：2026-09-27——關鍵字篩選 0 命中，代表富果這份清單裡的名稱
+                # 可能用了完全不同的字眼（例如純英文、或跟「上櫃」無關的措辭），先把
+                # 全部 181 筆的 symbol/name 都印出來，用眼睛找，而不是繼續猜關鍵字。
+                out[label] = {"total": len(data), "otc_matches": matches,
+                               "all": [{"symbol": it.get("symbol"), "name": it.get("name")} for it in data]}
             else:
                 out[label] = {"error": f"HTTP {r.status_code}", "body": r.text[:300]}
         return jsonify(out)
