@@ -616,52 +616,36 @@ def diagnostics_universe_thresholds():
 
 @app.route("/api/diagnostics/probe_openapi")
 def diagnostics_probe_openapi():
-    """★ 新增：2026-09-27——臨時診斷端點（用完即移除）。稽核發現 stock_universe.py
-    的 TPEX_LIST_URL="https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes" 跟
-    fundamentals.py 的 "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O" 兩個
-    openapi/v1 路徑，用 requests 從伺服器端實測都正常（不是 Cloudflare 擋所有流量，
-    之前用 WebFetch 工具測 403 可能是 WebFetch 的請求特徵被擋，不代表伺服器端的
-    requests.get() 也會被擋）——這推翻了 data_fetcher._fetch_tpex() 裡「TPEx整個
-    網域都被Cloudflare擋」的舊結論，值得重新用同一套 requests+HEADERS 探測看看
-    上櫃指數、估值面(本益比/股價淨值比/殖利率)、融券餘額等候選端點是否其實可用。
-    直接列出一批候選 dataset 名稱逐一嘗試，回傳每個的 HTTP 狀態碼跟前200字元。"""
+    """★ 新增：2026-09-27（第二輪）——臨時診斷端點（用完即移除）。第一輪已經確認
+    TPEx OpenAPI 網域本身沒被 Cloudflare 擋（見 data_fetcher._fetch_tpex() 頂端
+    的修正記錄），也找到 tpex_index/tpex_mainboard_peratio_analysis/BWIBBU_ALL
+    三個可用端點。這一輪用 Chrome 直接開 TPEx 跟 TWSE 兩邊的 Swagger UI 頁面，
+    從官方 API 目錄裡查到融資融券餘額、當沖交易統計的正確 dataset 名稱
+    （TPEx: tpex_mainboard_margin_balance / tpex_intraday_trading_statistics；
+    TWSE: exchangeReport/MI_MARGN（已知可用）/ exchangeReport/TWTB4U），這裡逐一
+    用 requests 實測確認欄位結構，供接下來寫 fetch_margin_short_map() 用。"""
     import requests as _requests
     from data_fetcher import HEADERS
-    candidates = [
-        "tpex_mainboard_quotes",           # 已知可用（個股報價，供比對基準）
-        "tpex_mainboard_dailyclose",
-        "tpex_mainboard_daily_close",
-        "tpex_indices",
-        "tpex_index",
-        "tpex_dailytpex_summary",
-        "tpex_mainboard_peratio_analysis",
-        "tpex_mainboard_margin_trading",
-        "tpex_mainboard_marginbalance",
-        "tpex_daily_margin",
-    ]
     out = {}
-    for name in candidates:
-        url = f"https://www.tpex.org.tw/openapi/v1/{name}"
+
+    def _probe(name, url):
         try:
             r = _requests.get(url, headers=HEADERS, timeout=10)
             body = r.text.strip()
-            out[name] = {"status": r.status_code, "len": len(body), "preview": body[:200]}
+            out[name] = {"status": r.status_code, "len": len(body), "preview": body[:400]}
         except Exception as e:
             out[name] = {"error": str(e)}
-    # 同時探測 TWSE BWIBBU_ALL（估值面：本益比/殖利率/股價淨值比，上市部分）
-    try:
-        r = _requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", headers=HEADERS, timeout=10)
-        body = r.text.strip()
-        out["twse_BWIBBU_ALL"] = {"status": r.status_code, "len": len(body), "preview": body[:300]}
-    except Exception as e:
-        out["twse_BWIBBU_ALL"] = {"error": str(e)}
-    # TWSE 融券餘額 (MI_MARGN 已知用於融資，同一份資料通常也含融券欄位，這裡單獨列出確認)
-    try:
-        r = _requests.get("https://openapi.twse.com.tw/v1/exchangeReport/TWT93U", headers=HEADERS, timeout=10)
-        body = r.text.strip()
-        out["twse_TWT93U_short"] = {"status": r.status_code, "len": len(body), "preview": body[:300]}
-    except Exception as e:
-        out["twse_TWT93U_short"] = {"error": str(e)}
+
+    _probe("tpex_mainboard_margin_balance",
+           "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance")
+    _probe("tpex_intraday_trading_statistics",
+           "https://www.tpex.org.tw/openapi/v1/tpex_intraday_trading_statistics")
+    _probe("tpex_securities",
+           "https://www.tpex.org.tw/openapi/v1/tpex_securities")
+    _probe("twse_MI_MARGN",
+           "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN")
+    _probe("twse_TWTB4U",
+           "https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U")
     return jsonify(out)
 
 

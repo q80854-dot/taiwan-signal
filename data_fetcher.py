@@ -232,29 +232,42 @@ def _fetch_twii() -> Optional[Dict]:
 
 def _fetch_tpex() -> Optional[Dict]:
     """TPEX 官方 API 抓上櫃指數"""
-    # ★ 修正：2026-08-31——完整除錯記錄（避免以後重複走冤枉路）：
-    #   1) 一開始以為是「Render 雲端 IP 被反爬蟲擋掉」，補了瀏覽器標頭、
-    #      session cookie、curl_cffi 偽裝 Chrome TLS 指紋，全部失敗且錯誤
-    #      訊息一模一樣。
-    #   2) 印出實際回應內容才發現：舊網址 market_summary/summary_result.php
-    #      其實回傳的是 TPEx 自己的「404 找不到頁面」（標題「404 - 證券
-    #      櫃檯買賣中心」），代表這個舊網址已經失效/改版移除，跟雲端 IP
-    #      完全無關；改用新路徑 aftertrading/index_summary/summary.php
-    #      （market_summary 已改名 index_summary）後，拿到的是標題正確
-    #      （「上櫃股價指數收盤行情」）的真實頁面 HTML，但 o=json 參數
-    #      沒有效果、還是整包 HTML。
-    #   3) 進一步在這個真實頁面的 <script src> 清單裡看到
-    #      "/cdn-cgi/challenge-platform/scripts/jsd/main.js"——這是
-    #      Cloudflare 的 bot 防護 JS 驗證腳本。代表 TPEx 官網（至少這個
-    #      查詢功能的資料層）架在 Cloudflare 之後，需要瀏覽器實際執行一段
-    #      JS 驗證流程才能拿到真正資料，不是單純標頭/cookie/TLS 指紋能繞過
-    #      的——這才是問題真正的根源，而不是「雲端機房 IP 被擋」。要在程式
-    #      層面正面突破，需要跑一個真的能執行 JS 的無頭瀏覽器（例如
-    #      Playwright）幫忙拿到 Cloudflare 通過後的資料，這對一個每 5
-    #      分鐘跑一次、跑在 Render 0.5c/512MB 方案上的排程服務來說成本偏
-    #      高（啟動瀏覽器的記憶體/時間開銷），所以先保留 curl_cffi 這個
-    #      「萬一哪天 Cloudflare 設定改變、剛好又能過」的低成本嘗試，抓不到
-    #      就直接退到 yfinance 保底來源，不再無限期原地繞。
+    # ★ 修正：2026-09-27（推翻 2026-09-27 稍早的錯誤結論）——先前以為
+    # www.tpex.org.tw 整個網域（含 /openapi/v1/...）都被 Cloudflare 擋掉，
+    # 這是誤判：判斷依據是 WebFetch 工具對 tpex.org.tw 的請求一律拿到 403，
+    # 但這是 WebFetch 這個特定客戶端的請求特徵被擋，不是網域本身擋爬蟲。
+    # 專案裡其他地方（stock_universe.py 的上櫃清單、fundamentals.py 的
+    # mopsfin_t187ap05_O）早就用 Python requests 函式庫成功呼叫同一個
+    # www.tpex.org.tw/openapi/v1/... 路徑，證明從 Render 伺服器用 requests
+    # 直接打是通的。用一個臨時診斷端點（已移除）以 requests.get() 實測
+    # /openapi/v1/tpex_index，證實它會回傳乾淨的 JSON 陣列（逐日上櫃指數
+    # OHLC），status 200。因此改成第一優先直接打這個 OpenAPI 端點，不需要
+    # curl_cffi 偽裝瀏覽器指紋這種繞路手法；下面原本的 curl_cffi 舊網頁
+    # 查詢路徑與 yfinance ^TWOII 保留作為次要備援，避免 OpenAPI 哪天改版
+    # 或暫時失效時整個指標消失。
+    try:
+        r = requests.get(
+            "https://www.tpex.org.tw/openapi/v1/tpex_index",
+            headers=HEADERS, timeout=10,
+        )
+        if r.status_code == 200 and r.text.strip():
+            data = r.json()
+            if isinstance(data, list) and len(data) >= 2:
+                last, prev = data[-1], data[-2]
+                p  = float(str(last.get("Close", "0")).replace(",", ""))
+                pv = float(str(prev.get("Close", "0")).replace(",", ""))
+                if 50 < p < 5000 and pv > 0:
+                    result = {
+                        "price": round(p, 2), "prev": round(pv, 2),
+                        "chg": round((p - pv) / pv * 100, 2),
+                        "chg_pt": round(p - pv, 2),
+                        "source": "tpex_openapi",
+                    }
+                    logger.info(f"TPEX openapi: {result['price']}")
+                    return result
+    except Exception as e:
+        logger.warning(f"TPEX openapi: {e}")
+
     tpex_headers = {
         **HEADERS,
         "Referer": "https://www.tpex.org.tw/web/stock/aftertrading/index_summary/summary.php",
@@ -293,30 +306,11 @@ def _fetch_tpex() -> Optional[Dict]:
     # 方法三：yfinance 備用 —— ★ 修正：2026-08-31 移除確認不存在的 "^TPEX"
     # （Yahoo 回 404 Quote not found），只保留 "^TWOII" 嘗試。
     # 注意：已知 ^TWOII 跟官方櫃買指數有約 5~6% 落差（例如 2026-08-28 官方
-    # 收盤 402.83，^TWOII 同期只有 389.41），只是最後一道保底、不完全準確。
-    # ★ 修正：2026-09-27（使用者要求排查此問題後的調查記錄）——2026-09-26起
-    # ^TWOII 開始回「No data found, symbol may be delisted」，這道最後保底也
-    # 失效了。調查過三個可能的替代方案，結論都是目前做不到，先誠實記錄避免
-    # 之後重複繞同樣的路：
-    #   1) 富果(Fugle) API：_fetch_fugle_index() 對 TWII 有效（symbolId=IX0001），
-    #      原本猜上櫃指數也能比照辦理，但實際呼叫 /stock/intraday/tickers
-    #      ?type=INDEX 撈出全部181筆指數清單，逐筆檢查後全部都是上市(TSE)相關
-    #      指數（報酬指數、產業類指數等），完全沒有任何一筆是上櫃(OTC)指數——
-    #      不是 symbolId 猜錯的問題，是富果這個方案的指數清單本來就不含上櫃指數。
-    #   2) TPEx 官方 OpenAPI（www.tpex.org.tw/openapi，非原本用的網頁爬蟲路徑）：
-    #      理論上應該是乾淨的 JSON API，但實測不管打 swagger.json 還是任何
-    #      /openapi/v1/... 路徑，一樣回 403——代表 Cloudflare 的 bot 防護是掛在
-    #      www.tpex.org.tw 整個網域上，不是只擋原本那個網頁查詢功能，OpenAPI
-    #      也一樣被擋，跟 _fetch_tpex() 上面官方來源那段的已知限制是同一個根因。
-    #   3) 其他 yfinance ticker 代碼：查證後找不到 Yahoo Finance 目前有在維護
-    #      任何可用的台灣櫃買指數替代代碼。
-    # 目前沒有低成本的解法（真正的解法是跑無頭瀏覽器過 Cloudflare 驗證，或
-    # 付費訂閱有上櫃指數的正式資料源，兩者都超出目前 Render 0.5c/512MB 方案
-    # 的成本/複雜度考量，見上方官方來源段落的說明）。_fetch_tpex() 傳回 None、
-    # fetch_market_index() 會把 result["tpex"] 標成 source="error"（fail-closed，
-    # 見該函式說明），系統其餘部分（TWII熔斷、can_trade）不依賴這個欄位，
-    # 只是 /api/state 的上櫃指數顯示會長期掛「資料異常」，這是已知、可接受
-    # 的限制，不是需要修的 bug。
+    # 收盤 402.83，^TWOII 同期只有 389.41），只是最後一道保底、不完全準確；
+    # 2026-09-26 起 ^TWOII 開始回「No data found, symbol may be delisted」，
+    # 這道 yfinance 保底目前形同失效。不過這已經不是問題了——上面新增的
+    # tpex_openapi 第一優先來源才是真正的修法（見上方 2026-09-27 註解），
+    # 這裡的 yfinance 分支純粹保留當最後一道保底，即使長期回 None 也無妨。
     if YFINANCE_OK:
         for sym in ["^TWOII"]:
             try:
