@@ -646,6 +646,40 @@ def diagnostics_fundamentals_extra():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/diagnostics/pending_signals")
+def diagnostics_pending_signals():
+    """★ 新增：2026-09-27——臨時診斷端點（用完即移除）。使用者反映系統回報
+    「已有14個持倉，暫停新增（上限5）」，需要查清楚這14筆 status='active' AND
+    result='pending' 的訊號到底是什麼、生成多久了，才能判斷是
+    _resolve_pending_signals() 的逾期強制平倉邏輯本身沒有正常執行，還是資料
+    本身有欄位缺失（例如 stop_loss 缺失導致被略過，見該函式 continue 那行）
+    讓這些訊號永遠不會被結算。"""
+    try:
+        from state_store import store
+        from datetime import datetime, timezone
+        pending = store.get_pending_signals()
+        now = datetime.now(timezone.utc)
+        out = []
+        for sig in pending:
+            gen_at = sig.get("generated_at", "")
+            age_days = None
+            try:
+                gen_dt = datetime.fromisoformat(gen_at.replace("Z", "+00:00"))
+                if gen_dt.tzinfo is None:
+                    gen_dt = gen_dt.replace(tzinfo=timezone.utc)
+                age_days = (now - gen_dt).days
+            except Exception:
+                pass
+            out.append({
+                "id": sig.get("id"), "ticker": sig.get("ticker"), "code": sig.get("code"),
+                "direction": sig.get("direction"), "status": sig.get("status"), "result": sig.get("result"),
+                "stop_loss": sig.get("stop_loss"), "generated_at": gen_at, "age_days": age_days,
+            })
+        return jsonify({"count": len(out), "signals": out})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/diagnostics")
 def diagnostics():
     def chk(m):
