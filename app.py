@@ -631,6 +631,14 @@ def diagnostics_probe_openapi():
     def _probe(name, url):
         try:
             r = _requests.get(url, headers=HEADERS, timeout=10)
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                    out[name] = {"status": 200, "len": len(data) if isinstance(data, list) else None,
+                                 "first_record": data[0] if isinstance(data, list) and data else data}
+                    return
+                except Exception:
+                    pass
             body = r.text.strip()
             out[name] = {"status": r.status_code, "len": len(body), "preview": body[:400]}
         except Exception as e:
