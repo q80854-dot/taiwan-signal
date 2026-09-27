@@ -294,6 +294,29 @@ def _fetch_tpex() -> Optional[Dict]:
     # （Yahoo 回 404 Quote not found），只保留 "^TWOII" 嘗試。
     # 注意：已知 ^TWOII 跟官方櫃買指數有約 5~6% 落差（例如 2026-08-28 官方
     # 收盤 402.83，^TWOII 同期只有 389.41），只是最後一道保底、不完全準確。
+    # ★ 修正：2026-09-27（使用者要求排查此問題後的調查記錄）——2026-09-26起
+    # ^TWOII 開始回「No data found, symbol may be delisted」，這道最後保底也
+    # 失效了。調查過三個可能的替代方案，結論都是目前做不到，先誠實記錄避免
+    # 之後重複繞同樣的路：
+    #   1) 富果(Fugle) API：_fetch_fugle_index() 對 TWII 有效（symbolId=IX0001），
+    #      原本猜上櫃指數也能比照辦理，但實際呼叫 /stock/intraday/tickers
+    #      ?type=INDEX 撈出全部181筆指數清單，逐筆檢查後全部都是上市(TSE)相關
+    #      指數（報酬指數、產業類指數等），完全沒有任何一筆是上櫃(OTC)指數——
+    #      不是 symbolId 猜錯的問題，是富果這個方案的指數清單本來就不含上櫃指數。
+    #   2) TPEx 官方 OpenAPI（www.tpex.org.tw/openapi，非原本用的網頁爬蟲路徑）：
+    #      理論上應該是乾淨的 JSON API，但實測不管打 swagger.json 還是任何
+    #      /openapi/v1/... 路徑，一樣回 403——代表 Cloudflare 的 bot 防護是掛在
+    #      www.tpex.org.tw 整個網域上，不是只擋原本那個網頁查詢功能，OpenAPI
+    #      也一樣被擋，跟 _fetch_tpex() 上面官方來源那段的已知限制是同一個根因。
+    #   3) 其他 yfinance ticker 代碼：查證後找不到 Yahoo Finance 目前有在維護
+    #      任何可用的台灣櫃買指數替代代碼。
+    # 目前沒有低成本的解法（真正的解法是跑無頭瀏覽器過 Cloudflare 驗證，或
+    # 付費訂閱有上櫃指數的正式資料源，兩者都超出目前 Render 0.5c/512MB 方案
+    # 的成本/複雜度考量，見上方官方來源段落的說明）。_fetch_tpex() 傳回 None、
+    # fetch_market_index() 會把 result["tpex"] 標成 source="error"（fail-closed，
+    # 見該函式說明），系統其餘部分（TWII熔斷、can_trade）不依賴這個欄位，
+    # 只是 /api/state 的上櫃指數顯示會長期掛「資料異常」，這是已知、可接受
+    # 的限制，不是需要修的 bug。
     if YFINANCE_OK:
         for sym in ["^TWOII"]:
             try:

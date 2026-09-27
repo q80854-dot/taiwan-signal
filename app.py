@@ -614,42 +614,6 @@ def diagnostics_universe_thresholds():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/diagnostics/fugle_index_list")
-def diagnostics_fugle_index_list():
-    """★ 新增：2026-09-27——臨時診斷端點（用完即可移除）。上櫃指數(TPEx)的兩層
-    備援來源（TPEx官網Cloudflare擋、yfinance ^TWOII「may be delisted」）雙雙失效，
-    見 data_fetcher._fetch_tpex() 的說明。這裡直接呼叫富果(Fugle) API 的指數清單
-    端點，把名稱含「櫃」「OTC」「上櫃」關鍵字的候選 symbolId 印出來，取代原本
-    只寫進 log、要重啟後翻 log 才看得到的 _fugle_discover_indices()，方便直接用
-    瀏覽器打這支 API 一次拿到正確代碼。"""
-    try:
-        from data_fetcher import FUGLE_API_KEY, FUBON_PUBLIC_BASE, HEADERS
-        import requests as _requests
-        if not FUGLE_API_KEY:
-            return jsonify({"error": "FUGLE_API_KEY 未設定"}), 500
-        out = {}
-        for label, params in (("TSE", {"market": "TSE", "type": "INDEX"}),
-                               ("OTC", {"market": "OTC", "type": "INDEX"}),
-                               ("no_market", {"type": "INDEX"})):
-            r = _requests.get(f"{FUBON_PUBLIC_BASE}/stock/intraday/tickers",
-                               headers={**HEADERS, "X-API-KEY": FUGLE_API_KEY},
-                               params=params, timeout=10)
-            if r.status_code == 200:
-                data = r.json().get("data", [])
-                matches = [{"symbol": it.get("symbol"), "name": it.get("name")}
-                           for it in data if any(k in (it.get("name") or "") for k in ("櫃", "OTC", "上櫃"))]
-                # ★ 修正：2026-09-27——關鍵字篩選 0 命中，代表富果這份清單裡的名稱
-                # 可能用了完全不同的字眼（例如純英文、或跟「上櫃」無關的措辭），先把
-                # 全部 181 筆的 symbol/name 都印出來，用眼睛找，而不是繼續猜關鍵字。
-                out[label] = {"total": len(data), "otc_matches": matches,
-                               "all": [{"symbol": it.get("symbol"), "name": it.get("name")} for it in data]}
-            else:
-                out[label] = {"error": f"HTTP {r.status_code}", "body": r.text[:300]}
-        return jsonify(out)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route("/api/diagnostics")
 def diagnostics():
     def chk(m):
