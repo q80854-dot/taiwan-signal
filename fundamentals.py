@@ -67,17 +67,17 @@ def _fetch_twse_monthly_revenue() -> Dict[str, Dict]:
 
 
 def _fetch_tpex_monthly_revenue() -> Dict[str, Dict]:
-    """上櫃公司月營收，TPEx OpenAPI。這個網域已知架在 Cloudflare 之後（見
-    data_fetcher._fetch_tpex() 的詳細除錯記錄），用 curl_cffi 偽裝瀏覽器
-    TLS 指紋嘗試，失敗就回空字典（優雅降級，不阻擋任何訊號）。"""
+    """上櫃公司月營收，TPEx OpenAPI。
+    ★ 修正：2026-09-27——推翻原本「TPEx 整個網域架在 Cloudflare 之後，需要
+    curl_cffi 偽裝瀏覽器 TLS 指紋才能繞過」的結論（同樣的錯誤判斷也出現在
+    data_fetcher._fetch_tpex()，已在該處修正並記錄完整除錯過程）。實測從
+    Render 伺服器直接用 requests.get() 打 www.tpex.org.tw/openapi/v1/...
+    是通的，403 只出現在 WebFetch 工具自己的請求特徵上。這裡改成 requests
+    優先，curl_cffi 降為次要備援（萬一哪天 requests 這個路徑真的被擋，還有
+    一層保底，不會整個功能一次失效）。"""
     url = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"
-    try:
-        from curl_cffi import requests as cffi_requests
-        r = cffi_requests.get(url, headers=HEADERS, timeout=15, impersonate="chrome", verify=False)
-        if r.status_code != 200:
-            logger.warning(f"_fetch_tpex_monthly_revenue: HTTP {r.status_code}（已知 TPEx 有 Cloudflare 保護，失敗時不影響上市個股的過濾，僅上櫃個股不套用基本面過濾）")
-            return {}
-        rows = r.json()
+
+    def _parse(rows) -> Dict[str, Dict]:
         result = {}
         for row in rows:
             code = (row.get("公司代號") or "").strip()
@@ -89,10 +89,29 @@ def _fetch_tpex_monthly_revenue() -> Dict[str, Dict]:
                 yoy = None
             result[code] = {"yoy_pct": yoy, "mom_pct": None,
                              "period": row.get("資料年月", ""), "source": "tpex_openapi"}
-        logger.info(f"月營收（上櫃）：{len(result)} 檔")
+        return result
+
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code == 200:
+            result = _parse(r.json())
+            logger.info(f"月營收（上櫃）：{len(result)} 檔")
+            return result
+        logger.warning(f"_fetch_tpex_monthly_revenue: requests HTTP {r.status_code}，改試 curl_cffi 備援")
+    except Exception as e:
+        logger.warning(f"_fetch_tpex_monthly_revenue requests: {e}，改試 curl_cffi 備援")
+
+    try:
+        from curl_cffi import requests as cffi_requests
+        r = cffi_requests.get(url, headers=HEADERS, timeout=15, impersonate="chrome", verify=False)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_tpex_monthly_revenue: curl_cffi 也失敗 HTTP {r.status_code}（上櫃個股本次不套用基本面過濾）")
+            return {}
+        result = _parse(r.json())
+        logger.info(f"月營收（上櫃，curl_cffi 備援）：{len(result)} 檔")
         return result
     except Exception as e:
-        logger.warning(f"_fetch_tpex_monthly_revenue: {e}（上櫃個股本次不套用基本面過濾）")
+        logger.warning(f"_fetch_tpex_monthly_revenue curl_cffi: {e}（上櫃個股本次不套用基本面過濾）")
         return {}
 
 
@@ -373,3 +392,239 @@ def check_fundamental_hard_filter(code: str, revenue_map: Optional[Dict] = None)
 # 準確度沒有把握前，貿然接上去可能誤殺正常公告、或漏掉真正的地雷，比不做
 # 更危險。若之後要做，建議先串接公開資訊觀測站(MOPS)重大訊息查詢 API，
 # 並且先用歷史地雷股名單驗證分類準確度，而不是直接上線影響訊號產生。
+
+
+# ════════════════════════════════════════════════
+# 估值面（本益比/股價淨值比/殖利率）
+# ════════════════════════════════════════════════
+# ★ 新增：2026-09-27——使用者要求補上「估值面(本益比/股價淨值比/殖利率) +
+# 獲利品質」。估值面這塊直接有官方 OpenAPI 逐股資料，兩個市場都已實測確認
+# 欄位名稱（見 app.py /api/diagnostics/probe_openapi 的探測記錄）：
+#   TWSE: openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL
+#         欄位（英文）：Code, Name, PEratio, DividendYield, PBratio
+#   TPEx: www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis
+#         欄位（英文）：SecuritiesCompanyCode, CompanyName, PriceEarningRatio,
+#         DividendPerShare, YieldRatio, PriceBookRatio
+# 「獲利品質」（毛利率/營益率趨勢）需要季報財務資料，欄位/計算方式跟月營收
+# 硬性過濾不是同一個等級的資料源穩定度，先不在這次一起做，留在下面
+# fetch_valuation_map() 之後單獨評估（見檔案最後的 TODO）。
+def _f(v) -> Optional[float]:
+    """安全轉 float：空字串/None/千分位逗號一律轉成 None，不是 0——
+    「沒有資料」跟「真的是0」是兩回事，跟這個檔案其他地方的既有原則一致。"""
+    if v is None or v == "":
+        return None
+    try:
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch_twse_valuation() -> Dict[str, Dict]:
+    """上市個股本益比/殖利率/股價淨值比，TWSE OpenAPI（依代碼查詢，全市場一次回傳）。"""
+    url = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_twse_valuation: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code = (row.get("Code") or "").strip()
+            if not code:
+                continue
+            result[code] = {
+                "pe": _f(row.get("PEratio")),
+                "yield_pct": _f(row.get("DividendYield")),
+                "pb": _f(row.get("PBratio")),
+                "source": "twse_openapi",
+            }
+        logger.info(f"估值面（上市）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_twse_valuation: {e}")
+        return {}
+
+
+def _fetch_tpex_valuation() -> Dict[str, Dict]:
+    """上櫃個股本益比/殖利率/股價淨值比，TPEx OpenAPI。"""
+    url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_tpex_valuation: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code = (row.get("SecuritiesCompanyCode") or "").strip()
+            if not code:
+                continue
+            result[code] = {
+                "pe": _f(row.get("PriceEarningRatio")),
+                "yield_pct": _f(row.get("YieldRatio")),
+                "pb": _f(row.get("PriceBookRatio")),
+                "source": "tpex_openapi",
+            }
+        logger.info(f"估值面（上櫃）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_tpex_valuation: {e}")
+        return {}
+
+
+def fetch_valuation_map() -> Dict[str, Dict]:
+    """回傳 {代號: {pe, yield_pct, pb, source}}，涵蓋上市+上櫃。任一來源失敗
+    只影響該來源涵蓋的個股（優雅降級，跟 fetch_monthly_revenue_map() 同一個
+    設計原則），快取沿用本檔案模組層級的 _cache（12小時，估值資料一天更新
+    一次已經足夠即時）。"""
+    if c := _cache_get("valuation_map"):
+        return c
+    merged = {}
+    merged.update(_fetch_twse_valuation())
+    merged.update(_fetch_tpex_valuation())
+    return _cache_set("valuation_map", merged)
+
+
+# ════════════════════════════════════════════════
+# 融資融券餘額（籌碼面風險：個股層級）
+# ════════════════════════════════════════════════
+# ★ 新增：2026-09-27——使用者要求補上「融券餘額 + 當沖比例（籌碼面風險）」。
+# 個股融資融券餘額兩個市場都已實測確認欄位名稱：
+#   TWSE: openapi.twse.com.tw/v1/exchangeReport/MI_MARGN（中文欄位）
+#         股票代號/股票名稱/融資今日餘額/融資限額/融券今日餘額/融券前日餘額/
+#         融券限額/資券互抵/註記 等
+#   TPEx: www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance（英文欄位）
+#         SecuritiesCompanyCode/CompanyName/MarginPurchaseBalance/
+#         MarginPurchaseQuota/ShortSaleBalance/ShortSaleBalancePreviousDay/
+#         ShortSaleQuota 等
+# 「當沖比例」目前只確認到市場層級的彙總資料可用（TPEx
+# tpex_intraday_trading_statistics：全市場當沖成交值占大盤比重），TWSE
+# 對應的 exchangeReport/TWTB4U 官方 OpenAPI 實測只有「當日可當沖標的清單」
+# 四個欄位（Date/Code/Name/Suspension），沒有個股當沖比重數字；TWSE 個股
+# 層級的當沖比重目前沒找到官方 OpenAPI 資料源（見檔案最後 TODO），所以這裡
+# 先做「個股融券餘額」這個確定可拿到的籌碼面風險訊號，當沖比例先只做
+# TPEx 市場層級的 overlay，個股層級當沖比重留待之後找到資料源再補。
+def _fetch_twse_margin_short() -> Dict[str, Dict]:
+    """上市個股融資融券餘額，TWSE OpenAPI。"""
+    url = "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_twse_margin_short: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code = (row.get("股票代號") or "").strip()
+            if not code:
+                continue
+            short_today = _f(row.get("融券今日餘額"))
+            short_prev  = _f(row.get("融券前日餘額"))
+            short_quota = _f(row.get("融券限額"))
+            result[code] = {
+                "short_balance": short_today,
+                "short_balance_chg": (short_today - short_prev)
+                                      if (short_today is not None and short_prev is not None) else None,
+                "short_utilization_pct": round(short_today / short_quota * 100, 2)
+                                          if (short_today and short_quota) else None,
+                "margin_balance": _f(row.get("融資今日餘額")),
+                "margin_quota": _f(row.get("融資限額")),
+                "offsetting": _f(row.get("資券互抵")),
+                "source": "twse_openapi",
+            }
+        logger.info(f"融資融券餘額（上市）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_twse_margin_short: {e}")
+        return {}
+
+
+def _fetch_tpex_margin_short() -> Dict[str, Dict]:
+    """上櫃個股融資融券餘額，TPEx OpenAPI。"""
+    url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_tpex_margin_short: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code = (row.get("SecuritiesCompanyCode") or "").strip()
+            if not code:
+                continue
+            short_today = _f(row.get("ShortSaleBalance"))
+            short_prev  = _f(row.get("ShortSaleBalancePreviousDay"))
+            short_quota = _f(row.get("ShortSaleQuota"))
+            result[code] = {
+                "short_balance": short_today,
+                "short_balance_chg": (short_today - short_prev)
+                                      if (short_today is not None and short_prev is not None) else None,
+                "short_utilization_pct": _f(row.get("ShortSaleUtilizationRate")),
+                "margin_balance": _f(row.get("MarginPurchaseBalance")),
+                "margin_quota": _f(row.get("MarginPurchaseQuota")),
+                "offsetting": _f(row.get("Offsetting")),
+                "source": "tpex_openapi",
+            }
+        logger.info(f"融資融券餘額（上櫃）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_tpex_margin_short: {e}")
+        return {}
+
+
+def fetch_margin_short_map() -> Dict[str, Dict]:
+    """回傳 {代號: {short_balance, short_balance_chg, short_utilization_pct,
+    margin_balance, margin_quota, offsetting, source}}，涵蓋上市+上櫃。
+    short_balance_chg > 0 代表融券餘額比前一交易日增加（放空/避險部位增加，
+    籌碼面風險上升訊號之一），short_utilization_pct 是融券使用率（今日餘額
+    佔限額比例），數字愈高代表愈接近該股融券額度上限。"""
+    if c := _cache_get("margin_short_map"):
+        return c
+    merged = {}
+    merged.update(_fetch_twse_margin_short())
+    merged.update(_fetch_tpex_margin_short())
+    return _cache_set("margin_short_map", merged)
+
+
+def fetch_market_daytrading_overlay() -> Dict:
+    """回傳全市場（目前僅 TPEx 有官方 OpenAPI 資料源，見上方 TODO）當日沖銷
+    成交值占大盤比重的最新一筆，作為籌碼面風險的大盤層級 overlay 使用；
+    個股層級當沖比重目前沒有資料源，回傳的是市場整體數字，不是個股專屬。
+    抓不到就回傳空字典（優雅降級，不影響任何既有訊號邏輯）。"""
+    if c := _cache_get("market_daytrading_overlay"):
+        return c
+    url = "https://www.tpex.org.tw/openapi/v1/tpex_intraday_trading_statistics"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code == 200:
+            rows = r.json()
+            if rows:
+                last = rows[-1]
+                result = {
+                    "date": last.get("Date", ""),
+                    "volume_pct_of_market": _f(str(last.get("DayTradingVolumeOfTheMarket", "")).replace("%", "")),
+                    "buy_value_pct_of_market": _f(str(last.get("DayTradingValueOfBuyOfTheMarket", "")).replace("%", "")),
+                    "sell_value_pct_of_market": _f(str(last.get("DayTradingValueOfSellsOfTheMarket", "")).replace("%", "")),
+                    "scope": "tpex_market_wide",
+                    "source": "tpex_openapi",
+                }
+                return _cache_set("market_daytrading_overlay", result)
+    except Exception as e:
+        logger.warning(f"fetch_market_daytrading_overlay: {e}")
+    return {}
+
+
+# ── TODO（下一步，尚未實作）──
+# 1) 個股層級當沖比重（TWSE）：官方 OpenAPI 的 exchangeReport/TWTB4U 只有
+#    「當日可當沖標的清單」，沒有比重數字；需要另外找 TWSE 個股當沖成交值/
+#    比重的資料源（可能要看 www.twse.com.tw 舊網頁報表有沒有對應的
+#    ?response=json 端點，或另尋第三方資料源），確認前不要用猜測欄位名稱
+#    硬接，避免用假資料誤導籌碼面風險判斷。
+# 2) 獲利品質（毛利率/營益率趨勢）：需要串接季報財務資料（TWSE
+#    opendata/t187ap06_L_ci 等綜合損益表系列、TPEx mopsfin_t187ap06_O_ci
+#    等），計算趨勢（例如近4季毛利率變化）需要額外的歷史序列儲存設計，
+#    複雜度比這次做的估值面/融資融券餘額高一截，留待下一輪單獨評估。
+# 3) 目前 fetch_valuation_map()/fetch_margin_short_map()/
+#    fetch_market_daytrading_overlay() 都只是資料擷取層，尚未接進
+#    signal_engine.py 的評分邏輯——要當硬性過濾還是加減分因子，需要先跟
+#    使用者確認設計方向（類似月營收當初的硬性過濾 vs 三大法人買賣超的
+#    加減分，兩種模式對系統行為影響不同），這裡先把資料管線打通、
+#    透過 /api/diagnostics 暴露出來供人工檢視，評分邏輯留到下一輪再接。

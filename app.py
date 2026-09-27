@@ -614,47 +614,36 @@ def diagnostics_universe_thresholds():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/diagnostics/probe_openapi")
-def diagnostics_probe_openapi():
-    """★ 新增：2026-09-27（第二輪）——臨時診斷端點（用完即移除）。第一輪已經確認
-    TPEx OpenAPI 網域本身沒被 Cloudflare 擋（見 data_fetcher._fetch_tpex() 頂端
-    的修正記錄），也找到 tpex_index/tpex_mainboard_peratio_analysis/BWIBBU_ALL
-    三個可用端點。這一輪用 Chrome 直接開 TPEx 跟 TWSE 兩邊的 Swagger UI 頁面，
-    從官方 API 目錄裡查到融資融券餘額、當沖交易統計的正確 dataset 名稱
-    （TPEx: tpex_mainboard_margin_balance / tpex_intraday_trading_statistics；
-    TWSE: exchangeReport/MI_MARGN（已知可用）/ exchangeReport/TWTB4U），這裡逐一
-    用 requests 實測確認欄位結構，供接下來寫 fetch_margin_short_map() 用。"""
-    import requests as _requests
-    from data_fetcher import HEADERS
-    out = {}
-
-    def _probe(name, url):
-        try:
-            r = _requests.get(url, headers=HEADERS, timeout=10)
-            if r.status_code == 200:
-                try:
-                    data = r.json()
-                    out[name] = {"status": 200, "len": len(data) if isinstance(data, list) else None,
-                                 "first_record": data[0] if isinstance(data, list) and data else data}
-                    return
-                except Exception:
-                    pass
-            body = r.text.strip()
-            out[name] = {"status": r.status_code, "len": len(body), "preview": body[:400]}
-        except Exception as e:
-            out[name] = {"error": str(e)}
-
-    _probe("tpex_mainboard_margin_balance",
-           "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance")
-    _probe("tpex_intraday_trading_statistics",
-           "https://www.tpex.org.tw/openapi/v1/tpex_intraday_trading_statistics")
-    _probe("tpex_securities",
-           "https://www.tpex.org.tw/openapi/v1/tpex_securities")
-    _probe("twse_MI_MARGN",
-           "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN")
-    _probe("twse_TWTB4U",
-           "https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U")
-    return jsonify(out)
+@app.route("/api/diagnostics/fundamentals_extra")
+def diagnostics_fundamentals_extra():
+    """★ 新增：2026-09-27——使用者要求補上「估值面(本益比/股價淨值比/殖利率) +
+    獲利品質」與「融券餘額 + 當沖比例（籌碼面風險）」。這兩塊的資料擷取層
+    （fundamentals.fetch_valuation_map() / fetch_margin_short_map() /
+    fetch_market_daytrading_overlay()，見該檔案說明與檔尾 TODO）已經打通，
+    但還沒接進 signal_engine.py 的評分邏輯（設計方向留待使用者確認）。這個
+    唯讀診斷端點讓人可以直接看到目前抓得到什麼資料、涵蓋幾檔股票，不用等
+    評分邏輯接上才能檢視。query string 可傳 ?code=2330 只看單一檔。"""
+    try:
+        from fundamentals import fetch_valuation_map, fetch_margin_short_map, fetch_market_daytrading_overlay
+        code = (request.args.get("code") or "").strip()
+        valuation = fetch_valuation_map()
+        margin_short = fetch_margin_short_map()
+        overlay = fetch_market_daytrading_overlay()
+        if code:
+            return jsonify({
+                "code": code,
+                "valuation": valuation.get(code),
+                "margin_short": margin_short.get(code),
+                "market_daytrading_overlay": overlay,
+            })
+        return jsonify({
+            "valuation_coverage": len(valuation),
+            "margin_short_coverage": len(margin_short),
+            "market_daytrading_overlay": overlay,
+            "sample_codes": list(valuation.keys())[:5],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/diagnostics")
