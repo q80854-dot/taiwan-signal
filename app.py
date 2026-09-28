@@ -682,6 +682,29 @@ def diagnostics_pending_signals():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/diagnostics/probe_holiday_api")
+def diagnostics_probe_holiday_api():
+    """★ 新增：2026-09-28——臨時診斷端點（用完即移除）。使用者問系統的國定假日
+    判斷有沒有涵蓋颱風假這種臨時停市。目前 config.TW_MARKET_HOLIDAYS 是每年
+    手動維護的固定清單（見該處說明），明確記載颱風假/臨時停市無法事先預測、
+    不在清單裡。這裡探測 TWSE 官方 OpenAPI 的 holidaySchedule/holidaySchedule
+    端點，看它是不是由交易所即時維護、能不能改成動態查詢取代手動清單（即使
+    查不到颱風假即時更新，至少能省掉每年手動抄一次國定假日的維護成本）。"""
+    import requests as _requests
+    from data_fetcher import HEADERS
+    try:
+        r = _requests.get("https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
+                           headers=HEADERS, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            return jsonify({"status": 200, "count": len(data) if isinstance(data, list) else None,
+                             "first_3": data[:3] if isinstance(data, list) else data,
+                             "last_3": data[-3:] if isinstance(data, list) else None})
+        return jsonify({"status": r.status_code, "body_preview": r.text[:300]})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route("/api/diagnostics")
 def diagnostics():
     def chk(m):
