@@ -464,6 +464,22 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             "conditions_met":mtf["conditions_met"],"conditions_fail":mtf["conditions_fail"],
             "generated_at":datetime.now(timezone.utc).isoformat(),"expire_days":CB["signal_expire_days"],
             "result":"pending","pnl_twd":0,"status":"active",
+            # ★ 新增：2026-09-28——使用者要求親自詢問 ChatGPT/Perplexity 目前系統
+            # 還缺什麼，Perplexity 給的立即可部署建議：在完整的「資料三態化」
+            # 工程做完之前，先用一個很小的修補把放空訊號明確標成「研究版／
+            # 不可執行」，因為系統目前完全沒有借券可得性、借券費率、強制回補、
+            # 軋空風險這些做空真正需要的資料（見 fetch_market_regime() 附近
+            # 對放空的其他討論），而且新的收緊門檻本身也還沒經過回測驗證
+            # （見 config.py SHORT_SIGNAL_THRESH 上方說明）。這裡不是要阻止
+            # 系統產生放空訊號（使用者仍想看到這些訊號，用來觀察/研究），
+            # 而是讓 Telegram 推播明確告知使用者「這則不是跟做多同等級的
+            # 可執行建議」，不要在沒有這些資料前被當一般訊號直接下單。
+            "executable": direction != "sell",
+            "short_research_only_reason": (
+                "放空門檻(分數75/ADX方向確認/週線硬性偏空/大盤中期regime)尚未經過"
+                "真實成交資料回測驗證；且系統目前沒有借券可得性、借券費率、"
+                "強制回補日、軋空風險等做空必要資料"
+            ) if direction == "sell" else None,
         }
         logger.info(f"[{ticker}] ✅ {name} {direction} score={score}({grade}) SL={sl:.1f} TP1={tp_info['tp1']:.1f} shares={pos['shares']}")
         return signal

@@ -262,7 +262,21 @@ def format_signal_paid(sig: Dict) -> str:
     conds_fail = "\n".join(f"　⚠️ {c}" for c in sig.get("conditions_fail", [])[:3])
     inst = sig.get("inst_signal", "") or "資料更新中"
 
+    # ★ 新增：2026-09-28——見 signal_engine.py generate_signal_tw() 的
+    # executable/short_research_only_reason 說明：放空訊號在系統完成完整
+    # 的資料三態化＋借券/軋空風險檢查前，先用一個明顯的頂部橫幅標成
+    # 「研究版／不可執行」，避免使用者把它當成跟做多同等級的可執行建議。
+    # 故意放在訊息最前面（比月營收缺料警示更醒目），因為這是「這整則
+    # 訊號目前的可信等級」，不是單一資料欄位的局部缺失。
+    short_research_banner = (
+        "🔬 <b>研究版訊號｜非正式可執行建議</b>\n"
+        "本檔為放空訊號，門檻尚未經真實成交資料回測驗證，且系統目前缺借券可得性／"
+        "借券費率／強制回補／軋空風險資料，請勿直接當作可執行的放空建議。\n"
+        "━━━━━━━━━━━━━━━\n"
+    ) if sig.get("executable") is False else ""
+
     return (
+        short_research_banner +
         f"{grade_em} <b>{sig.get('grade','C')}級｜{sig['name']} {sig.get('code','')}</b>\n"
         f"{sig.get('sector','—')}｜{dir_str}\n"
         f"━━━━━━━━━━━━━━━\n"
