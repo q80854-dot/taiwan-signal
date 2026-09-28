@@ -668,34 +668,55 @@ def _fetch_twse_income_statement_ci() -> Dict[str, Dict]:
 
 def fetch_profitability_quality_map() -> Dict[str, Dict]:
     """回傳 {代號: {period, revenue, gross_margin_pct, operating_margin_pct,
-    net_income, gross_margin_chg, operating_margin_chg, source}}。
-    gross_margin_chg/operating_margin_chg 是跟 state_store 裡存的「上一筆有
-    紀錄的季度快照」比較的變化量（百分點），第一次抓到某檔股票的資料、或
-    這一期資料本身缺 gross_margin_pct 時不會有 trend，欄位就是 None——
-    「沒有資料」和「持平（變化量剛好是0）」是兩回事，呼叫端不要混為一談。
-    每次抓到新資料都會把這一期的毛利率/營益率寫進 state_store，讓下一季
-    的呼叫可以往前比較，這個副作用是設計上刻意要做的（沒有這個寫入，
-    「趨勢」永遠算不出來，只能看單季絕對水準）。"""
+    net_income, source}}，只有「當期絕對水準」，不含 gross_margin_chg/
+    operating_margin_chg（季度變化量）——這兩個 trend 欄位要另外呼叫
+    get_profitability_quality(code) 才會有，見該函式說明。這個函式本身
+    不碰資料庫，單純是 TWSE 端點的快取包裝。
+
+    ★ 修正：2026-09-28（上線後立刻發現的效能問題）——原本這裡在拿到全市場
+    900+ 檔資料後，會對「每一檔」都做一次資料庫讀+寫（比對/記錄季度快照），
+    實測部署後連 /api/state 這種既有的輕量端點都被拖到逾時，這個函式本身
+    也是同一批（每次呼叫都對全市場做900+次序列化DB往返，Render上的
+    Postgres加上網路延遲，這規模的序列化I/O足以拖到數十秒甚至逾時）。這個
+    函式在 scanner.py 的 _filter_and_rank() 裡，每次掃描只需要看「當次候選
+    訊號」（通常幾十檔以內）的獲利品質，卻要為了這幾十檔而先對全市場900+
+    檔做資料庫寫入，規模完全不成比例——所以改成這裡只做「抓資料+快取」，
+    資料庫讀寫（也就是「趨勢比對」）搬到 get_profitability_quality(code)，
+    只在呼叫端真的要看某一檔股票時才做，把資料庫I/O從900+次降到呼叫端
+    實際需要的幾十次。"""
     if c := _cache_get("profitability_quality_map"):
         return c
-    merged = _fetch_twse_income_statement_ci()
-    if merged:
-        try:
-            from state_store import store
-            for code, info in merged.items():
-                period = info.get("period", "")
-                if not period or info.get("gross_margin_pct") is None:
-                    continue
-                prev = store.get_prev_quarterly_margin(code, period)
-                store.save_quarterly_margin(code, period, info.get("gross_margin_pct"), info.get("operating_margin_pct"))
-                if prev:
-                    if info.get("gross_margin_pct") is not None and prev.get("gross_margin_pct") is not None:
-                        info["gross_margin_chg"] = round(info["gross_margin_pct"] - prev["gross_margin_pct"], 2)
-                    if info.get("operating_margin_pct") is not None and prev.get("operating_margin_pct") is not None:
-                        info["operating_margin_chg"] = round(info["operating_margin_pct"] - prev["operating_margin_pct"], 2)
-        except Exception as e:
-            logger.warning(f"fetch_profitability_quality_map: 季度趨勢比對失敗（不影響本次抓到的資料，trend 留空): {e}")
-    return _cache_set("profitability_quality_map", merged)
+    return _cache_set("profitability_quality_map", _fetch_twse_income_statement_ci())
+
+
+def get_profitability_quality(code: str) -> Optional[Dict]:
+    """對外接口：只針對「單一檔股票」做資料庫讀寫來算季度趨勢，供 scanner.py
+    對候選訊號逐檔呼叫用——絕對不要在全市場迴圈裡呼叫這個函式（見上方
+    fetch_profitability_quality_map() 的效能教訓），只給已經篩到候選名單的
+    個股用。回傳格式同 fetch_profitability_quality_map() 的單檔內容，外加
+    gross_margin_chg/operating_margin_chg（跟上一筆季度快照比較的變化量，
+    百分點；沒有歷史紀錄可比較時是 None，不是0——「沒有資料」和「持平」
+    是兩回事）。這檔股票在 fetch_profitability_quality_map() 裡沒有資料
+    （例如上櫃、金融股）時回傳 None。"""
+    info = fetch_profitability_quality_map().get(code)
+    if not info:
+        return None
+    info = dict(info)  # 複製一份，避免修改到共用快取裡的物件
+    period = info.get("period", "")
+    if not period or info.get("gross_margin_pct") is None:
+        return info
+    try:
+        from state_store import store
+        prev = store.get_prev_quarterly_margin(code, period)
+        store.save_quarterly_margin(code, period, info.get("gross_margin_pct"), info.get("operating_margin_pct"))
+        if prev:
+            if info.get("gross_margin_pct") is not None and prev.get("gross_margin_pct") is not None:
+                info["gross_margin_chg"] = round(info["gross_margin_pct"] - prev["gross_margin_pct"], 2)
+            if info.get("operating_margin_pct") is not None and prev.get("operating_margin_pct") is not None:
+                info["operating_margin_chg"] = round(info["operating_margin_pct"] - prev["operating_margin_pct"], 2)
+    except Exception as e:
+        logger.warning(f"get_profitability_quality({code}): 季度趨勢比對失敗（不影響當期資料，trend 留空): {e}")
+    return info
 
 
 # ════════════════════════════════════════════════

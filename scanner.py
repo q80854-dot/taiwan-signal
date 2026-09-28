@@ -764,14 +764,18 @@ class TWScanEngine:
         #      比照法人買賣超/籌碼面的「小幅加減分」而非「一票否決」，
         #      把誤判的下行風險限制在可接受範圍內。
         try:
-            from fundamentals import fetch_profitability_quality_map, fetch_material_news_risk_map
-            quality_map = fetch_profitability_quality_map()
+            # ★ 修正：2026-09-28——這裡刻意用 get_profitability_quality(code)
+            # 逐檔查（只對「這次候選訊號」的幾十檔個股做資料庫讀寫），不是
+            # fetch_profitability_quality_map() 整包全市場的 map——後者上線
+            # 後實測對全市場900+檔都做DB讀寫，把 /api/state 這種既有端點都
+            # 拖到逾時，已修正（見 fundamentals.py 該函式的說明）。
+            from fundamentals import get_profitability_quality, fetch_material_news_risk_map
             news_risk_map = fetch_material_news_risk_map()
             for sig in signals:
                 code = sig.get("code", "")
                 quality_adj = 0
                 quality_notes = []
-                q = quality_map.get(code)
+                q = get_profitability_quality(code)
                 if q:
                     gm_chg = q.get("gross_margin_chg")
                     om_chg = q.get("operating_margin_chg")

@@ -654,21 +654,27 @@ def diagnostics_quality_and_news():
     目前抓得到什麼資料、涵蓋幾檔股票，不用等下一次掃描才能檢視。query
     string 可傳 ?code=2330 只看單一檔。"""
     try:
-        from fundamentals import fetch_profitability_quality_map, fetch_material_news_risk_map
+        from fundamentals import fetch_profitability_quality_map, get_profitability_quality, fetch_material_news_risk_map
         code = (request.args.get("code") or "").strip()
-        quality = fetch_profitability_quality_map()
         news = fetch_material_news_risk_map()
         if code:
+            # 只有帶 ?code= 查單一檔時才呼叫 get_profitability_quality()
+            # 做資料庫讀寫算趨勢——不帶 code 的整體檢視絕對不能對全市場
+            # 900+ 檔都做一次，那是這次上線後修掉的效能問題（見
+            # fundamentals.py fetch_profitability_quality_map() 的說明）。
             return jsonify({
                 "code": code,
-                "profitability_quality": quality.get(code),
+                "profitability_quality": get_profitability_quality(code),
                 "material_news_risk": news.get(code),
             })
+        quality = fetch_profitability_quality_map()  # 只抓資料+快取，不碰DB
         return jsonify({
             "profitability_quality_coverage": len(quality),
             "material_news_risk_hits": len(news),
             "sample_quality_codes": list(quality.keys())[:5],
             "sample_news_codes": list(news.keys())[:5],
+            "note": "profitability_quality_coverage 是當期資料覆蓋率，不含季度趨勢；"
+                    "trend 只在帶 ?code= 查單一檔時才會計算並寫入資料庫。",
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
