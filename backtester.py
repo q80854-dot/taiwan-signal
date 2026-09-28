@@ -215,11 +215,21 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
     w_opens  =weekly_raw.get("opens",[])   if weekly_raw else []
     w_volumes=weekly_raw.get("volumes",[]) if weekly_raw else []
     def _weekly_asof(day_date):
-        """回傳「這根日K當下」看得到的週線切片（週線起始日<=day_date的所有週線K棒）。
-        資料不足20根週線就回傳None，交給 check_multi_timeframe_tw 內部的valid檢查決定
-        要不要採用，行為上等同於實盤時週線資料不足的狀況。"""
+        """回傳「這根日K當下」看得到的週線切片。
+        ★ 修正：2026-09-29——稽核發現look-ahead bias（ChatGPT/Perplexity第二輪
+        交叉檢查揪出的P0問題）：原本用「週線起始日<=day_date」取到的最後一根
+        週線K棒，很可能是day_date當天所屬、還沒走完的「本週」——yfinance的
+        週線K棒是用週一(起始日)標記，但這根K棒的OHLC是整週（一路到週五）的
+        資料。如果day_date是週二～週五，代表這一週還沒收完，原本的判斷卻已經
+        把「整週（含當天之後、還沒發生的幾天）」的高低收都當成「day_date當下
+        已知」餵給模型，是真實存在的look-ahead bias，不是「理論上可能」而已。
+        修正邏輯：w_dates[j+1]<=day_date時，週j才算「已經走完、當下真的看得到」
+        （下一週都已經開始，代表這一週的交易日全部結束了）。等價寫法是
+        bisect_right(w_dates, day_date)再往前收縮一格，把「day_date當天所屬、
+        可能還在進行中」的那一根週線K棒整根排除，只用「已經完整結束」的週線
+        歷史，不再假設「起始日<=day_date」就等於「這週已經走完」。"""
         if not w_dates or not day_date: return None
-        w_idx=bisect.bisect_right(w_dates, day_date)
+        w_idx=bisect.bisect_right(w_dates, day_date)-1
         if w_idx<20: return None
         return {"closes":w_closes[:w_idx],"highs":w_highs[:w_idx],"lows":w_lows[:w_idx],
                 "opens":w_opens[:w_idx],"volumes":w_volumes[:w_idx]}
@@ -664,8 +674,11 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
     w_opens  =weekly_raw.get("opens",[])   if weekly_raw else []
     w_volumes=weekly_raw.get("volumes",[]) if weekly_raw else []
     def _weekly_asof(day_date):
+        # ★ 修正：2026-09-29——跟backtest_symbol_tw()裡同名函式同一個修正：
+        # 排除day_date當天所屬、可能還沒走完的那一根週線K棒，避免look-ahead
+        # bias（完整理由見backtest_symbol_tw()裡_weekly_asof()的docstring）。
         if not w_dates or not day_date: return None
-        w_idx=bisect.bisect_right(w_dates, day_date)
+        w_idx=bisect.bisect_right(w_dates, day_date)-1
         if w_idx<20: return None
         return {"closes":w_closes[:w_idx],"highs":w_highs[:w_idx],"lows":w_lows[:w_idx],
                 "opens":w_opens[:w_idx],"volumes":w_volumes[:w_idx]}
