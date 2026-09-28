@@ -980,7 +980,7 @@ def run_short_gate_validation_tw(tickers=None, min_score=65.0, progress_cb=None)
         "buy_unaffected_check":{
             "n_trades_before":b_buy.get("n_trades",0),"n_trades_after":g_buy.get("n_trades",0),
             "win_rate_before":b_buy.get("win_rate",0),"win_rate_after":g_buy.get("win_rate",0),
-            "note":"做多完全不受這兩層放空閘門影響，理論上前後應該一致；若不一致代表程式邏輯有誤，要優先排查。",
+            "note":"★ 修正：2026-09-29——原本這裡寫「理論上應該完全一致，不一致代表bug」是錯的：backtest_symbol_tw() 同一檔股票同一時間只能有一筆 open_trade（單一倉位槽），放空閘門攔掉一筆原本會開倉的sell訊號時，那個時間點的倉位槽是空的，可能被「原本因為槽被那筆sell佔用而進不去」的後續buy訊號填補，所以做多筆數前後不一致是這個單倉位模型的正常結果，不是bug。真正該檢查程式邏輯的情況，是這個差異大到不合理（例如相差好幾倍），或方向明顯說不通。",
         },
         "interpretation":(
             "sell_n_trades大幅下降、sell_win_rate上升＝閘門有效過濾掉了低品質放空訊號（用「少做但做對」換勝率，"
@@ -1083,7 +1083,7 @@ def run_short_gate_validation_tw_period(tickers=None, min_score=65.0, period_sta
         "buy_unaffected_check": {
             "n_trades_before": b_buy["n_trades"], "n_trades_after": g_buy["n_trades"],
             "win_rate_before": b_buy["win_rate"], "win_rate_after": g_buy["win_rate"],
-            "note": "做多完全不受這兩層放空閘門影響，理論上前後應該一致；若不一致代表程式邏輯有誤，要優先排查。",
+            "note": "★ 修正：2026-09-29——原本這裡寫「理論上應該完全一致，不一致代表bug」是錯的：backtest_symbol_tw() 同一檔股票同一時間只能有一筆 open_trade（單一倉位槽），放空閘門攔掉一筆原本會開倉的sell訊號時，那個時間點的倉位槽是空的，可能被「原本因為槽被那筆sell佔用而進不去」的後續buy訊號填補，所以做多筆數前後不一致是這個單倉位模型的正常結果，不是bug。真正該檢查程式邏輯的情況，是這個差異大到不合理（例如相差好幾倍），或方向明顯說不通。",
         },
         "interpretation": (
             f"這是指定期間（{period_start}～{period_end}）而非近1年的驗證，用意是檢驗放空分層閘門"
