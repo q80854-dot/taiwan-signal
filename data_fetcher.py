@@ -987,15 +987,61 @@ def fetch_market_overview() -> Dict:
 # 國定假日（如中秋、端午）會被誤判成開盤。這裡統一用這個 helper 查詢，
 # 找不到當年度清單時退回只用週末判斷並記一次警告 log（用 module-level set
 # 記錄已經警告過的年份，避免每次呼叫都洗版 log）。
+#
+# ★ 修正：2026-09-28——使用者問「颱風假這種臨時停市有沒有涵蓋」。誠實的答案
+# 是：不完全。TW_MARKET_HOLIDAYS 是每年手動抄一次的固定清單，颱風假是每次
+# 颱風來的當天早上才由地方政府/人事行政總處臨時公告、證交所跟著公告臨時
+# 停市，這種「事到臨頭才知道」的假期，寫死在程式碼裡的年度清單天生就不可能
+# 涵蓋（除非每次颱風假都手動改程式碼再重新部署，太慢也不實際）。這裡改用
+# TWSE 官方 OpenAPI 的 holidaySchedule/holidaySchedule 端點（已用
+# /api/diagnostics/probe_holiday_api 實測確認可用，回傳當年度27筆官方公告
+# 休市日）取代寫死的清單當主要來源：這份資料由證交所自己維護，好處是(1)
+# 不用每年手動抄一次固定假日，(2)如果證交所把臨時停市公告也更新進同一份
+# 資料（這點無法事先保證，需要真的遇到颱風假才能驗證），系統會在下次快取
+# 過期後自動抓到最新結果，不需要重新部署程式碼——即使證交所沒有把颱風假
+# 放進這份資料，至少比寫死清單多一層「有機會自動跟上」的可能性，而不是
+# 完全沒有。抓不到（網路問題/端點改版）就退回原本的 TW_MARKET_HOLIDAYS
+# 靜態清單，維持原有的 fail-open 精神，不會讓假日判斷整個掛掉。
 _holiday_warned_years = set()
+_HOLIDAY_API_CACHE_TTL_SEC = 6 * 3600  # 6小時重抓一次，同一天內如果證交所臨時更新公告，最慢6小時後就會反映
+
+def _fetch_official_holiday_set() -> Optional[set]:
+    """向 TWSE 官方 OpenAPI 查詢當年度休市日期，回傳 {'2026-01-01', ...} 格式的
+    集合；查不到（含網路失敗、非預期回應格式）回傳 None，呼叫端會退回靜態清單。"""
+    if c := _cache_get("official_holidays", _HOLIDAY_API_CACHE_TTL_SEC):
+        return c
+    try:
+        r = requests.get("https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
+                          headers=HEADERS, timeout=10)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_official_holiday_set: HTTP {r.status_code}")
+            return None
+        rows = r.json()
+        result = set()
+        for row in rows:
+            date_raw = (row.get("Date") or "").strip()  # 民國年格式，例如 "1150101"
+            if len(date_raw) != 7:
+                continue
+            roc_year, month, day = int(date_raw[:3]), date_raw[3:5], date_raw[5:7]
+            result.add(f"{roc_year + 1911}-{month}-{day}")
+        if not result:
+            return None
+        return _cache_set("official_holidays", result)
+    except Exception as e:
+        logger.warning(f"_fetch_official_holiday_set: {e}")
+        return None
+
 def _is_tw_market_holiday(now) -> bool:
     year = now.year
     date_str = now.strftime("%Y-%m-%d")
+    official = _fetch_official_holiday_set()
+    if official is not None:
+        return date_str in official
     holidays = TW_MARKET_HOLIDAYS.get(year)
     if holidays is None:
         if year not in _holiday_warned_years:
             _holiday_warned_years.add(year)
-            logger.warning(f"_is_tw_market_holiday: config.TW_MARKET_HOLIDAYS 沒有 {year} 年的休市日清單，"
+            logger.warning(f"_is_tw_market_holiday: 官方 API 查詢失敗，且 config.TW_MARKET_HOLIDAYS 沒有 {year} 年的休市日清單，"
                             f"目前只用「是否週末」判斷開盤，平日遇到國定假日會誤判成開盤，需要手動補上該年度清單")
         return False
     return date_str in holidays
