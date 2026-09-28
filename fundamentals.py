@@ -618,15 +618,33 @@ def fetch_market_daytrading_overlay() -> Dict:
 # ★ 新增：2026-09-28——使用者要求把「獲利品質」接進評分。TWSE OpenAPI 的
 # opendata/t187ap06_L_ci（上市「一般業」公司綜合損益表）欄位已實測確認：
 # 公司代號/公司名稱/年度/季別/營業收入/營業成本/營業毛利（毛損）淨額/
-# 營業利益（損失）/本期淨利（淨損）等。只做「一般業」的原因：銀行/證券
-# 期貨/保險/金控/異業這幾個子分類（t187ap06_L_basi/bd/fh/ins/mim）的損益表
-# 科目結構跟一般業不一樣（例如銀行沒有「營業成本/毛利」的概念），這幾個
-# 分類各自欄位名稱目前沒有逐一實測過，貿然套用一般業的欄位名稱去解析會
-# 算出錯誤或缺漏的毛利率數字，比「這幾類公司暫時沒有獲利品質資料」風險
-# 更高——所以先只做確認過的一般業，其餘分類、以及全部上櫃公司（TPEx對應
-# 資料源還沒找到），這個函式回傳的 map 裡就是沒有這些代號，呼叫端要能
-# 處理「這檔股票沒有獲利品質資料」是正常情況，不是異常。
+# 營業利益（損失）/本期淨利（淨損）等。
+#
+# ★ 修正：2026-09-28（使用者要求「金融業抓不到資料要去別的地方找」）——原本
+# 只做一般業，銀行/證券期貨/保險/金控這幾個子分類（basi/bd/fh/ins）的欄位
+# 名稱已經逐一實測確認（見下方各自的 fetch 函式），全部補上；只有「異業」
+# （mim）還沒做，因為它是個雜項分類，成分股跟台灣50沒有重疊，優先度較低。
+# 銀行/證券期貨/金控這幾類商業模式本來就沒有「營業成本/毛利」的概念（銀行
+# 的獲利來源是利差不是賣東西的毛利），所以這幾類的 gross_margin_pct 會是
+# None——這是「這個概念不適用」，不是「沒抓到資料」，呼叫端要分清楚兩者。
+# operating_margin_pct 則用各行業結構裡最接近「營業利益」的科目：
+#   ci/ins：營業利益（損失）
+#   bd（證券期貨業）：營業利益
+#   fh（金控業）：繼續營業單位稅前損益（金控業損益表沒有單獨的「營業利益」
+#     科目，稅前損益是最接近的替代指標，嚴格說是「稅前利潤率」不是「營益
+#     率」，這裡沿用同一個欄位名稱是為了讓 scanner.py 的評分邏輯不用為
+#     金融股另外寫一套規則，但數字的實際意義跟一般業的營益率不完全一樣，
+#     這點寫在 industry_type 欄位讓呼叫端可以識別）
+#   basi（銀行業）：繼續營業單位稅前淨利（淨損）
 _QUALITY_CACHE_TTL_SEC = 3600 * 24  # 季報一季才更新一次，24小時快取足夠保守
+
+def _parse_common(row: Dict) -> tuple:
+    code = (row.get("公司代號") or "").strip()
+    year = (row.get("年度") or "").strip()
+    quarter = (row.get("季別") or "").strip()
+    period = f"{year}Q{quarter}" if (year and quarter) else ""
+    return code, period
+
 
 def _fetch_twse_income_statement_ci() -> Dict[str, Dict]:
     """上市「一般業」公司最新一期綜合損益表，TWSE OpenAPI。"""
@@ -638,7 +656,7 @@ def _fetch_twse_income_statement_ci() -> Dict[str, Dict]:
             return {}
         result = {}
         for row in r.json():
-            code = (row.get("公司代號") or "").strip()
+            code, period = _parse_common(row)
             if not code:
                 continue
             revenue = _f(row.get("營業收入"))
@@ -647,16 +665,12 @@ def _fetch_twse_income_statement_ci() -> Dict[str, Dict]:
                 gross = _f(row.get("營業毛利（毛損）"))
             op_income = _f(row.get("營業利益（損失）"))
             net_income = _f(row.get("本期淨利（淨損）"))
-            gross_margin_pct = round(gross / revenue * 100, 2) if (gross is not None and revenue) else None
-            op_margin_pct = round(op_income / revenue * 100, 2) if (op_income is not None and revenue) else None
-            year = (row.get("年度") or "").strip()
-            quarter = (row.get("季別") or "").strip()
             result[code] = {
-                "period": f"{year}Q{quarter}" if (year and quarter) else "",
-                "revenue": revenue,
-                "gross_margin_pct": gross_margin_pct,
-                "operating_margin_pct": op_margin_pct,
+                "period": period, "industry_type": "ci",
+                "revenue": revenue, "gross_profit": gross, "operating_income": op_income,
                 "net_income": net_income,
+                "gross_margin_pct": round(gross / revenue * 100, 2) if (gross is not None and revenue) else None,
+                "operating_margin_pct": round(op_income / revenue * 100, 2) if (op_income is not None and revenue) else None,
                 "source": "twse_openapi_ci",
             }
         logger.info(f"獲利品質（上市一般業）：{len(result)} 檔")
@@ -666,12 +680,148 @@ def _fetch_twse_income_statement_ci() -> Dict[str, Dict]:
         return {}
 
 
+def _fetch_twse_income_statement_ins() -> Dict[str, Dict]:
+    """上市「保險業」，欄位結構跟一般業相同（有營業收入/營業成本/營業利益），
+    差別只是沒有單獨的「營業毛利」科目，用 revenue-cost 自己算。"""
+    url = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ins"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_twse_income_statement_ins: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code, period = _parse_common(row)
+            if not code:
+                continue
+            revenue = _f(row.get("營業收入"))
+            cost = _f(row.get("營業成本"))
+            gross = (revenue - cost) if (revenue is not None and cost is not None) else None
+            op_income = _f(row.get("營業利益（損失）"))
+            net_income = _f(row.get("本期淨利（淨損）"))
+            result[code] = {
+                "period": period, "industry_type": "ins",
+                "revenue": revenue, "gross_profit": gross, "operating_income": op_income,
+                "net_income": net_income,
+                "gross_margin_pct": round(gross / revenue * 100, 2) if (gross is not None and revenue) else None,
+                "operating_margin_pct": round(op_income / revenue * 100, 2) if (op_income is not None and revenue) else None,
+                "source": "twse_openapi_ins",
+            }
+        logger.info(f"獲利品質（上市保險業）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_twse_income_statement_ins: {e}")
+        return {}
+
+
+def _fetch_twse_income_statement_bd() -> Dict[str, Dict]:
+    """上市「證券期貨業」，沒有毛利概念（收益-支出及費用=營業利益）。"""
+    url = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_bd"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_twse_income_statement_bd: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code, period = _parse_common(row)
+            if not code:
+                continue
+            revenue = _f(row.get("收益"))
+            op_income = _f(row.get("營業利益"))
+            net_income = _f(row.get("本期淨利（淨損）"))
+            result[code] = {
+                "period": period, "industry_type": "bd",
+                "revenue": revenue, "gross_profit": None, "operating_income": op_income,
+                "net_income": net_income,
+                "gross_margin_pct": None,  # 證券期貨業沒有「成本/毛利」概念
+                "operating_margin_pct": round(op_income / revenue * 100, 2) if (op_income is not None and revenue) else None,
+                "source": "twse_openapi_bd",
+            }
+        logger.info(f"獲利品質（上市證券期貨業）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_twse_income_statement_bd: {e}")
+        return {}
+
+
+def _fetch_twse_income_statement_fh() -> Dict[str, Dict]:
+    """上市「金控業」，沒有毛利概念，operating_margin_pct 這裡用「稅前損益率」
+    （繼續營業單位稅前損益/淨收益）替代——金控業損益表沒有單獨的營業利益
+    科目，這是最接近的替代指標，嚴格說不是傳統定義的營益率（見上方檔案
+    開頭的說明），這個欄位在金控股身上的意義跟一般業不完全一樣。"""
+    url = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_fh"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_twse_income_statement_fh: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code, period = _parse_common(row)
+            if not code:
+                continue
+            revenue = _f(row.get("淨收益"))
+            pretax = _f(row.get("繼續營業單位稅前損益"))
+            net_income = _f(row.get("本期稅後淨利（淨損）"))
+            result[code] = {
+                "period": period, "industry_type": "fh",
+                "revenue": revenue, "gross_profit": None, "operating_income": pretax,
+                "net_income": net_income,
+                "gross_margin_pct": None,  # 金控業沒有「成本/毛利」概念
+                "operating_margin_pct": round(pretax / revenue * 100, 2) if (pretax is not None and revenue) else None,
+                "source": "twse_openapi_fh",
+            }
+        logger.info(f"獲利品質（上市金控業）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_twse_income_statement_fh: {e}")
+        return {}
+
+
+def _fetch_twse_income_statement_basi() -> Dict[str, Dict]:
+    """上市「銀行業」，跟金控業同樣沒有毛利概念，revenue 用「利息淨收益+
+    利息以外淨損益」相加（這個資料源沒有給一個現成的「總收益」欄位，要
+    自己加總），operating_margin_pct 用稅前淨利率替代（理由同金控業）。"""
+    url = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_basi"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_twse_income_statement_basi: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code, period = _parse_common(row)
+            if not code:
+                continue
+            interest_net = _f(row.get("利息淨收益"))
+            non_interest_net = _f(row.get("利息以外淨損益"))
+            revenue = (interest_net + non_interest_net) if (interest_net is not None and non_interest_net is not None) else None
+            pretax = _f(row.get("繼續營業單位稅前淨利（淨損）"))
+            net_income = _f(row.get("本期淨利（淨損）"))
+            result[code] = {
+                "period": period, "industry_type": "basi",
+                "revenue": revenue, "gross_profit": None, "operating_income": pretax,
+                "net_income": net_income,
+                "gross_margin_pct": None,  # 銀行業沒有「成本/毛利」概念
+                "operating_margin_pct": round(pretax / revenue * 100, 2) if (pretax is not None and revenue) else None,
+                "source": "twse_openapi_basi",
+            }
+        logger.info(f"獲利品質（上市銀行業）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_twse_income_statement_basi: {e}")
+        return {}
+
+
 def fetch_profitability_quality_map() -> Dict[str, Dict]:
-    """回傳 {代號: {period, revenue, gross_margin_pct, operating_margin_pct,
-    net_income, source}}，只有「當期絕對水準」，不含 gross_margin_chg/
+    """回傳 {代號: {period, industry_type, revenue, gross_profit,
+    operating_income, net_income, gross_margin_pct, operating_margin_pct,
+    source}}，只有「當期累計絕對水準」，不含 gross_margin_chg/
     operating_margin_chg（季度變化量）——這兩個 trend 欄位要另外呼叫
     get_profitability_quality(code) 才會有，見該函式說明。這個函式本身
-    不碰資料庫，單純是 TWSE 端點的快取包裝。
+    不碰資料庫，單純是 TWSE 五個子分類端點的合併+快取包裝（一般業/保險業/
+    證券期貨業/金控業/銀行業，異業 mim 還沒做，見檔案最後 TODO）。
 
     ★ 修正：2026-09-28（上線後立刻發現的效能問題）——原本這裡在拿到全市場
     900+ 檔資料後，會對「每一檔」都做一次資料庫讀+寫（比對/記錄季度快照），
@@ -686,7 +836,42 @@ def fetch_profitability_quality_map() -> Dict[str, Dict]:
     實際需要的幾十次。"""
     if c := _cache_get("profitability_quality_map"):
         return c
-    return _cache_set("profitability_quality_map", _fetch_twse_income_statement_ci())
+    merged = {}
+    # 合併順序沒有特別意義（每個分類彼此的代號不會重疊，同一檔股票只會
+    # 屬於一個產業分類），這裡依序合併五個已驗證欄位名稱的子分類。
+    merged.update(_fetch_twse_income_statement_ci())
+    merged.update(_fetch_twse_income_statement_ins())
+    merged.update(_fetch_twse_income_statement_bd())
+    merged.update(_fetch_twse_income_statement_fh())
+    merged.update(_fetch_twse_income_statement_basi())
+    return _cache_set("profitability_quality_map", merged)
+
+
+def _derive_single_quarter(cum_now: Dict, cum_prev: Optional[Dict], quarter: int) -> Dict:
+    """把「累計數」反推成「單季數」。TWSE 這幾個季報端點的 revenue/gross_
+    profit/operating_income 都是「今年至該季為止的累計數」，不是單季數字
+    （2026-09-28 使用者拿台灣50比對台積電法說會公布的單季毛利率67.7%，
+    系統原本算出來是67.03%，兩者的量級差異就是「累計 vs 單季」造成的——
+    revenue攔位是法說會公布單季營收的將近兩倍，符合「上半年累計」）。
+    第一季（quarter==1）本身就是單季，不用減；其餘季別要用「這一季累計」
+    減去「上一季累計」（cum_prev，必須是同一年度的上一季，呼叫端要保證
+    這點），減不出來（cum_prev缺某個欄位）的部分就是 None，不是0。"""
+    if quarter == 1 or cum_prev is None:
+        return cum_now
+    out = {}
+    for k in ("revenue", "gross_profit", "operating_income"):
+        v_now, v_prev = cum_now.get(k), cum_prev.get(k)
+        out[k] = (v_now - v_prev) if (v_now is not None and v_prev is not None) else None
+    return out
+
+
+def _margin_from_single(single: Dict) -> tuple:
+    revenue = single.get("revenue")
+    gross_margin = (round(single["gross_profit"] / revenue * 100, 2)
+                     if (single.get("gross_profit") is not None and revenue) else None)
+    op_margin = (round(single["operating_income"] / revenue * 100, 2)
+                  if (single.get("operating_income") is not None and revenue) else None)
+    return gross_margin, op_margin
 
 
 def get_profitability_quality(code: str) -> Optional[Dict]:
@@ -694,26 +879,60 @@ def get_profitability_quality(code: str) -> Optional[Dict]:
     對候選訊號逐檔呼叫用——絕對不要在全市場迴圈裡呼叫這個函式（見上方
     fetch_profitability_quality_map() 的效能教訓），只給已經篩到候選名單的
     個股用。回傳格式同 fetch_profitability_quality_map() 的單檔內容，外加
-    gross_margin_chg/operating_margin_chg（跟上一筆季度快照比較的變化量，
-    百分點；沒有歷史紀錄可比較時是 None，不是0——「沒有資料」和「持平」
-    是兩回事）。這檔股票在 fetch_profitability_quality_map() 裡沒有資料
-    （例如上櫃、金融股）時回傳 None。"""
+    gross_margin_chg/operating_margin_chg——這兩個是「反推出單季數字後」
+    跟上一個單季比較的變化量（百分點），不是直接拿累計數的比率相減（見
+    _derive_single_quarter() 說明，這是2026-09-28驗證台灣50數據時發現的
+    修正，原本是直接拿累計比率相減，Q2 vs Q1還好，Q3 vs Q2這種會被多一季
+    累計進去稀釋，不夠嚴謹）。缺歷史資料可比較時兩個 chg 欄位是 None，
+    不是0——「沒有資料」和「持平」是兩回事。這檔股票在
+    fetch_profitability_quality_map() 裡沒有資料（例如上櫃、異業分類）
+    時回傳 None。"""
     info = fetch_profitability_quality_map().get(code)
     if not info:
         return None
     info = dict(info)  # 複製一份，避免修改到共用快取裡的物件
     period = info.get("period", "")
-    if not period or info.get("gross_margin_pct") is None:
+    if not period or "Q" not in period:
         return info
     try:
+        year_str, quarter_str = period.split("Q", 1)
+        year, quarter = int(year_str), int(quarter_str)
+    except (ValueError, IndexError):
+        return info
+    cum_now = {"revenue": info.get("revenue"), "gross_profit": info.get("gross_profit"),
+               "operating_income": info.get("operating_income")}
+    try:
         from state_store import store
-        prev = store.get_prev_quarterly_margin(code, period)
-        store.save_quarterly_margin(code, period, info.get("gross_margin_pct"), info.get("operating_margin_pct"))
-        if prev:
-            if info.get("gross_margin_pct") is not None and prev.get("gross_margin_pct") is not None:
-                info["gross_margin_chg"] = round(info["gross_margin_pct"] - prev["gross_margin_pct"], 2)
-            if info.get("operating_margin_pct") is not None and prev.get("operating_margin_pct") is not None:
-                info["operating_margin_chg"] = round(info["operating_margin_pct"] - prev["operating_margin_pct"], 2)
+        # 存這一期的「累計原始數字」，讓下一季呼叫時可以反推單季——
+        # gross_margin_pct/operating_margin_pct 這裡存的是累計比率，只是
+        # 給人工查資料庫時參考用，真正拿來算 trend 的是 cum_* 三個原始欄位。
+        store.save_quarterly_margin(code, period, info.get("gross_margin_pct"), info.get("operating_margin_pct"),
+                                     cum_now.get("revenue"), cum_now.get("gross_profit"), cum_now.get("operating_income"))
+
+        prev1 = None if quarter == 1 else store.get_quarterly_margin_snapshot(code, f"{year}Q{quarter - 1}")
+        if prev1 is None:
+            return info  # 沒有上一季資料可反推單季，當期水準照樣回傳，trend留空
+
+        prev1_cum = {"revenue": prev1.get("cum_revenue"), "gross_profit": prev1.get("cum_gross_profit"),
+                     "operating_income": prev1.get("cum_operating_income")}
+        single_now = _derive_single_quarter(cum_now, prev1_cum, quarter)
+
+        prev2 = None if quarter <= 2 else store.get_quarterly_margin_snapshot(code, f"{year}Q{quarter - 2}")
+        prev2_cum = ({"revenue": prev2.get("cum_revenue"), "gross_profit": prev2.get("cum_gross_profit"),
+                      "operating_income": prev2.get("cum_operating_income")} if prev2 else None)
+        single_prev = _derive_single_quarter(prev1_cum, prev2_cum, quarter - 1)
+
+        gm_now, om_now = _margin_from_single(single_now)
+        gm_prev, om_prev = _margin_from_single(single_prev)
+        if gm_now is not None and gm_prev is not None:
+            info["gross_margin_chg"] = round(gm_now - gm_prev, 2)
+        if om_now is not None and om_prev is not None:
+            info["operating_margin_chg"] = round(om_now - om_prev, 2)
+        # 附上反推出來的單季水準，跟原本 info 裡的「累計水準」分開放，
+        # 呼叫端要展示「這一季真正的單季毛利率」時用這兩個新欄位，不要
+        # 誤用 gross_margin_pct/operating_margin_pct（那兩個是累計）。
+        info["gross_margin_pct_single_q"] = gm_now
+        info["operating_margin_pct_single_q"] = om_now
     except Exception as e:
         logger.warning(f"get_profitability_quality({code}): 季度趨勢比對失敗（不影響當期資料，trend 留空): {e}")
     return info
@@ -786,9 +1005,13 @@ def fetch_material_news_risk_map() -> Dict[str, List[Dict]]:
 #    （含 TWTBAU1/TWTBAU2 等關鍵字比對）依然沒找到官方 OpenAPI 的個股
 #    當沖比重端點，暫時判定為「免費官方資料源不存在」，不是還沒找而已；
 #    如果之後要做，大概率要走付費資料商或自行爬證交所非API網頁報表。
-# 2) 獲利品質目前只涵蓋上市「一般業」（見上方 fetch_profitability_quality_map
-#    說明），金融/證券期貨/保險/金控/異業，以及全部上櫃公司都還沒有實作，
-#    這些公司在 quality_map 裡沒有 key，不代表獲利沒問題。
+# 2) 獲利品質目前涵蓋上市「一般業/保險業/證券期貨業/金控業/銀行業」（見上方
+#    fetch_profitability_quality_map 說明，2026-09-28 使用者反映金融業
+#    抓不到資料後補上）。異業分類（mim）跟全部上櫃公司還沒有實作，這些
+#    公司在 quality_map 裡沒有 key，不代表獲利沒問題。金控業/銀行業沒有
+#    「毛利」概念，gross_margin_pct 固定是 None（不是資料缺漏，是這個概念
+#    不適用），operating_margin_pct 用「稅前損益率」替代，跟一般業的
+#    「營業利益率」定義不完全一樣，這點務必不要混為一談。
 # 3) 重大訊息公告只做上市公司、只做關鍵字比對（不是語意判斷），一定有
 #    一定比例的誤判，評分邏輯刻意設計成小幅扣分不是硬性排除（見
 #    scanner.py 對應段落的設計理由）。

@@ -10,6 +10,7 @@ from config import (
     CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD,
     COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION,
     MAX_RISK_PER_TRADE, ENABLE_SHORT_SIGNALS,
+    SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, SHORT_REQUIRE_WEEKLY_BEARISH,
 )
 
 logger = logging.getLogger(__name__)
@@ -279,15 +280,30 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             logger.info(f"[SCORE] {ticker} dir={direction} score={score} "
                         f"bar={_last_date} close={price}")
         if direction=="none" or score<THRESH["min_score"]: return None
-        # ★ 新增：2026-09-19——見 config.py ENABLE_SHORT_SIGNALS 的說明：TW50
-        # 真實回測顯示做空方向勝率只有14.8%（做多63.6%），且回測還沒算進真實
-        # 融券成本，暫停對外推播做空訊號，只做多，直到做空邏輯重新設計並驗證過。
-        if direction=="sell" and not ENABLE_SHORT_SIGNALS:
-            return None
+        # ★ 修正：2026-09-28——見 config.py ENABLE_SHORT_SIGNALS 上方的說明：
+        # 使用者要求重新開啟做空，但放空訊號要通過比做多更嚴格的專屬條件，
+        # 不是跟做多共用同一套門檻直接放行。三個條件依序檢查，任一沒過
+        # 這一檔的放空訊號就不會產生：
+        #   1) 開關本身（ENABLE_SHORT_SIGNALS）
+        #   2) 放空專屬分數門檻（SHORT_SIGNAL_THRESH["min_score"]，比做多高）
+        #   3) 週線必須明確偏空（硬性條件，不是原本的軟性扣分）
+        #   4) 大盤情緒不能偏多（sentiment_score < SHORT_MAX_SENTIMENT）
+        if direction=="sell":
+            if not ENABLE_SHORT_SIGNALS:
+                return None
+            if score < SHORT_SIGNAL_THRESH["min_score"]:
+                return None
+            if SHORT_REQUIRE_WEEKLY_BEARISH and "bearish" not in mtf.get("weekly_bias","neutral"):
+                return None
+            if market_overview.get("sentiment_score", 50) >= SHORT_MAX_SENTIMENT:
+                return None
         adx_val=mtf.get("adx_value",0)
-        if adx_val<THRESH["min_adx"]: return None
+        # 放空的 ADX/量能門檻比做多更嚴格（見 config.py SHORT_SIGNAL_THRESH 說明）
+        min_adx_req = SHORT_SIGNAL_THRESH["min_adx"] if direction=="sell" else THRESH["min_adx"]
+        if adx_val<min_adx_req: return None
         vol_ratio=mtf.get("vol_ratio",1.0)
-        if vol_ratio<THRESH["min_vol_ratio"] and score<75: return None
+        min_vol_req = SHORT_SIGNAL_THRESH["min_vol_ratio"] if direction=="sell" else THRESH["min_vol_ratio"]
+        if vol_ratio<min_vol_req and score<75: return None
         # ★ 修正：2026-09-16——稽核發現 sell 方向的法人加權只有「外資賣超 → +5」
         # 這一種情況，buy 方向卻同時有「外資買超 → +5」跟「外資賣超 → -5」兩種。
         # 也就是說，一檔 sell(放空)訊號就算外資當天大買超（跟「放空」方向完全

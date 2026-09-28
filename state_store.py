@@ -203,6 +203,19 @@ class StateStore:
         # 遷移，且對「這個欄位是不是已經加過」做防呆（見 _migrate_add_column），
         # 避免每次啟動都重複執行或在欄位已存在時噴錯。
         self._migrate_add_column("signals", "actual_entry_price", "REAL")
+        # ★ 新增：2026-09-28——使用者驗證台灣50數據時發現：TWSE 季報 API 的
+        # 營收/毛利/營業利益欄位是「累計數」（今年至該季為止的加總），不是
+        # 單季數字（拿台積電比對法說會公布的單季毛利率67.7%，系統算出來是
+        # 67.03%，量級對得上「累計」而非「單季」）。原本的季度趨勢比對是直接
+        # 拿累計數的毛利率相減，Q2 vs Q1 還好，但 Q3 vs Q2 這種比較會被「多
+        # 一季累計進去」稀釋，嚴謹度不夠。修正做法：多存「累計原始數字」
+        # （營收/毛利/營業利益，不是比率），下次比較時用「這一季累計 減去
+        # 上一季累計」反推出真正的單季數字，同年度內quarter==1不用減（本身
+        # 就是單季）。這裡用 ALTER TABLE ADD COLUMN 遷移，理由跟上面
+        # actual_entry_price 一樣——正式環境已經在跑，不能 DROP TABLE 重建。
+        self._migrate_add_column("quarterly_margin_snapshot", "cum_revenue", "REAL")
+        self._migrate_add_column("quarterly_margin_snapshot", "cum_gross_profit", "REAL")
+        self._migrate_add_column("quarterly_margin_snapshot", "cum_operating_income", "REAL")
         logger.info(f"資料庫初始化：{'Postgres（持久化）' if USE_PG else DB_PATH}")
 
     def _migrate_add_column(self, table: str, column: str, coltype: str):
@@ -646,19 +659,34 @@ class StateStore:
     # 上一筆比較算出變化量。period 格式固定是「年度Q季別」（例如"115Q2"），
     # 同樣位數下字串排序等同時間排序，可以直接用字串比較/ORDER BY。
     def save_quarterly_margin(self, code: str, period: str,
-                               gross_margin_pct: Optional[float], operating_margin_pct: Optional[float]) -> bool:
+                               gross_margin_pct: Optional[float], operating_margin_pct: Optional[float],
+                               cum_revenue: Optional[float] = None, cum_gross_profit: Optional[float] = None,
+                               cum_operating_income: Optional[float] = None) -> bool:
+        """cum_revenue/cum_gross_profit/cum_operating_income 是「累計原始數字」
+        （不是比率），用來讓下一季呼叫時反推單季數字（見上方 _init_db() 遷移
+        的說明）。舊呼叫端不傳這三個參數時是 None，等於只存比率，沒辦法反推
+        單季——這是為了不強制所有呼叫端都要改，但獲利品質這條路徑（唯一
+        呼叫端）一定會傳。"""
         try:
             now = datetime.now(timezone.utc).isoformat()
             if USE_PG:
-                sql = ("INSERT INTO quarterly_margin_snapshot(code,period,gross_margin_pct,operating_margin_pct,updated_at) "
-                       "VALUES(?,?,?,?,?) ON CONFLICT (code,period) DO UPDATE SET "
+                sql = ("INSERT INTO quarterly_margin_snapshot"
+                       "(code,period,gross_margin_pct,operating_margin_pct,"
+                       "cum_revenue,cum_gross_profit,cum_operating_income,updated_at) "
+                       "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT (code,period) DO UPDATE SET "
                        "gross_margin_pct=EXCLUDED.gross_margin_pct,"
-                       "operating_margin_pct=EXCLUDED.operating_margin_pct,updated_at=EXCLUDED.updated_at")
+                       "operating_margin_pct=EXCLUDED.operating_margin_pct,"
+                       "cum_revenue=EXCLUDED.cum_revenue,"
+                       "cum_gross_profit=EXCLUDED.cum_gross_profit,"
+                       "cum_operating_income=EXCLUDED.cum_operating_income,"
+                       "updated_at=EXCLUDED.updated_at")
             else:
                 sql = ("INSERT OR REPLACE INTO quarterly_margin_snapshot"
-                       "(code,period,gross_margin_pct,operating_margin_pct,updated_at) VALUES(?,?,?,?,?)")
+                       "(code,period,gross_margin_pct,operating_margin_pct,"
+                       "cum_revenue,cum_gross_profit,cum_operating_income,updated_at) VALUES(?,?,?,?,?,?,?,?)")
             with self._conn() as conn:
-                conn.execute(sql, (code, period, gross_margin_pct, operating_margin_pct, now))
+                conn.execute(sql, (code, period, gross_margin_pct, operating_margin_pct,
+                                    cum_revenue, cum_gross_profit, cum_operating_income, now))
             return True
         except Exception as e:
             logger.warning(f"save_quarterly_margin {code}/{period}: {e}")
@@ -679,6 +707,25 @@ class StateStore:
             return dict(rows[0]) if rows else None
         except Exception as e:
             logger.warning(f"get_prev_quarterly_margin {code}/{period}: {e}")
+            return None
+
+    def get_quarterly_margin_snapshot(self, code: str, period: str) -> Optional[Dict]:
+        """精確查某一檔股票、某一個 period（例如"115Q1"）的快照，跟
+        get_prev_quarterly_margin()「period之前最近一筆」不同，這裡要求
+        完全對上——反推單季數字時（見 fundamentals.py 說明）需要精確指定
+        「上一季」跟「上上一季」各自的累計數字，不能用「最近一筆」代替
+        （中間可能跳過某一季沒抓到資料，用「最近一筆」會反推出錯誤的
+        單季數字）。找不到精確對應的那一季就回傳 None，呼叫端要能處理
+        「中間有缺一季資料」這個正常情況。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM quarterly_margin_snapshot WHERE code=? AND period=? LIMIT 1",
+                    (code, period)
+                ).fetchall()
+            return dict(rows[0]) if rows else None
+        except Exception as e:
+            logger.warning(f"get_quarterly_margin_snapshot {code}/{period}: {e}")
             return None
 
 
