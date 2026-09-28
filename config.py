@@ -109,14 +109,30 @@ THRESH = SIGNAL_THRESHOLDS
 # 訊號的實際表現（可以用 /api/diagnostics/pending_signals 之類的既有工具
 # 追蹤），如果收緊後表現還是差，代表根因假設可能是錯的，需要進一步收緊
 # 或重新停用，不能自動假設「加了門檻就等於解決問題」。
+#
+# ★ 修正：2026-09-28（第二輪）——把上面這組收緊條件貼給 ChatGPT 跟
+# Perplexity 兩邊獨立審查（使用者明確要求親自詢問，不是自己猜），兩邊
+# 一致指出同一個架構問題：原本這幾個條件全部塞在 signal_engine.py 的同一段
+# if 依序檢查，等於「大盤環境」「個股方向」「個股訊號強度」混在一起，
+# 同一個資訊（週線、ADX）可能同時影響算分跟准駁，而且「大盤單日情緒分數」
+# 當放空總開關容易把單日下跌誤判成空頭市場、隔天V轉就被巴。已重構為分層
+# gate（見 signal_engine.py generate_signal_tw() 的 Layer1/2/3 說明與
+# data_fetcher.py fetch_market_regime()），這裡的常數意義也跟著調整：
+#   - SHORT_MAX_SENTIMENT：原本是「唯一」的大盤放空總開關，現在降級成
+#     Layer1 內的次要保護（regime 允許放空的前提下，單日出現極端反彈才
+#     暫緩一次），主要開關改成 fetch_market_regime() 的多日均線趨勢判斷。
+#   - SHORT_REQUIRE_WEEKLY_BEARISH：不變，仍是 Layer2 的硬性條件。
+#   - SHORT_SIGNAL_THRESH["min_adx"]：意義不變（Layer3 訊號強度門檻），
+#     但現在必須先通過 Layer2 的 ADX 方向確認（+DI/-DI，adx_bias=="bearish"）
+#     才會被檢查，避免「ADX很高但其實是強漲」被誤判成放空訊號夠強。
 ENABLE_SHORT_SIGNALS = True
 SHORT_SIGNAL_THRESH = {
     "min_score": 75,        # 比做多的65高，做空要更強的訊號共振才進場
-    "min_adx": 25,           # 比做多的20高，要求更明確的趨勢強度
+    "min_adx": 25,           # 比做多的20高，要求更明確的趨勢強度（須先過ADX方向確認）
     "min_vol_ratio": 1.5,    # 比做多的1.2高，要求更明確的賣壓/量能確認
 }
-SHORT_MAX_SENTIMENT = 50    # 大盤情緒分數(0-100)必須 < 這個值（不能偏多）才允許放空
-SHORT_REQUIRE_WEEKLY_BEARISH = True  # 週線必須明確偏空（硬性條件，不是軟性扣分）
+SHORT_MAX_SENTIMENT = 50    # Layer1 次要保護：regime已允許放空時，單日情緒分數仍 >= 這個值就暫緩一次
+SHORT_REQUIRE_WEEKLY_BEARISH = True  # Layer2 硬性條件：週線必須明確偏空（不是軟性扣分）
 
 # ★ 修正：2026-09-26（稽核 finding #8，文件化澄清，未刪值/未變更行為）——
 # 下面每個分類的 "trail_stop" 欄位目前是死設定：signal_engine.calc_stop_loss_tw()/

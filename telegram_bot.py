@@ -287,6 +287,10 @@ def format_signal_paid(sig: Dict) -> str:
         f"✅ {weekly_zh}｜{sig.get('size_cat','—')}\n"
         + (f"━━━━━━━━━━━━━━━\n✅ <b>確認條件：</b>\n{conds_met}\n" if conds_met else "")
         + (f"⚠️ <b>注意：</b>\n{conds_fail}\n" if conds_fail else "")
+        # ★ 新增：2026-09-28——見 scanner.py/fundamentals.py 的 data_missing
+        # 說明：月營收資料抓不到時系統採 fail-open（不擋訊號），但這裡明確
+        # 推播出來，避免使用者誤以為這檔已經過本業衰退檢查。
+        + ("⚠️ <b>月營收資料本次無法取得，未經本業衰退檢查</b>\n" if sig.get("revenue_check") == "data_missing" else "")
         + f"━━━━━━━━━━━━━━━\n"
         f"💡 {sig.get('reason_brief','—')}\n"
         f"━━━━━━━━━━━━━━━\n"

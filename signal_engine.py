@@ -147,7 +147,8 @@ def check_multi_timeframe_tw(tf_data, disabled_factors=None):
             if ind.get("valid"): results[tf_key] = ind
     if "daily" not in results:
         return {"direction":"none","score":0,"resonance":False,"conditions_met":[],"conditions_fail":[],
-                "weekly_bias":"unknown","daily_bias":"unknown","rsi_value":50,"adx_value":0,"vol_ratio":1.0,"entry_indicators":{}}
+                "weekly_bias":"unknown","daily_bias":"unknown","rsi_value":50,"adx_value":0,"adx_bias":"neutral",
+                "vol_ratio":1.0,"entry_indicators":{}}
     daily    = results["daily"]
     ema_d    = daily.get("ema",{})
     rsi_d    = daily.get("rsi",{})
@@ -158,6 +159,14 @@ def check_multi_timeframe_tw(tf_data, disabled_factors=None):
     rsi_val  = rsi_d.get("value",50)        if rsi_d.get("valid")  else 50
     macd_bias= macd_d.get("bias","neutral") if macd_d.get("valid") else "neutral"
     adx_val  = adx_d.get("value",0)         if adx_d.get("valid")  else 0
+    # ★ 新增：2026-09-28——ChatGPT/Perplexity 審查放空門檻時都指出同一個問題：
+    # ADX 只衡量「趨勢強度」，不衡量「趨勢方向」——ADX=25 可能是強漲也可能是
+    # 強跌，放空訊號如果只拿 ADX 數值當門檻（見 config.py SHORT_SIGNAL_THRESH
+    # min_adx），很可能誤放行「ADX很高但其實是強漲」的股票。calc_adx() 其實
+    # 早就算出 +DI/-DI（bias 欄位：+DI>-DI 是 bullish、反之 bearish），只是
+    # 原本沒有任何地方讀取，這裡把它帶出去，讓 generate_signal_tw() 的放空
+    # 判斷可以額外要求 -DI>+DI（真正的空方動能主導），不是只看 ADX 強度。
+    adx_bias = adx_d.get("bias","neutral")  if adx_d.get("valid")  else "neutral"
     vol_ratio= vol_d.get("ratio",1.0)       if vol_d.get("valid")  else 1.0
     weekly_bias = "neutral"
     if "weekly" in results:
@@ -249,7 +258,7 @@ def check_multi_timeframe_tw(tf_data, disabled_factors=None):
         score=min(100,int(base))
     return {"direction":direction,"score":score,"resonance":"hourly" in results,
             "bull_score":bull_score,"bear_score":bear_score,"weekly_bias":weekly_bias,"daily_bias":ema_bias,
-            "rsi_value":rsi_val,"adx_value":adx_val,"vol_ratio":vol_ratio,
+            "rsi_value":rsi_val,"adx_value":adx_val,"adx_bias":adx_bias,"vol_ratio":vol_ratio,
             "conditions_met":conds_met,"conditions_fail":conds_fail,"entry_indicators":daily}
 
 def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=None, margin_data=None):
@@ -280,22 +289,58 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             logger.info(f"[SCORE] {ticker} dir={direction} score={score} "
                         f"bar={_last_date} close={price}")
         if direction=="none" or score<THRESH["min_score"]: return None
-        # ★ 修正：2026-09-28——見 config.py ENABLE_SHORT_SIGNALS 上方的說明：
-        # 使用者要求重新開啟做空，但放空訊號要通過比做多更嚴格的專屬條件，
-        # 不是跟做多共用同一套門檻直接放行。三個條件依序檢查，任一沒過
-        # 這一檔的放空訊號就不會產生：
-        #   1) 開關本身（ENABLE_SHORT_SIGNALS）
-        #   2) 放空專屬分數門檻（SHORT_SIGNAL_THRESH["min_score"]，比做多高）
-        #   3) 週線必須明確偏空（硬性條件，不是原本的軟性扣分）
-        #   4) 大盤情緒不能偏多（sentiment_score < SHORT_MAX_SENTIMENT）
+        # ★ 修正：2026-09-28（第二輪）——上一輪重新開放放空後，把 ChatGPT／
+        # Perplexity 兩邊的審查意見貼回去複查，兩邊獨立收斂出同一個架構問題：
+        # 原本把「大盤環境」「個股方向」「個股訊號強度」全部塞進同一組
+        # if 判斷依序檢查，等於同一個資訊（例如週線偏空、ADX）可能同時影響
+        # 「算分」跟「准不准放行」兩層，也讓「大盤今天心情不好」跟「這檔股票
+        # 真的走空」這兩件完全不同的事混在一起判斷。這裡改成明確分層，
+        # 上層 gate 沒過，下層完全不看，不讓個股分數把大盤層級的否決救回來：
+        #   Layer 1  Market Regime Gate：大盤是不是處於「允許放空」的中期
+        #            環境（fetch_market_regime()，20日/60日均線+斜率，多日
+        #            趨勢，不是單日漲跌）。這一層通不過，直接 NO SHORT。
+        #   Layer 2  Stock Direction Gate：這一檔個股本身的方向證據是否
+        #            明確偏空——週線必須明確偏空（硬性，不是軟性扣分）、
+        #            且 ADX 的 +DI/-DI 方向也要確認是空方主導（不能只看
+        #            ADX 強度，ADX 高可能是強漲也可能是強跌，見下方 adx_bias）。
+        #   Layer 3  訊號強度：分數/ADX強度/量能門檻本身比做多更高。
         if direction=="sell":
             if not ENABLE_SHORT_SIGNALS:
                 return None
-            if score < SHORT_SIGNAL_THRESH["min_score"]:
+            # --- Layer 1: Market Regime Gate -------------------------------
+            regime = market_overview.get("regime", {})
+            if not regime.get("available"):
+                # 抓不到大盤中期趨勢資料 = 不確定現在是不是空頭環境，
+                # 「不確定」不等於「確定可以放空」，保守起見直接不放行
+                # （跟 fetch_market_regime() 的 fail-closed 說明一致）。
+                logger.info(f"[{ticker}] 放空 Layer1 Market Regime Gate 未過：大盤中期趨勢資料不可用")
                 return None
+            if not regime.get("bearish_regime"):
+                logger.info(f"[{ticker}] 放空 Layer1 Market Regime Gate 未過：大盤中期趨勢={regime.get('trend')}"
+                            f"（非明確中期空頭，不允許個股層級放空訊號蓋過大盤環境判斷）")
+                return None
+            # 大盤單日急跌/急漲（shock）仍額外檢查一次：就算中期是空頭，
+            # 如果今天大盤单日已經是極端反彈（情緒分數很高），也先觀望一天，
+            # 避免對著當天的軋空行情放空；這是 Layer1 內的次要保護，不是
+            # 主要開關（主要開關已經是上面的 regime，不會被單日數字反過來
+            # 打開放空，只會在 regime 已經允許時，被單日異常反彈暫時攔一次）。
+            if market_overview.get("sentiment_score", 50) >= SHORT_MAX_SENTIMENT:
+                logger.info(f"[{ticker}] 放空 Layer1 Market Shock 檢查未過：大盤單日情緒分數過高，"
+                            f"疑似當日軋空行情，暫緩本次放空訊號")
+                return None
+            # --- Layer 2: Stock Direction Gate ------------------------------
             if SHORT_REQUIRE_WEEKLY_BEARISH and "bearish" not in mtf.get("weekly_bias","neutral"):
                 return None
-            if market_overview.get("sentiment_score", 50) >= SHORT_MAX_SENTIMENT:
+            adx_bias = mtf.get("adx_bias","neutral")
+            if adx_bias != "bearish":
+                # ADX 只衡量趨勢強度、不衡量方向，見 check_multi_timeframe_tw()
+                # 的 adx_bias 說明：+DI>-DI 時 ADX 再高也是多方強勢，不能拿來
+                # 當放空的訊號強度證據。
+                logger.info(f"[{ticker}] 放空 Layer2 Stock Direction Gate 未過：ADX方向(+DI/-DI)={adx_bias}，"
+                            f"非空方主導，即使ADX數值達標也不視為有效放空訊號")
+                return None
+            # --- Layer 3: 訊號強度（分數/ADX強度/量能，比做多更嚴格）--------
+            if score < SHORT_SIGNAL_THRESH["min_score"]:
                 return None
         adx_val=mtf.get("adx_value",0)
         # 放空的 ADX/量能門檻比做多更嚴格（見 config.py SHORT_SIGNAL_THRESH 說明）

@@ -665,15 +665,28 @@ class TWScanEngine:
             before = len(signals)
             fundamentally_blocked = []
             kept = []
+            data_missing_count = 0
             for sig in signals:
                 chk = check_fundamental_hard_filter(sig.get("code", ""), revenue_map)
                 if chk["blocked"]:
                     fundamentally_blocked.append(f"{sig.get('ticker')}（{chk['reason']}）")
                 else:
+                    # ★ 新增：2026-09-28——見 fundamentals.py check_fundamental_hard_filter()
+                    # 的說明：ChatGPT/Perplexity 都把「fail-open 時無法分辨『查過沒事』
+                    # 跟『根本沒查到』」列為高優先風險。這裡把 data_missing 明確標在訊號
+                    # 上（推播文字＋一個獨立欄位），讓使用者自己判斷要不要對這種訊號
+                    # 更保守，而不是讓它看起來跟「已通過月營收檢查」的訊號一模一樣。
+                    sig["revenue_check"] = "data_missing" if chk.get("data_missing") else "passed"
+                    if chk.get("data_missing"):
+                        data_missing_count += 1
+                        sig["reason_full"] = sig.get("reason_full", "") + \
+                            "\n⚠️【月營收】資料無法取得，本檔本次未經過本業衰退檢查（非「已確認正常」）"
                     kept.append(sig)
             signals = kept
             if fundamentally_blocked:
                 logger.info(f"_filter_and_rank: 基本面硬性過濾排除 {len(fundamentally_blocked)} 檔：{fundamentally_blocked}")
+            if data_missing_count:
+                logger.info(f"_filter_and_rank: {data_missing_count} 檔月營收資料缺失、未實際檢查（fail-open，已標記在訊號上）")
             logger.info(f"_filter_and_rank: 基本面過濾後剩 {len(signals)}/{before} 檔")
         except Exception as e:
             logger.warning(f"_filter_and_rank: 基本面過濾失敗（不影響本次掃描，本次跳過基本面過濾）: {e}")

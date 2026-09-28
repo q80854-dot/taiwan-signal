@@ -355,12 +355,12 @@ def check_fundamental_hard_filter_asof(code: str, asof_date: str) -> Dict:
     max_period = f"{y}-{m:02d}"
     info = store.get_revenue_asof(code, max_period)
     if not info or info.get("yoy_pct") is None:
-        return {"blocked": False, "reason": None, "yoy_pct": None}
+        return {"blocked": False, "reason": None, "yoy_pct": None, "data_missing": True}
     yoy = info["yoy_pct"]
     if yoy <= REVENUE_YOY_HARD_FLOOR:
-        return {"blocked": True, "yoy_pct": yoy,
+        return {"blocked": True, "yoy_pct": yoy, "data_missing": False,
                 "reason": f"月營收年增率 {yoy:+.1f}%（{info.get('period','')}，回測asof查詢），本業明顯衰退，不列入波段候選"}
-    return {"blocked": False, "reason": None, "yoy_pct": yoy}
+    return {"blocked": False, "reason": None, "yoy_pct": yoy, "data_missing": False}
 
 
 # ★ 新增：2026-09-24——硬性過濾門檻。營收年增率 <= -30% 代表本業明顯衰退，
@@ -371,19 +371,31 @@ def check_fundamental_hard_filter_asof(code: str, asof_date: str) -> Dict:
 REVENUE_YOY_HARD_FLOOR = -30.0
 
 
+# ★ 修正：2026-09-28——把這個「找不到資料一律不擋」的 fail-open 設計貼給
+# ChatGPT／Perplexity 審查，兩邊都把它列為目前系統優先級最高的風險項目之一：
+# fail-open 本身的方向（資料源故障時不要錯殺）沒有錯，但原本的回傳值讓
+# 「查過、確認乾淨」跟「根本沒查到」在下游（scanner.py／Telegram推播）完全
+# 無法分辨——兩者都是 blocked=False，一檔真正該被排除的地雷股，如果剛好那天
+# 資料源抓不到它的月營收，會跟一檔「月營收年增率經過確認是+20%」的健康股票
+# 顯示得一模一樣，使用者拿到訊號時完全看不出這檔其實沒有被基本面把關過。
+# 這裡新增 data_missing 欄位，不改變「不擋」這個行為本身（仍然是 fail-open，
+# 不是改成 fail-closed 誤殺資料源故障的正常股票），但讓下游可以把「沒查到」
+# 明確標示出來，而不是讓它悄悄跟「查過沒事」變成同一種外觀。
 def check_fundamental_hard_filter(code: str, revenue_map: Optional[Dict] = None) -> Dict:
-    """回傳 {"blocked": bool, "reason": str|None, "yoy_pct": float|None}。
+    """回傳 {"blocked": bool, "reason": str|None, "yoy_pct": float|None, "data_missing": bool}。
     找不到資料（新股、資料源當天失敗等）一律不擋，「不知道」不等於「有問題」，
-    跟這個專案其他過濾邏輯（sector/相關性群組）的既有原則一致。"""
+    跟這個專案其他過濾邏輯（sector/相關性群組）的既有原則一致——但會用
+    data_missing=True 明確標示「這筆沒有真的被檢查過」，避免跟「檢查過確認
+    正常」的情況混在一起、讓使用者誤以為所有訊號都經過月營收把關。"""
     revenue_map = revenue_map if revenue_map is not None else fetch_monthly_revenue_map()
     info = revenue_map.get(code)
     if not info or info.get("yoy_pct") is None:
-        return {"blocked": False, "reason": None, "yoy_pct": None}
+        return {"blocked": False, "reason": None, "yoy_pct": None, "data_missing": True}
     yoy = info["yoy_pct"]
     if yoy <= REVENUE_YOY_HARD_FLOOR:
-        return {"blocked": True, "yoy_pct": yoy,
+        return {"blocked": True, "yoy_pct": yoy, "data_missing": False,
                 "reason": f"月營收年增率 {yoy:+.1f}%（{info.get('period','')}），本業明顯衰退，不列入波段候選"}
-    return {"blocked": False, "reason": None, "yoy_pct": yoy}
+    return {"blocked": False, "reason": None, "yoy_pct": yoy, "data_missing": False}
 
 
 # ── TODO（使用者已表示之後再評估，先不做）──

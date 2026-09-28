@@ -230,6 +230,71 @@ def _fetch_twii() -> Optional[Dict]:
     return {"price": 0, "prev": 0, "chg": 0, "chg_pt": 0, "source": "error"}
 
 
+# ════════════════════════════════════════════════
+# 大盤「中期趨勢」regime（跟下面 fetch_market_overview() 的單日情緒分數是
+# 兩個不同的東西，刻意分開）
+# ════════════════════════════════════════════════
+# ★ 新增：2026-09-28——使用者要求重新檢查放空的收緊條件，ChatGPT/Perplexity
+# 兩邊審查後一致指出：原本用「大盤單日情緒分數 < 50」當放空的市場環境總開關，
+# 情緒分數本身是當天漲跌/VIX/外資/融資幾個「當日」數字加總（見下面
+# fetch_market_overview()），非常容易把單一交易日的下跌誤判成「空頭市場」，
+# 隔天大盤 V 型反轉，昨天才因為情緒分數<50被放行的空單，今天可能直接軋損。
+# 兩邊都建議拆成「中期趨勢(regime)」跟「短期急跌(shock)」兩個獨立變數，
+# 不要只靠單日分數決定要不要放空——這裡新增的是前者：用大盤真正的多日
+# 價格趨勢（20日均線 vs 60日均線、60日均線斜率）判斷「現在是不是處於
+# 中期空頭格局」，而不是看今天單一一天的漲跌。這個函式回傳的 regime 會在
+# signal_engine.generate_signal_tw() 被當成放空的「第一層 Market Regime
+# Gate」——先問「現在這個大盤環境允不允許放空」，答案不是的話，不管個股
+# 分數多高、ADX多強，都不放行，不讓個股層級的訊號把它救回來（分層 gate
+# 架構，避免市場環境判斷跟個股訊號判斷混在同一個加總分數裡互相稀釋）。
+def fetch_market_regime() -> Dict:
+    """回傳大盤中期趨勢 regime，只依賴多日價格資料，不受單日漲跌影響：
+    {"available": bool, "trend": "bullish"|"bearish"|"neutral"|"unknown",
+     "ma20": float|None, "ma60": float|None, "ma60_slope_pct": float|None,
+     "price": float|None, "bearish_regime": bool}
+    bearish_regime 同時滿足「價格 < 60日均線」「60日均線斜率向下」
+    「20日均線 < 60日均線」三個條件才是 True——刻意要求三個條件都成立，
+    不是任一個，避免大盤只是短暫拉回、均線還沒真正走空就被誤判。
+    資料源（yfinance ^TWII）拿不到時，available=False、bearish_regime=False
+    （抓不到資料時，「不確定是不是空頭」不等於「確定是空頭」，跟這個專案
+    其他資料源失效時的保守原則一致：fail closed 對「放空」這個動作來說，
+    就是「不確定就不放空」，而不是照樣放行。）"""
+    if c := _cache_get("market_regime", 3600):
+        return c
+    unavailable = {"available": False, "trend": "unknown", "ma20": None, "ma60": None,
+                   "ma60_slope_pct": None, "price": None, "bearish_regime": False,
+                   "note": "大盤中期趨勢資料無法取得，保守起見視為不確定（不放行新放空訊號）"}
+    if not YFINANCE_OK:
+        return _cache_set("market_regime", unavailable)
+    try:
+        ticker = yf.Ticker("^TWII")
+        h = ticker.history(period="6mo", interval="1d")
+        if h is None or h.empty or len(h) < 65:
+            logger.warning("fetch_market_regime: TWII 歷史資料不足65根，regime 判定為 unknown")
+            return _cache_set("market_regime", unavailable)
+        closes = h["Close"].dropna()
+        ma20 = float(closes.tail(20).mean())
+        ma60_series = closes.tail(65).rolling(60).mean().dropna()
+        if len(ma60_series) < 6:
+            return _cache_set("market_regime", unavailable)
+        ma60 = float(ma60_series.iloc[-1])
+        ma60_5ago = float(ma60_series.iloc[-6])
+        ma60_slope_pct = round((ma60 - ma60_5ago) / ma60_5ago * 100, 3) if ma60_5ago else 0.0
+        price = float(closes.iloc[-1])
+        bearish_regime = bool(price < ma60 and ma60_slope_pct < 0 and ma20 < ma60)
+        bullish_regime = bool(price > ma60 and ma60_slope_pct > 0 and ma20 > ma60)
+        trend = "bearish" if bearish_regime else "bullish" if bullish_regime else "neutral"
+        result = {"available": True, "trend": trend, "ma20": round(ma20, 1), "ma60": round(ma60, 1),
+                  "ma60_slope_pct": ma60_slope_pct, "price": round(price, 1),
+                  "bearish_regime": bearish_regime}
+        logger.info(f"大盤中期趨勢 regime={trend} price={price:.0f} MA20={ma20:.0f} "
+                    f"MA60={ma60:.0f}({ma60_slope_pct:+.2f}%/5日)")
+        return _cache_set("market_regime", result)
+    except Exception as e:
+        logger.warning(f"fetch_market_regime: {e}")
+        return _cache_set("market_regime", unavailable)
+
+
 def _fetch_tpex() -> Optional[Dict]:
     """TPEX 官方 API 抓上櫃指數"""
     # ★ 修正：2026-09-27（推翻 2026-09-27 稍早的錯誤結論）——先前以為
@@ -946,6 +1011,10 @@ def fetch_market_overview() -> Dict:
     overview = {"fetched_at": datetime.now(timezone.utc).isoformat()}
     overview["index"]         = fetch_market_index()
     overview["foreign"]       = fetch_foreign_total_flow()
+    # ★ 新增：2026-09-28——見 fetch_market_regime() 說明：這是獨立於下面單日
+    # sentiment_score 的「中期趨勢」判斷，專門給 signal_engine.py 放空訊號的
+    # Market Regime Gate 用，不跟單日情緒分數混在一起。
+    overview["regime"]        = fetch_market_regime()
     # ★ 移除（稽核發現，2026-09-26）：這裡原本還有一行
     # `overview["institutional"] = fetch_institutional_flow()`。
     # fetch_institutional_flow() 沒帶 date_str 時，抓的是「今天全市場~1700檔
