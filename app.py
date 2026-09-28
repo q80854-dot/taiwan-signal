@@ -462,6 +462,58 @@ def api_backtest_short_gate_validation_result():
         "result": store.get_meta("short_gate_validation_result", None),
     })
 
+# ★ 新增：2026-09-29——item：涵蓋真實空頭期間。上面 short_gate_validation 的
+# 樣本被 production fetch_ohlcv() 綁死在近1年（幾乎全程bullish regime），
+# ChatGPT/Perplexity都指出「放空筆數0」這個結果沒辦法區分「閘門真的有效」
+# 還是「近1年根本沒出現過空頭條件」。這裡用 backtester.run_short_gate_
+# validation_tw_period()（抓長期歷史、只截到指定期間）跑2022年台股真實空頭，
+# 同一套背景執行緒＋state_store meta輪詢模式（50檔×長期歷史抓取+雙輪回測，
+# 一定超過 gunicorn 逾時）。
+_short_gate_validation_bear_running = threading.Event()
+
+def _run_short_gate_validation_bear_bg(min_score, period_start, period_end):
+    from state_store import store
+    if _short_gate_validation_bear_running.is_set():
+        return
+    _short_gate_validation_bear_running.set()
+    try:
+        from backtester import run_short_gate_validation_tw_period
+        store.set_meta("short_gate_validation_bear_progress", {"status": "running", "done": 0, "total": 0, "ticker": ""})
+        def _cb(done, total, ticker):
+            store.set_meta("short_gate_validation_bear_progress", {"status": "running", "done": done, "total": total, "ticker": ticker})
+        result = run_short_gate_validation_tw_period(min_score=min_score, period_start=period_start,
+                                                       period_end=period_end, progress_cb=_cb)
+        store.set_meta("short_gate_validation_bear_result", result)
+        store.set_meta("short_gate_validation_bear_progress", {"status": "done", "done": 1, "total": 1, "ticker": ""})
+        c = result.get("comparison", {})
+        logger.info(f"[BT] 空頭期間({period_start}~{period_end})放空分層閘門驗證完成：放空筆數 "
+                    f"{c.get('sell_n_trades_before',0)} → {c.get('sell_n_trades_after',0)}，"
+                    f"勝率 {c.get('sell_win_rate_before',0)}% → {c.get('sell_win_rate_after',0)}%")
+    except Exception as e:
+        logger.error(f"_run_short_gate_validation_bear_bg: {e}", exc_info=True)
+        store.set_meta("short_gate_validation_bear_progress", {"status": "error", "error": str(e)})
+    finally:
+        _short_gate_validation_bear_running.clear()
+
+@app.route("/api/backtest/short_gate_validation_bear/run", methods=["POST"])
+def api_backtest_short_gate_validation_bear_run():
+    if _short_gate_validation_bear_running.is_set():
+        return jsonify({"status": "already_running"})
+    min_score = request.args.get("min_score", default=65.0, type=float)
+    period_start = request.args.get("period_start", default="2022-01-01", type=str)
+    period_end = request.args.get("period_end", default="2022-12-31", type=str)
+    threading.Thread(target=_run_short_gate_validation_bear_bg, args=(min_score, period_start, period_end), daemon=True).start()
+    return jsonify({"status": "started", "min_score": min_score, "period_start": period_start, "period_end": period_end,
+                     "note": "TW50成分股，用長期歷史截到指定期間，新舊放空邏輯各跑一輪，用 /api/backtest/short_gate_validation_bear/result 查進度"})
+
+@app.route("/api/backtest/short_gate_validation_bear/result")
+def api_backtest_short_gate_validation_bear_result():
+    from state_store import store
+    return jsonify({
+        "progress": store.get_meta("short_gate_validation_bear_progress", {"status": "never_run"}),
+        "result": store.get_meta("short_gate_validation_bear_result", None),
+    })
+
 # ★ 新增：2026-09-24——使用者看到第一版比較回測（只有TWII一項）差異很小之後，
 # 明確要求「用真實資料回測，不要假數據，能補的都補上」。融資餘額、個股月營收
 # 這兩項都查證出有真實的官方歷史資料來源可以回填（見 data_fetcher.

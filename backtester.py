@@ -168,6 +168,75 @@ def _short_gate_pass(day_date: Optional[str], mtf: Dict, twii_regime_map: Dict[s
     return True
 
 
+# ★ 新增：2026-09-29——item：涵蓋真實空頭期間。ChatGPT/Perplexity 對「新放空
+# 分層閘門在近1年TW50樣本裡0筆交易」這個結果一致指出：無法區分「閘門在真正
+# 空頭期間也一樣有效攔住爛訊號」還是「近1年（幾乎全程多頭regime）根本沒出現
+# 過閘門會放行的空頭條件」，這個問題不解決，0筆交易的結論就撐不住嚴謹檢驗。
+# production 的 fetch_ohlcv() daily 固定用 config.TIMEFRAMES["daily"]["period"]
+# ="1y"（live 掃描本來就只需要近1年），回測沿用同一套 fetch_ohlcv()（見上方
+# 多處說明：回測跟實盤要用同一份資料/邏輯，不能各吃一套），所以連帶把回測
+# 樣本也綁死在近1年。這裡另開一條完全獨立的資料來源，直接呼叫 yfinance 抓
+# 長期歷史（預設 period="max"，涵蓋2022年台股真實空頭），跟 production 的
+# fetch_ohlcv()/state_store 持久化快取完全分開、互不寫入也互不讀取——不修改
+# config.TIMEFRAMES、不動 live 掃描，純粹是這個驗證用途專屬的獨立抓取路徑，
+# 用完即丟（只快取在這個模組內的記憶體字典，跟 _twii_regime_cache 等既有
+# 作法一致）。
+_long_hist_cache: Dict = {}
+
+def _fetch_long_history_tw(ticker: str, tf_key: str, period: str = "max") -> Optional[Dict]:
+    """回傳跟 data_fetcher.fetch_ohlcv() 同樣形狀（dates/opens/highs/lows/closes/
+    volumes 平行陣列）的字典，但資料期間由呼叫端指定（預設 period="max"，
+    盡量抓到該檔全部可得歷史），不受 config.TIMEFRAMES 的 1y/5y 上限限制。
+    直接呼叫 yfinance＋複用 data_fetcher._yf_rows_to_bars() 做同一套K棒轉換
+    （避免另外發明一套解析邏輯、跟 production 對同一份原始資料的解讀不一致），
+    但不經過 state_store 持久化快取，只在本模組記憶體內快取（避免同一次
+    驗證跑批時對同一檔重複發出 yfinance 請求）。"""
+    cache_k = f"{ticker}|{tf_key}|{period}"
+    if cache_k in _long_hist_cache:
+        return _long_hist_cache[cache_k]
+    try:
+        import yfinance as yf
+        from data_fetcher import _yf_rows_to_bars
+        interval = "1wk" if tf_key == "weekly" else "1d"
+        h = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=True)
+        if h is None or h.empty:
+            _long_hist_cache[cache_k] = None
+            return None
+        bars = _yf_rows_to_bars(h, tf_key)
+        if not bars:
+            _long_hist_cache[cache_k] = None
+            return None
+        result = {
+            "closes":  [b["close"]  for b in bars],
+            "opens":   [b["open"]   for b in bars],
+            "highs":   [b["high"]   for b in bars],
+            "lows":    [b["low"]    for b in bars],
+            "volumes": [b["volume"] for b in bars],
+            "dates":   [b["date"]   for b in bars],
+        }
+        _long_hist_cache[cache_k] = result
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_long_history_tw {ticker}/{tf_key}: {e}")
+        _long_hist_cache[cache_k] = None
+        return None
+
+
+def _truncate_ohlcv_to_date(data: Optional[Dict], date_end: Optional[str]) -> Optional[Dict]:
+    """把 _fetch_long_history_tw() 抓回來的長期歷史，截到 date_end（含）為止——
+    backtest_symbol_tw() 收盤前若持倉未平倉，會用陣列最後一筆價格強制平倉，
+    若不截斷，驗證某個歷史區間（如2022年）時就會用區間結束之後的未來價格
+    強制平倉，污染統計，所以驗證期間之外的資料必須先截掉，不能只靠
+    date_start 過濾「進場」那一半。"""
+    if not data or not date_end:
+        return data
+    dates = data.get("dates", [])
+    idx = bisect.bisect_right(dates, date_end)
+    if idx <= 0:
+        return None
+    return {k: v[:idx] for k, v in data.items()}
+
+
 # ★ 修正：2026-08-30（第二輪）——跟 signal_engine.calc_position_size() 的修正配套：不再假設倉位
 # 一定是「張」(1000股)的整數倍，改直接吃股數。calc_tw_pnl 的 shares 參數現在就是股數本身，
 # 不用再乘 SHARES_PER_LOT。
@@ -178,8 +247,19 @@ def calc_tw_pnl(entry, close, direction, shares):
     sell_tax=close*shares*TAX_RATE_SELL
     return round(gross-buy_fee-sell_fee-sell_tax,0)
 
-def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True) -> Dict:
+def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True,
+                        daily_override=None, weekly_override=None, date_start=None) -> Dict:
     """
+    ★ 新增：2026-09-29——daily_override/weekly_override/date_start 三個參數，
+    給「涵蓋真實空頭期間」驗證用（見 _fetch_long_history_tw()）：daily_override／
+    weekly_override 給定時，直接使用該資料而不呼叫 fetch_ohlcv()（用長期歷史
+    取代 production 綁死的 1y/5y 視窗，資料格式必須跟 fetch_ohlcv() 回傳一致）；
+    date_start 給定時，只是把「新開倉」限制在 date_start（含）之後——不影響
+    已持倉部位的停損停利判斷、也不影響 date_start 之前資料仍被拿來算指標
+    （這正是保留這段資料的目的：LOOKBACK=130 根日K的暖身期要在 date_start
+    之前就先跑完，不能讓 date_start 當天才開始只有0根歷史可看）。三個參數
+    都不給時，行為與修改前完全一致（None 時 daily_override/weekly_override
+    直接 or 掉、date_start 判斷式直接短路為 False）。
     ★ 修正：改為直接呼叫 signal_engine 的 check_multi_timeframe_tw() / calc_stop_loss_tw() /
     calc_take_profits_tw() / calc_position_size()，跟 scanner.py 每天盤後真正在跑的邏輯用同一套，
     不再是 scoring_engine.calc_composite_score() 那套只有回測在用、實盤從未呼叫過的獨立評分法。
@@ -202,12 +282,12 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
     from state_store    import store
     min_score = min_score if min_score is not None else THRESH["min_score"]
     balance=initial_balance or ACCOUNT_BALANCE_TWD
-    data=fetch_ohlcv(ticker,"daily")
+    data=daily_override if daily_override is not None else fetch_ohlcv(ticker,"daily")
     if not data or len(data.get("closes",[]))<60:
         return {"error":f"{ticker} 歷史數據不足（需60根日線）"}
     closes=data["closes"]; highs=data["highs"]; lows=data["lows"]; opens=data["opens"]; volumes=data["volumes"]
     dates=data.get("dates",[])
-    weekly_raw=fetch_ohlcv(ticker,"weekly")
+    weekly_raw=weekly_override if weekly_override is not None else fetch_ohlcv(ticker,"weekly")
     w_dates  =weekly_raw.get("dates",[])   if weekly_raw else []
     w_closes =weekly_raw.get("closes",[])  if weekly_raw else []
     w_highs  =weekly_raw.get("highs",[])   if weekly_raw else []
@@ -280,7 +360,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
                                 "pnl_pct":round(pnl/entry_balance*100,2),"score":open_trade.get("score",0),
                                 "bar_in":open_trade["bar"],"bar_out":i,"hold_days":i-open_trade["bar"]})
                 open_trade=None; just_exited=True
-        if open_trade is None and not just_exited:
+        if open_trade is None and not just_exited and not (date_start and day_date and day_date<date_start):
             tf_data_bt={"daily":wd}
             w_slice=_weekly_asof(day_date)
             if w_slice: tf_data_bt["weekly"]=w_slice
@@ -917,3 +997,105 @@ def run_short_gate_validation_tw(tickers=None, min_score=65.0, progress_cb=None)
     }
     return {"completed_at":datetime.now(timezone.utc).isoformat(),"min_score":min_score,
             "n_tickers":len(targets),"baseline":baseline,"gated":gated,"comparison":comparison}
+
+
+# ★ 新增：2026-09-29——run_short_gate_validation_tw() 的樣本被 production
+# fetch_ohlcv() 綁死在近1年（見上方 _fetch_long_history_tw() 說明），近1年
+# 幾乎全程是大盤 bullish regime，「放空筆數 28→0」沒辦法回答「這是閘門真的
+# 在空頭有效，還是近1年根本沒出現過閘門會放行的空頭條件」。這裡改用
+# _fetch_long_history_tw() 抓長期歷史（預設 period="max"），把回測資料截到
+# period_end 為止（避免用區間之後的未來價格強制平倉），只把「新開倉」限制
+# 在 [period_start, period_end] 這段指定期間（date_start 之前的資料仍保留、
+# 只用來讓 LOOKBACK=130 根日K的暖身期跟週線 _weekly_asof() 有足夠歷史可看，
+# 不會被誤用來開倉——見 backtest_symbol_tw() 的 date_start 說明），藉此驗證
+# 閘門在真實指定期間（例如2022年台股實際空頭）的表現。
+# 為了不對 yfinance 重複發出請求，每檔股票的長期歷史只抓一次（daily+weekly），
+# 同一份（已截斷的）資料同時餵給 baseline（use_short_gates=False）跟
+# gated（use_short_gates=True）兩輪回測。
+def run_short_gate_validation_tw_period(tickers=None, min_score=65.0, period_start="2022-01-01",
+                                         period_end="2022-12-31", history_period="max",
+                                         progress_cb=None) -> Dict:
+    from stock_universe import get_tw50_components
+    targets = tickers or get_tw50_components()
+    baseline_results = []
+    gated_results = []
+    skipped = []
+    total = len(targets)
+    for idx, ticker in enumerate(targets):
+        try:
+            daily_long = _fetch_long_history_tw(ticker, "daily", history_period)
+            weekly_long = _fetch_long_history_tw(ticker, "weekly", history_period)
+            daily_trunc = _truncate_ohlcv_to_date(daily_long, period_end)
+            weekly_trunc = _truncate_ohlcv_to_date(weekly_long, period_end)
+            if not daily_trunc or len(daily_trunc.get("closes", [])) < 60:
+                skipped.append({"ticker": ticker, "reason": "長期歷史資料不足（可能是2022年之後才掛牌，或yfinance抓不到）"})
+                continue
+            # 暖身期檢查：period_start 之前至少要有 LOOKBACK(130) 根日K可用，
+            # 否則 period_start 一開始的進場判斷會用到不足130根的殘缺指標，
+            # 跟 backtest_symbol_tw() 其他呼叫路徑的資料完整度不一致。
+            dates_before_start = [d for d in daily_trunc.get("dates", []) if d < period_start]
+            if len(dates_before_start) < 130:
+                skipped.append({"ticker": ticker, "reason": f"{period_start} 之前可用日K只有 {len(dates_before_start)} 根（需≥130根暖身），略過此檔避免指標失真"})
+                continue
+            r_base = backtest_symbol_tw(ticker, min_score=min_score, use_short_gates=False,
+                                         daily_override=daily_trunc, weekly_override=weekly_trunc, date_start=period_start)
+            r_gate = backtest_symbol_tw(ticker, min_score=min_score, use_short_gates=True,
+                                         daily_override=daily_trunc, weekly_override=weekly_trunc, date_start=period_start)
+            if "error" not in r_base: baseline_results.append(r_base)
+            if "error" not in r_gate: gated_results.append(r_gate)
+        except Exception as e:
+            logger.error(f"[BT-BEAR] {ticker} 失敗: {e}")
+            skipped.append({"ticker": ticker, "reason": f"執行失敗: {e}"})
+        if progress_cb:
+            try: progress_cb(idx + 1, total, ticker)
+            except Exception: pass
+        time.sleep(0.3)
+
+    def _agg(results):
+        agg = {"buy": {"n_trades": 0, "n_wins": 0, "n_losses": 0, "total_pnl_twd": 0},
+               "sell": {"n_trades": 0, "n_wins": 0, "n_losses": 0, "total_pnl_twd": 0}}
+        for r in results:
+            bd = r.get("by_direction", {})
+            for d in ("buy", "sell"):
+                s = bd.get(d, {})
+                agg[d]["n_trades"] += s.get("n_trades", 0)
+                agg[d]["n_wins"] += s.get("n_wins", 0)
+                agg[d]["n_losses"] += s.get("n_losses", 0)
+                agg[d]["total_pnl_twd"] += s.get("total_pnl_twd", 0)
+        for d in ("buy", "sell"):
+            wl = agg[d]["n_wins"] + agg[d]["n_losses"]
+            agg[d]["win_rate"] = round(agg[d]["n_wins"] / max(wl, 1) * 100, 1)
+            agg[d]["avg_pnl_twd"] = round(agg[d]["total_pnl_twd"] / max(agg[d]["n_trades"], 1), 0)
+        return agg
+
+    b_agg = _agg(baseline_results)
+    g_agg = _agg(gated_results)
+    b_sell = b_agg["sell"]; g_sell = g_agg["sell"]
+    b_buy = b_agg["buy"]; g_buy = g_agg["buy"]
+
+    def _delta(a, b): return round(b - a, 2)
+
+    comparison = {
+        "sell_n_trades_before": b_sell["n_trades"], "sell_n_trades_after": g_sell["n_trades"],
+        "sell_win_rate_before": b_sell["win_rate"], "sell_win_rate_after": g_sell["win_rate"],
+        "sell_win_rate_delta": _delta(b_sell["win_rate"], g_sell["win_rate"]),
+        "sell_total_pnl_before": b_sell["total_pnl_twd"], "sell_total_pnl_after": g_sell["total_pnl_twd"],
+        "buy_unaffected_check": {
+            "n_trades_before": b_buy["n_trades"], "n_trades_after": g_buy["n_trades"],
+            "win_rate_before": b_buy["win_rate"], "win_rate_after": g_buy["win_rate"],
+            "note": "做多完全不受這兩層放空閘門影響，理論上前後應該一致；若不一致代表程式邏輯有誤，要優先排查。",
+        },
+        "interpretation": (
+            f"這是指定期間（{period_start}～{period_end}）而非近1年的驗證，用意是檢驗放空分層閘門"
+            "在真實空頭條件下的表現，而不是只看「近1年很少出現空頭條件」這個可能混淆結論的樣本。"
+            "若這段期間 sell_n_trades_before（舊邏輯）明顯>0 而 sell_n_trades_after（新閘門）仍然是0"
+            "或極少，且勝率/損益有改善，代表閘門不是「太嚴格導致什麼都沒測到」，而是真的在區分"
+            "好/壞放空訊號；若舊邏輯在這段期間本身交易數也很少，代表台灣50這個範圍在這段期間本身"
+            "放空訊號觸發就不多，需要換更長區間或更廣的股票池才能有足夠樣本下結論。"
+        ),
+        "sample_note": f"共 {len(targets)} 檔目標，{len(baseline_results)} 檔有效回測結果，{len(skipped)} 檔略過（見 skipped_tickers）。",
+    }
+    return {"completed_at": datetime.now(timezone.utc).isoformat(), "min_score": min_score,
+            "period_start": period_start, "period_end": period_end, "history_period": history_period,
+            "n_tickers": len(targets), "n_valid": len(baseline_results), "skipped_tickers": skipped,
+            "baseline_aggregate": b_agg, "gated_aggregate": g_agg, "comparison": comparison}
