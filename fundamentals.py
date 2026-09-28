@@ -747,9 +747,19 @@ def _fetch_twse_income_statement_bd() -> Dict[str, Dict]:
 
 def _fetch_twse_income_statement_fh() -> Dict[str, Dict]:
     """上市「金控業」，沒有毛利概念，operating_margin_pct 這裡用「稅前損益率」
-    （繼續營業單位稅前損益/淨收益）替代——金控業損益表沒有單獨的營業利益
-    科目，這是最接近的替代指標，嚴格說不是傳統定義的營益率（見上方檔案
-    開頭的說明），這個欄位在金控股身上的意義跟一般業不完全一樣。"""
+    （繼續營業單位稅前損益/利息以外淨收益）替代——金控業損益表沒有單獨的
+    營業利益科目，這是最接近的替代指標，嚴格說不是傳統定義的營益率（見
+    上方檔案開頭的說明），這個欄位在金控股身上的意義跟一般業不完全一樣。
+
+    ★ 修正：2026-09-28（上線後用台灣50驗證立刻發現的bug）——revenue 分母
+    原本用「淨收益」欄位，但實測拿富邦金(2881)的真實原始數字回推發現，
+    「淨收益」其實是已經扣掉呆帳費用/保險負債準備變動/營業費用之後的
+    「淨額」（數值遠小於稅前損益），拿它當分母會算出稅前損益率302%這種
+    荒謬數字。真正該當「總收益」分母的是「利息以外淨收益」這個欄位——
+    雖然欄位名稱看起來像「利息以外的收益」，但實測數字等於「利息淨收益+
+    其他收益及費損淨額」的加總，也就是金控業扣除各項費用「之前」的總
+    收益，這是 TWSE 資料源本身欄位命名容易誤導的地方（銀行業 basi 分類
+    沒有這個問題，欄位命名邏輯正常，已用彰銀2801的真實數字驗證過）。"""
     url = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_fh"
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
@@ -761,7 +771,7 @@ def _fetch_twse_income_statement_fh() -> Dict[str, Dict]:
             code, period = _parse_common(row)
             if not code:
                 continue
-            revenue = _f(row.get("淨收益"))
+            revenue = _f(row.get("利息以外淨收益"))
             pretax = _f(row.get("繼續營業單位稅前損益"))
             net_income = _f(row.get("本期稅後淨利（淨損）"))
             result[code] = {
