@@ -612,19 +612,162 @@ def fetch_market_daytrading_overlay() -> Dict:
     return {}
 
 
-# ── TODO（下一步，尚未實作）──
-# 1) 個股層級當沖比重（TWSE）：官方 OpenAPI 的 exchangeReport/TWTB4U 只有
-#    「當日可當沖標的清單」，沒有比重數字；需要另外找 TWSE 個股當沖成交值/
-#    比重的資料源（可能要看 www.twse.com.tw 舊網頁報表有沒有對應的
-#    ?response=json 端點，或另尋第三方資料源），確認前不要用猜測欄位名稱
-#    硬接，避免用假資料誤導籌碼面風險判斷。
-# 2) 獲利品質（毛利率/營益率趨勢）：需要串接季報財務資料（TWSE
-#    opendata/t187ap06_L_ci 等綜合損益表系列、TPEx mopsfin_t187ap06_O_ci
-#    等），計算趨勢（例如近4季毛利率變化）需要額外的歷史序列儲存設計，
-#    複雜度比這次做的估值面/融資融券餘額高一截，留待下一輪單獨評估。
-# 3) 目前 fetch_valuation_map()/fetch_margin_short_map()/
-#    fetch_market_daytrading_overlay() 都只是資料擷取層，尚未接進
-#    signal_engine.py 的評分邏輯——要當硬性過濾還是加減分因子，需要先跟
-#    使用者確認設計方向（類似月營收當初的硬性過濾 vs 三大法人買賣超的
-#    加減分，兩種模式對系統行為影響不同），這裡先把資料管線打通、
-#    透過 /api/diagnostics 暴露出來供人工檢視，評分邏輯留到下一輪再接。
+# ════════════════════════════════════════════════
+# 獲利品質（毛利率/營業利益率，季報，目前僅上市「一般業」）
+# ════════════════════════════════════════════════
+# ★ 新增：2026-09-28——使用者要求把「獲利品質」接進評分。TWSE OpenAPI 的
+# opendata/t187ap06_L_ci（上市「一般業」公司綜合損益表）欄位已實測確認：
+# 公司代號/公司名稱/年度/季別/營業收入/營業成本/營業毛利（毛損）淨額/
+# 營業利益（損失）/本期淨利（淨損）等。只做「一般業」的原因：銀行/證券
+# 期貨/保險/金控/異業這幾個子分類（t187ap06_L_basi/bd/fh/ins/mim）的損益表
+# 科目結構跟一般業不一樣（例如銀行沒有「營業成本/毛利」的概念），這幾個
+# 分類各自欄位名稱目前沒有逐一實測過，貿然套用一般業的欄位名稱去解析會
+# 算出錯誤或缺漏的毛利率數字，比「這幾類公司暫時沒有獲利品質資料」風險
+# 更高——所以先只做確認過的一般業，其餘分類、以及全部上櫃公司（TPEx對應
+# 資料源還沒找到），這個函式回傳的 map 裡就是沒有這些代號，呼叫端要能
+# 處理「這檔股票沒有獲利品質資料」是正常情況，不是異常。
+_QUALITY_CACHE_TTL_SEC = 3600 * 24  # 季報一季才更新一次，24小時快取足夠保守
+
+def _fetch_twse_income_statement_ci() -> Dict[str, Dict]:
+    """上市「一般業」公司最新一期綜合損益表，TWSE OpenAPI。"""
+    url = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_twse_income_statement_ci: HTTP {r.status_code}")
+            return {}
+        result = {}
+        for row in r.json():
+            code = (row.get("公司代號") or "").strip()
+            if not code:
+                continue
+            revenue = _f(row.get("營業收入"))
+            gross = _f(row.get("營業毛利（毛損）淨額"))
+            if gross is None:
+                gross = _f(row.get("營業毛利（毛損）"))
+            op_income = _f(row.get("營業利益（損失）"))
+            net_income = _f(row.get("本期淨利（淨損）"))
+            gross_margin_pct = round(gross / revenue * 100, 2) if (gross is not None and revenue) else None
+            op_margin_pct = round(op_income / revenue * 100, 2) if (op_income is not None and revenue) else None
+            year = (row.get("年度") or "").strip()
+            quarter = (row.get("季別") or "").strip()
+            result[code] = {
+                "period": f"{year}Q{quarter}" if (year and quarter) else "",
+                "revenue": revenue,
+                "gross_margin_pct": gross_margin_pct,
+                "operating_margin_pct": op_margin_pct,
+                "net_income": net_income,
+                "source": "twse_openapi_ci",
+            }
+        logger.info(f"獲利品質（上市一般業）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_twse_income_statement_ci: {e}")
+        return {}
+
+
+def fetch_profitability_quality_map() -> Dict[str, Dict]:
+    """回傳 {代號: {period, revenue, gross_margin_pct, operating_margin_pct,
+    net_income, gross_margin_chg, operating_margin_chg, source}}。
+    gross_margin_chg/operating_margin_chg 是跟 state_store 裡存的「上一筆有
+    紀錄的季度快照」比較的變化量（百分點），第一次抓到某檔股票的資料、或
+    這一期資料本身缺 gross_margin_pct 時不會有 trend，欄位就是 None——
+    「沒有資料」和「持平（變化量剛好是0）」是兩回事，呼叫端不要混為一談。
+    每次抓到新資料都會把這一期的毛利率/營益率寫進 state_store，讓下一季
+    的呼叫可以往前比較，這個副作用是設計上刻意要做的（沒有這個寫入，
+    「趨勢」永遠算不出來，只能看單季絕對水準）。"""
+    if c := _cache_get("profitability_quality_map"):
+        return c
+    merged = _fetch_twse_income_statement_ci()
+    if merged:
+        try:
+            from state_store import store
+            for code, info in merged.items():
+                period = info.get("period", "")
+                if not period or info.get("gross_margin_pct") is None:
+                    continue
+                prev = store.get_prev_quarterly_margin(code, period)
+                store.save_quarterly_margin(code, period, info.get("gross_margin_pct"), info.get("operating_margin_pct"))
+                if prev:
+                    if info.get("gross_margin_pct") is not None and prev.get("gross_margin_pct") is not None:
+                        info["gross_margin_chg"] = round(info["gross_margin_pct"] - prev["gross_margin_pct"], 2)
+                    if info.get("operating_margin_pct") is not None and prev.get("operating_margin_pct") is not None:
+                        info["operating_margin_chg"] = round(info["operating_margin_pct"] - prev["operating_margin_pct"], 2)
+        except Exception as e:
+            logger.warning(f"fetch_profitability_quality_map: 季度趨勢比對失敗（不影響本次抓到的資料，trend 留空): {e}")
+    return _cache_set("profitability_quality_map", merged)
+
+
+# ════════════════════════════════════════════════
+# 重大訊息公告（紅旗關鍵字，軟性扣分＋顯示，不做硬性排除）
+# ════════════════════════════════════════════════
+# ★ 新增：2026-09-28——使用者要求接「重大訊息公告」。TWSE OpenAPI 的
+# opendata/t187ap04_L（上市公司每日重大訊息）欄位已實測確認：公司代號/
+# 公司名稱/發言日期/主旨/說明 等。這個端點只回傳「最近幾天」的公告（實測
+# 抓到的是最新一批，官方文件沒明講確切保留天數），不是完整歷史，所以只能
+# 當「近期有沒有負面重大訊息」的即時訊號，不能拿來做統計；只做上市公司，
+# 上櫃公司對應資料源還沒找到。
+_MATERIAL_NEWS_CACHE_TTL_SEC = 3600 * 6  # 重大訊息即時性較高，6小時重抓一次
+
+# 只挑「已發生、方向明確偏負面」的字詞，刻意不做「正面關鍵字加分」——
+# 像「股利分派」「董事會決議」「名稱變更」這類中性/正面公告本來就佔多數，
+# 重大訊息公告的本質是風險揭露用途，拿來當加分理由容易本末倒置。這份
+# 清單一定會有一定比例的誤判（關鍵字出現在無關語境，例如「內部控制」也
+# 可能出現在「強化內部控制」這種正面語境），所以底下評分邏輯是小幅扣分
+# 而不是直接排除（設計理由見 scanner.py 對應段落）。
+MATERIAL_NEWS_NEGATIVE_KEYWORDS = [
+    "存款不足", "跳票", "聲請重整", "破產", "下市", "停止買賣", "全額交割",
+    "掏空", "淘空", "檢調", "搜索", "起訴", "收押", "重大訴訟", "重大裁罰",
+    "財報重編", "更換簽證會計師", "董事長辭職", "總經理辭職", "財務長辭職",
+    "內部控制", "重大缺失", "存貨跌價", "重大虧損", "停工", "資產減損",
+    "信用評等調降",
+]
+
+def _fetch_material_news_map() -> Dict[str, List[Dict]]:
+    """上市公司每日重大訊息，命中負面關鍵字的才保留。"""
+    url = "https://openapi.twse.com.tw/v1/opendata/t187ap04_L"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"_fetch_material_news_map: HTTP {r.status_code}")
+            return {}
+        result: Dict[str, List[Dict]] = {}
+        for row in r.json():
+            code = (row.get("公司代號") or "").strip()
+            subject = (row.get("主旨") or "").strip()
+            if not code or not subject:
+                continue
+            if any(kw in subject for kw in MATERIAL_NEWS_NEGATIVE_KEYWORDS):
+                result.setdefault(code, []).append({
+                    "date": row.get("發言日期", ""),
+                    "subject": subject,
+                })
+        logger.info(f"重大訊息（負面關鍵字命中）：{len(result)} 檔")
+        return result
+    except Exception as e:
+        logger.warning(f"_fetch_material_news_map: {e}")
+        return {}
+
+
+def fetch_material_news_risk_map() -> Dict[str, List[Dict]]:
+    """對外接口，加上快取。回傳 {代號: [{date, subject}, ...]}，只涵蓋
+    命中負面關鍵字的上市公司；沒命中或找不到資料的股票不會是這個 map
+    的 key（呼叫端用 .get(code) 判斷「近期沒有負面重大訊息」）。"""
+    if c := _cache_get("material_news_risk_map"):
+        return c
+    return _cache_set("material_news_risk_map", _fetch_material_news_map())
+
+
+# ── TODO（下一步，尚未實作，誠實列出目前的覆蓋率限制）──
+# 1) 個股層級當沖比重（TWSE+TPEx）：官方 OpenAPI 目前確認只有 TWTB4U
+#    （當日可當沖標的清單，沒有比重數字）跟 TPEx 市場層級彙總
+#    （tpex_intraday_trading_statistics），2026-09-28 重新搜尋過一輪
+#    （含 TWTBAU1/TWTBAU2 等關鍵字比對）依然沒找到官方 OpenAPI 的個股
+#    當沖比重端點，暫時判定為「免費官方資料源不存在」，不是還沒找而已；
+#    如果之後要做，大概率要走付費資料商或自行爬證交所非API網頁報表。
+# 2) 獲利品質目前只涵蓋上市「一般業」（見上方 fetch_profitability_quality_map
+#    說明），金融/證券期貨/保險/金控/異業，以及全部上櫃公司都還沒有實作，
+#    這些公司在 quality_map 裡沒有 key，不代表獲利沒問題。
+# 3) 重大訊息公告只做上市公司、只做關鍵字比對（不是語意判斷），一定有
+#    一定比例的誤判，評分邏輯刻意設計成小幅扣分不是硬性排除（見
+#    scanner.py 對應段落的設計理由）。

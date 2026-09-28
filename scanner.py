@@ -751,6 +751,75 @@ class TWScanEngine:
         except Exception as e:
             logger.warning(f"_filter_and_rank: 籌碼面評分調整失敗（不影響本次掃描，本次跳過）: {e}")
 
+        # ★ 新增：2026-09-28——使用者要求把「獲利品質（毛利率/營業利益率
+        # 趨勢）」跟「重大訊息公告（紅旗關鍵字）」接進評分邏輯。設計決定
+        # 跟上面融券餘額/融券使用率一樣走「加減分」模式，不做硬性排除：
+        #   1) 獲利品質目前只有上市「一般業」公司有資料源（見 fundamentals.py
+        #      fetch_profitability_quality_map() 說明），覆蓋率不到全市場，
+        #      硬性排除會讓沒資料的標的（上櫃/金融/異業）處於「永遠不會被
+        #      擋」的不公平狀態，跟月營收硬性過濾「找不到資料一律不擋」的
+        #      公平性原則矛盾；用加減分則沒資料時本來就是「不加不減」，
+        #      沒有這個公平性問題。
+        #   2) 重大訊息公告是關鍵字比對，不是語意判斷，一定有誤判機率，
+        #      比照法人買賣超/籌碼面的「小幅加減分」而非「一票否決」，
+        #      把誤判的下行風險限制在可接受範圍內。
+        try:
+            from fundamentals import fetch_profitability_quality_map, fetch_material_news_risk_map
+            quality_map = fetch_profitability_quality_map()
+            news_risk_map = fetch_material_news_risk_map()
+            for sig in signals:
+                code = sig.get("code", "")
+                quality_adj = 0
+                quality_notes = []
+                q = quality_map.get(code)
+                if q:
+                    gm_chg = q.get("gross_margin_chg")
+                    om_chg = q.get("operating_margin_chg")
+                    om = q.get("operating_margin_pct")
+                    if sig["direction"] == "buy":
+                        if om is not None and om < 0:
+                            quality_adj -= 3
+                            quality_notes.append(f"本季營業利益率{om:.1f}%（虧損）⚠️")
+                        if gm_chg is not None and gm_chg <= -3:
+                            quality_adj -= 2
+                            quality_notes.append(f"毛利率季減{abs(gm_chg):.1f}個百分點")
+                        elif gm_chg is not None and gm_chg >= 3:
+                            quality_adj += 1
+                            quality_notes.append(f"毛利率季增{gm_chg:.1f}個百分點")
+                        if om_chg is not None and om_chg <= -3:
+                            quality_adj -= 2
+                            quality_notes.append(f"營業利益率季減{abs(om_chg):.1f}個百分點")
+                    else:  # sell（目前 ENABLE_SHORT_SIGNALS=False 不會實際產生，規則對稱保留）
+                        if om is not None and om < 0:
+                            quality_adj += 2
+                            quality_notes.append(f"本季營業利益率{om:.1f}%（虧損，放空方向支持）")
+                        if gm_chg is not None and gm_chg <= -3:
+                            quality_adj += 1
+                            quality_notes.append(f"毛利率季減{abs(gm_chg):.1f}個百分點（放空方向支持）")
+                news_hits = news_risk_map.get(code)
+                if news_hits and sig["direction"] == "buy":
+                    quality_adj -= 4
+                    quality_notes.append(f"近期重大訊息：{news_hits[0].get('subject','')}⚠️")
+                if quality_adj:
+                    sig["score"] = max(0, min(100, sig["score"] + quality_adj))
+                    logger.info(f"[{sig.get('ticker')}] 獲利品質/重大訊息評分調整 {quality_adj:+d}：{'；'.join(quality_notes)}")
+                display_lines = []
+                if q and (q.get("gross_margin_pct") is not None or q.get("operating_margin_pct") is not None):
+                    display_lines.append(
+                        f"【獲利品質】毛利率={q.get('gross_margin_pct','—')}% "
+                        f"營業利益率={q.get('operating_margin_pct','—')}%（{q.get('period','')}）"
+                    )
+                if news_hits:
+                    display_lines.append("【重大訊息】" + "；".join(h.get("subject", "") for h in news_hits[:2]))
+                if display_lines:
+                    sig["reason_full"] = sig.get("reason_full", "") + "\n" + "\n".join(display_lines)
+            before = len(signals)
+            signals = [s for s in signals if s["score"] >= THRESH["min_score"]]
+            if len(signals) != before:
+                logger.info(f"_filter_and_rank: 獲利品質/重大訊息評分調整後，{before - len(signals)} 檔跌破門檻被排除，剩 {len(signals)} 檔")
+        except Exception as e:
+            logger.warning(f"_filter_and_rank: 獲利品質/重大訊息評分調整失敗（不影響本次掃描，本次跳過）: {e}")
+
         # 同產業去重（只留最高分）
         # ★ 修正：2026-08-30——今天稽核程式碼時抓到一個還沒真的發生過、但影響非常大的
         #   潛在 bug：sig["sector"] 來自 stock_universe.py 的 _fetch_sector_info()，那個

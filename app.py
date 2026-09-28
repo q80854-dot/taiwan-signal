@@ -646,6 +646,34 @@ def diagnostics_fundamentals_extra():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/diagnostics/quality_and_news")
+def diagnostics_quality_and_news():
+    """★ 新增：2026-09-28——使用者要求補上「獲利品質(毛利率/營業利益率趨勢)」
+    跟「重大訊息公告(紅旗關鍵字)」，已接進 scanner.py 的評分邏輯（加減分，
+    非硬性排除，理由見該檔案對應段落）。這個唯讀診斷端點讓人可以直接看到
+    目前抓得到什麼資料、涵蓋幾檔股票，不用等下一次掃描才能檢視。query
+    string 可傳 ?code=2330 只看單一檔。"""
+    try:
+        from fundamentals import fetch_profitability_quality_map, fetch_material_news_risk_map
+        code = (request.args.get("code") or "").strip()
+        quality = fetch_profitability_quality_map()
+        news = fetch_material_news_risk_map()
+        if code:
+            return jsonify({
+                "code": code,
+                "profitability_quality": quality.get(code),
+                "material_news_risk": news.get(code),
+            })
+        return jsonify({
+            "profitability_quality_coverage": len(quality),
+            "material_news_risk_hits": len(news),
+            "sample_quality_codes": list(quality.keys())[:5],
+            "sample_news_codes": list(news.keys())[:5],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/diagnostics/pending_signals")
 def diagnostics_pending_signals():
     """★ 新增：2026-09-27——原本是臨時診斷端點，用來查清楚使用者回報的「已有14個

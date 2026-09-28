@@ -105,6 +105,11 @@ class StateStore:
                 CREATE TABLE IF NOT EXISTS margin_chg_daily_history (
                     bar_date TEXT PRIMARY KEY, balance BIGINT, chg_pct REAL, updated_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS quarterly_margin_snapshot (
+                    code TEXT, period TEXT, gross_margin_pct REAL, operating_margin_pct REAL,
+                    updated_at TEXT,
+                    PRIMARY KEY (code, period)
+                );
                 CREATE TABLE IF NOT EXISTS signals (
                     id            TEXT PRIMARY KEY,
                     ticker        TEXT, code TEXT, name TEXT, sector TEXT,
@@ -151,6 +156,11 @@ class StateStore:
                 CREATE INDEX IF NOT EXISTS idx_rev_hist_ticker ON monthly_revenue_history(ticker, period);
                 CREATE TABLE IF NOT EXISTS margin_chg_daily_history (
                     bar_date TEXT PRIMARY KEY, balance INTEGER, chg_pct REAL, updated_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS quarterly_margin_snapshot (
+                    code TEXT, period TEXT, gross_margin_pct REAL, operating_margin_pct REAL,
+                    updated_at TEXT,
+                    PRIMARY KEY (code, period)
                 );
                 CREATE TABLE IF NOT EXISTS signals (
                     id            TEXT PRIMARY KEY,
@@ -627,6 +637,49 @@ class StateStore:
         except Exception as e:
             logger.warning(f"get_margin_chg_map: {e}")
             return {}
+
+    # ── 獲利品質（季報毛利率/營業利益率快照，用來算「趨勢」）──
+    # ★ 新增：2026-09-28——使用者要求接「獲利品質」評分。TWSE OpenAPI 的季報
+    # 端點（opendata/t187ap06_L_ci）每次只回傳「最新一期」數字，沒有歷史序列，
+    # 沒辦法從單一次 API 回應算出「毛利率有沒有變差」這種趨勢資訊——所以這裡
+    # 每次抓到新一期資料就存一筆快照，等下一季資料進來時，就能跟這裡存的
+    # 上一筆比較算出變化量。period 格式固定是「年度Q季別」（例如"115Q2"），
+    # 同樣位數下字串排序等同時間排序，可以直接用字串比較/ORDER BY。
+    def save_quarterly_margin(self, code: str, period: str,
+                               gross_margin_pct: Optional[float], operating_margin_pct: Optional[float]) -> bool:
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            if USE_PG:
+                sql = ("INSERT INTO quarterly_margin_snapshot(code,period,gross_margin_pct,operating_margin_pct,updated_at) "
+                       "VALUES(?,?,?,?,?) ON CONFLICT (code,period) DO UPDATE SET "
+                       "gross_margin_pct=EXCLUDED.gross_margin_pct,"
+                       "operating_margin_pct=EXCLUDED.operating_margin_pct,updated_at=EXCLUDED.updated_at")
+            else:
+                sql = ("INSERT OR REPLACE INTO quarterly_margin_snapshot"
+                       "(code,period,gross_margin_pct,operating_margin_pct,updated_at) VALUES(?,?,?,?,?)")
+            with self._conn() as conn:
+                conn.execute(sql, (code, period, gross_margin_pct, operating_margin_pct, now))
+            return True
+        except Exception as e:
+            logger.warning(f"save_quarterly_margin {code}/{period}: {e}")
+            return False
+
+    def get_prev_quarterly_margin(self, code: str, period: str) -> Optional[Dict]:
+        """回傳指定股票在 period 之前、最近一筆有紀錄的季度快照，沒有歷史紀錄
+        （系統第一次看到這檔股票的季報資料，這是正常情況，不代表有問題）
+        回傳 None，呼叫端要把「沒有上一季可比較」跟「有比較、變化量是0」
+        分開處理。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM quarterly_margin_snapshot WHERE code=? AND period<? "
+                    "ORDER BY period DESC LIMIT 1",
+                    (code, period)
+                ).fetchall()
+            return dict(rows[0]) if rows else None
+        except Exception as e:
+            logger.warning(f"get_prev_quarterly_margin {code}/{period}: {e}")
+            return None
 
 
 store = StateStore()
