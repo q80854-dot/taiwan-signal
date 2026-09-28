@@ -305,6 +305,12 @@ def format_signal_paid(sig: Dict) -> str:
         # 說明：月營收資料抓不到時系統採 fail-open（不擋訊號），但這裡明確
         # 推播出來，避免使用者誤以為這檔已經過本業衰退檢查。
         + ("⚠️ <b>月營收資料本次無法取得，未經本業衰退檢查</b>\n" if sig.get("revenue_check") == "data_missing" else "")
+        # ★ 新增：2026-09-28——item 2（fail-open 三態化）：獲利品質／重大
+        # 訊息「這次抓取失敗、沒查」(unavailable) 跟「這檔本來就不在涵蓋
+        # 範圍」(not_covered，例如上櫃／異業) 分開處理——only unavailable
+        # 需要提醒，not_covered 是長期已知的系統限制，每次都提示會變噪音。
+        + ("⚠️ <b>獲利品質資料本次無法取得，未經檢查</b>\n" if sig.get("quality_check") == "unavailable" else "")
+        + ("⚠️ <b>重大訊息公告本次無法取得，未經檢查</b>\n" if sig.get("news_check") == "unavailable" else "")
         + f"━━━━━━━━━━━━━━━\n"
         f"💡 {sig.get('reason_brief','—')}\n"
         f"━━━━━━━━━━━━━━━\n"

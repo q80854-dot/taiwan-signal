@@ -861,12 +861,37 @@ def fetch_profitability_quality_map() -> Dict[str, Dict]:
     merged = {}
     # 合併順序沒有特別意義（每個分類彼此的代號不會重疊，同一檔股票只會
     # 屬於一個產業分類），這裡依序合併五個已驗證欄位名稱的子分類。
-    merged.update(_fetch_twse_income_statement_ci())
-    merged.update(_fetch_twse_income_statement_ins())
-    merged.update(_fetch_twse_income_statement_bd())
-    merged.update(_fetch_twse_income_statement_fh())
-    merged.update(_fetch_twse_income_statement_basi())
+    # ★ 新增：2026-09-28（三態資料品質，item 2）——每個子分類各有幾百檔，
+    # 正常情況下子端點抓到的絕對不會是空字典，所以用「這次有沒有抓到任何
+    # 一筆」當作該子端點「這次有沒有抓成功」的近似判斷（不修改五個子函式
+    # 各自回傳 tuple，避免這次改動範圍過大）。只要五個子端點「至少一個」
+    # 這次抓成功，就不算整體 unavailable——个股層級的細緻歸屬（例如金控股
+    # 剛好碰到 fh 端點失敗）目前不做，呼叫端只能知道「這次整體資料源健康
+    # 與否」，這是刻意的簡化範圍，非完整方案。
+    any_ok = False
+    for fetch_fn in (
+        _fetch_twse_income_statement_ci, _fetch_twse_income_statement_ins,
+        _fetch_twse_income_statement_bd, _fetch_twse_income_statement_fh,
+        _fetch_twse_income_statement_basi,
+    ):
+        d = fetch_fn()
+        if d:
+            any_ok = True
+        merged.update(d)
+    _cache_set("profitability_quality_fetch_ok", any_ok)
     return _cache_set("profitability_quality_map", merged)
+
+
+def profitability_quality_fetch_ok() -> bool:
+    """★ 新增：2026-09-28（三態資料品質，item 2）——回傳「最近一次
+    fetch_profitability_quality_map() 是否至少有一個子分類端點抓成功」。
+    False 時，某檔股票在 map 裡查不到，是因為「這次資料源整體抓失敗」
+    （unavailable），不是「這檔本來就不在涵蓋範圍」（not_covered，例如
+    上櫃或異業分類）；呼叫端（scanner.py）拿這個搭配 q is None 組出
+    checked/not_covered/unavailable 三態。還沒呼叫過
+    fetch_profitability_quality_map() 之前保守回傳 False。"""
+    c = _cache_get("profitability_quality_fetch_ok")
+    return bool(c) if c is not None else False
 
 
 def _derive_single_quarter(cum_now: Dict, cum_prev: Optional[Dict], quarter: int) -> Dict:
@@ -985,14 +1010,18 @@ MATERIAL_NEWS_NEGATIVE_KEYWORDS = [
     "信用評等調降",
 ]
 
-def _fetch_material_news_map() -> Dict[str, List[Dict]]:
-    """上市公司每日重大訊息，命中負面關鍵字的才保留。"""
+def _fetch_material_news_map() -> tuple:
+    """上市公司每日重大訊息，命中負面關鍵字的才保留。回傳 (result, ok)——
+    ★ 新增：2026-09-28（三態資料品質，item 2）：ok=False 代表這次抓取本身
+    失敗（HTTP錯誤／例外），這時 result 一定是空字典。呼叫端要能分辨
+    「抓取失敗、根本沒查」跟「抓到了、確認沒有負面重大訊息」這兩種情況，
+    不能讓兩者在下游看起來一樣（都是「這檔不在 result 裡」）。"""
     url = "https://openapi.twse.com.tw/v1/opendata/t187ap04_L"
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             logger.warning(f"_fetch_material_news_map: HTTP {r.status_code}")
-            return {}
+            return {}, False
         result: Dict[str, List[Dict]] = {}
         for row in r.json():
             code = (row.get("公司代號") or "").strip()
@@ -1005,19 +1034,36 @@ def _fetch_material_news_map() -> Dict[str, List[Dict]]:
                     "subject": subject,
                 })
         logger.info(f"重大訊息（負面關鍵字命中）：{len(result)} 檔")
-        return result
+        return result, True
     except Exception as e:
         logger.warning(f"_fetch_material_news_map: {e}")
-        return {}
+        return {}, False
 
 
 def fetch_material_news_risk_map() -> Dict[str, List[Dict]]:
     """對外接口，加上快取。回傳 {代號: [{date, subject}, ...]}，只涵蓋
     命中負面關鍵字的上市公司；沒命中或找不到資料的股票不會是這個 map
-    的 key（呼叫端用 .get(code) 判斷「近期沒有負面重大訊息」）。"""
+    的 key（呼叫端用 .get(code) 判斷「近期沒有負面重大訊息」）。這個函式
+    本身涵蓋範圍只有上市（t187ap04_L 沒有上櫃對應端點），呼叫端要判斷
+    「上櫃、本來就不在涵蓋範圍」請用 code 的市場別（例如月營收 map 的
+    source 欄位），不要用這個函式的回傳值判斷涵蓋範圍。"""
     if c := _cache_get("material_news_risk_map"):
         return c
-    return _cache_set("material_news_risk_map", _fetch_material_news_map())
+    result, ok = _fetch_material_news_map()
+    _cache_set("material_news_fetch_ok", ok)
+    return _cache_set("material_news_risk_map", result)
+
+
+def material_news_fetch_ok() -> bool:
+    """★ 新增：2026-09-28（三態資料品質，item 2）——回傳「最近一次
+    fetch_material_news_risk_map() 抓取是否成功」。False 時，代表當次
+    「沒命中」是因為根本沒抓到資料（fail-open，不是「查過確認乾淨」）；
+    呼叫端（scanner.py）拿這個搭配月營收 source 欄位判斷的市場別，組出
+    checked/not_covered/unavailable 三態。還沒呼叫過
+    fetch_material_news_risk_map() 之前保守回傳 False（視為「不確定」，
+    跟 fetch_market_regime() 保守失敗的設計原則一致）。"""
+    c = _cache_get("material_news_fetch_ok")
+    return bool(c) if c is not None else False
 
 
 # ── TODO（下一步，尚未實作，誠實列出目前的覆蓋率限制）──

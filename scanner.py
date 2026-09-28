@@ -782,13 +782,57 @@ class TWScanEngine:
             # fetch_profitability_quality_map() 整包全市場的 map——後者上線
             # 後實測對全市場900+檔都做DB讀寫，把 /api/state 這種既有端點都
             # 拖到逾時，已修正（見 fundamentals.py 該函式的說明）。
-            from fundamentals import get_profitability_quality, fetch_material_news_risk_map
+            from fundamentals import (
+                get_profitability_quality, fetch_material_news_risk_map,
+                material_news_fetch_ok, profitability_quality_fetch_ok,
+            )
             news_risk_map = fetch_material_news_risk_map()
+            # ★ 新增：2026-09-28——item 2（fail-open 三態化，ChatGPT/Perplexity
+            # 第二輪都列為最優先項目）：「沒查到」跟「查過確認乾淨」原本在
+            # sig 上長得一模一樣，使用者只能靠「加減分沒動」猜。這裡比照
+            # revenue_check 的模式，明確標三態：
+            #   checked      = 這次真的查過這檔（不管結果是命中/沒命中）
+            #   not_covered  = 這檔本來就不在資料源涵蓋範圍（上櫃／異業／
+            #                  重大訊息只做上市），不是抓取失敗
+            #   unavailable  = 資料源這次整體抓取失敗，fail-open 放行，但
+            #                  「沒有風險提示」不代表「已確認乾淨」
+            _news_ok = material_news_fetch_ok()
+            _quality_ok = profitability_quality_fetch_ok()
             for sig in signals:
                 code = sig.get("code", "")
                 quality_adj = 0
                 quality_notes = []
                 q = get_profitability_quality(code)
+                # revenue_map 的 source 欄位（twse_openapi/tpex_openapi）用來
+                # 判斷這檔的市場別——重大訊息公告只有上市公司的資料源，上櫃
+                # 一律 not_covered，不管這次 fetch 有沒有成功。
+                _market_source = revenue_map.get(code, {}).get("source", "")
+                if _market_source == "tpex_openapi":
+                    sig["news_check"] = "not_covered"
+                elif _news_ok:
+                    sig["news_check"] = "checked"
+                else:
+                    sig["news_check"] = "unavailable"
+                # 獲利品質目前只做上市「一般業/保險業/證券期貨業/金控業/
+                # 銀行業」五個子分類，上櫃／異業(mim) 一律 not_covered；q 不是
+                # None 就代表這次確實查到、算出結果了（checked）。
+                if q is not None:
+                    sig["quality_check"] = "checked"
+                elif _market_source == "tpex_openapi":
+                    sig["quality_check"] = "not_covered"
+                elif not _quality_ok:
+                    sig["quality_check"] = "unavailable"
+                else:
+                    # 上市但沒查到，且這次五個子端點至少有一個抓成功——
+                    # 最可能是異業(mim)分類，目前還沒做，一律當 not_covered。
+                    sig["quality_check"] = "not_covered"
+                if sig["quality_check"] == "unavailable" or sig["news_check"] == "unavailable":
+                    sig["reason_full"] = sig.get("reason_full", "") + (
+                        "\n⚠️【資料品質】" +
+                        ("獲利品質本次無法取得、未實際檢查；" if sig["quality_check"] == "unavailable" else "") +
+                        ("重大訊息本次無法取得、未實際檢查；" if sig["news_check"] == "unavailable" else "") +
+                        "非「已確認正常」"
+                    )
                 if q:
                     gm_chg = q.get("gross_margin_chg")
                     om_chg = q.get("operating_margin_chg")
