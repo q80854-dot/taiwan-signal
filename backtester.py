@@ -6,7 +6,7 @@ backtester.py — 台股波段版 v1.0
 import logging, time, math, bisect
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
-from config import ACCOUNT_BALANCE_TWD, SIGNAL_THRESHOLDS as THRESH, COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION, CIRCUIT_BREAKER as CB
+from config import ACCOUNT_BALANCE_TWD, SIGNAL_THRESHOLDS as THRESH, COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION, CIRCUIT_BREAKER as CB, SHORT_SIGNAL_THRESH, SHORT_REQUIRE_WEEKLY_BEARISH
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,76 @@ def _macro_score_adj(day_date: Optional[str], twii_chg_map: Dict[str, float],
             adj -= 8
     return adj
 
+# ★ 新增：2026-09-28——item 3（walk-forward/OOS 驗證第二輪已上線的放空分層閘門，
+# ChatGPT 明確建議「先驗證再動 alpha_score」）。backtest_symbol_tw() 原本完全沒有
+# 套用 signal_engine.generate_signal_tw() 裡新增的 Layer1 Market Regime Gate／
+# Layer2 ADX方向確認（adx_bias）——回測只呼叫 check_multi_timeframe_tw()，這兩層
+# 閘門是 generate_signal_tw() 自己額外做的過濾，回測完全繞過了。這裡補上「歷史
+# 逐日 TWII regime」重建（不是只算「現在這一天」再套用到整段歷史，那會是用未來
+# 資料污染過去判斷的look-ahead bias），讓回測放空進場邏輯能跟實盤對齊。
+# 大盤情緒(SHORT_MAX_SENTIMENT)這項次要保護因為系統沒有歷史逐日 sentiment_score
+# 資料可回填，比照 _fetch_margin_chg_map() 「沒有歷史回填資料就誠實跳過，不假裝
+# 一直通過」的既有原則，這裡不套用，跟 run_comparison_backtest_tw() 對外資買賣超
+# 的處理方式一致。
+_twii_regime_cache: Dict = {}
+
+def _fetch_twii_regime_series() -> Dict[str, bool]:
+    """回傳 {日期字串: bearish_regime bool}，判定邏輯跟 data_fetcher.
+    fetch_market_regime() 完全一致（price<MA60 且 MA60的5日斜率<0 且 MA20<MA60），
+    差別是這裡對 ^TWII 全部歷史「逐日」重算，每一天都只用「那天當下看得到」的
+    價格窗口（跟 backtest_symbol_tw() 其他地方逐K棒重建 tf_data 一樣的紀律），
+    不是拿最新一天算出來的單一 regime 套用到整段歷史。資料不足65根（60日MA+
+    5日斜率回看）的日期不會出現在回傳的 map 裡，呼叫端要當成「不確定、不放行」
+    處理（見 _short_gate_pass()）。"""
+    if _twii_regime_cache.get("map") is not None and time.time() - _twii_regime_cache.get("ts", 0) < 3600:
+        return _twii_regime_cache["map"]
+    try:
+        from data_fetcher import fetch_ohlcv
+        data = fetch_ohlcv("^TWII", "daily")
+        if not data or not data.get("dates"):
+            logger.warning("_fetch_twii_regime_series: 抓不到 ^TWII 歷史資料，Market Regime Gate 這部分驗證會跳過")
+            return {}
+        dates = data["dates"]; closes = data["closes"]; n = len(closes)
+        ma60_list = [None] * n
+        run_sum = 0.0
+        for i in range(n):
+            run_sum += closes[i]
+            if i >= 60:
+                run_sum -= closes[i - 60]
+            if i >= 59:
+                ma60_list[i] = run_sum / 60
+        regime_map = {}
+        for i in range(n):
+            if i < 64 or ma60_list[i] is None or ma60_list[i - 5] is None:
+                continue
+            ma60 = ma60_list[i]; ma60_5ago = ma60_list[i - 5]
+            ma60_slope_pct = (ma60 - ma60_5ago) / ma60_5ago * 100 if ma60_5ago else 0.0
+            ma20 = sum(closes[i - 19:i + 1]) / 20
+            price = closes[i]
+            regime_map[dates[i]] = bool(price < ma60 and ma60_slope_pct < 0 and ma20 < ma60)
+        _twii_regime_cache["map"] = regime_map
+        _twii_regime_cache["ts"] = time.time()
+        logger.info(f"_fetch_twii_regime_series: 建好 {len(regime_map)} 個交易日的歷史大盤regime序列")
+        return regime_map
+    except Exception as e:
+        logger.warning(f"_fetch_twii_regime_series: {e}")
+        return {}
+
+
+def _short_gate_pass(day_date: Optional[str], mtf: Dict, twii_regime_map: Dict[str, bool]) -> bool:
+    """複製 signal_engine.generate_signal_tw() 放空邏輯的 Layer1（大盤regime，
+    用上面的歷史逐日序列，不含 SHORT_MAX_SENTIMENT 單日情緒次要保護，理由見
+    本區塊開頭說明）／Layer2（週線硬性偏空＋ADX方向確認 adx_bias）兩層硬性
+    條件；Layer3（分數/ADX強度/量能門檻）在呼叫端沿用 SHORT_SIGNAL_THRESH。"""
+    if not day_date or day_date not in twii_regime_map or not twii_regime_map[day_date]:
+        return False
+    if SHORT_REQUIRE_WEEKLY_BEARISH and "bearish" not in mtf.get("weekly_bias", "neutral"):
+        return False
+    if mtf.get("adx_bias", "neutral") != "bearish":
+        return False
+    return True
+
+
 # ★ 修正：2026-08-30（第二輪）——跟 signal_engine.calc_position_size() 的修正配套：不再假設倉位
 # 一定是「張」(1000股)的整數倍，改直接吃股數。calc_tw_pnl 的 shares 參數現在就是股數本身，
 # 不用再乘 SHARES_PER_LOT。
@@ -108,7 +178,7 @@ def calc_tw_pnl(entry, close, direction, shares):
     sell_tax=close*shares*TAX_RATE_SELL
     return round(gross-buy_fee-sell_fee-sell_tax,0)
 
-def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None) -> Dict:
+def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True) -> Dict:
     """
     ★ 修正：改為直接呼叫 signal_engine 的 check_multi_timeframe_tw() / calc_stop_loss_tw() /
     calc_take_profits_tw() / calc_position_size()，跟 scanner.py 每天盤後真正在跑的邏輯用同一套，
@@ -161,11 +231,13 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
     n=len(closes); LOOKBACK=130; trades=[]; equity=[balance]; open_trade=None
     twii_chg_map=_fetch_twii_change_map() if use_macro_overlay else {}
     margin_chg_map=_fetch_margin_chg_map() if use_macro_overlay else {}
+    twii_regime_map=_fetch_twii_regime_series() if use_short_gates else {}
     fund_code=ticker.split(".")[0] if use_fundamentals_filter else None
     if use_fundamentals_filter:
         from fundamentals import check_fundamental_hard_filter_asof
     logger.info(f"[BT] {ticker} 開始回測，共 {n} 根日線，size_cat={size_cat}，"
-                f"use_macro_overlay={use_macro_overlay}，use_fundamentals_filter={use_fundamentals_filter}")
+                f"use_macro_overlay={use_macro_overlay}，use_fundamentals_filter={use_fundamentals_filter}，"
+                f"use_short_gates={use_short_gates}")
     # ★ 修正：2026-08-30——投資人報告核對數字時發現 Sharpe/最大回撤嚴重失真的根因：equity_curve
     #   原本只在「每次平倉當下」才記一筆，不是每根K棒都記。calc_performance_metrics() 卻把這條
     #   equity_curve 相鄰兩點的報酬率當「逐日報酬」處理、年化時乘上 sqrt(252)——但兩個平倉點之間
@@ -208,17 +280,30 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
             if direction!="none" and use_fundamentals_filter and day_date:
                 fund_chk=check_fundamental_hard_filter_asof(fund_code, day_date)
                 fund_blocked=fund_chk.get("blocked", False)
-            if direction!="none" and not fund_blocked:
+            # ★ 新增：2026-09-28——item 3：放空這條路徑套用跟實盤 generate_signal_tw()
+            # 一致的 Layer1(大盤regime)/Layer2(週線硬性偏空+ADX方向確認) 硬性閘門，
+            # 見上方 _short_gate_pass() 說明。use_short_gates=False 時完全不套用，
+            # 保留成「舊邏輯」基準，讓 run_short_gate_validation_tw() 可以做前後比較。
+            short_gate_blocked=False
+            if direction=="sell" and use_short_gates:
+                short_gate_blocked=not _short_gate_pass(day_date, mtf, twii_regime_map)
+            if direction!="none" and not fund_blocked and not short_gate_blocked:
                 score=mtf.get("score",0)
                 if use_macro_overlay:
                     macro_adj=_macro_score_adj(day_date, twii_chg_map, margin_chg_map)
                     if macro_adj:
                         score=max(0,score+macro_adj)
-                if score>=min_score:
+                # 放空且 Layer1/2 閘門已上線時，Layer3 訊號強度門檻比照實盤改用
+                # SHORT_SIGNAL_THRESH（分數75/ADX25/量比1.5，都比做多門檻更嚴）。
+                use_short_thresh = (direction=="sell" and use_short_gates)
+                min_score_eff = SHORT_SIGNAL_THRESH["min_score"] if use_short_thresh else min_score
+                min_adx_eff = SHORT_SIGNAL_THRESH["min_adx"] if use_short_thresh else THRESH["min_adx"]
+                min_vol_eff = SHORT_SIGNAL_THRESH["min_vol_ratio"] if use_short_thresh else THRESH["min_vol_ratio"]
+                if score>=min_score_eff:
                     adx_val=mtf.get("adx_value",0)
-                    if adx_val>=THRESH["min_adx"]:
+                    if adx_val>=min_adx_eff:
                         vol_ratio=mtf.get("vol_ratio",1.0)
-                        if not(vol_ratio<THRESH["min_vol_ratio"] and score<75):
+                        if not(vol_ratio<min_vol_eff and score<75):
                             daily_ind=mtf.get("entry_indicators",{})
                             atr=daily_ind.get("atr",{}).get("value",0) or price*0.02
                             if atr:
@@ -288,6 +373,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
             "equity_curve":equity,"trades":trades[-30:],"min_score_used":min_score,
             "grade":metrics.get("sharpe_grade","—"),"dd_grade":metrics.get("dd_grade","—"),
             "use_macro_overlay":use_macro_overlay,"use_fundamentals_filter":use_fundamentals_filter,
+            "use_short_gates":use_short_gates,
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
 def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=None) -> Dict:
@@ -359,13 +445,13 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             "stability":round(sum(1 for w in window_results if w["win_rate"]>=50)/max(len(window_results),1)*100,1),
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
-def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None) -> Dict:
+def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True) -> Dict:
     from stock_universe import get_tw50_components
     targets=tickers or get_tw50_components(); results=[]
-    logger.info(f"[BT] 批量回測 {len(targets)} 檔，use_macro_overlay={use_macro_overlay}，use_fundamentals_filter={use_fundamentals_filter}，disabled_factors={disabled_factors}")
+    logger.info(f"[BT] 批量回測 {len(targets)} 檔，use_macro_overlay={use_macro_overlay}，use_fundamentals_filter={use_fundamentals_filter}，disabled_factors={disabled_factors}，use_short_gates={use_short_gates}")
     for idx,ticker in enumerate(targets):
         try:
-            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay,use_fundamentals_filter=use_fundamentals_filter,disabled_factors=disabled_factors)
+            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay,use_fundamentals_filter=use_fundamentals_filter,disabled_factors=disabled_factors,use_short_gates=use_short_gates)
             if "error" not in r: results.append(r)
             # ★ 新增：2026-09-19——這個函式現在會被 app.py 包成背景執行緒跑（50檔
             # 全部跑完可能要幾分鐘），加一個可選的進度回呼，讓外層可以把「跑到第
@@ -763,3 +849,58 @@ def run_full_backtest_tw_partial(tickers=None, min_score=65.0, progress_cb=None)
                             "return_pct":r["return_pct"],"grade":r["grade"],"n_trades":r["n_trades"],
                             "pct_trades_full3_exit":r.get("pct_trades_full3_exit",0)} for r in results],
             "details":results}
+
+
+# ★ 新增：2026-09-28——item 3（walk-forward/OOS 驗證放空分層閘門，ChatGPT/
+# Perplexity 第二輪都建議「先驗證新閘門有沒有效，再動 alpha_score」）。這裡
+# 用「有沒有套用 Layer1 Market Regime Gate + Layer2 ADX方向確認」跑兩輪全市場
+# 回測（use_short_gates=False 當「舊邏輯」基準，True 當「新閘門」），只聚焦
+# 放空方向的統計差異——因為這兩層閘門只影響放空訊號的產生，做多完全不受
+# 影響（by_direction["buy"] 兩輪理論上應該一致，這裡也一併回傳方便交叉核對）。
+# 這是「樣本外」的意義：新閘門本身是2026-09-28才上線的邏輯，過去實際交易
+# 從未真的套用過，這裡用過去(TW50, 近1年)歷史資料重放，是它第一次被拿真實
+# 歷史資料檢驗，不是「調參數去擬合看過的資料」那種樣本內過擬合。
+def run_short_gate_validation_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
+    from stock_universe import get_tw50_components
+    targets=tickers or get_tw50_components()
+    def _cb_baseline(done,total,ticker):
+        if progress_cb: progress_cb(done,total*2,f"[舊邏輯/無分層閘門] {ticker}")
+    def _cb_gated(done,total,ticker):
+        if progress_cb: progress_cb(total+done,total*2,f"[新閘門/Regime+ADX方向] {ticker}")
+    baseline=run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb_baseline,use_short_gates=False)
+    gated   =run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb_gated,   use_short_gates=True)
+    b_sell=baseline.get("by_direction_aggregate",{}).get("sell",{})
+    g_sell=gated.get("by_direction_aggregate",{}).get("sell",{})
+    b_buy=baseline.get("by_direction_aggregate",{}).get("buy",{})
+    g_buy=gated.get("by_direction_aggregate",{}).get("buy",{})
+    def _delta(a,b): return round(b-a,2)
+    comparison={
+        "sell_n_trades_before":b_sell.get("n_trades",0),
+        "sell_n_trades_after":g_sell.get("n_trades",0),
+        "sell_win_rate_before":b_sell.get("win_rate",0),
+        "sell_win_rate_after":g_sell.get("win_rate",0),
+        "sell_win_rate_delta":_delta(b_sell.get("win_rate",0),g_sell.get("win_rate",0)),
+        "sell_total_pnl_before":b_sell.get("total_pnl_twd",0),
+        "sell_total_pnl_after":g_sell.get("total_pnl_twd",0),
+        "sell_avg_pnl_before":b_sell.get("avg_pnl_twd",0),
+        "sell_avg_pnl_after":g_sell.get("avg_pnl_twd",0),
+        "buy_unaffected_check":{
+            "n_trades_before":b_buy.get("n_trades",0),"n_trades_after":g_buy.get("n_trades",0),
+            "win_rate_before":b_buy.get("win_rate",0),"win_rate_after":g_buy.get("win_rate",0),
+            "note":"做多完全不受這兩層放空閘門影響，理論上前後應該一致；若不一致代表程式邏輯有誤，要優先排查。",
+        },
+        "interpretation":(
+            "sell_n_trades大幅下降、sell_win_rate上升＝閘門有效過濾掉了低品質放空訊號（用「少做但做對」換勝率，"
+            "符合原本設計動機：解決舊邏輯用單日情緒當唯一開關、ADX不分方向誤放行「強勢多頭」當放空訊號的問題）。"
+            "若sell_n_trades掉到個位數甚至0，代表閘門在近1年台灣50這個樣本裡幾乎不曾同時滿足（大盤中期偏空+"
+            "週線偏空+ADX方向偏空），這本身也是有意義的結果——不是bug，是「近1年台灣50很少出現這種空頭條件」，"
+            "跟目前/api/state看到的大盤multi-month上升趨勢（bullish regime）互相印證。"
+        ),
+        "scope_note":(
+            "只套用 Layer1(大盤regime)/Layer2(週線+ADX方向)兩層硬性閘門，Layer1次要保護"
+            "(SHORT_MAX_SENTIMENT單日情緒)因為沒有歷史逐日情緒分數可回填，這裡誠實跳過未套用"
+            "（不是假裝一直通過），理由跟 run_comparison_backtest_tw() 對外資買賣超的處理原則一致。"
+        ),
+    }
+    return {"completed_at":datetime.now(timezone.utc).isoformat(),"min_score":min_score,
+            "n_tickers":len(targets),"baseline":baseline,"gated":gated,"comparison":comparison}

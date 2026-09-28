@@ -417,6 +417,51 @@ def api_backtest_compare_result():
         "result": store.get_meta("compare_backtest_result", None),
     })
 
+# ★ 新增：2026-09-28——item 3（walk-forward/OOS 驗證放空分層閘門，ChatGPT/
+# Perplexity 都建議先驗證新閘門有沒有效，再動 alpha_score）。沿用 compare_backtest
+# 同一套背景執行緒＋state_store meta 輪詢模式（同樣要跑兩輪TW50回測，一定會
+# 超過 gunicorn 逾時）。
+_short_gate_validation_running = threading.Event()
+
+def _run_short_gate_validation_bg(min_score):
+    from state_store import store
+    if _short_gate_validation_running.is_set():
+        return
+    _short_gate_validation_running.set()
+    try:
+        from backtester import run_short_gate_validation_tw
+        store.set_meta("short_gate_validation_progress", {"status": "running", "done": 0, "total": 0, "ticker": ""})
+        def _cb(done, total, ticker):
+            store.set_meta("short_gate_validation_progress", {"status": "running", "done": done, "total": total, "ticker": ticker})
+        result = run_short_gate_validation_tw(min_score=min_score, progress_cb=_cb)
+        store.set_meta("short_gate_validation_result", result)
+        store.set_meta("short_gate_validation_progress", {"status": "done", "done": 1, "total": 1, "ticker": ""})
+        c = result.get("comparison", {})
+        logger.info(f"[BT] 放空分層閘門驗證完成：放空筆數 {c.get('sell_n_trades_before',0)} → {c.get('sell_n_trades_after',0)}，"
+                    f"勝率 {c.get('sell_win_rate_before',0)}% → {c.get('sell_win_rate_after',0)}%")
+    except Exception as e:
+        logger.error(f"_run_short_gate_validation_bg: {e}", exc_info=True)
+        store.set_meta("short_gate_validation_progress", {"status": "error", "error": str(e)})
+    finally:
+        _short_gate_validation_running.clear()
+
+@app.route("/api/backtest/short_gate_validation/run", methods=["POST"])
+def api_backtest_short_gate_validation_run():
+    if _short_gate_validation_running.is_set():
+        return jsonify({"status": "already_running"})
+    min_score = request.args.get("min_score", default=65.0, type=float)
+    threading.Thread(target=_run_short_gate_validation_bg, args=(min_score,), daemon=True).start()
+    return jsonify({"status": "started", "min_score": min_score,
+                     "note": "TW50成分股，新舊放空邏輯各跑一輪，用 /api/backtest/short_gate_validation/result 查進度"})
+
+@app.route("/api/backtest/short_gate_validation/result")
+def api_backtest_short_gate_validation_result():
+    from state_store import store
+    return jsonify({
+        "progress": store.get_meta("short_gate_validation_progress", {"status": "never_run"}),
+        "result": store.get_meta("short_gate_validation_result", None),
+    })
+
 # ★ 新增：2026-09-24——使用者看到第一版比較回測（只有TWII一項）差異很小之後，
 # 明確要求「用真實資料回測，不要假數據，能補的都補上」。融資餘額、個股月營收
 # 這兩項都查證出有真實的官方歷史資料來源可以回填（見 data_fetcher.
