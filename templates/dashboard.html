@@ -591,11 +591,21 @@ function fmtMinguoYM(v){
 async function fetchInstrument(){
   const raw=(document.getElementById('inst-ticker').value||'').trim();
   if(!raw){toast('請輸入股票代號');return;}
-  const ticker=raw.includes('.')?raw:raw+'.TW';
+  // ★ 修正：2026-09-29——使用者回報「個股研究的資料有錯誤」，這裡找到另一個
+  // 獨立的根因：前端原本不管使用者有沒有輸入後綴，只要沒帶「.」就一律自己補
+  // 上「.TW」（假設是上市），但後端 /api/instruments/<ticker> 的
+  // had_suffix（判斷「使用者是否自己指定後綴」）就是看網址裡有沒有「.」——
+  // 前端補了「.TW」之後，後端看到的永遠是「使用者自己指定了 .TW」，導致
+  // 後端原本專門為了處理「使用者只打代號、其實是上櫃股票」設計的.TW猜錯
+  // 自動改猜.TWO 備援邏輯（見 app.py api_instrument() 說明）永遠不會被觸發
+  // ——單純輸入代號查一檔上櫃股票（例如 6488 環球晶），會被誤判成「查無
+  // 資料」，即使該股票的資料其實存在、也正確。修正：前端不再自己猜後綴，
+  // 原始輸入（只 trim 不加「.TW」）直接交給後端做完整的上市/上櫃自動判斷。
+  const ticker=raw;
   const el=document.getElementById('inst-result');
   el.innerHTML='<div class="empty">查詢中…</div>';
   try{
-    const d=await(await fetch('/api/instruments/'+ticker,{cache:'no-store'})).json();
+    const d=await(await fetch('/api/instruments/'+encodeURIComponent(ticker),{cache:'no-store'})).json();
     if(d.error){el.innerHTML=`<div class="empty">${d.error}</div>`;return;}
     renderInstrument(d);
   }catch(e){el.innerHTML='<div class="empty">查詢失敗，請稍後再試</div>';}
