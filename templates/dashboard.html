@@ -398,6 +398,7 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
   <!-- Market Overview -->
   <div class="page" id="page-marketoverview">
     <div class="pad">
+    <div id="mo-source-note" style="font-size:10.5px;color:var(--t3);margin-bottom:12px"></div>
     <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">漲跌家數</div></div>
     <div class="hero-row" style="grid-template-columns:repeat(5,1fr)" id="breadth-row">
       <div class="kpi" style="border-left:none"><div class="kpi-label">載入中</div></div>
@@ -423,8 +424,8 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
       <div style="font-size:10.5px;color:var(--t3);margin-top:8px">目前不支援 RSI／MACD／均線等技術指標篩選——對全市場即時算技術指標成本太高，現有掃描架構只對候選訊號算，這裡先不做。</div>
     </div></div>
     <div class="panel card"><div style="overflow-x:auto"><table class="tbl">
-      <thead><tr><th>代號</th><th>名稱</th><th>產業</th><th>股價</th><th>漲跌幅</th><th>成交量(張)</th><th>訊號</th></tr></thead>
-      <tbody id="screener-tbody"><tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">按「篩選」開始查詢</td></tr></tbody>
+      <thead><tr><th>代號</th><th>名稱</th><th>產業</th><th>股價</th><th>漲跌幅</th><th>成交量(張)</th><th>訊號</th><th>備註</th></tr></thead>
+      <tbody id="screener-tbody"><tr><td colspan="8" style="text-align:center;padding:20px;color:var(--t3)">按「篩選」開始查詢</td></tr></tbody>
     </table></div></div>
     </div>
   </div>
@@ -594,12 +595,23 @@ async function fetchInstrument(){
 function renderInstrument(d){
   const el=document.getElementById('inst-result');if(!el)return;
   const info=d.info, ind=d.indicators, sig=d.active_signal, hist=d.signal_history||[],
-        news=d.material_news||[], pq=d.profitability_quality||{}, val=d.valuation||{}, rev=d.monthly_revenue||{};
+        news=d.material_news||[], pq=d.profitability_quality||{}, val=d.valuation||{}, rev=d.monthly_revenue||{},
+        ds=d.data_sources||{};
   let html='';
+
+  // ★ 新增：2026-09-29——使用者要求查詢範圍要涵蓋全部上市櫃股票（不能只限
+  // 200張成交量門檻以上的掃描池候選），且要能清楚看到資料來源／更新時間／
+  // 產業分類資料是否正常抓到。這裡統一顯示在基本資料區塊最上方。
+  const qs=ds.quote_and_sector||{};
+  const fetchedTxt=qs.fetched_at?toTaipeiStr(new Date(qs.fetched_at*1000).toISOString()):null;
+  html+=`<div style="font-size:10.5px;color:var(--t3);margin-bottom:10px">
+    行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}
+    ${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，下方「產業」欄位暫時一律顯示「其他」，非真實分類</span>':''}
+  </div>`;
 
   html+=`<div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">基本資料與行情</div></div>`;
   if(!info){
-    html+=`<div class="panel card"><div class="panel-body"><div class="empty">${d.code} 不在目前的掃描池清單裡（不代表股票不存在，可能是成交量太低被門檻濾掉，或資料源未涵蓋）</div></div></div>`;
+    html+=`<div class="panel card"><div class="panel-body"><div class="empty">查無 ${d.code}——已同時查過上市(.TW)與上櫃(.TWO)，TWSE/TPEX 公開清單中都沒有這個代號（可能是代號輸入錯誤，或該股票已下市）</div></div></div>`;
   }else{
     html+=`<div class="hero-row" style="grid-template-columns:repeat(5,1fr)">
       <div class="kpi" style="border-left:none"><div class="kpi-label">${safe(info.name)}（${safe(info.code)}）</div><div class="kpi-val">${safeN(info.close,2)}</div><div class="kpi-sub" style="color:${clr(info.change_pct)}">${info.change_pct!==undefined&&info.change_pct!==null?(info.change_pct>0?'+':'')+info.change_pct+'%':'—'}</div></div>
@@ -608,6 +620,13 @@ function renderInstrument(d){
       <div class="kpi"><div class="kpi-label">市場</div><div class="kpi-val" style="font-size:14px">${(d.ticker||'').includes('.TWO')?'上櫃':'上市'}</div></div>
       <div class="kpi"><div class="kpi-label">成交量</div><div class="kpi-val">${safe(info.volume_lots)}</div><div class="kpi-sub">張</div></div>
     </div>`;
+    if(info.is_disposal_or_attention){
+      html+=`<div style="font-size:11px;color:var(--alert);margin-top:6px">⚠ 這檔目前被 TWSE 列為處置或注意股票，波動可能極端，請留意</div>`;
+    }
+    if(info.in_scan_universe===false){
+      const th=qs.scan_universe_threshold||{};
+      html+=`<div style="font-size:10.5px;color:var(--t3);margin-top:6px">此股票收盤價或成交量未達每日訊號掃描門檻（收盤價>${safe(th.min_close,'5')}元 且 成交量>=${safe(th.min_volume_lots,'200')}張），不在每日自動掃描候選池內，僅供本頁查詢研究，不影響下方技術指標／基本面資料的正確性</div>`;
+    }
   }
 
   html+=`<div class="sec-label"><div class="bar"></div><div class="tx">目前有效訊號</div></div>`;
@@ -683,14 +702,23 @@ function renderInstrument(d){
   el.innerHTML=html;
 }
 
-// ★ 新增：2026-09-29——市場總覽頁。漲跌家數／產業排行純粹從既有 build_universe()
-// 快取算出（不對全市場即時算技術指標，成本太高），股票篩選器同理只用既有欄位
-// （代號/名稱/產業/規模/價格/漲跌幅/量），不支援技術指標篩選。
+// ★ 新增：2026-09-29——市場總覽頁。漲跌家數／產業排行／股票篩選器現在都從
+// build_full_universe() 算出（不設200張成交量門檻，涵蓋全部上市＋上櫃股票，
+// 見 stock_universe.py 2026-09-29 修正說明），不對全市場即時算技術指標
+// （成本太高），股票篩選器同理只用既有欄位（代號/名稱/產業/規模/價格/
+// 漲跌幅/量），不支援技術指標篩選。
+function renderMoSourceNote(ds){
+  const el=document.getElementById('mo-source-note');if(!el||!ds)return;
+  const qs=ds.quote_and_sector||ds; // /api/market/breadth 直接把 data_sources 塞在頂層是 get_universe_data_meta() 的原始結構
+  const fetchedTxt=qs.fetched_at?toTaipeiStr(new Date(qs.fetched_at*1000).toISOString()):null;
+  el.innerHTML=`行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}`;
+}
 async function fetchMarketBreadth(){
   const el=document.getElementById('breadth-row');if(!el)return;
   try{
     const d=await(await fetch('/api/market/breadth',{cache:'no-store'})).json();
     if(d.error)throw new Error(d.error);
+    renderMoSourceNote(d.data_sources);
     const warn=(!d.coverage_ok||(d.total&&d.covered<d.total*0.5))?`<div class="kpi-sub" style="color:var(--warn)">涵蓋 ${d.covered}/${d.total} 檔，資料可能不完整</div>`:'';
     el.innerHTML=`
       <div class="kpi" style="border-left:none"><div class="kpi-label">上漲家數</div><div class="kpi-val" style="color:var(--up)">${d.advancers}</div></div>
@@ -708,6 +736,7 @@ async function fetchSectorPerf(){
   try{
     const d=await(await fetch('/api/market/sectors',{cache:'no-store'})).json();
     if(d.error)throw new Error(d.error);
+    renderMoSourceNote(d.data_sources);
     const sectors=d.sectors||[];
     if(!sectors.length){if(tbody)tbody.innerHTML='<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--t3)">無資料</td></tr>';return;}
     if(tbody)tbody.innerHTML=sectors.map(s=>`<tr><td>${safe(s.sector)}</td><td>${s.n}</td><td style="color:${clr(s.avg_change_pct)}">${s.avg_change_pct>0?'+':''}${s.avg_change_pct}%</td><td style="color:var(--up)">${s.up}</td><td style="color:var(--down)">${s.down}</td></tr>`).join('');
@@ -733,22 +762,28 @@ async function runScreener(){
   if(size)params.set('size_cat',size);
   if(minchg!=='')params.set('min_chg_pct',minchg);
   if(maxchg!=='')params.set('max_chg_pct',maxchg);
-  tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">查詢中…</td></tr>';
+  tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--t3)">查詢中…</td></tr>';
   try{
     const d=await(await fetch('/api/screener?'+params.toString(),{cache:'no-store'})).json();
     if(d.error)throw new Error(d.error);
+    renderMoSourceNote(d.data_sources);
     const items=d.items||[];
-    if(info)info.textContent=`共 ${d.total_matched!==undefined?d.total_matched:items.length} 檔符合`;
-    if(!items.length){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">無符合條件的股票</td></tr>';return;}
-    tbody.innerHTML=items.map(s=>`
+    if(info)info.textContent=`共 ${d.total_matched!==undefined?d.total_matched:items.length} 檔符合（涵蓋全部上市＋上櫃股票）`;
+    if(!items.length){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--t3)">無符合條件的股票</td></tr>';return;}
+    tbody.innerHTML=items.map(s=>{
+      const notes=[];
+      if(s.in_scan_universe===false)notes.push('<span style="color:var(--t3)">未達掃描門檻</span>');
+      if(s.is_disposal_or_attention)notes.push('<span style="color:var(--alert)">處置/注意股</span>');
+      return `
       <tr style="cursor:pointer" onclick="goToInstrument('${s.ticker||(s.code+'.TW')}')">
         <td>${safe(s.code)}</td><td>${safe(s.name)}</td><td>${safe(s.sector)}</td>
         <td>${safeN(s.close,2)}</td>
         <td style="color:${clr(s.change_pct)}">${s.change_pct!==undefined&&s.change_pct!==null?(s.change_pct>0?'+':'')+s.change_pct+'%':'—'}</td>
         <td>${safe(s.volume_lots)}</td>
         <td>${s.has_signal?'<span class="tag green">有訊號</span>':''}</td>
-      </tr>`).join('');
-  }catch(e){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">查詢失敗</td></tr>';}
+        <td style="font-size:10.5px">${notes.join('　')||'—'}</td>
+      </tr>`;}).join('');
+  }catch(e){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--t3)">查詢失敗</td></tr>';}
 }
 
 // ★ 新增：2026-09-29——觀察清單（使用者要求，參考 Perplexity 規劃書「觀察清單」
