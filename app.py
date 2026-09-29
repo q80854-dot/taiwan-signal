@@ -248,6 +248,20 @@ def api_state():
         scan_st  = scanner.get_status()
         perf     = store.get_performance_summary()
         sys_stat = get_system_status(market)
+        # ★ 新增：2026-09-29——使用者反饋「資料量太少，希望包含重大訊息公告」。
+        # fundamentals.fetch_material_news_risk_map() 有 6 小時記憶體快取
+        # （見 fundamentals.py），這裡只是讀快取算個數，不會對外重抓，跟
+        # /api/diagnostics/quality_and_news 已經在用的呼叫一樣輕量，可以放
+        # 進每 30 秒被前端輪詢一次的 /api/state 不會拖慢回應。完整清單另外走
+        # /api/material_news（見下方），這裡只回傳數量+狀態給側邊欄徽章用。
+        try:
+            from fundamentals import fetch_material_news_risk_map, material_news_fetch_ok
+            _news_map = fetch_material_news_risk_map()
+            news_count = sum(len(v) for v in _news_map.values())
+            news_ok = material_news_fetch_ok()
+        except Exception as _e:
+            logger.warning(f"api_state: material_news 讀取失敗（不影響其餘欄位）: {_e}")
+            news_count, news_ok = 0, False
         return jsonify({
             "version":        SYSTEM["version"],
             "system_name":    SYSTEM["name"],
@@ -261,9 +275,52 @@ def api_state():
             "system_status":  sys_stat,
             "sentiment_score":market.get("sentiment_score", 50),
             "sentiment_zh":   market.get("sentiment_zh", "中性"),
+            "material_news_count": news_count,
+            "material_news_ok":    news_ok,
         })
     except Exception as e:
         logger.error(f"api_state: {e}"); return jsonify({"error": str(e)}), 500
+
+@app.route("/api/material_news")
+def api_material_news():
+    """★ 新增：2026-09-29——公開版「重大訊息公告」清單，給前端獨立面板用。
+    跟 /api/diagnostics/quality_and_news 不同：這裡把 code 解析成公司名稱、
+    攤平成單一時間序列 list 並依日期排序，前端不用自己再組資料結構。
+    資料源見 fundamentals.py：TWSE OpenAPI t187ap04_L（上市公司重大訊息），
+    只保留主旨命中負面關鍵字的筆數（見 MATERIAL_NEWS_NEGATIVE_KEYWORDS），
+    僅涵蓋上市（無對應的上櫃公開資料源）。"""
+    try:
+        from fundamentals import fetch_material_news_risk_map, material_news_fetch_ok
+        from stock_universe import build_universe
+        news_map = fetch_material_news_risk_map()
+        ok = material_news_fetch_ok()
+        name_map = {}
+        try:
+            for s in build_universe():
+                name_map[s.get("code", "")] = s.get("name", "")
+        except Exception as _e:
+            logger.warning(f"api_material_news: build_universe 讀取失敗，名稱將以代號代替: {_e}")
+        items = []
+        for code, entries in news_map.items():
+            name = name_map.get(code, "")
+            for e in entries:
+                items.append({
+                    "code": code,
+                    "name": name or code,
+                    "ticker": f"{code}.TW",
+                    "date": e.get("date", ""),
+                    "subject": e.get("subject", ""),
+                })
+        items.sort(key=lambda x: x.get("date", ""), reverse=True)
+        return jsonify({
+            "ok": ok,
+            "count": len(items),
+            "items": items[:80],
+            "source": "TWSE OpenAPI t187ap04_L · 僅上市公司，近期揭露（非全歷史）",
+        })
+    except Exception as e:
+        logger.error(f"api_material_news: {e}")
+        return jsonify({"error": str(e), "ok": False, "count": 0, "items": []}), 500
 
 @app.route("/api/signals")
 def api_signals():
