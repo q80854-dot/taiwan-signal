@@ -393,7 +393,13 @@ class StateStore:
             # ETF，跟其餘程式碼同一套慣例），但不刪除資料本身——
             # get_closed_trades() 回傳的明細列表仍然看得到這些交易，只是額外
             # 標成 research_only，讓使用者自己判斷要不要參考，不是憑空消失。
-            etf_short_exclude = "NOT (direction='sell' AND code LIKE '00%')"
+            #
+            # ★ 修正：2026-09-29——接上 Postgres 後這段又踩到跟上面同一種
+            # % 衝突：etf_short_exclude 字串裡寫死的 code LIKE '00%'，那個
+            # % 會被 psycopg2 的參數代換誤判，跟上面 'tp%' 的教訓一模一樣，
+            # 只是這次是我自己剛加的程式碼踩進去。同樣改成 bound parameter，
+            # 不要把任何字面 % 寫在 SQL 字串裡。
+            etf_short_filter = "direction='sell' AND code LIKE ?"  # true＝要排除的 ETF 放空
             with self._conn() as conn:
                 row = conn.execute(f"""
                     SELECT COUNT(*) as total,
@@ -402,11 +408,11 @@ class StateStore:
                            SUM(pnl_twd) as total_pnl,
                            AVG(CASE WHEN result LIKE ? THEN pnl_twd ELSE NULL END) as avg_win,
                            AVG(CASE WHEN result='sl' THEN pnl_twd ELSE NULL END) as avg_loss
-                    FROM signals WHERE status='closed' AND {etf_short_exclude}
-                """, ("tp%",)).fetchone()
+                    FROM signals WHERE status='closed' AND NOT ({etf_short_filter})
+                """, ("tp%", "00%")).fetchone()
                 excluded_row = conn.execute(f"""
-                    SELECT COUNT(*) as n FROM signals WHERE status='closed' AND NOT ({etf_short_exclude})
-                """).fetchone()
+                    SELECT COUNT(*) as n FROM signals WHERE status='closed' AND {etf_short_filter}
+                """, ("00%",)).fetchone()
             total=row["total"] or 0; wins=row["wins"] or 0; losses=row["losses"] or 0
             closed=wins+losses
             excluded_etf_shorts = excluded_row["n"] or 0
