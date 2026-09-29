@@ -561,20 +561,42 @@ def api_walkforward(ticker: str):
 # /result 隨時可以查目前進度或拿到已完成的結果，不用整個request卡住等。
 _full_backtest_running = threading.Event()
 
-def _run_full_backtest_bg(min_score):
+# ★ 修正：2026-09-29（跨AI覆核，ChatGPT指出「回測股票池 vs 即時掃描池不一致」，
+# 經驗證確實屬實）——原本這裡永遠只回測寫死的TW50這50檔，但scanner.py即時
+# 掃描的是全市場1000+檔，回測數字跟即時系統實際在做的事情根本不是同一件事。
+# 現在加一個 universe 參數：預設仍是 "tw50"（維持原本速度快、適合快速迭代
+# 驗證單一因子改動的用途，不改變既有呼叫端行為），但可以傳 universe=full
+# 改成回測 stock_universe.build_universe() 回傳的「今天」完整即時掃描池
+# （1000+檔），跟即時系統用同一份股票池，解決「兩邊池子不一樣」這個問題。
+# 誠實的限制：build_universe()用的是「現在」的股票清單套用到過去的回測期間，
+# 過去曾經下市/被剔除的股票依然不會出現在裡面（存活者偏差本身沒有完全解決，
+# 需要歷史每日真實成分股清單這種目前系統沒有的資料源才能徹底解決），這裡回
+# 傳的 result 會明確標註 universe_mode 跟這個限制，不能讓使用者誤以為
+# universe=full 就是「完全沒有偏差」的回測。
+def _run_full_backtest_bg(min_score, universe_mode="tw50"):
     from state_store import store
     if _full_backtest_running.is_set():
         return
     _full_backtest_running.set()
     try:
         from backtester import run_full_backtest_tw
-        store.set_meta("full_backtest_progress", {"status": "running", "done": 0, "total": 0, "ticker": ""})
+        if universe_mode == "full":
+            from stock_universe import build_universe
+            tickers = [s["ticker"] for s in build_universe()]
+        else:
+            tickers = None  # None → run_full_backtest_tw 內部退回 get_tw50_components()
+        store.set_meta("full_backtest_progress", {"status": "running", "done": 0, "total": 0, "ticker": "", "universe_mode": universe_mode})
         def _cb(done, total, ticker):
-            store.set_meta("full_backtest_progress", {"status": "running", "done": done, "total": total, "ticker": ticker})
-        result = run_full_backtest_tw(min_score=min_score, progress_cb=_cb)
+            store.set_meta("full_backtest_progress", {"status": "running", "done": done, "total": total, "ticker": ticker, "universe_mode": universe_mode})
+        result = run_full_backtest_tw(tickers=tickers, min_score=min_score, progress_cb=_cb)
+        result["universe_mode"] = universe_mode
+        result["universe_note"] = ("回測範圍：今天的完整即時掃描池（約" + str(len(tickers or [])) + "檔，跟scanner.py即時系統同一份股票池）。"
+                                    "但仍套用「現在」的清單到過去日期，曾經下市/被剔除的股票不會出現，存活者偏差未完全消除。"
+                                    if universe_mode == "full" else
+                                    "回測範圍：寫死的台灣50成分股（50檔），跟即時系統實際掃描的1000+檔股票池不是同一份，僅供快速驗證策略邏輯用，不代表即時系統的真實績效分佈。")
         store.set_meta("full_backtest_result", result)
-        store.set_meta("full_backtest_progress", {"status": "done", "done": result.get("total", 0), "total": result.get("total", 0), "ticker": ""})
-        logger.info(f"[BT] 批量回測完成，共 {result.get('total',0)} 檔有效結果")
+        store.set_meta("full_backtest_progress", {"status": "done", "done": result.get("total", 0), "total": result.get("total", 0), "ticker": "", "universe_mode": universe_mode})
+        logger.info(f"[BT] 批量回測完成（universe={universe_mode}），共 {result.get('total',0)} 檔有效結果")
     except Exception as e:
         logger.error(f"_run_full_backtest_bg: {e}", exc_info=True)
         store.set_meta("full_backtest_progress", {"status": "error", "error": str(e)})
@@ -586,8 +608,13 @@ def api_backtest_full_run():
     if _full_backtest_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
-    threading.Thread(target=_run_full_backtest_bg, args=(min_score,), daemon=True).start()
-    return jsonify({"status": "started", "min_score": min_score, "note": "TW50成分股，背景執行，用 /api/backtest/full/result 查進度"})
+    universe_mode = request.args.get("universe", default="tw50", type=str)
+    if universe_mode not in ("tw50", "full"):
+        return jsonify({"error": "universe 參數必須是 tw50 或 full"}), 400
+    threading.Thread(target=_run_full_backtest_bg, args=(min_score, universe_mode), daemon=True).start()
+    note = "TW50成分股（50檔），背景執行" if universe_mode == "tw50" else "完整即時掃描池（約1000+檔，跟scanner.py同一份股票池），背景執行，檔數較多會明顯較慢"
+    return jsonify({"status": "started", "min_score": min_score, "universe": universe_mode,
+                     "note": f"{note}，用 /api/backtest/full/result 查進度"})
 
 @app.route("/api/backtest/full/result")
 def api_backtest_full_result():
