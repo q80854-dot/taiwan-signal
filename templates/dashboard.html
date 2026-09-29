@@ -180,6 +180,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang TC'
   <div class="nav"     onclick="go('perf')">績效分析</div>
   <div class="nav-g">市場</div>
   <div class="nav"     onclick="go('market')">市場環境</div>
+  <div class="nav"     onclick="go('news')">重大訊息公告 <span class="nbadge" id="news-count-badge">0</span></div>
   <div class="nav-g">工具</div>
   <div class="nav"     onclick="go('backtest')">回測</div>
   <div class="nav"     onclick="go('diag')">系統診斷</div>
@@ -240,6 +241,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang TC'
         <div class="panel-body" id="market-summary"><div class="empty">載入中...</div></div>
       </div>
     </div>
+    <div class="sec-label"><div class="bar" style="background:var(--alert)"></div><div class="tx">重大訊息公告</div><div class="lnk" onclick="go('news')">查看全部 →</div></div>
+    <div class="panel card" style="margin-bottom:2px"><div class="panel-body" id="news-preview" style="padding:0"><div class="empty">載入中...</div></div></div>
     </div>
   </div>
 
@@ -300,6 +303,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang TC'
     <div class="grid2">
       <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">環境評分</span></div><div class="panel-body" id="market-env-body"><div class="empty">載入中</div></div></div>
       <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">各類別建議</span></div><div class="panel-body" id="cat-advice-body"><div class="empty">載入中</div></div></div>
+    </div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">掃描股票池</div></div>
+    <div class="panel card" style="margin-bottom:2px"><div class="panel-body" id="universe-body"><div class="empty">載入中</div></div></div>
+    </div>
+  </div>
+
+  <!-- Material News -->
+  <div class="page" id="page-news">
+    <div class="pad">
+    <div class="note-box" style="border-left-color:var(--alert);margin-bottom:16px" id="news-source-note">資料來源：TWSE OpenAPI（上市公司重大訊息公告）· 載入中…</div>
+    <div class="panel card"><div class="panel-head"><div class="bar" style="background:var(--alert)"></div><span class="panel-title">重大訊息公告（風險關鍵字命中）</span></div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>發言日期</th><th>股票</th><th>代號</th><th>公告主旨</th></tr></thead>
+        <tbody id="news-tbody"><tr><td colspan="4" style="text-align:center;padding:30px;color:var(--t3)">載入中...</td></tr></tbody>
+      </table></div>
     </div>
     </div>
   </div>
@@ -412,7 +430,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={overview:'總覽',signals:'今日訊號',history:'交易歷史',perf:'績效分析',market:'市場環境',backtest:'回測',diag:'系統診斷'};
+const TITLES={overview:'總覽',signals:'今日訊號',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',backtest:'回測',diag:'系統診斷'};
 function go(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.nav').forEach(n=>n.classList.remove('on'));
@@ -421,7 +439,8 @@ function go(id){
   document.getElementById('page-title').textContent=TITLES[id]||id;
   if(id==='history'&&_state)renderHistory(_state);
   if(id==='perf'&&_state)renderPerf(_state.win_rate||{});
-  if(id==='market'&&_state)renderMarket(_state);
+  if(id==='market'&&_state){renderMarket(_state);fetchUniverse();}
+  if(id==='news')renderMaterialNewsPage();
   if(id==='diag')fetchDiag();
   closeSide();
 }
@@ -458,6 +477,62 @@ async function fetchDiag(){
     ).join('');
   }catch(e){document.getElementById('diag-body').innerHTML='<div class="empty">診斷失敗</div>';}
 }
+// ★ 新增：2026-09-29——重大訊息公告（真實 TWSE OpenAPI 資料，見 fundamentals.py
+// fetch_material_news_risk_map()）。後端有 6 小時記憶體快取，前端不需要跟
+// fetchState() 一樣每 30 秒重抓，改成頁面載入時抓一次＋每 10 分鐘刷新一次即可。
+let _materialNews=[],_materialNewsOk=null;
+async function fetchMaterialNews(){
+  try{
+    const d=await(await fetch('/api/material_news',{cache:'no-store'})).json();
+    if(d.error)throw new Error(d.error);
+    _materialNews=d.items||[];_materialNewsOk=d.ok;
+    setEl('news-count-badge',_materialNews.length);
+    renderMaterialNewsPreview();
+    if(document.getElementById('page-news').classList.contains('on'))renderMaterialNewsPage();
+  }catch(e){
+    setEl('news-count-badge','—');
+    const el=document.getElementById('news-preview');
+    if(el)el.innerHTML='<div class="empty">重大訊息公告載入失敗</div>';
+  }
+}
+function renderMaterialNewsPreview(){
+  const el=document.getElementById('news-preview');if(!el)return;
+  if(!_materialNews.length){
+    el.innerHTML=`<div class="empty"><div class="empty-label">重大訊息</div>${_materialNewsOk===false?'資料源本次抓取失敗（非「已確認無異常」）':'目前無命中風險關鍵字的公告'}</div>`;return;
+  }
+  el.innerHTML=_materialNews.slice(0,5).map(n=>`
+    <div style="padding:13px 20px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:flex-start">
+      <span style="font-size:10px;color:var(--t3);white-space:nowrap;padding-top:2px">${safe(n.date)}</span>
+      <div style="min-width:0"><span style="font-weight:800;color:var(--t1);font-size:12px">${safe(n.name)}（${safe(n.code)}）</span>
+        <div style="font-size:11.5px;color:var(--t2);margin-top:2px">${safe(n.subject)}</div></div>
+    </div>`).join('');
+}
+function renderMaterialNewsPage(){
+  const note=document.getElementById('news-source-note');
+  if(note)note.textContent='資料來源：TWSE OpenAPI t187ap04_L（上市公司重大訊息公告，僅涵蓋上市、非全歷史；上櫃無對應公開資料源）'+
+    (_materialNewsOk===false?'　⚠ 本次抓取失敗，以下可能非最新':_materialNewsOk===true?'　✓ 本次抓取正常':'');
+  const tbody=document.getElementById('news-tbody');if(!tbody)return;
+  if(!_materialNews.length){
+    tbody.innerHTML=`<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--t3)">${_materialNewsOk===false?'資料源本次抓取失敗':'目前無命中風險關鍵字的公告'}</td></tr>`;return;
+  }
+  tbody.innerHTML=_materialNews.map(n=>`
+    <tr><td>${safe(n.date)}</td><td><b>${safe(n.name)}</b></td><td style="color:var(--t3)">${safe(n.code)}</td>
+      <td style="white-space:normal;color:var(--alert)">${safe(n.subject)}</td></tr>`).join('');
+}
+
+// ★ 新增：2026-09-29——掃描股票池概況（真實資料，見 stock_universe.py
+// build_universe()），現有 /api/universe 端點原本只在後端存在、前端從未用過。
+async function fetchUniverse(){
+  const el=document.getElementById('universe-body');if(!el)return;
+  try{
+    const d=await(await fetch('/api/universe',{cache:'no-store'})).json();
+    if(d.error)throw new Error(d.error);
+    const sectors=Object.entries(d.sectors||{}).sort((a,b)=>b[1]-a[1]);
+    el.innerHTML=`<div class="kv"><span>掃描池總數</span><span>${d.count||0} 檔</span></div>`+
+      sectors.map(([sec,cnt])=>`<div class="kv"><span>${sec}</span><span>${cnt} 檔</span></div>`).join('');
+  }catch(e){el.innerHTML='<div class="empty">股票池資料載入失敗</div>';}
+}
+
 async function runBacktest(){
   const raw=document.getElementById('bt-ticker').value.trim();
   if(!raw){toast('請輸入股票代號');return;}
@@ -547,6 +622,16 @@ function renderKPIs(d){
   setEl('last-scan-top',scanHM?'最後：'+scanHM+'（'+ageLabel(ageMinutes(d.last_scan_time))+'）':'尚未掃描');
 }
 
+// ★ 新增：2026-09-29——scanner.py 早就有幫每筆訊號標「獲利品質(quality_check)」
+// 跟「重大訊息(news_check)」三態（checked/not_covered/unavailable，見
+// scanner.py 加減分邏輯段落的說明），但前端從未渲染出來，使用者只能靠加減分
+// 有沒有動猜，看不出這檔到底「查過確認乾淨」還是「本來就沒查」。這裡統一用
+// 一個 helper 把三態轉成清楚的中文徽章。
+function qnBadge(v,label){
+  const map={checked:['已查·正常','var(--ok)'],not_covered:['未涵蓋','var(--t3)'],unavailable:['資料異常','var(--warn)']};
+  const [tx,c]=map[v]||['—','var(--t3)'];
+  return `<span style="color:${c}">${label} ${tx}</span>`;
+}
 function renderLatestSignals(sigs){
   const el=document.getElementById('latest-signals');
   if(!sigs||!sigs.length){el.innerHTML='<div class="empty"><div class="empty-label">訊號</div>今日尚無訊號<br><small>每日 16:30 盤後掃描</small></div>';return;}
@@ -563,6 +648,7 @@ function renderLatestSignals(sigs){
         <div class="sig-item"><label>張數</label><span>${safe(s.suggested_lots,1)}</span></div>
       </div>
       <div class="sig-footer"><span>${safe(s.sector)}</span><span>風險 TWD ${(s.risk_twd||0).toLocaleString()}</span><span>RR 1:${safeN(s.rr1,1)}</span></div>
+      <div class="sig-footer" style="margin-top:6px">${qnBadge(s.quality_check,'獲利品質')}${qnBadge(s.news_check,'重大訊息')}</div>
     </div>`).join('');
 }
 
@@ -605,6 +691,7 @@ function renderSignals(){
         <span>量比 <b style="color:var(--t1)">${safeN(s.vol_ratio,1)}x</b></span><span>週線 <b style="color:var(--t1)">${safe(s.weekly_bias,'—')}</b></span>
         ${s.inst_signal?`<span style="color:var(--accent)">${s.inst_signal}</span>`:''}
       </div>
+      <div style="font-size:11px;margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap">${qnBadge(s.quality_check,'獲利品質')}${qnBadge(s.news_check,'重大訊息')}</div>
       ${cMet?`<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:10px;color:var(--t3);letter-spacing:.3px">條件詳情</summary><div style="margin-top:8px;line-height:2">${cMet}${cFail?'<br>'+cFail:''}</div></details>`:''}
       <div class="note-box" style="border-left-color:var(--line2);color:var(--t2)">${safe(s.reason_brief,'—')}</div>
       <div style="font-size:10.5px;color:var(--t3);margin-top:10px;display:flex;justify-content:space-between"><span>${safe(s.action)}</span><span>有效 ${safe(s.expire_days,3)} 個交易日</span></div>
@@ -696,7 +783,10 @@ function toast(msg){
   document.body.appendChild(t);setTimeout(()=>t.remove(),3000);
 }
 
-document.addEventListener('DOMContentLoaded',()=>{fetchState();setInterval(fetchState,30000);});
+document.addEventListener('DOMContentLoaded',()=>{
+  fetchState();setInterval(fetchState,30000);
+  fetchMaterialNews();setInterval(fetchMaterialNews,600000);
+});
 </script>
 </body>
 </html>
