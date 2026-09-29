@@ -221,6 +221,9 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
   <div class="nav"     onclick="go('watchlist')">觀察清單 <span class="nbadge" id="wl-count-badge">0</span></div>
   <div class="nav"     onclick="go('history')">交易歷史</div>
   <div class="nav"     onclick="go('perf')">績效分析</div>
+  <div class="nav-g">研究</div>
+  <div class="nav"     onclick="go('instrument')">個股研究</div>
+  <div class="nav"     onclick="go('marketoverview')">市場總覽</div>
   <div class="nav-g">市場</div>
   <div class="nav"     onclick="go('market')">市場環境</div>
   <div class="nav"     onclick="go('news')">重大訊息公告 <span class="nbadge" id="news-count-badge">0</span></div>
@@ -378,6 +381,54 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
     </div>
   </div>
 
+  <!-- Instrument Research -->
+  <div class="page" id="page-instrument">
+    <div class="pad">
+    <div class="panel card" style="margin-bottom:2px"><div class="panel-body">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="inst-ticker" placeholder="股票代號（如 2330）" style="padding:8px 10px;border:1px solid var(--line2);border-radius:0;background:var(--s1);color:var(--t1);font-size:12px;width:170px" onkeydown="if(event.key==='Enter')fetchInstrument()">
+        <button class="btn primary arrow" onclick="fetchInstrument()">查詢</button>
+        <span style="font-size:11px;color:var(--t3)">整合行情、技術指標、基本面、重大訊息與歷史訊號</span>
+      </div>
+    </div></div>
+    <div id="inst-result" style="margin-top:20px"><div class="empty">輸入股票代號開始查詢，或從訊號卡上的股票名稱點進來</div></div>
+    </div>
+  </div>
+
+  <!-- Market Overview -->
+  <div class="page" id="page-marketoverview">
+    <div class="pad">
+    <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">漲跌家數</div></div>
+    <div class="hero-row" style="grid-template-columns:repeat(5,1fr)" id="breadth-row">
+      <div class="kpi" style="border-left:none"><div class="kpi-label">載入中</div></div>
+    </div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">產業當日漲跌排行</div></div>
+    <div class="panel card" style="margin-bottom:2px"><div style="overflow-x:auto"><table class="tbl">
+      <thead><tr><th>產業</th><th>檔數</th><th>平均漲跌幅</th><th>上漲</th><th>下跌</th></tr></thead>
+      <tbody id="sector-perf-tbody"><tr><td colspan="5" style="text-align:center;padding:20px;color:var(--t3)">載入中...</td></tr></tbody>
+    </table></div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">股票篩選器</div></div>
+    <div class="panel card" style="margin-bottom:16px"><div class="panel-body">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="scr-q" placeholder="代號/名稱" style="padding:7px 10px;border:1px solid var(--line2);border-radius:0;background:var(--s1);color:var(--t1);font-size:11.5px;width:120px" onkeydown="if(event.key==='Enter')runScreener()">
+        <select id="scr-sector" style="padding:7px 10px;border:1px solid var(--line2);border-radius:0;background:var(--s1);color:var(--t2);font-size:11.5px"><option value="">全部產業</option></select>
+        <select id="scr-size" style="padding:7px 10px;border:1px solid var(--line2);border-radius:0;background:var(--s1);color:var(--t2);font-size:11.5px">
+          <option value="">全部規模</option><option value="ETF">ETF</option><option value="大型股">大型股</option><option value="中型股">中型股</option><option value="小型股">小型股</option>
+        </select>
+        <input id="scr-minchg" type="number" step="0.1" placeholder="最小漲跌%" style="padding:7px 10px;border:1px solid var(--line2);border-radius:0;background:var(--s1);color:var(--t1);font-size:11.5px;width:100px">
+        <input id="scr-maxchg" type="number" step="0.1" placeholder="最大漲跌%" style="padding:7px 10px;border:1px solid var(--line2);border-radius:0;background:var(--s1);color:var(--t1);font-size:11.5px;width:100px">
+        <button class="btn primary" onclick="runScreener()">篩選</button>
+        <span style="font-size:11px;color:var(--t3)" id="scr-info"></span>
+      </div>
+      <div style="font-size:10.5px;color:var(--t3);margin-top:8px">目前不支援 RSI／MACD／均線等技術指標篩選——對全市場即時算技術指標成本太高，現有掃描架構只對候選訊號算，這裡先不做。</div>
+    </div></div>
+    <div class="panel card"><div style="overflow-x:auto"><table class="tbl">
+      <thead><tr><th>代號</th><th>名稱</th><th>產業</th><th>股價</th><th>漲跌幅</th><th>成交量(張)</th><th>訊號</th></tr></thead>
+      <tbody id="screener-tbody"><tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">按「篩選」開始查詢</td></tr></tbody>
+    </table></div></div>
+    </div>
+  </div>
+
   <!-- Backtest -->
   <div class="page" id="page-backtest">
     <div class="pad">
@@ -486,7 +537,8 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',backtest:'回測',diag:'系統診斷'};
+const TITLES={overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
+let _marketOverviewLoaded=false;
 function go(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.nav').forEach(n=>n.classList.remove('on'));
@@ -498,8 +550,193 @@ function go(id){
   if(id==='market'&&_state){renderMarket(_state);fetchUniverse();}
   if(id==='news')renderMaterialNewsPage();
   if(id==='watchlist')renderWatchlistPage();
+  if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchMarketBreadth();fetchSectorPerf();}
   if(id==='diag')fetchDiag();
   closeSide();
+}
+function goToInstrument(ticker){
+  if(!ticker)return;
+  go('instrument');
+  const input=document.getElementById('inst-ticker');
+  if(input)input.value=ticker.split('.')[0];
+  fetchInstrument();
+}
+
+// ★ 新增：2026-09-29——個股研究頁。整合 /api/instruments/<ticker>，把已經存在、
+// 但分散在各模組的資料（行情、技術指標、基本面、重大訊息、目前訊號、歷史訊號）
+// 集中顯示在一頁。技術指標直接沿用 indicators.py 的 calc_all_indicators()，
+// 跟 scanner.py 產生即時訊號用的是同一套計算，避免這裡跟訊號卡數字對不上。
+async function fetchInstrument(){
+  const raw=(document.getElementById('inst-ticker').value||'').trim();
+  if(!raw){toast('請輸入股票代號');return;}
+  const ticker=raw.includes('.')?raw:raw+'.TW';
+  const el=document.getElementById('inst-result');
+  el.innerHTML='<div class="empty">查詢中…</div>';
+  try{
+    const d=await(await fetch('/api/instruments/'+ticker,{cache:'no-store'})).json();
+    if(d.error){el.innerHTML=`<div class="empty">${d.error}</div>`;return;}
+    renderInstrument(d);
+  }catch(e){el.innerHTML='<div class="empty">查詢失敗，請稍後再試</div>';}
+}
+
+function renderInstrument(d){
+  const el=document.getElementById('inst-result');if(!el)return;
+  const info=d.info, ind=d.indicators, sig=d.active_signal, hist=d.signal_history||[],
+        news=d.material_news||[], pq=d.profitability_quality||{}, val=d.valuation||{}, rev=d.monthly_revenue||{};
+  let html='';
+
+  html+=`<div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">基本資料與行情</div></div>`;
+  if(!info){
+    html+=`<div class="panel card"><div class="panel-body"><div class="empty">${d.code} 不在目前的掃描池清單裡（不代表股票不存在，可能是成交量太低被門檻濾掉，或資料源未涵蓋）</div></div></div>`;
+  }else{
+    html+=`<div class="hero-row" style="grid-template-columns:repeat(5,1fr)">
+      <div class="kpi" style="border-left:none"><div class="kpi-label">${safe(info.name)}（${safe(info.code)}）</div><div class="kpi-val">${safeN(info.close,2)}</div><div class="kpi-sub" style="color:${clr(info.change_pct)}">${info.change_pct!==undefined&&info.change_pct!==null?(info.change_pct>0?'+':'')+info.change_pct+'%':'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">產業</div><div class="kpi-val" style="font-size:14px">${safe(info.sector)}</div></div>
+      <div class="kpi"><div class="kpi-label">規模</div><div class="kpi-val" style="font-size:14px">${safe(info.size_cat)}</div></div>
+      <div class="kpi"><div class="kpi-label">市場</div><div class="kpi-val" style="font-size:14px">${(d.ticker||'').includes('.TWO')?'上櫃':'上市'}</div></div>
+      <div class="kpi"><div class="kpi-label">成交量</div><div class="kpi-val">${safe(info.volume_lots)}</div><div class="kpi-sub">張</div></div>
+    </div>`;
+  }
+
+  html+=`<div class="sec-label"><div class="bar"></div><div class="tx">目前有效訊號</div></div>`;
+  if(sig){
+    html+=`<div class="sig-card ${sig.direction==='buy'?'':'sell'}">
+      <div class="sig-head">
+        <div><span class="sig-name">${safe(sig.name)}</span><span class="sig-badge ${sig.direction}">${sig.direction==='buy'?'做多':'做空'}</span>${wlStar(sig.ticker)}</div>
+        <div class="sig-score" style="color:${sig.score>=85?'var(--up)':sig.score>=75?'var(--warn)':'var(--t3)'}">${sig.score||0}</div>
+      </div>
+      <div class="sig-grid">
+        <div class="sig-item"><label>現價</label><span>${safeN(sig.current_price,2)}</span></div>
+        <div class="sig-item"><label>止損</label><span style="color:var(--down)">${safeN(sig.stop_loss,2)}</span></div>
+        <div class="sig-item"><label>TP1</label><span style="color:var(--up)">${safeN(sig.tp1,2)}</span></div>
+        <div class="sig-item"><label>張數</label><span>${safe(sig.suggested_lots,1)}</span></div>
+      </div>
+      <div class="sig-footer" style="margin-top:6px">${qnBadge(sig.quality_check,'獲利品質')}${qnBadge(sig.news_check,'重大訊息')}</div>
+    </div>`;
+  }else{
+    html+=`<div class="panel card"><div class="panel-body"><div class="empty">目前無有效訊號</div></div></div>`;
+  }
+
+  html+=`<div class="sec-label"><div class="bar"></div><div class="tx">技術指標</div></div>`;
+  if(!ind||!ind.valid){
+    html+=`<div class="panel card"><div class="panel-body"><div class="empty">${ind&&ind.reason?ind.reason:'技術指標資料不足或載入失敗'}</div></div></div>`;
+  }else{
+    const biasMap={strong_bullish:['強烈偏多','var(--up)'],bullish:['偏多','var(--up)'],neutral:['中性','var(--t3)'],bearish:['偏空','var(--down)'],strong_bearish:['強烈偏空','var(--down)']};
+    const [biasTx,biasC]=biasMap[ind.overall_bias]||['—','var(--t3)'];
+    html+=`<div class="panel card"><div class="panel-body">
+      <div class="kv"><span>綜合判斷</span><span style="color:${biasC}">${biasTx}（分數 ${ind.total_score}，共 ${ind.valid_count} 項有效指標）</span></div>
+      <div class="kv"><span>EMA排列</span><span>${ind.ema&&ind.ema.valid?ind.ema.alignment+'　'+ind.ema.cross:'—'}</span></div>
+      <div class="kv"><span>RSI</span><span>${ind.rsi&&ind.rsi.valid?safeN(ind.rsi.value,1)+'（'+ind.rsi.status+'）':'—'}</span></div>
+      <div class="kv"><span>MACD</span><span>${ind.macd&&ind.macd.valid?'柱狀圖 '+safeN(ind.macd.histogram,4):'—'}</span></div>
+      <div class="kv"><span>ADX</span><span>${ind.adx&&ind.adx.valid?safeN(ind.adx.value,1)+'　'+ind.adx.trend+(ind.adx.strong?'（強）':''):'—'}</span></div>
+      <div class="kv"><span>布林通道</span><span>${ind.bb&&ind.bb.valid?ind.bb.position+(ind.bb.squeeze?'　（擠壓中）':''):'—'}</span></div>
+      <div class="kv"><span>成交量</span><span>${ind.volume&&ind.volume.valid?ind.volume.status+'（'+ind.volume.ratio+'x）':'—'}</span></div>
+      <div class="kv"><span>壓力／支撐</span><span>${ind.support_resistance&&ind.support_resistance.valid?'壓力 '+safe(ind.support_resistance.nearest_resistance,'—')+'　支撐 '+safe(ind.support_resistance.nearest_support,'—'):'—'}</span></div>
+    </div></div>`;
+  }
+
+  html+=`<div class="sec-label"><div class="bar"></div><div class="tx">基本面</div></div>`;
+  html+=`<div class="panel card"><div class="panel-body">
+    <div class="kv"><span>本益比 PE</span><span>${safeN(val.pe,1,'—')}</span></div>
+    <div class="kv"><span>殖利率</span><span>${val.yield_pct!==undefined&&val.yield_pct!==null?safeN(val.yield_pct,2)+'%':'—'}</span></div>
+    <div class="kv"><span>股價淨值比 PB</span><span>${safeN(val.pb,2,'—')}</span></div>
+    <div class="kv"><span>月營收年增率</span><span style="color:${clr(rev.yoy_pct)}">${rev.yoy_pct!==undefined&&rev.yoy_pct!==null?safeN(rev.yoy_pct,2)+'%':'—'}</span></div>
+    <div class="kv"><span>月營收月增率</span><span style="color:${clr(rev.mom_pct)}">${rev.mom_pct!==undefined&&rev.mom_pct!==null?safeN(rev.mom_pct,2)+'%':'—'}</span></div>
+    <div class="kv"><span>營收資料期間</span><span>${safe(rev.period)}</span></div>
+    <div class="kv"><span>毛利率變化</span><span style="color:${clr(pq.gross_margin_chg)}">${pq.gross_margin_chg!==undefined&&pq.gross_margin_chg!==null?safeN(pq.gross_margin_chg,2):'—'}</span></div>
+    <div class="kv"><span>營益率變化</span><span style="color:${clr(pq.operating_margin_chg)}">${pq.operating_margin_chg!==undefined&&pq.operating_margin_chg!==null?safeN(pq.operating_margin_chg,2):'—'}</span></div>
+    <div style="font-size:10.5px;color:var(--t3);margin-top:8px">基本面資料可能有落後（估值／營收非即時），實際期間以「營收資料期間」欄位為準</div>
+  </div></div>`;
+
+  html+=`<div class="sec-label"><div class="bar"></div><div class="tx">重大訊息公告</div></div>`;
+  if(!news.length){
+    html+=`<div class="panel card"><div class="panel-body"><div class="empty">目前無命中風險關鍵字的公告</div></div></div>`;
+  }else{
+    html+=`<div class="panel card"><div style="overflow-x:auto"><table class="tbl">
+      <thead><tr><th>發言日期</th><th>公告主旨</th></tr></thead>
+      <tbody>${news.map(n=>`<tr><td>${safe(n.date)}</td><td style="white-space:normal;color:var(--alert)">${safe(n.subject)}</td></tr>`).join('')}</tbody>
+    </table></div></div>`;
+  }
+
+  html+=`<div class="sec-label"><div class="bar"></div><div class="tx">近期歷史訊號（近180天）</div></div>`;
+  if(!hist.length){
+    html+=`<div class="panel card" style="margin-bottom:20px"><div class="panel-body"><div class="empty">近180天無歷史訊號記錄</div></div></div>`;
+  }else{
+    html+=`<div class="panel card" style="margin-bottom:20px"><div style="overflow-x:auto"><table class="tbl">
+      <thead><tr><th>日期</th><th>方向</th><th>分數</th><th>現價</th></tr></thead>
+      <tbody>${hist.map(h=>`<tr><td>${toTaipeiStr(h.generated_at)||safe(h.generated_at)}</td><td><span class="tag ${h.direction==='buy'?'green':'red'}">${h.direction==='buy'?'多':'空'}</span></td><td>${safe(h.score)}</td><td>${safeN(h.current_price,2)}</td></tr>`).join('')}</tbody>
+    </table></div></div>`;
+  }
+
+  el.innerHTML=html;
+}
+
+// ★ 新增：2026-09-29——市場總覽頁。漲跌家數／產業排行純粹從既有 build_universe()
+// 快取算出（不對全市場即時算技術指標，成本太高），股票篩選器同理只用既有欄位
+// （代號/名稱/產業/規模/價格/漲跌幅/量），不支援技術指標篩選。
+async function fetchMarketBreadth(){
+  const el=document.getElementById('breadth-row');if(!el)return;
+  try{
+    const d=await(await fetch('/api/market/breadth',{cache:'no-store'})).json();
+    if(d.error)throw new Error(d.error);
+    const warn=(!d.coverage_ok||(d.total&&d.covered<d.total*0.5))?`<div class="kpi-sub" style="color:var(--warn)">涵蓋 ${d.covered}/${d.total} 檔，資料可能不完整</div>`:'';
+    el.innerHTML=`
+      <div class="kpi" style="border-left:none"><div class="kpi-label">上漲家數</div><div class="kpi-val" style="color:var(--up)">${d.advancers}</div></div>
+      <div class="kpi"><div class="kpi-label">下跌家數</div><div class="kpi-val" style="color:var(--down)">${d.decliners}</div></div>
+      <div class="kpi"><div class="kpi-label">平盤家數</div><div class="kpi-val">${d.unchanged}</div></div>
+      <div class="kpi"><div class="kpi-label">漲停家數</div><div class="kpi-val" style="color:var(--up)">${d.limit_up}</div></div>
+      <div class="kpi"><div class="kpi-label">跌停家數</div><div class="kpi-val" style="color:var(--down)">${d.limit_down}</div>${warn}</div>
+    `;
+  }catch(e){el.innerHTML='<div class="kpi" style="border-left:none"><div class="kpi-label">載入失敗</div></div>';}
+}
+
+async function fetchSectorPerf(){
+  const tbody=document.getElementById('sector-perf-tbody');
+  const sel=document.getElementById('scr-sector');
+  try{
+    const d=await(await fetch('/api/market/sectors',{cache:'no-store'})).json();
+    if(d.error)throw new Error(d.error);
+    const sectors=d.sectors||[];
+    if(!sectors.length){if(tbody)tbody.innerHTML='<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--t3)">無資料</td></tr>';return;}
+    if(tbody)tbody.innerHTML=sectors.map(s=>`<tr><td>${safe(s.sector)}</td><td>${s.n}</td><td style="color:${clr(s.avg_change_pct)}">${s.avg_change_pct>0?'+':''}${s.avg_change_pct}%</td><td style="color:var(--up)">${s.up}</td><td style="color:var(--down)">${s.down}</td></tr>`).join('');
+    if(sel){
+      const cur=sel.value;
+      sel.innerHTML='<option value="">全部產業</option>'+sectors.map(s=>`<option value="${safe(s.sector)}">${safe(s.sector)}</option>`).join('');
+      sel.value=cur;
+    }
+  }catch(e){if(tbody)tbody.innerHTML='<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--t3)">載入失敗</td></tr>';}
+}
+
+async function runScreener(){
+  const tbody=document.getElementById('screener-tbody');
+  const info=document.getElementById('scr-info');
+  const q=document.getElementById('scr-q').value.trim();
+  const sector=document.getElementById('scr-sector').value;
+  const size=document.getElementById('scr-size').value;
+  const minchg=document.getElementById('scr-minchg').value;
+  const maxchg=document.getElementById('scr-maxchg').value;
+  const params=new URLSearchParams();
+  if(q)params.set('q',q);
+  if(sector)params.set('sector',sector);
+  if(size)params.set('size_cat',size);
+  if(minchg!=='')params.set('min_chg_pct',minchg);
+  if(maxchg!=='')params.set('max_chg_pct',maxchg);
+  tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">查詢中…</td></tr>';
+  try{
+    const d=await(await fetch('/api/screener?'+params.toString(),{cache:'no-store'})).json();
+    if(d.error)throw new Error(d.error);
+    const items=d.items||[];
+    if(info)info.textContent=`共 ${d.total_matched!==undefined?d.total_matched:items.length} 檔符合`;
+    if(!items.length){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">無符合條件的股票</td></tr>';return;}
+    tbody.innerHTML=items.map(s=>`
+      <tr style="cursor:pointer" onclick="goToInstrument('${s.ticker||(s.code+'.TW')}')">
+        <td>${safe(s.code)}</td><td>${safe(s.name)}</td><td>${safe(s.sector)}</td>
+        <td>${safeN(s.close,2)}</td>
+        <td style="color:${clr(s.change_pct)}">${s.change_pct!==undefined&&s.change_pct!==null?(s.change_pct>0?'+':'')+s.change_pct+'%':'—'}</td>
+        <td>${safe(s.volume_lots)}</td>
+        <td>${s.has_signal?'<span class="tag green">有訊號</span>':''}</td>
+      </tr>`).join('');
+  }catch(e){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">查詢失敗</td></tr>';}
 }
 
 // ★ 新增：2026-09-29——觀察清單（使用者要求，參考 Perplexity 規劃書「觀察清單」
