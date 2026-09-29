@@ -350,32 +350,41 @@ def api_universe():
 
 @app.route("/api/market/breadth")
 def api_market_breadth():
-    """★ 新增：2026-09-29——使用者要求「市場總覽頁」，這裡是漲跌家數/漲跌停
-    家數，資料來自 stock_universe.get_market_breadth()（見該函式說明：只用
-    build_universe() 既有快取算，不額外打 API）。"""
+    """使用者要求「市場總覽頁」，這裡是漲跌家數/漲跌停家數，資料來自
+    stock_universe.get_market_breadth()（用 build_full_universe() 既有快取
+    算，不額外打 API，涵蓋全部上市＋上櫃股票，不受掃描池200張門檻限制——見
+    該函式 2026-09-29 修正說明）。附上 data_sources 讓使用者能核對資料來源
+    與更新時間（使用者要求要能明確看到資料來源正確性）。"""
     try:
-        from stock_universe import get_market_breadth
-        return jsonify(get_market_breadth())
+        from stock_universe import get_market_breadth, get_universe_data_meta
+        result = get_market_breadth()
+        result["data_sources"] = get_universe_data_meta()
+        return jsonify(result)
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/market/sectors")
 def api_market_sectors():
-    """產業當日漲跌排行，同樣只用既有 universe 快取算，見
+    """產業當日漲跌排行，同樣用 build_full_universe() 既有快取算，見
     stock_universe.get_sector_performance()。"""
     try:
-        from stock_universe import get_sector_performance
-        return jsonify({"sectors": get_sector_performance()})
+        from stock_universe import get_sector_performance, get_universe_data_meta
+        return jsonify({"sectors": get_sector_performance(), "data_sources": get_universe_data_meta()})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/screener")
 def api_screener():
-    """★ 新增：2026-09-29——市場總覽頁的股票篩選器。只支援 stock_universe.py
-    既有欄位（代號/名稱/產業/市值分類/價格/漲跌幅/成交量），不支援 RSI/MACD/
-    均線這類技術指標篩選——對全市場 1000+ 檔即時算技術指標成本太高，現有
-    掃描架構只對候選訊號的幾十檔算（見 scanner.py），這裡先不做，避免每次
-    篩選都變成一次重量級全市場運算。"""
+    """市場總覽頁的股票篩選器。只支援 stock_universe.py 既有欄位（代號/名稱/
+    產業/市值分類/價格/漲跌幅/成交量），不支援 RSI/MACD/均線這類技術指標篩選
+    ——對全市場 1000+ 檔即時算技術指標成本太高，現有掃描架構只對候選訊號的
+    幾十檔算（見 scanner.py），這裡先不做，避免每次篩選都變成一次重量級全
+    市場運算。
+    ★ 修正：2026-09-29——改用不設門檻的 screen_universe()（見該函式說明），
+    查詢範圍涵蓋全部上市＋上櫃股票，不再受掃描池200張成交量門檻限制。每筆
+    結果額外附上 in_scan_universe（是否會被每日訊號掃描納入候選）、
+    is_disposal_or_attention（是否為目前列管的處置/注意股）兩個旗標，讓使用
+    者篩到成交量很低或列管中的股票時，能清楚知道這點、不會誤以為是一般股票。"""
     try:
-        from stock_universe import screen_universe
+        from stock_universe import screen_universe, get_universe_data_meta
         from scanner import scanner
         filters = {
             "q": request.args.get("q"),
@@ -393,7 +402,8 @@ def api_screener():
         signal_tickers = {s.get("ticker") for s in scanner.get_status().get("signals", [])}
         for s in results:
             s["has_signal"] = s.get("ticker") in signal_tickers
-        return jsonify({"count": len(results), "total_matched": len(results), "items": results[:limit]})
+        return jsonify({"count": len(results), "total_matched": len(results), "items": results[:limit],
+                         "data_sources": get_universe_data_meta()})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/instruments/<ticker>")
@@ -404,24 +414,31 @@ def api_instrument(ticker: str):
     跟 scanner.py 產生訊號用的是同一套計算）、基本面（get_profitability_
     quality/估值/月營收）、重大訊息公告、目前有效訊號、近期歷史訊號。任一
     區塊失敗只影響那個區塊（優雅降級，其餘照常回傳），不會因為某個資料源
-    掛掉就整頁失敗。"""
+    掛掉就整頁失敗。
+    ★ 修正：2026-09-29——使用者反映「查詢限制在200張(成交量門檻)以內」——
+    原本用 get_stock_info()（查 build_universe() 的掃描池，受 config.py
+    THRESH['min_avg_volume'] 200張門檻限制）取基本資料，代表成交量沒有到
+    200張的股票（尤其是大多數上櫃小型股）完全查不到。改用不設門檻的
+    get_stock_info_any()（查 build_full_universe()，涵蓋全部上市＋上櫃
+    股票），查詢範圍不再受掃描池門檻限制。同時使用者要求要能清楚看到每一
+    塊資料的來源/正確性，所以加了 data_sources 區塊、in_scan_universe／
+    is_disposal_or_attention 旗標。"""
     raw = ticker.upper()
     had_suffix = "." in raw
     t = raw if had_suffix else raw + ".TW"
     code = t.split(".")[0]
     out = {"ticker": t, "code": code}
     try:
-        from stock_universe import get_stock_info
-        info = get_stock_info(t)
-        # ★ 新增：2026-09-29——使用者只輸入代號、不帶 .TW/.TWO 後綴時，這裡預設
-        # 先猜 .TW（上市），但很多股票其實是上櫃（.TWO），猜錯會導致整頁查無
-        # 資料。build_universe() 同時有上市+上櫃兩份清單，所以猜 .TW 沒找到、
-        # 使用者原本又沒指定後綴時，改猜 .TWO 再試一次；两次都沒有才真的代表
-        # 這檔不在目前的掃描池清單裡（不代表股票不存在，只代表沒被掃描池收錄，
-        # 例如成交量太低被 stock_universe.py 的門檻濾掉）。
+        from stock_universe import get_stock_info_any
+        info = get_stock_info_any(t)
+        # 使用者只輸入代號、不帶 .TW/.TWO 後綴時，這裡預設先猜 .TW（上市），但
+        # 很多股票其實是上櫃（.TWO），猜錯會導致整頁查無資料。build_full_universe()
+        # 同時涵蓋上市+上櫃全部股票，所以猜 .TW 沒找到、使用者原本又沒指定後綴時，
+        # 改猜 .TWO 再試一次；兩次都沒有才真的代表這檔不存在於 TWSE/TPEX 公開清單
+        # （例如下市、代號輸入錯誤）。
         if info is None and not had_suffix:
             t2 = code + ".TWO"
-            info2 = get_stock_info(t2)
+            info2 = get_stock_info_any(t2)
             if info2 is not None:
                 t = t2; info = info2
                 out["ticker"] = t
@@ -463,6 +480,33 @@ def api_instrument(ticker: str):
         out["signal_history"] = history[:20]
     except Exception as e:
         out["signal_history"] = []; out["signal_history_error"] = str(e)
+    # ★ 新增：2026-09-29——使用者要求「保證資料來源的正確性以及準確度」，把每
+    # 一塊資料實際的來源、更新頻率、已知限制明白列出來，不要讓使用者自己猜。
+    try:
+        from stock_universe import get_universe_data_meta
+        meta = get_universe_data_meta()
+        out["data_sources"] = {
+            "quote_and_sector": {
+                "quote_source": meta["quote_source"],
+                "sector_source": meta["sector_source"],
+                "sector_data_ok": meta["sector_data_ok"],
+                "fetched_at": meta["fetched_at"],
+                "update_freq": "每日一次（收盤後），非即時盤中報價",
+                "scan_universe_threshold": meta["scan_universe_threshold"],
+            },
+            "technical_indicators": {
+                "source": "yfinance 日線 OHLCV，計算方式與每日訊號掃描（scanner.py）完全相同",
+                "note": "K線根數不足（EMA長期均線需120根以上）時 indicators.valid=false，各子指標亦可能個別缺資料",
+            },
+            "fundamentals": {
+                "valuation_source": (out.get("valuation") or {}).get("source", "twse_openapi／tpex_openapi（本益比/殖利率/股價淨值比）"),
+                "monthly_revenue_source": (out.get("monthly_revenue") or {}).get("source", "twse_openapi／tpex_openapi（月營收）"),
+                "note": "估值與營收資料可能落後（非即時），實際期間以回傳的 period 欄位為準",
+            },
+            "material_news": {"source": "TWSE OpenAPI t187ap04_L（重大訊息公告，僅涵蓋上市、非全歷史；上櫃無對應公開資料源）"},
+        }
+    except Exception as e:
+        out["data_sources_error"] = str(e)
     return jsonify(out)
 
 @app.route("/api/scan/force", methods=["POST"])

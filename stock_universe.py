@@ -23,8 +23,13 @@ logger = logging.getLogger(__name__)
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-CACHE_PATH = "instance/stock_universe.json"
 CACHE_TTL  = 86400
+# ★ 新增：2026-09-29——使用者要求個股研究頁要能查全部上市櫃股票，不能只限
+# build_universe() 套了 200張成交量門檻之後的掃描池候選。這支「未過濾原始
+# 清單」快取是 build_universe()（掃描用，套門檻）跟 build_full_universe()
+# （研究查詢用，不套門檻）共用的底層資料來源，同一次刷新只打一次 TWSE/TPEX
+# API，不會因為多了研究頁功能就讓每日 API 呼叫量翻倍。
+RAW_CACHE_PATH = "instance/stock_universe_raw.json"
 
 TWSE_LIST_URL   = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
 TPEX_LIST_URL   = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
@@ -125,10 +130,6 @@ SECTOR_SCAN_PRIORITY = {
     "ETF": 1, "鋼鐵": 5, "化學": 5, "塑膠": 5,
     "建築營造": 6, "食品": 6, "紡織纖維": 6, "其他": 9,
 }
-
-def _is_cache_valid():
-    if not os.path.exists(CACHE_PATH): return False
-    return time.time() - os.path.getmtime(CACHE_PATH) < CACHE_TTL
 
 # ★ 修正：原本用 `len(code) not in (4,5) or not code.isdigit()` 判斷「有效代碼」，
 #   這個規則把台股所有槓桿/反向/主動式 ETF（代碼結尾帶一碼英文字母，如 00631L 元大台灣50正2、
@@ -288,48 +289,86 @@ def _classify_size(close, volume_lots) -> str:
 # 另一個（甚至更主要的）原因，跟 data_fetcher.py 那個無上限快取是同一類問題。
 # 這裡加一層簡單的行程內記憶體快取：只要硬碟快取沒過期，同一個 process 內直接
 # 回傳記憶體裡那份，不用每次都重新讀檔案、重新反序列化。
-_universe_mem_cache: Optional[List[Dict]] = None
-_universe_mem_cache_at: float = 0.0
+_raw_mem_cache: Optional[Dict] = None
+_raw_mem_cache_at: float = 0.0
 
-def build_universe(force_refresh=False) -> List[Dict]:
-    """回傳 list of dict（取代原本的 DataFrame）"""
-    global _universe_mem_cache, _universe_mem_cache_at
+def _raw_cache_valid():
+    if not os.path.exists(RAW_CACHE_PATH): return False
+    return time.time() - os.path.getmtime(RAW_CACHE_PATH) < CACHE_TTL
+
+def _get_raw_universe(force_refresh=False) -> Dict:
+    """抓（或讀快取）全市場「未經任何流動性/價格門檻過濾」的原始清單＋產業分類。
+    回傳 {"stocks":[...每檔股票原始資料...], "sector_map":{代號:產業}, "fetched_at":
+    抓取時間戳, "fetch_ok": 本次是否真的成功抓到資料（False代表用的是舊快取或備援）}。
+    build_universe()（掃描池，套 200張/5元門檻）跟 build_full_universe()（個股
+    研究頁查詢用，不套門檻，讓使用者查得到全部上市櫃股票）共用這份底層資料，
+    同一次刷新只打一次 TWSE/TPEX 官方 API。
+    """
+    global _raw_mem_cache, _raw_mem_cache_at
     os.makedirs("instance", exist_ok=True)
 
-    # 黑名單有自己獨立、短很多的新鮮度門檻，不管全市場清單本身有沒有過期都先檢查
-    # （見上方 _refresh_blacklist_if_stale 說明），並套用在下面每一條回傳路徑上。
-    _refresh_blacklist_if_stale()
+    if not force_refresh and _raw_cache_valid():
+        if _raw_mem_cache is not None and time.time() - _raw_mem_cache_at < CACHE_TTL:
+            return _raw_mem_cache
+        logger.info("使用快取原始品種清單")
+        with open(RAW_CACHE_PATH, "r", encoding="utf-8") as f:
+            _raw_mem_cache = json.load(f)
+        _raw_mem_cache_at = time.time()
+        return _raw_mem_cache
 
-    if not force_refresh and _is_cache_valid():
-        if _universe_mem_cache is not None and time.time() - _universe_mem_cache_at < CACHE_TTL:
-            return _filter_blacklist(_universe_mem_cache)
-        logger.info("使用快取品種清單")
-        with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            _universe_mem_cache = json.load(f)
-        _universe_mem_cache_at = time.time()
-        return _filter_blacklist(_universe_mem_cache)
-
-    logger.info("下載全市場品種清單...")
+    logger.info("下載全市場原始品種清單（含上市+上櫃，未過濾）...")
     tse  = _fetch_twse_list()
     tpex = _fetch_tpex_list()
     all_stocks = tse + tpex
 
     if not all_stocks:
-        logger.error("無法下載品種清單，使用備份")
-        fallback = _get_fallback_universe()
-        _universe_mem_cache, _universe_mem_cache_at = fallback, time.time()
-        return fallback
+        logger.error("_get_raw_universe: 無法下載品種清單")
+        if _raw_mem_cache is not None:
+            logger.warning("_get_raw_universe: 本次刷新失敗，沿用記憶體裡的舊快取")
+            return _raw_mem_cache
+        if os.path.exists(RAW_CACHE_PATH):
+            logger.warning("_get_raw_universe: 本次刷新失敗，改讀硬碟舊快取（可能已過期）")
+            with open(RAW_CACHE_PATH, "r", encoding="utf-8") as f:
+                _raw_mem_cache = json.load(f)
+            _raw_mem_cache_at = time.time()
+            return _raw_mem_cache
+        return {"stocks": [], "sector_map": {}, "fetched_at": time.time(), "fetch_ok": False}
 
     sector_map = _fetch_sector_info()
     if not sector_map:
         logger.warning(
-            f"build_universe: 產業分類資料抓取失敗，本次 {len(all_stocks)} 檔股票全部會被標成"
+            f"_get_raw_universe: 產業分類資料抓取失敗，本次 {len(all_stocks)} 檔股票全部會被標成"
             f"「其他」——這會讓 scanner.py 的同產業去重邏輯把每天的訊號都收斂到只剩 1 檔"
             f"（已在 scanner.py 加防呆略過去重，但這裡還是先留下明確的根因記錄）"
         )
 
+    payload = {"stocks": all_stocks, "sector_map": sector_map,
+               "fetched_at": time.time(), "fetch_ok": True}
+    with open(RAW_CACHE_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    _raw_mem_cache, _raw_mem_cache_at = payload, time.time()
+    logger.info(f"原始品種清單: {len(all_stocks)} 檔（上市+上櫃，未過濾）")
+    return payload
+
+def build_universe(force_refresh=False) -> List[Dict]:
+    """回傳「掃描池」清單（list of dict）：套用 config.py THRESH['min_avg_volume']
+    （目前 200 張）流動性門檻＋收盤價>5 元門檻，這是 scanner.py 每日掃描候選、
+    市場總覽頁漲跌家數/產業排行/篩選器的資料來源——這個門檻是為了「值不值得
+    產生交易訊號」設計的，避免對幾千檔冷門雞蛋水餃股跑技術指標（成本太高）。
+    ★ 個股研究頁查詢單一股票不透過這個函式，改用不設門檻的 build_full_universe()
+    （使用者明確要求：查詢範圍要涵蓋全部上市櫃股票，不能只限這裡的掃描池候選）。
+    """
+    _refresh_blacklist_if_stale()
+    raw = _get_raw_universe(force_refresh)
+    all_stocks, sector_map = raw["stocks"], raw["sector_map"]
+
+    if not all_stocks:
+        logger.error("build_universe: 無法取得原始品種清單，使用備份")
+        return _get_fallback_universe()
+
     result = []
-    for s in all_stocks:
+    for orig in all_stocks:
+        s = dict(orig)  # 複製一份，不要動到 _get_raw_universe 快取裡的原始 dict
         if s["close"] <= 5: continue
         if s["volume_lots"] < THRESH["min_avg_volume"]: continue
         s["sector"] = sector_map.get(s["code"], "其他")
@@ -339,13 +378,44 @@ def build_universe(force_refresh=False) -> List[Dict]:
 
     # 排序：優先權 → 成交量
     result.sort(key=lambda x: (x["scan_priority"], -x["volume_lots"]))
+    return _filter_blacklist(result)
 
-    with open(CACHE_PATH, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False)
-
-    _universe_mem_cache, _universe_mem_cache_at = result, time.time()
-    logger.info(f"品種清單: {len(result)} 檔")
+# ★ 新增：2026-09-29——個股研究頁專用：回傳全部上市＋上櫃股票（只排除收盤價
+# <=0 的無效資料列），不套用 build_universe() 的成交量/價格門檻，也不排除
+# 處置/注意股（研究頁本來就該查得到，但用 is_disposal_or_attention 明確標出
+# 來，讓使用者知道這檔目前被列管、波動可能極端）。額外附上 in_scan_universe
+# 欄位，讓前端可以誠實告知使用者「這檔目前是否會被每日訊號掃描納入候選」。
+def build_full_universe(force_refresh=False) -> List[Dict]:
+    _refresh_blacklist_if_stale()
+    raw = _get_raw_universe(force_refresh)
+    all_stocks, sector_map = raw["stocks"], raw["sector_map"]
+    if not all_stocks:
+        logger.error("build_full_universe: 無法取得原始品種清單，使用備份")
+        return _get_fallback_universe()
+    result = []
+    for orig in all_stocks:
+        if orig["close"] <= 0: continue
+        s = dict(orig)
+        s["sector"] = sector_map.get(s["code"], "其他")
+        s["size_cat"] = "ETF" if s["is_etf"] else _classify_size(s["close"], s["volume_lots"])
+        s["in_scan_universe"] = s["close"] > 5 and s["volume_lots"] >= THRESH["min_avg_volume"]
+        s["is_disposal_or_attention"] = s["code"] in BLACKLIST_CODES
+        result.append(s)
+    result.sort(key=lambda x: x["code"])
     return result
+
+def get_universe_data_meta() -> Dict:
+    """給前端標示資料來源／更新時間／產業分類資料本次是否真的抓到，避免使用者
+    誤把抓取失敗時的退回值「其他」當成真正的產業分類結果。"""
+    raw = _get_raw_universe()
+    return {
+        "fetched_at": raw.get("fetched_at"),
+        "fetch_ok": raw.get("fetch_ok", False),
+        "sector_data_ok": bool(raw.get("sector_map")),
+        "quote_source": "TWSE OpenAPI STOCK_DAY_ALL（上市）／TPEx OpenAPI tpex_mainboard_quotes（上櫃）",
+        "sector_source": "TWSE OpenAPI t187ap03_L（僅涵蓋上市公司；上櫃無對應公開產業分類資料源，一律顯示為「其他」）",
+        "scan_universe_threshold": {"min_close": 5, "min_volume_lots": THRESH["min_avg_volume"]},
+    }
 
 def get_scan_batches(batch_size=None) -> List[List[str]]:
     batch_size = batch_size or SYSTEM["scan_batch_size"]
@@ -353,8 +423,19 @@ def get_scan_batches(batch_size=None) -> List[List[str]]:
     return [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
 
 def get_stock_info(ticker: str) -> Optional[Dict]:
+    """查掃描池（受 200張/5元門檻限制）。scanner.py／backtester.py 用這個——
+    只需要知道候選股票的 size_cat 等資訊，本來就該侷限在掃描池範圍內。"""
     universe = build_universe()
     for s in universe:
+        if s["ticker"] == ticker:
+            return s
+    return None
+
+def get_stock_info_any(ticker: str) -> Optional[Dict]:
+    """★ 新增：2026-09-29——查全部上市櫃股票（不受掃描池門檻限制），供個股
+    研究頁查詢用。跟 get_stock_info() 的差別只在資料來源：這個查
+    build_full_universe()。"""
+    for s in build_full_universe():
         if s["ticker"] == ticker:
             return s
     return None
@@ -438,8 +519,14 @@ def get_sector_count() -> Dict[str, int]:
 # 對全市場重抓。change_pct 是 None 的股票（見 _parse_change() 說明：欄位
 # 解析失敗，或這次 TWSE/TPEX 清單抓取本身失敗）一律不計入漲/跌/平家數，
 # 避免用猜的數字冒充真的漲跌方向。
+# ★ 修正：2026-09-29——使用者反映查詢/統計不該被限制在掃描池的200張成交量
+# 門檻以內。原本這三個函式（漲跌家數、產業排行、股票篩選器）都是用
+# build_universe()（掃描池，套門檻）算的，代表「上漲家數/下跌家數」這類市場
+# 總覽統計，還有篩選器能查到的股票，其實都只涵蓋成交量>=200張的股票，跟頁面
+# 標題「市場總覽」（應該代表全市場）不符，也不夠準確。全部改用不設門檻的
+# build_full_universe()，涵蓋全部上市＋上櫃股票。
 def get_market_breadth() -> Dict:
-    universe = build_universe()
+    universe = build_full_universe()
     covered = [s for s in universe if s.get("change_pct") is not None]
     up = [s for s in covered if s["change_pct"] > 0]
     down = [s for s in covered if s["change_pct"] < 0]
@@ -454,7 +541,7 @@ def get_market_breadth() -> Dict:
     }
 
 def get_sector_performance() -> List[Dict]:
-    universe = build_universe()
+    universe = build_full_universe()
     by_sector: Dict[str, List[float]] = {}
     for s in universe:
         cp = s.get("change_pct")
@@ -472,12 +559,14 @@ def get_sector_performance() -> List[Dict]:
     return out
 
 def screen_universe(filters: Dict) -> List[Dict]:
-    """★ 新增：2026-09-29——市場總覽頁的股票篩選器。只用 build_universe()
-    既有欄位篩（代號/名稱/產業/市值分類/價格/漲跌幅/成交量），不做 RSI/MACD/
-    均線這類需要對全市場即時算技術指標的篩選——現有掃描架構只對「候選訊號」
-    的幾十檔股票算技術指標（見 scanner.py），對全市場 1000+ 檔即時算的成本
-    太高，這裡先不做，避免每次篩選都變成一次重量級全市場計算。"""
-    universe = build_universe()
+    """市場總覽頁的股票篩選器。只用既有欄位篩（代號/名稱/產業/市值分類/價格/
+    漲跌幅/成交量），不做 RSI/MACD/均線這類需要對全市場即時算技術指標的篩選
+    ——現有掃描架構只對「候選訊號」的幾十檔股票算技術指標（見 scanner.py），
+    對全市場 1000+ 檔即時算的成本太高，這裡先不做，避免每次篩選都變成一次
+    重量級全市場計算。
+    ★ 修正：2026-09-29——改用不設門檻的 build_full_universe()，查詢範圍涵蓋
+    全部上市＋上櫃股票，不再受 build_universe() 的200張成交量門檻限制。"""
+    universe = build_full_universe()
     q = (filters.get("q") or "").strip().lower()
     sector = filters.get("sector") or ""
     size_cat = filters.get("size_cat") or ""
