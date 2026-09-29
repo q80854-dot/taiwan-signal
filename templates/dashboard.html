@@ -527,9 +527,14 @@ async function fetchUniverse(){
   try{
     const d=await(await fetch('/api/universe',{cache:'no-store'})).json();
     if(d.error)throw new Error(d.error);
+    // ★ 修正：2026-09-29——後端 get_sector_count()（stock_universe.py）目前對
+    // 「產業分類資料源抓不到對應」的股票會回傳空字串當 key（不是統一併進
+    // 「其他」），前端如果直接照 key 印會出現一列完全空白的產業名稱，看起來
+    // 像渲染壞掉。這裡把空字串 key 顯示成「未分類」，資料本身不動、只是給
+    // 空字串一個看得懂的標籤。
     const sectors=Object.entries(d.sectors||{}).sort((a,b)=>b[1]-a[1]);
     el.innerHTML=`<div class="kv"><span>掃描池總數</span><span>${d.count||0} 檔</span></div>`+
-      sectors.map(([sec,cnt])=>`<div class="kv"><span>${sec}</span><span>${cnt} 檔</span></div>`).join('');
+      sectors.map(([sec,cnt])=>`<div class="kv"><span>${sec||'未分類'}</span><span>${cnt} 檔</span></div>`).join('');
   }catch(e){el.innerHTML='<div class="empty">股票池資料載入失敗</div>';}
 }
 
