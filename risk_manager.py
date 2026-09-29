@@ -195,14 +195,30 @@ def get_system_status(market_overview: Dict) -> Dict:
     elif foreign.get("level")=="warning":  score-=10
     elif foreign.get("level")=="positive": score+=10
     daily=check_daily_loss_limit(); score=max(0,min(100,score))
+    # ★ 修正：2026-09-29——使用者回報這頁同一畫面「外資賣超632億，暫停多單」
+    # 跟「可交易：是」「每個產業✅適合交易」同時出現，互相矛盾。根因：
+    # can_trade 跟 cat_advice 原本純粹看 score 門檻（>=50 / >=70），但 score
+    # 只是把 market_cb/foreign 的等級各自扣固定分數後加總——大盤重挫(extreme,
+    # -50)同時外資也極端賣超(extreme,-20)才會扣到70分以下，只有外資單獨
+    # extreme（-20分，100→80分）並不會把總分拉到70以下，可交易/適合交易的
+    # 文字判斷完全沒有意識到「stop_buy」這個訊號本身就是要暫停多單，只把它
+    # 當成一般扣分項目——這正是 signal_engine.py 那邊「extreme 等級原本也只
+    # 是扣分、沒有真的擋單」的同一個根因，只是這裡是顯示層版本。
+    # 這裡讓 can_trade／cat_advice 直接看 market_cb/foreign 的 action 是否為
+    # "stop_buy"，是就無條件顯示暫停，不再讓分數門檻蓋過這個訊號。
+    stop_buy = market_cb.get("action")=="stop_buy" or foreign.get("action")=="stop_buy"
+    can_trade = (not stop_buy) and score>=50
     cat_advice={}
-    for cat in ["ETF","半導體","AI概念","金融保險","航運","生技醫療"]:
-        cat_advice[cat]="✅ 適合交易" if score>=70 else "⚠️ 謹慎" if score>=40 else "🔴 觀望"
+    for cat in ["ETF","半導體業","電子零組件業","金融保險","航運業","生技醫療業"]:
+        if stop_buy:
+            cat_advice[cat]="🔴 暫停多單（大盤/外資熔斷中，僅供研究參考）"
+        else:
+            cat_advice[cat]="✅ 適合交易" if score>=70 else "⚠️ 謹慎" if score>=40 else "🔴 觀望"
     # ★ 新增：2026-09-26（稽核發現）——原本這裡完全沒有揭露「這次環境評分是不是
     # 建立在缺資料上」，儀表板/使用者只會看到一個看起來正常的分數，不知道背後
     # 大盤或外資資料其實剛好抓不到。data_issues 讓前端可以額外提示。
     data_issues=[m for m in (market_cb.get("message") if market_cb.get("level")=="unknown" else None,
                               foreign.get("message") if foreign.get("level")=="unknown" else None) if m]
     return {"env_score":score,"env_status":st,"env_color":cl,"twii_chg":twii_chg,"vix":vix,
-            "can_trade":score>=50,"category_advice":cat_advice,"daily_loss":daily,
+            "can_trade":can_trade,"stop_buy":stop_buy,"category_advice":cat_advice,"daily_loss":daily,
             "foreign_signal":foreign.get("message",""),"data_issues":data_issues}

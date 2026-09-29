@@ -290,6 +290,30 @@ class StateStore:
         except Exception as e:
             logger.error(f"get_recent_signals: {e}"); return []
 
+    # ★ 新增：2026-09-29——使用者回報兩個相關 bug：(1) 績效分析頁「總交易 6」
+    # 跟下面列出的約19筆對不起來、(2) 交易歷史頁顯示「尚無記錄」但績效頁明明
+    # 有交易資料。根因是同一個：get_performance_summary() 的 "total" 是
+    # COUNT(*) WHERE status='closed'（只算已平倉），但底下塞給前端表格的
+    # "recent_trades" 卻是呼叫 get_recent_signals()，那支函式完全不看 status，
+    # 抓的是「近30天所有產生過的訊號」（active／pending／closed 都算在內）
+    # ——兩個數字從來就不是同一個母體，對不起來是必然的；而 dashboard.html
+    # 的「交易歷史」頁更誇張，直接讀的是 _state.active_signals（今日訊號用的
+    # 「目前有效訊號」清單），跟「歷史」兩個字完全無關，沒有未平倉訊號時自然
+    # 顯示「尚無記錄」，即使資料庫裡已經累積了一堆已平倉交易。
+    # 這裡補一個明確只回傳「已平倉」交易、依平倉時間排序的函式，讓績效頁的
+    # KPI（closed 筆數）跟底下列表用同一個母體，交易歷史頁也改抓這裡（見
+    # app.py /api/performance 的呼叫端與 dashboard.html renderHistory()）。
+    def get_closed_trades(self, limit: int = 100) -> List[Dict]:
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM signals WHERE status='closed' ORDER BY closed_at DESC LIMIT ?",
+                    (limit,)
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"get_closed_trades: {e}"); return []
+
     # ★ 新增：2026-09-16——見上方 _init_db() 的 actual_entry_price 欄位說明。
     def record_actual_fill(self, sig_id: str, actual_price: float) -> bool:
         try:
@@ -357,18 +381,38 @@ class StateStore:
         # 不會有這個問題，所以之前用 SQLite 從沒踩到。改成把 'tp%' 當成 bound
         # parameter 傳進去（兩種後端都支援, 也更安全），而不是寫死在 SQL 字串裡。
         try:
+            # ★ 修正：2026-09-29——使用者回報「實盤紀錄裡有兩筆ETF空單，其中一
+            # 檔是債券ETF，空單應該只算研究用途，不該混進實盤勝率」。台股 ETF
+            # 代碼慣例一律以「00」開頭（跟 stock_universe._is_etf_code() 用的
+            # 同一條規則），放空 ETF——尤其是債券 ETF——在多數券商根本不是一般
+            # 散戶帳戶能直接下單的標的（要嘛不能融券、要嘛流動性/借券成本讓
+            # 「照訊號價位計算的勝率」跟實際能不能成交脫節），把這類訊號的損益
+            # 算進「實盤勝率」會讓這個數字看起來像是真的可執行績效，但其實
+            # 混了一部分使用者根本無法照做的訊號。這裡把「ETF + 放空」的已平倉
+            # 交易從勝率/損益的加總統計裡剔除（SQL 用 code LIKE '00%' 判斷
+            # ETF，跟其餘程式碼同一套慣例），但不刪除資料本身——
+            # get_closed_trades() 回傳的明細列表仍然看得到這些交易，只是額外
+            # 標成 research_only，讓使用者自己判斷要不要參考，不是憑空消失。
+            etf_short_exclude = "NOT (direction='sell' AND code LIKE '00%')"
             with self._conn() as conn:
-                row = conn.execute("""
+                row = conn.execute(f"""
                     SELECT COUNT(*) as total,
                            SUM(CASE WHEN result IN ('tp1','tp2','tp3') THEN 1 ELSE 0 END) as wins,
                            SUM(CASE WHEN result='sl' THEN 1 ELSE 0 END) as losses,
                            SUM(pnl_twd) as total_pnl,
                            AVG(CASE WHEN result LIKE ? THEN pnl_twd ELSE NULL END) as avg_win,
                            AVG(CASE WHEN result='sl' THEN pnl_twd ELSE NULL END) as avg_loss
-                    FROM signals WHERE status='closed'
+                    FROM signals WHERE status='closed' AND {etf_short_exclude}
                 """, ("tp%",)).fetchone()
+                excluded_row = conn.execute(f"""
+                    SELECT COUNT(*) as n FROM signals WHERE status='closed' AND NOT ({etf_short_exclude})
+                """).fetchone()
             total=row["total"] or 0; wins=row["wins"] or 0; losses=row["losses"] or 0
             closed=wins+losses
+            excluded_etf_shorts = excluded_row["n"] or 0
+            recent = self.get_closed_trades(100)
+            for t in recent:
+                t["research_only"] = (t.get("direction")=="sell" and str(t.get("code","")).startswith("00"))
             return {
                 "total":      total, "closed": closed, "pending": total-closed,
                 "wins":       wins,  "losses": losses,
@@ -376,7 +420,14 @@ class StateStore:
                 "total_pnl":  round(row["total_pnl"] or 0,0),
                 "avg_win":    round(row["avg_win"]  or 0,0),
                 "avg_loss":   round(row["avg_loss"] or 0,0),
-                "recent_trades": self.get_recent_signals(20),
+                # ★ 修正：2026-09-29——原本是 get_recent_signals(20)（近30天所有
+                # 訊號，不分 status），跟上面 total/wins/losses 這幾個只算
+                # status='closed' 的統計對不上母體，見 get_closed_trades() 的
+                # 說明。改成同樣只抓已平倉交易，兩邊數字才會一致。列表本身仍
+                # 包含 ETF 空單（標 research_only=true），只有上面的加總統計
+                # 排除它們。
+                "recent_trades": recent,
+                "excluded_etf_short_count": excluded_etf_shorts,
                 # ★ 新增：2026-09-16——三方AI交叉比對後續修正，見 get_slippage_stats()
                 # 與 get_winrate_by_weekly_bias() 的定義說明。掛在 /api/performance
                 # 既有回應裡，不需要另外開新端點，網站/未來分析都能直接拿到。

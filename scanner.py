@@ -175,11 +175,30 @@ class TWScanEngine:
                 block_msgs.append(max_pos.get("message", "持倉數達上限"))
             if skip_new_signals:
                 logger.warning(f"風控熔斷觸發，本次掃描跳過產生新訊號：{'；'.join(block_msgs)}")
+                # ★ 修正：2026-09-29——見下面 _push_signals() 「今日已推播過一次
+                # 盤後集結報告就跳過重複推播」的同一個修正說明——這則風控熔斷
+                # 警示是同一次完整掃描流程裡、比 _push_signals 更早的一步，如果
+                # 當天稍早已經整套跑過一次（不管是手動立即掃描還是排程/重啟
+                # 重疊），這裡也會因為條件同樣成立而重複發一次一模一樣的熔斷
+                # 警示——這正是使用者截圖裡「已有13個持倉，暫停新增」訊息連續
+                # 出現兩次的根因。用同一個 daily_report_sent_date 旗標判斷「今天
+                # 是否已經跑過一次完整報告」，是的話這則警示也一併跳過，不需要
+                # 額外開一個旗標。
+                already_reported_today = False
                 try:
-                    from telegram_bot import send_alert
-                    send_alert("🛑 風控熔斷，今日暫停產生新訊號\n" + "\n".join(block_msgs), "warning")
+                    from state_store import store as _store
+                    _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    already_reported_today = _store.get_meta("daily_report_sent_date", "") == _today
                 except Exception as e:
-                    logger.warning(f"風控熔斷通知推播失敗: {e}")
+                    logger.warning(f"風控熔斷通知：讀取今日是否已推播旗標失敗（{e}），保守起見照常推播")
+                if already_reported_today:
+                    logger.warning("風控熔斷通知：今天稍早已經推播過一次完整報告（含此警示的內容），本次視為重複觸發，跳過")
+                else:
+                    try:
+                        from telegram_bot import send_alert
+                        send_alert("🛑 風控熔斷，今日暫停產生新訊號\n" + "\n".join(block_msgs), "warning")
+                    except Exception as e:
+                        logger.warning(f"風控熔斷通知推播失敗: {e}")
         except Exception as e:
             logger.warning(f"risk_manager 熔斷檢查失敗（不影響本次掃描繼續）: {e}", exc_info=True)
 
@@ -995,8 +1014,39 @@ class TWScanEngine:
             logger.error(f"_push_signals: 無法載入 telegram_bot，本次全部訊號未推播: {e}", exc_info=True)
             return
 
+        # ★ 修正：2026-09-29——使用者回報 Telegram「一直亂跳訊息」，實際是同一份
+        # 「盤後集結報告」跟風控熔斷警示在同一天被完整重複推播了兩次（15:39跟
+        # 16:30 各一次，兩次的VIX/外資數字有些微差異，代表是兩次真正各自獨立
+        # 的完整掃描，不是同一次送兩份）。run_daily_scan() 本身只用鎖擋「同時」
+        # 執行兩次，完全沒有擋「同一天」執行第二次——不管第二次是使用者自己
+        # 手動按了「立即掃描」、還是 16:15 job_pre_scan_restart 重啟 worker 後
+        # 舊/新兩個 worker 短暫並存導致 16:30 的排程意外跑了兩次，只要當天
+        # 已經有一次完整報告送出去，同一天再送一次一定是重複雜訊，不會是使用者
+        # 想看到的。這裡在真正推播「總結報告」前用 state_store 記一個「今天
+        # 是否已經送過」的旗標（跨 process/跨重啟都看得到，不是只存在記憶體），
+        # 已經送過就跳過本次總結報告（＋後面的個別訊號推播，因為那些訊號本來
+        # 就是同一次完整掃描找出來的，這次掃描如果整個是「重複」，個別訊號也
+        # 沒有必要重推一次），只在 log 留一筆記錄方便日後排查，而不是靜靜吞掉
+        # 讓機主一頭霧水查不到原因。
+        try:
+            from state_store import store
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            already_sent_date = store.get_meta("daily_report_sent_date", "")
+            if already_sent_date == today_str:
+                logger.warning(f"_push_signals: 今天（{today_str}）已經送過一次盤後集結報告，"
+                                f"本次視為重複觸發（手動立即掃描或排程/重啟重疊），跳過推播避免 Telegram 重複洗版")
+                return
+        except Exception as e:
+            logger.warning(f"_push_signals: 讀取今日是否已推播的旗標失敗（{e}），保守起見繼續照常推播")
+            today_str = None
+
         try:
             send_daily_report(signals, market_overview, stats)
+            if today_str:
+                try:
+                    store.set_meta("daily_report_sent_date", today_str)
+                except Exception as e:
+                    logger.warning(f"_push_signals: 寫入今日已推播旗標失敗（不影響本次已送出的報告）: {e}")
         except Exception as e:
             logger.error(f"_push_signals: 每日總結報告推播失敗: {e}", exc_info=True)
             try:

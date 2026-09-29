@@ -377,9 +377,31 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             from risk_manager import check_market_circuit_breaker, check_foreign_flow, check_margin_change
             macro_adj = 0; macro_notes = []
             mc = check_market_circuit_breaker(market_overview)
+            fc = check_foreign_flow(market_overview)
+            # ★ 修正：2026-09-29——使用者回報「市場環境頁」同一頁一邊寫「外資賣超
+            # 632億，暫停多單」，一邊又寫「可交易：是」「產業✅適合交易」，互相
+            # 矛盾。追出來的根因：check_market_circuit_breaker()／check_foreign_flow()
+            # 在大盤重挫或外資極端賣超時，回傳的 level 是 "extreme"、
+            # action 是 "stop_buy"——但這個 "extreme"／"stop_buy" 只有這裡（
+            # signal_engine.py 算單一訊號分數）跟 risk_manager.get_system_status()
+            # （市場環境頁的顯示邏輯）兩個地方各自獨立讀取這兩個函式的結果，而
+            # 這裡原本只處理了 "high"（大盤偏弱，-10分）跟 "warning"（外資賣超，
+            # -8分）兩個較輕的等級，完全沒有處理 "extreme" 這個真正該擋新多單的
+            # 等級——分數依舊只是照常算、訊號依舊照常推播，"暫停多單" 這個名稱
+            # 本身從來沒有真的讓任何一筆多單訊號被擋下來，是純文字訊息、沒接線。
+            # 這裡把 "extreme"／action=="stop_buy" 接成真正的硬性攔截：只擋多單
+            # （direction=="buy"）方向的新訊號，放空訊號不受影響（大盤重挫/外資
+            # 大舉賣超對放空來說反而是順勢，沒有理由一併擋）。
+            # get_system_status() 那邊的矛盾另外在該函式做對應修正（不能只看
+            # 總分門檻，score>=70 但背後可能是靠其他項目加分蓋過 stop_buy）。
+            if direction == "buy" and mc.get("action") == "stop_buy":
+                logger.info(f"[{ticker}] 大盤熔斷 extreme（{mc.get('message')}），暫停產生多單訊號")
+                return None
+            if direction == "buy" and fc.get("action") == "stop_buy":
+                logger.info(f"[{ticker}] 外資賣超熔斷 extreme（{fc.get('message')}），暫停產生多單訊號")
+                return None
             if mc.get("level") == "high":
                 macro_adj -= 10; macro_notes.append(mc["message"])
-            fc = check_foreign_flow(market_overview)
             if fc.get("level") == "warning":
                 macro_adj -= 8; macro_notes.append(fc["message"])
             gc_ = check_margin_change(market_overview)
