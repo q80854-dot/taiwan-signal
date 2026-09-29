@@ -172,6 +172,40 @@ def _parse_change(raw) -> Optional[float]:
     except Exception:
         return None
 
+# ★ 新增：2026-09-29——使用者回報「成交量的張數全部都有問題」。實測驗證
+# （用 WebFetch 直接打 TWSE 官方 STOCK_DAY 單股歷史 API 現場核對 2330、00400A
+# 兩檔）：vol/1000 這條換算公式本身沒有錯，算出來的張數跟 TWSE 官方公佈的
+# 數字逐位元相符。真正的落差在於：TWSE STOCK_DAY_ALL 這支「全市場快照」API
+# 本身只會在「每個交易日收盤後」才更新當天的資料，如果使用者是在收盤前，
+# 或是 TWSE 官方資料本身還沒更新完成的時間點查詢，API 回傳的會是「上一個
+# 已收盤交易日」的舊資料，而這支程式原本完全沒有把「這份快照實際上是哪一
+# 個交易日的資料」記錄下來或顯示給使用者看——使用者看到的只有我們自己的
+# 抓取時間戳（fetched_at），會被誤會成「今天的即時資料」，但實際上可能是
+# 前幾個交易日的舊數字，讓人誤以為是張數「算錯了」。這裡把 TWSE 官方回傳
+# 的 Date 欄位（民國年格式，如 "1150924" = 民國115年09月24日）解析出來，
+# 存到每一筆股票資料的 quote_date 欄位，讓 _get_raw_universe() 可以往上
+# attach 一個全市場統一的「這份資料實際上是哪一天收盤後的資料」欄位，
+# 前端會用這個欄位明確標示，而不是只顯示我們自己的抓取時間。
+def _parse_roc_date(raw) -> Optional[str]:
+    """民國年日期字串轉西元 ISO 格式。支援 TWSE 常見的兩種格式：
+    純數字 7 碼「1150924」(YYYMMDD) 或帶斜線「115/09/24」。
+    解析失敗回傳 None（不猜測，避免顯示錯誤的日期誤導使用者）。"""
+    try:
+        s = str(raw).strip()
+        if not s: return None
+        if "/" in s:
+            parts = s.split("/")
+            if len(parts) != 3: return None
+            roc_y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
+        else:
+            if not s.isdigit() or len(s) not in (6, 7): return None
+            roc_y = int(s[:-4]); m = int(s[-4:-2]); d = int(s[-2:])
+        if not (1 <= m <= 12 and 1 <= d <= 31): return None
+        year = roc_y + 1911
+        return f"{year:04d}-{m:02d}-{d:02d}"
+    except Exception:
+        return None
+
 def _fetch_twse_list() -> List[Dict]:
     try:
         r = requests.get(TWSE_LIST_URL, headers=HEADERS, timeout=15)
@@ -199,6 +233,7 @@ def _fetch_twse_list() -> List[Dict]:
                 "change": chg, "change_pct": chg_pct,
                 "sector": "", "is_etf": _is_etf_code(code),
                 "size_cat": "", "scan_priority": 9,
+                "quote_date": _parse_roc_date(item.get("Date")),
             })
         logger.info(f"TWSE: {len(stocks)} 檔")
         return stocks
@@ -230,6 +265,17 @@ def _fetch_tpex_list() -> List[Dict]:
             except: continue
             chg = _parse_change(item.get("Change"))
             chg_pct = round(chg/(close-chg)*100, 2) if (chg is not None and close-chg > 0) else None
+            # ★ 新增：2026-09-29——TPEX 這支 API 目前無法從沙盒環境現場驗證欄位
+            # 名稱（WebFetch 打這個網域一直被擋 403），所以這裡沒有偷懶假設
+            # 一定是哪個 key，而是依序嘗試官方 OpenAPI 文件/其他上櫃端點常見的
+            # 幾種可能命名，找到第一個能解析出合法日期的就用，全部失敗就是
+            # None（前端會照實顯示「上櫃資料日期未知，以下市資料日期為準」，
+            # 不會顯示一個猜錯的日期）。
+            tpex_date = None
+            for key in ("Date", "date", "TradingDate", "SecuritiesTradingDate", "d"):
+                if key in item:
+                    tpex_date = _parse_roc_date(item.get(key))
+                    if tpex_date: break
             stocks.append({
                 "code": code, "ticker": f"{code}.TWO", "name": name,
                 "market": "OTC", "close": close,
@@ -237,6 +283,7 @@ def _fetch_tpex_list() -> List[Dict]:
                 "change": chg, "change_pct": chg_pct,
                 "sector": "", "is_etf": _is_etf_code(code),
                 "size_cat": "", "scan_priority": 9,
+                "quote_date": tpex_date,
             })
         logger.info(f"TPEX: {len(stocks)} 檔")
         return stocks
@@ -332,7 +379,8 @@ def _get_raw_universe(force_refresh=False) -> Dict:
                 _raw_mem_cache = json.load(f)
             _raw_mem_cache_at = time.time()
             return _raw_mem_cache
-        return {"stocks": [], "sector_map": {}, "fetched_at": time.time(), "fetch_ok": False}
+        return {"stocks": [], "sector_map": {}, "fetched_at": time.time(), "fetch_ok": False,
+                "quote_trading_date": None}
 
     sector_map = _fetch_sector_info()
     if not sector_map:
@@ -342,8 +390,25 @@ def _get_raw_universe(force_refresh=False) -> Dict:
             f"（已在 scanner.py 加防呆略過去重，但這裡還是先留下明確的根因記錄）"
         )
 
+    # ★ 新增：2026-09-29——見上面 _parse_roc_date 的說明：從這次抓到的資料裡
+    # 找出「這份快照實際上是哪一個交易日收盤後的資料」，讓前端可以明確標示
+    # 給使用者看，而不是只顯示我們自己的抓取時間戳（fetched_at）。優先採用
+    # TWSE（上市）的日期做為全市場代表——兩個交易所平常交易日曆一致；如果
+    # TWSE 這批完全沒解析出日期（例如欄位格式又變了），退而求其次用 TPEX
+    # 的日期；兩邊都沒有就是 None（前端會照實顯示「資料日期未知」，不會
+    # 顯示一個猜錯的日期）。
+    quote_trading_date = None
+    for s in tse:
+        if s.get("quote_date"):
+            quote_trading_date = s["quote_date"]; break
+    if not quote_trading_date:
+        for s in tpex:
+            if s.get("quote_date"):
+                quote_trading_date = s["quote_date"]; break
+
     payload = {"stocks": all_stocks, "sector_map": sector_map,
-               "fetched_at": time.time(), "fetch_ok": True}
+               "fetched_at": time.time(), "fetch_ok": True,
+               "quote_trading_date": quote_trading_date}
     with open(RAW_CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     _raw_mem_cache, _raw_mem_cache_at = payload, time.time()
@@ -415,6 +480,13 @@ def get_universe_data_meta() -> Dict:
         "quote_source": "TWSE OpenAPI STOCK_DAY_ALL（上市）／TPEx OpenAPI tpex_mainboard_quotes（上櫃）",
         "sector_source": "TWSE OpenAPI t187ap03_L（僅涵蓋上市公司；上櫃無對應公開產業分類資料源，一律顯示為「其他」）",
         "scan_universe_threshold": {"min_close": 5, "min_volume_lots": THRESH["min_avg_volume"]},
+        # ★ 新增：2026-09-29——這份快照實際上是「哪一個交易日」收盤後的成交量
+        # /價格資料（不是我們的抓取時間，是 TWSE/TPEX 官方資料本身標示的交易
+        # 日）。TWSE 官方 API 本身只在收盤後才會更新當天資料，如果現在還沒收盤
+        # 、或官方資料還沒更新完，這裡看到的會是上一個已收盤交易日，這是正常
+        # 現象，不是成交量算錯了——把這個日期清楚顯示出來，讓使用者自己判斷
+        # 看到的數字是不是「今天」的。
+        "quote_trading_date": raw.get("quote_trading_date"),
     }
 
 def get_scan_batches(batch_size=None) -> List[List[str]]:
