@@ -488,6 +488,14 @@ function taipeiParts(iso){
   fmt.formatToParts(d).forEach(p=>{parts[p.type]=p.value;});
   return parts;
 }
+// ★ 新增：2026-09-29——回傳「現在台北時間」的西元日期字串（YYYY-MM-DD），
+// 用來跟後端回傳的 quote_trading_date 比對，判斷使用者現在看到的成交量／
+// 價格資料是不是「今天」收盤後的資料，還是 TWSE/TPEX 官方尚未更新、其實
+// 是前幾個交易日的舊資料（這是正常現象，不代表張數算錯）。
+function todayISO(){
+  const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'});
+  return fmt.format(new Date()); // en-CA locale 固定輸出 YYYY-MM-DD
+}
 function toTaipeiStr(iso){
   if(!iso)return null;
   try{
@@ -604,7 +612,14 @@ function renderInstrument(d){
   // 產業分類資料是否正常抓到。這裡統一顯示在基本資料區塊最上方。
   const qs=ds.quote_and_sector||{};
   const fetchedTxt=qs.fetched_at?toTaipeiStr(new Date(qs.fetched_at*1000).toISOString()):null;
+  // ★ 新增：2026-09-29——使用者回報「成交量的張數全部都有問題」，實測驗證
+  // 換算公式本身沒錯，真正落差是 TWSE/TPEX 官方 API 只在收盤後才更新，查詢
+  // 當下如果還沒收盤，看到的會是上一個交易日的資料。這裡把「這份成交量／
+  // 價格資料實際上是哪一個交易日」明顯標示出來（跟「我們何時抓取」分開顯示），
+  // 讓使用者自己判斷看到的數字是不是「今天」的，不要再誤以為是算錯了。
+  const tdate=qs.quote_trading_date;
   html+=`<div style="font-size:10.5px;color:var(--t3);margin-bottom:10px">
+    ${tdate?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">📅 以下成交量／價格為 <span style="color:var(--down)">${tdate}</span> 收盤後資料${tdate!==todayISO()?'（非今日，TWSE/TPEX 官方尚未公布更新的收盤資料，屬正常現象，不是張數算錯）':'（今日收盤後最新資料）'}</div>`:'<div style="color:var(--warn)">⚠ 無法判斷這份資料實際交易日期，請自行核對是否為最新收盤資料</div>'}
     行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}
     ${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，下方「產業」欄位暫時一律顯示「其他」，非真實分類</span>':''}
   </div>`;
@@ -711,7 +726,12 @@ function renderMoSourceNote(ds){
   const el=document.getElementById('mo-source-note');if(!el||!ds)return;
   const qs=ds.quote_and_sector||ds; // /api/market/breadth 直接把 data_sources 塞在頂層是 get_universe_data_meta() 的原始結構
   const fetchedTxt=qs.fetched_at?toTaipeiStr(new Date(qs.fetched_at*1000).toISOString()):null;
-  el.innerHTML=`行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}`;
+  // ★ 新增：2026-09-29——同 renderInstrument()：明確標示這頁的漲跌家數／
+  // 產業排行／篩選器背後的成交量、價格是「哪一個交易日」收盤後的資料，
+  // 避免使用者把 TWSE/TPEX 官方尚未更新（非今日）誤會成張數算錯。
+  const tdate=qs.quote_trading_date;
+  const tdateHtml=tdate?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">📅 以下統計為 <span style="color:var(--down)">${tdate}</span> 收盤後資料${tdate!==todayISO()?'（非今日，TWSE/TPEX 官方尚未公布更新的收盤資料，屬正常現象，不是張數算錯）':'（今日收盤後最新資料）'}</div>`:'<div style="color:var(--warn)">⚠ 無法判斷這份資料實際交易日期，請自行核對是否為最新收盤資料</div>';
+  el.innerHTML=`${tdateHtml}行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}`;
 }
 async function fetchMarketBreadth(){
   const el=document.getElementById('breadth-row');if(!el)return;
