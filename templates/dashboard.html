@@ -562,6 +562,18 @@ function goToInstrument(ticker){
   fetchInstrument();
 }
 
+// ★ 修正：2026-09-29——fundamentals.py 的月營收 period 欄位直接照 TWSE OpenAPI
+// 原始「資料年月」回傳，格式是民國年YYYMM（例如"11508"＝民國115年8月），不轉換
+// 直接印出來使用者看不懂。這裡只在前端顯示時轉成西元 YYYY-MM，不動後端資料。
+function fmtMinguoYM(v){
+  if(v===undefined||v===null||v==='')return '—';
+  const s=String(v);
+  if(!/^\d{5,6}$/.test(s))return s;
+  const mm=s.slice(-2), yy=parseInt(s.slice(0,-2),10);
+  if(isNaN(yy))return s;
+  return (yy+1911)+'-'+mm;
+}
+
 // ★ 新增：2026-09-29——個股研究頁。整合 /api/instruments/<ticker>，把已經存在、
 // 但分散在各模組的資料（行情、技術指標、基本面、重大訊息、目前訊號、歷史訊號）
 // 集中顯示在一頁。技術指標直接沿用 indicators.py 的 calc_all_indicators()，
@@ -642,7 +654,7 @@ function renderInstrument(d){
     <div class="kv"><span>股價淨值比 PB</span><span>${safeN(val.pb,2,'—')}</span></div>
     <div class="kv"><span>月營收年增率</span><span style="color:${clr(rev.yoy_pct)}">${rev.yoy_pct!==undefined&&rev.yoy_pct!==null?safeN(rev.yoy_pct,2)+'%':'—'}</span></div>
     <div class="kv"><span>月營收月增率</span><span style="color:${clr(rev.mom_pct)}">${rev.mom_pct!==undefined&&rev.mom_pct!==null?safeN(rev.mom_pct,2)+'%':'—'}</span></div>
-    <div class="kv"><span>營收資料期間</span><span>${safe(rev.period)}</span></div>
+    <div class="kv"><span>營收資料期間</span><span>${fmtMinguoYM(rev.period)}</span></div>
     <div class="kv"><span>毛利率變化</span><span style="color:${clr(pq.gross_margin_chg)}">${pq.gross_margin_chg!==undefined&&pq.gross_margin_chg!==null?safeN(pq.gross_margin_chg,2):'—'}</span></div>
     <div class="kv"><span>營益率變化</span><span style="color:${clr(pq.operating_margin_chg)}">${pq.operating_margin_chg!==undefined&&pq.operating_margin_chg!==null?safeN(pq.operating_margin_chg,2):'—'}</span></div>
     <div style="font-size:10.5px;color:var(--t3);margin-top:8px">基本面資料可能有落後（估值／營收非即時），實際期間以「營收資料期間」欄位為準</div>
