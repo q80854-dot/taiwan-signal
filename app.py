@@ -493,11 +493,23 @@ def api_instrument(ticker: str):
                 "fetched_at": meta["fetched_at"],
                 "update_freq": "每日一次（收盤後），非即時盤中報價",
                 "scan_universe_threshold": meta["scan_universe_threshold"],
-                # ★ 新增：2026-09-29——回應使用者「成交量的張數全部都有問題」的
-                # 回報：這是實際「哪一個交易日」收盤後的成交量／價格資料（不是我們
-                # 的抓取時間），漏了這欄前端就沒有東西可以顯示，等於白加了
-                # stock_universe.py 那邊的功能。見 get_universe_data_meta() 說明。
-                "quote_trading_date": meta.get("quote_trading_date"),
+                # ★ 修正：2026-09-29——使用者回報「個股研究的資料有錯誤（上漲/
+                # 下跌）」。根因：這裡原本一律顯示 meta["quote_trading_date"]——
+                # 這是「優先取 TWSE 上市日期」的全市場代表日期，但 TWSE（上市）
+                # 跟 TPEX（上櫃）兩邊官方資料目前不是同一天更新（TWSE 卡在假期
+                # 前、TPEX 已經是今天），查詢一檔上櫃(.TWO)股票時，這檔股票自己
+                # 的 info.quote_date 其實是正確、最新的日期，但頁面卻顯示了
+                # TWSE 那個（對這檔股票而言是錯的）全市場日期，讓使用者以為看到
+                # 的是舊資料，或反過來以為新資料是舊的——兩種情況都會被誤會成
+                # 「資料算錯了」。修正：優先使用這檔股票自己的 info.quote_date
+                # （來源同一份 stock_universe 資料，只是沒有被混用到別的交易所日
+                # 期），查無 info 時才退回全市場代表日期。
+                "quote_trading_date": ((out.get("info") or {}).get("quote_date")) or meta.get("quote_trading_date"),
+                # 上市/上櫃兩邊「全市場」各自最新的資料日期＋是否不一致，供前端在
+                # 兩邊確實不同天時額外示警（例如查上市股卻想順便知道上櫃那邊落後）。
+                "tse_quote_date": meta.get("tse_quote_date"),
+                "otc_quote_date": meta.get("otc_quote_date"),
+                "dates_mismatch": meta.get("dates_mismatch", False),
             },
             "technical_indicators": {
                 "source": "yfinance 日線 OHLCV，計算方式與每日訊號掃描（scanner.py）完全相同",

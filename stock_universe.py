@@ -440,7 +440,8 @@ def _get_raw_universe(force_refresh=False) -> Dict:
             _raw_mem_cache_at = time.time()
             return _raw_mem_cache
         return {"stocks": [], "sector_map": {}, "fetched_at": time.time(), "fetch_ok": False,
-                "quote_trading_date": None}
+                "quote_trading_date": None, "tse_quote_date": None, "otc_quote_date": None,
+                "dates_mismatch": False}
 
     sector_map = _fetch_sector_info()
     if not sector_map:
@@ -450,25 +451,37 @@ def _get_raw_universe(force_refresh=False) -> Dict:
             f"（已在 scanner.py 加防呆略過去重，但這裡還是先留下明確的根因記錄）"
         )
 
-    # ★ 新增：2026-09-29——見上面 _parse_roc_date 的說明：從這次抓到的資料裡
-    # 找出「這份快照實際上是哪一個交易日收盤後的資料」，讓前端可以明確標示
-    # 給使用者看，而不是只顯示我們自己的抓取時間戳（fetched_at）。優先採用
-    # TWSE（上市）的日期做為全市場代表——兩個交易所平常交易日曆一致；如果
-    # TWSE 這批完全沒解析出日期（例如欄位格式又變了），退而求其次用 TPEX
-    # 的日期；兩邊都沒有就是 None（前端會照實顯示「資料日期未知」，不會
-    # 顯示一個猜錯的日期）。
-    quote_trading_date = None
+    # ★ 修正：2026-09-29——使用者回報「市場總覽的上漲/下跌家數全部加起來的
+    # 數字其實都有錯」，實測驗證找到真正的根因：TWSE STOCK_DAY_ALL（上市）
+    # 跟 TPEX tpex_mainboard_quotes（上櫃）這兩支官方 API「不是同時更新的」
+    # ——現場核對發現 TWSE 這支目前還停在 2026-09-24（受 09-25~09-28 連續
+    # 假期影響，官方尚未補上最新收盤資料），但 TPEX 那支已經是 2026-09-29
+    # （今天）的資料。原本這裡只取一個「quote_trading_date」代表全市場
+    # （優先用 TWSE 的日期），把上市/上櫃兩邊「實際上不是同一個交易日」的
+    # 資料當成同一天，直接加總算「上漲家數/下跌家數」，等於把 09-24 那天
+    # 上市股票的漲跌，跟 09-29 今天上櫃股票的漲跌混在一起相加——這個總數在
+    # 兩邊日期不一致時本來就沒有意義，是使用者說「數字都有錯」的真正原因，
+    # 不是加總的程式邏輯本身寫錯。修正：分別記錄 tse_quote_date／
+    # otc_quote_date 兩個日期，讓 get_market_breadth()／前端可以各自算、
+    # 各自標示，並在兩邊日期不同時明確示警，而不是假裝這是同一天的市場
+    # 總覽。quote_trading_date 保留（優先 TWSE、退而求其次 TPEX）供舊欄位
+    # 相容使用，但新增的兩個欄位才是正確判斷「這筆資料到底是哪一天」的依據。
+    tse_quote_date = None
     for s in tse:
         if s.get("quote_date"):
-            quote_trading_date = s["quote_date"]; break
-    if not quote_trading_date:
-        for s in tpex:
-            if s.get("quote_date"):
-                quote_trading_date = s["quote_date"]; break
+            tse_quote_date = s["quote_date"]; break
+    otc_quote_date = None
+    for s in tpex:
+        if s.get("quote_date"):
+            otc_quote_date = s["quote_date"]; break
+    quote_trading_date = tse_quote_date or otc_quote_date
 
     payload = {"stocks": all_stocks, "sector_map": sector_map,
                "fetched_at": time.time(), "fetch_ok": True,
-               "quote_trading_date": quote_trading_date}
+               "quote_trading_date": quote_trading_date,
+               "tse_quote_date": tse_quote_date,
+               "otc_quote_date": otc_quote_date,
+               "dates_mismatch": bool(tse_quote_date and otc_quote_date and tse_quote_date != otc_quote_date)}
     with open(RAW_CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     _raw_mem_cache, _raw_mem_cache_at = payload, time.time()
@@ -540,13 +553,21 @@ def get_universe_data_meta() -> Dict:
         "quote_source": "TWSE OpenAPI STOCK_DAY_ALL（上市）／TPEx OpenAPI tpex_mainboard_quotes（上櫃）",
         "sector_source": "TWSE OpenAPI t187ap03_L（僅涵蓋上市公司；上櫃無對應公開產業分類資料源，一律顯示為「其他」）",
         "scan_universe_threshold": {"min_close": 5, "min_volume_lots": THRESH["min_avg_volume"]},
-        # ★ 新增：2026-09-29——這份快照實際上是「哪一個交易日」收盤後的成交量
+        # ★ 修正：2026-09-29——原本只回傳一個 quote_trading_date（優先取
+        # TWSE 日期）代表「全市場」，但 TWSE／TPEX 兩邊官方資料常常不是同一
+        # 天更新（見 _get_raw_universe() 修正說明），這裡額外附上
+        # tse_quote_date／otc_quote_date／dates_mismatch，讓前端能分別標示
+        # 上市/上櫃各自的資料日期，兩邊不同天時明確示警，而不是只顯示一個
+        # 容易誤導的單一日期。這份快照實際上是「哪一個交易日」收盤後的成交量
         # /價格資料（不是我們的抓取時間，是 TWSE/TPEX 官方資料本身標示的交易
         # 日）。TWSE 官方 API 本身只在收盤後才會更新當天資料，如果現在還沒收盤
         # 、或官方資料還沒更新完，這裡看到的會是上一個已收盤交易日，這是正常
         # 現象，不是成交量算錯了——把這個日期清楚顯示出來，讓使用者自己判斷
         # 看到的數字是不是「今天」的。
         "quote_trading_date": raw.get("quote_trading_date"),
+        "tse_quote_date": raw.get("tse_quote_date"),
+        "otc_quote_date": raw.get("otc_quote_date"),
+        "dates_mismatch": raw.get("dates_mismatch", False),
     }
 
 def get_scan_batches(batch_size=None) -> List[List[str]]:
@@ -665,11 +686,44 @@ def get_market_breadth() -> Dict:
     flat = [s for s in covered if s["change_pct"] == 0]
     limit_up = [s for s in up if s["change_pct"] >= 9.5]
     limit_down = [s for s in down if s["change_pct"] <= -9.5]
+
+    # ★ 修正：2026-09-29——使用者回報「市場總覽的上漲加速及下跌加速全部加
+    # 起來的數字其實都有錯」。根因（詳見 _get_raw_universe() 修正說明）：
+    # 上面 advancers/decliners 是把上市(TSE)＋上櫃(OTC)兩個交易所的股票直接
+    # 混在一起算，但這兩邊的官方資料目前常常不是同一個交易日（TWSE 尚未補
+    # 上假期後最新收盤、TPEX 已經是今天的資料），等於把「兩個不同交易日」
+    # 的漲跌家數加在一起，總數本身失去意義。這裡分開統計 TSE／OTC 各自的
+    # 漲跌家數與各自的資料日期，讓前端可以分別顯示正確、同一天的統計數字，
+    # 並在兩邊日期不一致時明確示警——不拿掉原本的合計欄位（避免破壞既有
+    # 前端相容性），但合計不再是唯一可信的數字。
+    def _breadth_for(group):
+        cov = [s for s in group if s.get("change_pct") is not None]
+        u = [s for s in cov if s["change_pct"] > 0]
+        d = [s for s in cov if s["change_pct"] < 0]
+        f = [s for s in cov if s["change_pct"] == 0]
+        lu = [s for s in u if s["change_pct"] >= 9.5]
+        ld = [s for s in d if s["change_pct"] <= -9.5]
+        dates = sorted({s["quote_date"] for s in group if s.get("quote_date")})
+        return {
+            "total": len(group), "covered": len(cov),
+            "advancers": len(u), "decliners": len(d), "unchanged": len(f),
+            "limit_up": len(lu), "limit_down": len(ld),
+            "quote_date": dates[-1] if dates else None,
+        }
+    tse_group = [s for s in universe if s.get("market") == "TSE"]
+    otc_group = [s for s in universe if s.get("market") == "OTC"]
+    tse_breadth = _breadth_for(tse_group)
+    otc_breadth = _breadth_for(otc_group)
+    dates_mismatch = bool(tse_breadth["quote_date"] and otc_breadth["quote_date"]
+                           and tse_breadth["quote_date"] != otc_breadth["quote_date"])
+
     return {
         "total": len(universe), "covered": len(covered),
         "advancers": len(up), "decliners": len(down), "unchanged": len(flat),
         "limit_up": len(limit_up), "limit_down": len(limit_down),
         "coverage_ok": len(covered) > 0,
+        "tse": tse_breadth, "otc": otc_breadth,
+        "dates_mismatch": dates_mismatch,
     }
 
 def get_sector_performance() -> List[Dict]:
