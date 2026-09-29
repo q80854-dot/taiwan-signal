@@ -8,22 +8,28 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0d1117;--s1:#161b22;--s2:#21262d;--s3:#30363d;
-  --bd:#30363d;--t1:#e6edf3;--t2:#c9d1d9;--t3:#8b949e;
-  --G:#00d47e;--Gb:rgba(0,212,126,.12);
-  --R:#ff4060;--Rb:rgba(255,64,96,.12);
-  --B:#4d9eff;--Bb:rgba(77,158,255,.12);
-  --Y:#ffb020;--Yb:rgba(255,176,32,.12);
-  --r:8px;--rl:12px;
+  /* 機構研究平台風格配色：紙白底、深藏青文字、極淡的分隔線，
+     取代原本的深色霓虹「AI儀表板」風格。 */
+  --bg:#f6f5f2;--s1:#ffffff;--s2:#faf9f6;--s3:#f0efe9;
+  --bd:#e3e1d8;--bd2:#d3d0c4;
+  --t1:#12161f;--t2:#4c5265;--t3:#8b8d97;
+  --G:#1c6b48;--Gb:#eaf3ee;--Gbd:#c7ddd0;
+  --R:#8a2a2a;--Rb:#f7eeee;--Rbd:#e3c9c9;
+  --B:#1f3a63;--Bb:#eef1f6;--Bbd:#cdd6e3;
+  --Y:#8a6a1f;--Yb:#f7f1e2;--Ybd:#e3d3ab;
+  --accent:#12233f;--accent2:#1f3a63;
+  --serif:Georgia,'Times New Roman','Noto Serif TC','PMingLiU',serif;
+  --sans:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang TC','Microsoft JhengHei',Arial,sans-serif;
+  --r:3px;--rl:3px;
 }
 html,body{height:100%;overflow:hidden;background:var(--bg)}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:13px;color:var(--t2);line-height:1.5}
-::-webkit-scrollbar{width:4px;height:4px}
-::-webkit-scrollbar-thumb{background:var(--bd);border-radius:2px}
+body{font-family:var(--sans);font-size:13px;color:var(--t2);line-height:1.55;font-feature-settings:"tnum" 1;font-variant-numeric:tabular-nums}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:0}
 .shell{display:flex;height:100vh;position:relative}
 /* Sidebar */
-.side{width:200px;min-width:200px;background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
-.hamburger{display:none;width:30px;height:30px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);align-items:center;justify-content:center;cursor:pointer;font-size:14px;flex-shrink:0}
+.side{width:210px;min-width:210px;background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
+.hamburger{display:none;width:30px;height:30px;border:1px solid var(--bd2);background:var(--s1);color:var(--t2);align-items:center;justify-content:center;cursor:pointer;font-size:13px;flex-shrink:0}
 .side-backdrop{display:none}
 @media(max-width:640px){
   .hamburger{display:flex}
@@ -32,102 +38,108 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   .top{gap:8px}
   .top-r{gap:6px}
   #tw-time{display:none}
-  .btn{padding:5px 9px;font-size:10px}
-  .side{position:fixed;top:0;bottom:0;left:0;z-index:101;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.5)}
+  .btn{padding:6px 10px;font-size:10px}
+  .side{position:fixed;top:0;bottom:0;left:0;z-index:101;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 20px rgba(18,22,31,.14)}
   .side.open{transform:translateX(0)}
-  .side-backdrop.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100}
+  .side-backdrop.open{display:block;position:fixed;inset:0;background:rgba(18,22,31,.35);z-index:100}
   .sig-grid{grid-template-columns:repeat(2,1fr)!important}
   .idx-chip{min-width:0;flex:1 1 calc(50% - 8px)}
 }
-.logo{padding:14px 12px 10px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px}
-.logo-ic{width:28px;height:28px;border-radius:6px;background:var(--G);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#000;flex-shrink:0}
-.logo-nm{font-size:12px;font-weight:700;color:var(--t1);line-height:1.3}
-.logo-vr{font-size:9px;color:var(--t3)}
-.nav-g{padding:8px 10px 3px;font-size:9px;color:var(--t3);letter-spacing:.8px;text-transform:uppercase}
-.nav{display:flex;align-items:center;gap:6px;padding:6px 10px;margin:1px 4px;border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--t3);user-select:none;transition:all .15s;position:relative;white-space:nowrap}
-.nav:hover{background:var(--s2);color:var(--t2)}
-.nav.on{background:var(--s3);color:var(--t1)}
-.nav.on::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:2px;height:14px;background:var(--G);border-radius:1px}
-.nbadge{margin-left:auto;background:var(--G);color:#000;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700}
-.sfoot{padding:10px 12px;margin-top:auto;border-top:1px solid var(--bd);flex-shrink:0}
-.dot-live{width:6px;height:6px;border-radius:50%;background:var(--G);display:inline-block;flex-shrink:0;animation:blink 2s ease-in-out infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.sfr{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--t3);margin-bottom:3px}
+.logo{padding:20px 18px 16px;border-bottom:1px solid var(--bd)}
+.logo-nm{font-family:var(--serif);font-size:16px;font-weight:700;color:var(--t1);letter-spacing:.2px;line-height:1.3}
+.logo-vr{font-size:10px;color:var(--t3);letter-spacing:.5px;margin-top:3px}
+.nav-g{padding:16px 18px 6px;font-size:10px;color:var(--t3);letter-spacing:1.2px;text-transform:uppercase;font-weight:600}
+.nav{display:flex;align-items:center;gap:6px;padding:8px 18px;cursor:pointer;font-size:12.5px;color:var(--t2);user-select:none;transition:background .12s,color .12s;position:relative;white-space:nowrap;border-left:2px solid transparent}
+.nav:hover{background:var(--s2);color:var(--t1)}
+.nav.on{background:var(--s2);color:var(--t1);font-weight:600;border-left-color:var(--accent)}
+.nbadge{margin-left:auto;color:var(--t3);font-size:10.5px;font-weight:600}
+.nav.on .nbadge{color:var(--accent)}
+.sfoot{padding:14px 18px;margin-top:auto;border-top:1px solid var(--bd);flex-shrink:0}
+.dot-live{width:5px;height:5px;border-radius:50%;background:var(--G);display:inline-block;flex-shrink:0}
+.sfr{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--t3);margin-bottom:4px}
 /* Main */
 .body{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.top{height:46px;background:var(--s1);border-bottom:1px solid var(--bd);padding:0 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
-.top-l{font-size:14px;font-weight:600;color:var(--t1)}
-.top-r{display:flex;align-items:center;gap:10px}
-.btn{padding:5px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-size:11px;cursor:pointer;transition:all .15s}
-.btn:hover{background:var(--s3);color:var(--t1)}
-.btn.primary{background:var(--G);border-color:var(--G);color:#000;font-weight:600}
-.btn.primary:hover{opacity:.85}
-.content{flex:1;overflow-y:auto;padding:16px}
+.top{height:52px;background:var(--s1);border-bottom:1px solid var(--bd);padding:0 22px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.top-l{font-family:var(--serif);font-size:15px;font-weight:700;color:var(--t1);letter-spacing:.1px}
+.top-r{display:flex;align-items:center;gap:12px}
+.btn{padding:6px 14px;border-radius:var(--r);border:1px solid var(--bd2);background:var(--s1);color:var(--t2);font-size:11px;letter-spacing:.2px;cursor:pointer;transition:all .12s}
+.btn:hover{border-color:var(--t2);color:var(--t1)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.primary:hover{background:var(--accent2);border-color:var(--accent2)}
+.content{flex:1;overflow-y:auto;padding:22px}
 .page{display:none}.page.on{display:block}
 /* KPI */
-.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
-.kpi{background:var(--s1);border:1px solid var(--bd);border-radius:var(--rl);padding:12px 14px}
-.kpi-label{font-size:10px;color:var(--t3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
-.kpi-val{font-size:22px;font-weight:700;color:var(--t1);line-height:1}
-.kpi-sub{font-size:10px;color:var(--t3);margin-top:3px}
-.kpi.green{border-color:rgba(0,212,126,.3);background:var(--Gb)}
-.kpi.blue{border-color:rgba(77,158,255,.3);background:var(--Bb)}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;background:var(--bd);border:1px solid var(--bd);margin-bottom:18px}
+.kpi{background:var(--s1);padding:14px 16px}
+.kpi-label{font-size:10px;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
+.kpi-val{font-family:var(--serif);font-size:24px;font-weight:700;color:var(--t1);line-height:1}
+.kpi-sub{font-size:10.5px;color:var(--t3);margin-top:5px}
+.kpi.green .kpi-val{color:var(--G)}
+.kpi.blue .kpi-val{color:var(--B)}
 /* Grid */
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
 @media(max-width:900px){.grid2{grid-template-columns:1fr}}
 /* Card */
-.card{background:var(--s1);border:1px solid var(--bd);border-radius:var(--rl);overflow:hidden}
-.card-head{padding:10px 14px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between}
-.card-title{font-size:12px;font-weight:600;color:var(--t1)}
-.card-body{padding:12px 14px}
+.card{background:var(--s1);border:1px solid var(--bd)}
+.card-head{padding:12px 16px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between}
+.card-title{font-size:11px;font-weight:700;color:var(--t1);text-transform:uppercase;letter-spacing:.6px}
+.card-link{font-size:10.5px;color:var(--t3);cursor:pointer;letter-spacing:.2px}
+.card-link:hover{color:var(--accent)}
+.card-body{padding:16px}
 /* Signal */
-.sig-card{background:var(--s2);border-radius:var(--r);padding:12px 14px;margin-bottom:8px;border-left:3px solid var(--G)}
+.sig-card{background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--G);padding:14px 16px;margin-bottom:10px}
 .sig-card.sell{border-left-color:var(--R)}
-.sig-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.sig-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
 .sig-name{font-weight:700;font-size:13px;color:var(--t1)}
-.sig-badge{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
-.sig-badge.buy{background:var(--G);color:#000}
-.sig-badge.sell{background:var(--R);color:#fff}
-.sig-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:11px;margin-bottom:8px}
-.sig-item label{display:block;color:var(--t3);margin-bottom:1px;font-size:10px}
+.sig-sub{font-size:10.5px;color:var(--t3);margin-top:2px}
+.sig-badge{display:inline-block;padding:2px 7px;border:1px solid;font-size:10px;font-weight:600;letter-spacing:.4px;margin-left:8px}
+.sig-badge.buy{color:var(--G);border-color:var(--Gbd)}
+.sig-badge.sell{color:var(--R);border-color:var(--Rbd)}
+.sig-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;font-size:11px;margin-bottom:10px}
+.sig-item label{display:block;color:var(--t3);margin-bottom:2px;font-size:10px;letter-spacing:.3px}
 .sig-item span{font-weight:600;color:var(--t1)}
-.sig-footer{font-size:10px;color:var(--t3);display:flex;gap:12px;flex-wrap:wrap}
-.sig-score{font-size:20px;font-weight:700}
+.sig-footer{font-size:10.5px;color:var(--t3);display:flex;gap:14px;flex-wrap:wrap}
+.sig-score{font-family:var(--serif);font-size:21px;font-weight:700}
+.sig-grade{font-size:9.5px;letter-spacing:.4px;text-align:right;margin-top:2px}
 /* Index */
-.idx-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-.idx-chip{background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;min-width:100px}
-.idx-name{font-size:10px;color:var(--t3)}
-.idx-val{font-size:14px;font-weight:700;color:var(--t1)}
-.idx-chg{font-size:10px}
+.idx-row{display:flex;gap:1px;flex-wrap:wrap;margin-bottom:18px;background:var(--bd);border:1px solid var(--bd)}
+.idx-chip{background:var(--s1);padding:9px 14px;min-width:112px;flex:1}
+.idx-name{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px}
+.idx-val{font-family:var(--serif);font-size:15px;font-weight:700;color:var(--t1);margin-top:2px}
+.idx-chg{font-size:10.5px;margin-top:2px}
 .up{color:var(--G)}.dn{color:var(--R)}
 /* Table */
-.tbl{width:100%;border-collapse:collapse;font-size:11px}
-.tbl th{padding:6px 10px;text-align:left;color:var(--t3);border-bottom:1px solid var(--bd);font-weight:500;white-space:nowrap}
-.tbl td{padding:7px 10px;border-bottom:1px solid var(--bd);vertical-align:middle;white-space:nowrap}
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.tbl th{padding:8px 12px;text-align:left;color:var(--t3);border-bottom:1px solid var(--bd2);font-weight:600;text-transform:uppercase;letter-spacing:.4px;font-size:10px;white-space:nowrap}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--bd);vertical-align:middle;white-space:nowrap}
 .tbl tr:last-child td{border-bottom:none}
 .tbl tr:hover td{background:var(--s2)}
 /* Tag */
-.tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600}
-.tag.green{background:var(--Gb);color:var(--G);border:1px solid rgba(0,212,126,.3)}
-.tag.red{background:var(--Rb);color:var(--R);border:1px solid rgba(255,64,96,.3)}
-.tag.blue{background:var(--Bb);color:var(--B);border:1px solid rgba(77,158,255,.3)}
+.tag{display:inline-block;padding:1px 6px;border:1px solid;font-size:9.5px;font-weight:600;letter-spacing:.3px}
+.tag.green{color:var(--G);border-color:var(--Gbd);background:var(--Gb)}
+.tag.red{color:var(--R);border-color:var(--Rbd);background:var(--Rb)}
+.tag.blue{color:var(--B);border-color:var(--Bbd);background:var(--Bb)}
 /* Empty */
-.empty{text-align:center;padding:40px;color:var(--t3)}
-.empty-icon{font-size:32px;margin-bottom:8px}
+.empty{text-align:center;padding:44px 20px;color:var(--t3);font-size:12px}
+.empty-label{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--t3);margin-bottom:6px}
 /* Toast */
-.toast{position:fixed;bottom:20px;right:20px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:10px 16px;font-size:12px;color:var(--t1);z-index:999;animation:slidein .3s ease}
-@keyframes slidein{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-/* Freshness badge — 顯示資料來源最後更新時間跟新鮮度，全站時間一律換算成台北時區顯示，
-   避免像舊版那樣直接印 UTC 時間，跟畫面上其他台北時間的時鐘對不起來、造成混淆。 */
-.fresh-badge{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--t3);padding:3px 8px;border:1px solid var(--bd);border-radius:20px;background:var(--s2)}
-.fresh-dot{width:6px;height:6px;border-radius:50%;background:var(--t3);flex-shrink:0}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--t1);color:#fff;padding:10px 16px;font-size:11.5px;letter-spacing:.2px;z-index:999;animation:slidein .25s ease}
+@keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+/* Freshness badge */
+.fresh-badge{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--t3);padding:4px 10px;border:1px solid var(--bd);background:var(--s2)}
+.fresh-dot{width:5px;height:5px;border-radius:50%;background:var(--t3);flex-shrink:0}
 .fresh-dot.ok{background:var(--G)}
 .fresh-dot.warn{background:var(--Y)}
-.fresh-dot.stale{background:var(--R);animation:blink 1.2s ease-in-out infinite}
+.fresh-dot.stale{background:var(--R)}
 @media(max-width:640px){.fresh-badge{display:none}}
-/* Source tag on index chips when the value fell back to a degraded/error source */
-.idx-src{font-size:9px;color:var(--Y);margin-top:1px}
+.idx-src{font-size:9px;color:var(--Y);margin-top:2px;letter-spacing:.2px}
 .idx-src.err{color:var(--R)}
+/* Shared key/value row used across summary cards */
+.kv{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--bd);font-size:12px}
+.kv:last-child{border-bottom:none}
+.kv span:first-child{color:var(--t3)}
+.kv span:last-child{color:var(--t1);font-weight:600}
+.note-box{font-size:11px;color:var(--t2);background:var(--s2);border:1px solid var(--bd);padding:9px 11px}
 </style>
 </head>
 <body>
@@ -136,22 +148,22 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 <!-- Sidebar -->
 <div class="side" id="side">
   <div class="logo">
-    <div class="logo-ic">台</div>
-    <div><div class="logo-nm">台股波段<br>智慧交易</div><div class="logo-vr" id="version">v1.0.0</div></div>
+    <div class="logo-nm">台股波段<br>智慧交易系統</div>
+    <div class="logo-vr" id="version">v1.0.0</div>
   </div>
   <div class="nav-g">主介面</div>
-  <div class="nav on"  onclick="go('overview')">📊 總覽</div>
-  <div class="nav"     onclick="go('signals')">📡 今日訊號 <span class="nbadge" id="sig-count-badge">0</span></div>
-  <div class="nav"     onclick="go('history')">📋 交易歷史</div>
-  <div class="nav"     onclick="go('perf')">📈 績效分析</div>
+  <div class="nav on"  onclick="go('overview')">總覽</div>
+  <div class="nav"     onclick="go('signals')">今日訊號 <span class="nbadge" id="sig-count-badge">0</span></div>
+  <div class="nav"     onclick="go('history')">交易歷史</div>
+  <div class="nav"     onclick="go('perf')">績效分析</div>
   <div class="nav-g">市場</div>
-  <div class="nav"     onclick="go('market')">🌍 市場環境</div>
+  <div class="nav"     onclick="go('market')">市場環境</div>
   <div class="nav-g">工具</div>
-  <div class="nav"     onclick="go('backtest')">⚡ 回測</div>
-  <div class="nav"     onclick="go('diag')">🔧 系統診斷</div>
+  <div class="nav"     onclick="go('backtest')">回測</div>
+  <div class="nav"     onclick="go('diag')">系統診斷</div>
   <div class="sfoot">
     <div class="sfr"><div class="dot-live"></div><span id="market-session-side">載入中...</span></div>
-    <div style="font-size:10px;color:var(--t3)" id="last-scan-side">—</div>
+    <div style="font-size:10.5px;color:var(--t3)" id="last-scan-side">—</div>
   </div>
 </div>
 <!-- Main -->
@@ -164,8 +176,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
     <div class="top-r">
       <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
       <span id="tw-time" style="font-size:11px;color:var(--t3)"></span>
-      <button class="btn" onclick="fetchState()">↻ 刷新</button>
-      <button class="btn primary" onclick="forceScan()">⚡ 立即掃描</button>
+      <button class="btn" onclick="fetchState()">刷新</button>
+      <button class="btn primary" onclick="forceScan()">立即掃描</button>
     </div>
   </div>
   <div class="content" id="content">
@@ -191,11 +203,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
     </div>
     <div class="grid2">
       <div class="card">
-        <div class="card-head"><span class="card-title">🔥 最新訊號</span><span style="font-size:10px;color:var(--t3);cursor:pointer" onclick="go('signals')">查看全部 →</span></div>
-        <div class="card-body" id="latest-signals"><div class="empty"><div class="empty-icon">📡</div>尚無訊號，等待盤後掃描</div></div>
+        <div class="card-head"><span class="card-title">最新訊號</span><span class="card-link" onclick="go('signals')">查看全部 →</span></div>
+        <div class="card-body" id="latest-signals"><div class="empty"><div class="empty-label">訊號</div>尚無訊號，等待盤後掃描</div></div>
       </div>
       <div class="card">
-        <div class="card-head"><span class="card-title">📊 今日大盤</span></div>
+        <div class="card-head"><span class="card-title">今日大盤</span></div>
         <div class="card-body" id="market-summary"><div class="empty">載入中...</div></div>
       </div>
     </div>
@@ -203,11 +215,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
   <!-- Signals -->
   <div class="page" id="page-signals">
-    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-      <select id="sig-filter-dir" onchange="renderSignals()" style="padding:5px 8px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-size:12px">
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+      <select id="sig-filter-dir" onchange="renderSignals()" style="padding:6px 10px;border:1px solid var(--bd2);background:var(--s1);color:var(--t2);font-size:11.5px">
         <option value="">全部方向</option><option value="buy">做多</option><option value="sell">做空</option>
       </select>
-      <select id="sig-filter-grade" onchange="renderSignals()" style="padding:5px 8px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-size:12px">
+      <select id="sig-filter-grade" onchange="renderSignals()" style="padding:6px 10px;border:1px solid var(--bd2);background:var(--s1);color:var(--t2);font-size:11.5px">
         <option value="">全部等級</option><option value="A">A 級（85+）</option><option value="B">B 級（75+）</option><option value="C">C 級（65+）</option>
       </select>
       <span style="font-size:11px;color:var(--t3)" id="sig-filter-info"></span>
@@ -217,7 +229,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
   <!-- History -->
   <div class="page" id="page-history">
-    <div class="card"><div class="card-head"><span class="card-title">📋 交易歷史記錄</span></div>
+    <div class="card"><div class="card-head"><span class="card-title">交易歷史記錄</span></div>
       <div style="overflow-x:auto"><table class="tbl">
         <thead><tr><th>日期</th><th>股票</th><th>產業</th><th>方向</th><th>進場</th><th>止損</th><th>TP1</th><th>評分</th><th>ADX</th><th>RSI</th><th>量比</th><th>結果</th><th>損益(TWD)</th></tr></thead>
         <tbody id="history-tbody"><tr><td colspan="13" style="text-align:center;padding:30px;color:var(--t3)">載入中...</td></tr></tbody>
@@ -248,17 +260,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   <!-- Market -->
   <div class="page" id="page-market">
     <div class="grid2">
-      <div class="card"><div class="card-head"><span class="card-title">🌍 環境評分</span></div><div class="card-body" id="market-env-body"><div class="empty">載入中</div></div></div>
-      <div class="card"><div class="card-head"><span class="card-title">📊 各類別建議</span></div><div class="card-body" id="cat-advice-body"><div class="empty">載入中</div></div></div>
+      <div class="card"><div class="card-head"><span class="card-title">環境評分</span></div><div class="card-body" id="market-env-body"><div class="empty">載入中</div></div></div>
+      <div class="card"><div class="card-head"><span class="card-title">各類別建議</span></div><div class="card-body" id="cat-advice-body"><div class="empty">載入中</div></div></div>
     </div>
   </div>
 
   <!-- Backtest -->
   <div class="page" id="page-backtest">
-    <div class="card" style="margin-bottom:12px"><div class="card-head"><span class="card-title">⚡ 單檔回測</span></div>
+    <div class="card" style="margin-bottom:18px"><div class="card-head"><span class="card-title">單檔回測</span></div>
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input id="bt-ticker" placeholder="股票代號（如 2330）" style="padding:6px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t1);font-size:12px;width:160px">
+          <input id="bt-ticker" placeholder="股票代號（如 2330）" style="padding:7px 10px;border:1px solid var(--bd2);background:var(--s1);color:var(--t1);font-size:12px;width:170px">
           <button class="btn primary" onclick="runBacktest()">執行回測</button>
           <span style="font-size:11px;color:var(--t3)">使用日線 1 年數據 + 台股成本計算</span>
         </div>
@@ -269,7 +281,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
   <!-- Diag -->
   <div class="page" id="page-diag">
-    <div class="card"><div class="card-head"><span class="card-title">🔧 系統診斷</span></div><div class="card-body" id="diag-body"><div class="empty">載入中...</div></div></div>
+    <div class="card"><div class="card-head"><span class="card-title">系統診斷</span></div><div class="card-body" id="diag-body"><div class="empty">載入中...</div></div></div>
   </div>
 
   </div><!-- content -->
@@ -382,18 +394,18 @@ async function fetchState(){
     if(!r.ok)throw new Error('HTTP '+r.status);
     _state=await r.json();if(_state.error)throw new Error(_state.error);
     _signals=_state.active_signals||[];renderAll(_state);
-  }catch(e){toast('⚠️ '+e.message);}
+  }catch(e){toast(e.message);}
 }
 async function forceScan(){
-  toast('⏳ 掃描中...');
+  toast('掃描中…');
   try{await fetch('/api/scan/force',{method:'POST'});setTimeout(fetchState,3000);}
-  catch(e){toast('❌ 掃描失敗');}
+  catch(e){toast('掃描失敗');}
 }
 async function fetchDiag(){
   try{
     const d=await(await fetch('/api/diagnostics')).json();
     document.getElementById('diag-body').innerHTML=Object.entries(d).map(([k,v])=>
-      `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--bd)"><span style="color:var(--t3)">${k}</span><span style="color:${String(v).includes('✅')?'var(--G)':String(v).includes('❌')?'var(--R)':'var(--t2)'}">${v}</span></div>`
+      `<div class="kv"><span>${k}</span><span style="color:${String(v).includes('✅')?'var(--G)':String(v).includes('❌')?'var(--R)':'var(--t1)'}">${v}</span></div>`
     ).join('');
   }catch(e){document.getElementById('diag-body').innerHTML='<div class="empty">診斷失敗</div>';}
 }
@@ -401,10 +413,10 @@ async function runBacktest(){
   const raw=document.getElementById('bt-ticker').value.trim();
   if(!raw){toast('請輸入股票代號');return;}
   const ticker=raw.includes('.')?raw:raw+'.TW';
-  document.getElementById('bt-result').innerHTML='<div class="empty">⏳ 回測中（約10秒）...</div>';
+  document.getElementById('bt-result').innerHTML='<div class="empty">回測中（約10秒）…</div>';
   try{
     const d=await(await fetch('/api/backtest/'+ticker)).json();
-    if(d.error){document.getElementById('bt-result').innerHTML=`<div class="empty">❌ ${d.error}</div>`;return;}
+    if(d.error){document.getElementById('bt-result').innerHTML=`<div class="empty">${d.error}</div>`;return;}
     document.getElementById('bt-result').innerHTML=`
       <div class="card"><div class="card-head"><span class="card-title">${ticker} 回測結果</span></div><div class="card-body">
         <div class="kpi-row">
@@ -417,7 +429,7 @@ async function runBacktest(){
           <div class="kpi"><div class="kpi-label">平均持有</div><div class="kpi-val">${d.avg_hold_days} 天</div></div>
         </div>
       </div></div>`;
-  }catch(e){document.getElementById('bt-result').innerHTML=`<div class="empty">❌ ${e.message}</div>`;}
+  }catch(e){document.getElementById('bt-result').innerHTML=`<div class="empty">${e.message}</div>`;}
 }
 
 // Render
@@ -464,7 +476,7 @@ function renderIndex(idx){
       if(isErr||( d.source && !primaries.includes(d.source))){
         if(!srcEl){srcEl=document.createElement('div');srcEl.className='idx-src';chipEl.appendChild(srcEl);}
         srcEl.className='idx-src'+(isErr?' err':'');
-        srcEl.textContent=isErr?'⚠ 來源異常':'備援來源';
+        srcEl.textContent=isErr?'來源異常':'備援來源';
       }else if(srcEl){srcEl.remove();}
     }
   });
@@ -488,11 +500,11 @@ function renderKPIs(d){
 
 function renderLatestSignals(sigs){
   const el=document.getElementById('latest-signals');
-  if(!sigs||!sigs.length){el.innerHTML='<div class="empty"><div class="empty-icon">📡</div>今日尚無訊號<br><small>每日 16:30 盤後掃描</small></div>';return;}
+  if(!sigs||!sigs.length){el.innerHTML='<div class="empty"><div class="empty-label">訊號</div>今日尚無訊號<br><small>每日 16:30 盤後掃描</small></div>';return;}
   el.innerHTML=sigs.slice(0,4).map(s=>`
-    <div class="sig-card ${s.direction==='buy'?'':'sell'}" style="margin-bottom:8px;cursor:pointer" onclick="go('signals')">
+    <div class="sig-card ${s.direction==='buy'?'':'sell'}" style="cursor:pointer" onclick="go('signals')">
       <div class="sig-head">
-        <div><span class="sig-name">${s.emoji||'📊'} ${s.name}（${s.code||s.ticker}）</span> <span class="sig-badge ${s.direction}">${s.direction==='buy'?'做多 📈':'做空 📉'}</span></div>
+        <div><span class="sig-name">${s.name}（${s.code||s.ticker}）</span><span class="sig-badge ${s.direction}">${s.direction==='buy'?'做多':'做空'}</span></div>
         <div class="sig-score" style="color:${s.score>=85?'var(--G)':s.score>=75?'var(--Y)':'var(--t3)'}">${s.score||0}</div>
       </div>
       <div class="sig-grid">
@@ -513,20 +525,19 @@ function renderSignals(){
   if(fd)sigs=sigs.filter(s=>s.direction===fd);
   if(fg)sigs=sigs.filter(s=>s.grade===fg);
   document.getElementById('sig-filter-info').textContent=`顯示 ${sigs.length} / ${_signals.length} 個`;
-  if(!sigs.length){container.innerHTML='<div class="empty"><div class="empty-icon">📡</div>無符合條件訊號</div>';return;}
+  if(!sigs.length){container.innerHTML='<div class="empty"><div class="empty-label">訊號</div>無符合條件訊號</div>';return;}
   container.innerHTML=sigs.map(s=>{
     const isBuy=s.direction==='buy';
     const gc={A:'var(--G)',B:'var(--Y)',C:'var(--t3)'}[s.grade||'C'];
-    const cMet=(s.conditions_met||[]).slice(0,5).map(c=>`<span style="color:var(--G);font-size:10px">✅ ${c}</span>`).join('<br>');
-    const cFail=(s.conditions_fail||[]).slice(0,3).map(c=>`<span style="color:var(--Y);font-size:10px">⚠️ ${c}</span>`).join('<br>');
+    const cMet=(s.conditions_met||[]).slice(0,5).map(c=>`<span style="color:var(--G);font-size:10px">• ${c}</span>`).join('<br>');
+    const cFail=(s.conditions_fail||[]).slice(0,3).map(c=>`<span style="color:var(--Y);font-size:10px">• ${c}</span>`).join('<br>');
     return `<div class="sig-card ${isBuy?'':'sell'}">
       <div class="sig-head">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:20px">${s.emoji||'📊'}</span>
-          <div><div class="sig-name">${s.name}（${s.code||s.ticker}）</div><div style="font-size:10px;color:var(--t3)">${safe(s.sector)} · ${safe(s.size_cat)}</div></div>
-          <span class="sig-badge ${s.direction}">${isBuy?'做多 📈':'做空 📉'}</span>
+        <div style="display:flex;align-items:center;gap:0">
+          <div><div class="sig-name">${s.name}（${s.code||s.ticker}）</div><div class="sig-sub">${safe(s.sector)} · ${safe(s.size_cat)}</div></div>
+          <span class="sig-badge ${s.direction}">${isBuy?'做多':'做空'}</span>
         </div>
-        <div style="text-align:right"><div class="sig-score" style="color:${gc}">${s.score||0}</div><div style="font-size:10px;color:${gc}">${{A:'🔥 A級',B:'✅ B級',C:'👀 C級'}[s.grade||'C']}</div></div>
+        <div style="text-align:right"><div class="sig-score" style="color:${gc}">${s.score||0}</div><div class="sig-grade" style="color:${gc}">${{A:'A 級',B:'B 級',C:'C 級'}[s.grade||'C']}</div></div>
       </div>
       <div class="sig-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:10px">
         <div class="sig-item"><label>現價</label><span>${safeN(s.current_price,2)}</span></div>
@@ -535,19 +546,19 @@ function renderSignals(){
         <div class="sig-item"><label style="color:var(--G)">TP1</label><span style="color:var(--G)">${safeN(s.tp1,2)}(+${safeN(s.tp1_pct,1)}%)</span></div>
         <div class="sig-item"><label style="color:var(--G)">TP2</label><span style="color:var(--G)">${safeN(s.tp2,2)}(+${safeN(s.tp2_pct,1)}%)</span></div>
       </div>
-      <div style="background:var(--s1);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:11px">
-        💰 建議 <b style="color:var(--t1)">${safe(s.suggested_lots,1)} 張</b>
+      <div class="note-box" style="margin-bottom:8px">
+        建議 <b style="color:var(--t1)">${safe(s.suggested_lots,1)} 張</b>
         　風險 <b style="color:var(--R)">TWD ${(s.risk_twd||0).toLocaleString()}(${safeN(s.risk_pct,1)}%)</b>
         　費稅 TWD ${(s.roundtrip_cost||0).toLocaleString()}
       </div>
-      <div style="font-size:11px;margin-bottom:8px;display:flex;gap:10px;flex-wrap:wrap">
-        <span>ADX <b>${safeN(s.adx_value,0)}</b></span><span>RSI <b>${safeN(s.rsi_value,0)}</b></span>
-        <span>量比 <b>${safeN(s.vol_ratio,1)}x</b></span><span>週線 <b>${safe(s.weekly_bias,'—')}</b></span>
+      <div style="font-size:11px;margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap;color:var(--t2)">
+        <span>ADX <b style="color:var(--t1)">${safeN(s.adx_value,0)}</b></span><span>RSI <b style="color:var(--t1)">${safeN(s.rsi_value,0)}</b></span>
+        <span>量比 <b style="color:var(--t1)">${safeN(s.vol_ratio,1)}x</b></span><span>週線 <b style="color:var(--t1)">${safe(s.weekly_bias,'—')}</b></span>
         ${s.inst_signal?`<span style="color:var(--B)">${s.inst_signal}</span>`:''}
       </div>
-      ${cMet?`<details style="margin-bottom:6px"><summary style="cursor:pointer;font-size:10px;color:var(--t3)">條件詳情</summary><div style="margin-top:6px;line-height:2">${cMet}${cFail?'<br>'+cFail:''}</div></details>`:''}
-      <div style="font-size:10px;color:var(--t3);background:var(--s1);border-radius:4px;padding:6px 8px">${safe(s.reason_brief,'—')}</div>
-      <div style="font-size:10px;color:var(--t3);margin-top:6px;display:flex;justify-content:space-between"><span>${safe(s.action)}</span><span>有效 ${safe(s.expire_days,3)} 個交易日</span></div>
+      ${cMet?`<details style="margin-bottom:6px"><summary style="cursor:pointer;font-size:10px;color:var(--t3);letter-spacing:.3px">條件詳情</summary><div style="margin-top:6px;line-height:2">${cMet}${cFail?'<br>'+cFail:''}</div></details>`:''}
+      <div style="font-size:10.5px;color:var(--t2);background:var(--s2);border:1px solid var(--bd);padding:7px 9px">${safe(s.reason_brief,'—')}</div>
+      <div style="font-size:10.5px;color:var(--t3);margin-top:8px;display:flex;justify-content:space-between"><span>${safe(s.action)}</span><span>有效 ${safe(s.expire_days,3)} 個交易日</span></div>
     </div>`;
   }).join('');
 }
@@ -556,26 +567,26 @@ function renderMarketSummary(mo){
   const el=document.getElementById('market-summary');
   const fn=mo.foreign?.net_buy_twd||0;
   el.innerHTML=`
-    <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
-      <div style="display:flex;justify-content:space-between"><span>市場狀態</span><span>${{stop:'🔴 重挫，暫停多單',caution:'⚠️ 偏弱，謹慎',normal:'✅ 正常'}[mo.market_status]||'—'}</span></div>
-      <div style="display:flex;justify-content:space-between"><span>情緒分數</span><span style="color:var(--B)">${safeN(mo.sentiment_score,0)} / 100（${safe(mo.sentiment_zh)}）</span></div>
-      <div style="display:flex;justify-content:space-between"><span>VIX</span><span style="color:${(mo.index?.vix?.price||20)>30?'var(--R)':(mo.index?.vix?.price||20)>20?'var(--Y)':'var(--G)'}">${safeN(mo.index?.vix?.price,1)}</span></div>
-      <div style="display:flex;justify-content:space-between"><span>外資動向</span><span style="color:${fn>=0?'var(--G)':'var(--R)'}">${fn>=0?'買超':'賣超'} ${Math.abs(fn/1e8).toFixed(0)} 億</span></div>
-      <div style="display:flex;justify-content:space-between"><span>數據更新</span><span style="color:var(--t3)">${toTaipeiHM(mo.fetched_at)||'—'} 台北（${ageLabel(ageMinutes(mo.fetched_at))}）</span></div>
+    <div>
+      <div class="kv"><span>市場狀態</span><span>${{stop:'重挫，暫停多單',caution:'偏弱，謹慎',normal:'正常'}[mo.market_status]||'—'}</span></div>
+      <div class="kv"><span>情緒分數</span><span style="color:var(--B)">${safeN(mo.sentiment_score,0)} / 100（${safe(mo.sentiment_zh)}）</span></div>
+      <div class="kv"><span>VIX</span><span style="color:${(mo.index?.vix?.price||20)>30?'var(--R)':(mo.index?.vix?.price||20)>20?'var(--Y)':'var(--G)'}">${safeN(mo.index?.vix?.price,1)}</span></div>
+      <div class="kv"><span>外資動向</span><span style="color:${fn>=0?'var(--G)':'var(--R)'}">${fn>=0?'買超':'賣超'} ${Math.abs(fn/1e8).toFixed(0)} 億</span></div>
+      <div class="kv"><span>數據更新</span><span style="color:var(--t3);font-weight:400">${toTaipeiHM(mo.fetched_at)||'—'} 台北（${ageLabel(ageMinutes(mo.fetched_at))}）</span></div>
     </div>`;
 }
 
 function renderMarket(d){
   const sys=d.system_status||{};
   document.getElementById('market-env-body').innerHTML=`
-    <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
-      <div style="display:flex;justify-content:space-between"><span>環境評分</span><b style="color:${sys.env_score>=70?'var(--G)':sys.env_score>=40?'var(--Y)':'var(--R)'}">${sys.env_score||'—'}/100</b></div>
-      <div style="display:flex;justify-content:space-between"><span>大盤狀態</span><span>${safe(sys.env_status)}</span></div>
-      <div style="display:flex;justify-content:space-between"><span>可交易</span><span style="color:${sys.can_trade?'var(--G)':'var(--R)'}">${sys.can_trade?'✅ 是':'🔴 否'}</span></div>
-      <div style="display:flex;justify-content:space-between"><span>外資訊號</span><span>${safe(sys.foreign_signal)}</span></div>
+    <div>
+      <div class="kv"><span>環境評分</span><span style="color:${sys.env_score>=70?'var(--G)':sys.env_score>=40?'var(--Y)':'var(--R)'}">${sys.env_score||'—'}/100</span></div>
+      <div class="kv"><span>大盤狀態</span><span>${safe(sys.env_status)}</span></div>
+      <div class="kv"><span>可交易</span><span style="color:${sys.can_trade?'var(--G)':'var(--R)'}">${sys.can_trade?'是':'否'}</span></div>
+      <div class="kv"><span>外資訊號</span><span>${safe(sys.foreign_signal)}</span></div>
     </div>`;
   document.getElementById('cat-advice-body').innerHTML=Object.entries(sys.category_advice||{}).map(([cat,adv])=>
-    `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--bd)"><span>${cat}</span><span>${adv}</span></div>`
+    `<div class="kv"><span>${cat}</span><span>${adv}</span></div>`
   ).join('');
 }
 
@@ -620,8 +631,8 @@ function renderPerf(wr){
   if(curve.length>1){
     const ctx=document.getElementById('equity-chart').getContext('2d');
     if(_eqChart)_eqChart.destroy();
-    _eqChart=new Chart(ctx,{type:'line',data:{labels:curve.map((_,i)=>i),datasets:[{data:curve,borderColor:'#00d47e',backgroundColor:'rgba(0,212,126,.08)',borderWidth:1.5,pointRadius:2,fill:true,tension:0.3}]},
-      options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{display:false},y:{ticks:{color:'#8b949e',font:{size:10}},grid:{color:'#30363d'}}}}});
+    _eqChart=new Chart(ctx,{type:'line',data:{labels:curve.map((_,i)=>i),datasets:[{data:curve,borderColor:'#1c6b48',backgroundColor:'rgba(28,107,72,.06)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{display:false},y:{ticks:{color:'#8b8d97',font:{size:10}},grid:{color:'#e3e1d8'}}}}});
   }
 }
 
