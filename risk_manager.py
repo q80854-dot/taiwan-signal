@@ -5,11 +5,22 @@ risk_manager.py — 台股波段版 v1.0
 新增：check_foreign_flow、台股張數風控
 """
 import logging
-from datetime import datetime, timezone
+import pytz
+from datetime import datetime
 from typing import Dict, List
 from config import CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_DAILY_RISK
 
 logger = logging.getLogger(__name__)
+
+# ★ 修正：2026-09-29（跨AI覆核發現）——record_signal_loss / check_daily_loss_limit
+# 原本用 datetime.now(timezone.utc) 算「今天」，但 app.py 全部排程（包含真正會
+# 呼叫 record_signal_loss() 的 scanner.intraday_check/daily_scan）都是用
+# Asia/Taipei 時區安排的。雖然目前所有實際觸發時間換算成UTC都還在同一個UTC
+# 日曆日內，不會踩到邊界，但 /api/state 是前端每30秒直接輪詢
+# check_daily_loss_limit()，在台北時間00:00–08:00（對應前一個UTC日）這段
+# 期間會誤判成「今天」還沒開始、把昨天其實還有效的虧損歸零顯示。統一改成
+# 跟 app.py 排程同一個 TZ_TAIPEI，避免這個日期定義不一致的陷阱。
+TZ_TAIPEI = pytz.timezone("Asia/Taipei")
 
 # ★ 修正：2026-09-26（稽核發現，回應「fail-open 比模型不準更危險」的問題）——
 # check_market_circuit_breaker / check_foreign_flow / check_margin_change 這三個
@@ -99,7 +110,7 @@ def check_account_requirement(ticker: str, stock_info: Dict) -> Dict:
 _daily_loss = {"date":"","loss_twd":0.0,"signal_count":0}
 
 def record_signal_loss(loss_twd: float):
-    today=datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today=datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
     if _daily_loss["date"]!=today:
         _daily_loss["date"]=today; _daily_loss["loss_twd"]=0.0; _daily_loss["signal_count"]=0
     if loss_twd<0: _daily_loss["loss_twd"]+=abs(loss_twd)
@@ -113,7 +124,7 @@ def check_daily_loss_limit() -> Dict:
     # calc_position_size() 2026-09-16 修正過的同一類問題）。改成直接從
     # config 讀，兩處數字保證永遠一致。
     max_daily=ACCOUNT_BALANCE_TWD*MAX_DAILY_RISK
-    today=datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today=datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
     if _daily_loss["date"]!=today:
         return {"exceeded":False,"today_loss":0,"max_loss":round(max_daily,0),"remaining":round(max_daily,0)}
     loss=_daily_loss["loss_twd"]

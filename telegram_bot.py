@@ -28,32 +28,54 @@ from config import (
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 SUBSCRIBERS_PATH = "instance/subscribers.json"
 
+# ★ 修正：2026-09-29（跨AI覆核發現，經 grep/Read 驗證屬實：state_store.py
+# 的 docstring 本身就記錄了「Render 這個 Web Service 沒有 Persistent Disk，
+# 每次重新部署容器都會重建」——這個問題早就被發現並解決過一次（見同一份
+# docstring 2026-09-16 的說明），但當時只處理了訊號紀錄，忘了 subscribers.json
+# 是同一類問題：使用者透過 /start 訂閱之後，下次部署（本專案至今已15次以上）
+# free/paid 訂閱名單會被靜默清空，使用者收不到任何通知也不會被告知。
+# 現在改成優先走 state_store（Postgres，真正持久化），只有在 state_store
+# 這個模組因為某種原因無法載入時（理論上不會發生，這裡只是防呆）才退回
+# 本機 JSON 檔案，避免整個訂閱功能因為單一依賴失敗而完全掛掉。
 def _load_subscribers() -> Dict:
+    try:
+        from state_store import store
+        data = store.get_subscribers()
+    except Exception as e:
+        logger.error(f"_load_subscribers: state_store 無法使用，退回本機檔案（重新部署會遺失訂閱名單）: {e}")
+        if os.path.exists(SUBSCRIBERS_PATH):
+            with open(SUBSCRIBERS_PATH, "r") as f:
+                data = json.load(f)
+        else:
+            data = {"free": [], "paid": []}
+    data.setdefault("free", [])
+    data.setdefault("paid", [])
     # ★ 修正：2026-09-03——原本檔案存在時就直接回傳檔案內容，如果那個檔案
     # 是舊版邏輯建立的（沒有 "admin" 這個 key，或 admin 清單裡沒有
     # TELEGRAM_CHAT_ID），管理者/機主本人就永遠收不到任何推播，而且完全
     # 沒有錯誤訊息——這正是「網站看得到訊號、Telegram 卻收不到」的根因
-    # 之一。改成不管檔案內容是什麼，都強制把 TELEGRAM_CHAT_ID 併進
-    # admin 清單（有設定才併，避免塞進空字串），這樣機主一定會在收訊名單
-    # 裡，不必依賴 instance/subscribers.json 這個在 Render 上每次重新
-    # 部署就會被清空的暫存檔案有沒有剛好包含正確內容。
-    if os.path.exists(SUBSCRIBERS_PATH):
-        with open(SUBSCRIBERS_PATH, "r") as f:
-            data = json.load(f)
-    else:
-        data = {"free": [], "paid": [], "admin": []}
+    # 之一。改成不管來源是什麼，都強制把 TELEGRAM_CHAT_ID 併進 admin
+    # 清單（有設定才併，避免塞進空字串），這樣機主一定會在收訊名單裡。
     data.setdefault("admin", [])
     if TELEGRAM_CHAT_ID and str(TELEGRAM_CHAT_ID) not in [str(a) for a in data["admin"]]:
         data["admin"].append(str(TELEGRAM_CHAT_ID))
     return data
 
 def _save_subscribers(data: Dict):
+    """僅供 state_store 不可用時的本機檔案備援路徑使用；正常路徑
+    （add_subscriber/remove_subscriber）直接寫 state_store，不會呼叫這裡。"""
     os.makedirs("instance", exist_ok=True)
     with open(SUBSCRIBERS_PATH, "w") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def add_subscriber(chat_id: str, tier: str = "free"):
     with _subscribers_lock:
+        try:
+            from state_store import store
+            store.add_subscriber(chat_id, tier)
+            return
+        except Exception as e:
+            logger.error(f"add_subscriber: state_store 無法使用，退回本機檔案: {e}")
         subs = _load_subscribers()
         chat_id = str(chat_id)
         if chat_id not in subs.get(tier, []):
@@ -62,15 +84,26 @@ def add_subscriber(chat_id: str, tier: str = "free"):
 
 def remove_subscriber(chat_id: str):
     with _subscribers_lock:
+        try:
+            from state_store import store
+            store.remove_subscriber(chat_id)
+            return
+        except Exception as e:
+            logger.error(f"remove_subscriber: state_store 無法使用，退回本機檔案: {e}")
         subs = _load_subscribers()
         chat_id = str(chat_id)
         for tier in subs:
-            if chat_id in subs[tier]:
+            if tier != "admin" and chat_id in subs[tier]:
                 subs[tier].remove(chat_id)
         _save_subscribers(subs)
 
 def is_paid_subscriber(chat_id: str) -> bool:
-    return str(chat_id) in _load_subscribers().get("paid", [])
+    try:
+        from state_store import store
+        return store.is_paid_subscriber(chat_id)
+    except Exception as e:
+        logger.error(f"is_paid_subscriber: state_store 無法使用，退回本機檔案: {e}")
+        return str(chat_id) in _load_subscribers().get("paid", [])
 
 def get_subscriber_counts() -> Dict:
     # ★ 新增：2026-09-03——給 /api/diagnostics 用，讓機主不用連進伺服器看檔案

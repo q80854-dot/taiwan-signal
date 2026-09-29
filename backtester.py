@@ -240,11 +240,20 @@ def _truncate_ohlcv_to_date(data: Optional[Dict], date_end: Optional[str]) -> Op
 # ★ 修正：2026-08-30（第二輪）——跟 signal_engine.calc_position_size() 的修正配套：不再假設倉位
 # 一定是「張」(1000股)的整數倍，改直接吃股數。calc_tw_pnl 的 shares 參數現在就是股數本身，
 # 不用再乘 SHARES_PER_LOT。
+# ★ 修正：2026-09-29（跨AI覆核發現，經 grep/Read 驗證屬實）——sell_tax 原本無條件對
+# close 課證交稅，這在 direction="buy"（做多，賣出出場才是真正的賣出那一筆交易）
+# 是對的；但 direction="sell"（做空）的真正賣出交易是 entry（放空進場那一筆），
+# close 只是買回回補（買進），不該課證交稅。跟 signal_engine.calc_trade_cost() 的
+# 正確作法（用「哪一筆才是真正的賣出交易」來課稅，不是無條件用 close）對齊。
+# 目前 ENABLE_SHORT_SIGNALS=False，即時交易不受影響，但這個函式仍被回測/歷史
+# 空單績效統計使用，稅基算錯會讓空單的回測 P&L 系統性偏低，影響「要不要重新
+# 開放放空」這類決策所依據的數字。
 def calc_tw_pnl(entry, close, direction, shares):
     gross=(close-entry)*shares if direction=="buy" else (entry-close)*shares
     buy_fee=max(MIN_COMMISSION,entry*shares*COMMISSION_RATE)
     sell_fee=max(MIN_COMMISSION,close*shares*COMMISSION_RATE)
-    sell_tax=close*shares*TAX_RATE_SELL
+    sell_leg_price = close if direction=="buy" else entry
+    sell_tax=sell_leg_price*shares*TAX_RATE_SELL
     return round(gross-buy_fee-sell_fee-sell_tax,0)
 
 def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True,

@@ -135,6 +135,9 @@ class StateStore:
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY, value TEXT, updated_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS subscribers (
+                    chat_id TEXT PRIMARY KEY, tier TEXT, added_at TEXT
+                );
                 CREATE INDEX IF NOT EXISTS idx_signals_ticker  ON signals(ticker);
                 CREATE INDEX IF NOT EXISTS idx_signals_date    ON signals(generated_at);
                 CREATE INDEX IF NOT EXISTS idx_signals_status  ON signals(status);
@@ -186,6 +189,9 @@ class StateStore:
                 );
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY, value TEXT, updated_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS subscribers (
+                    chat_id TEXT PRIMARY KEY, tier TEXT, added_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_signals_ticker  ON signals(ticker);
                 CREATE INDEX IF NOT EXISTS idx_signals_date    ON signals(generated_at);
@@ -784,6 +790,73 @@ class StateStore:
         except Exception as e:
             logger.warning(f"get_quarterly_margin_snapshot {code}/{period}: {e}")
             return None
+
+    # ── Telegram 訂閱名單 ──
+    # ★ 新增：2026-09-29（跨AI覆核發現，經 grep/Read 驗證屬實）——telegram_bot.py
+    # 原本把 free/paid 訂閱名單存在本機檔案 instance/subscribers.json，跟這個
+    # 檔案原本要解決的 SQLite 問題是同一類：Render 這個 Web Service 沒有
+    # Persistent Disk，每次重新部署容器都會重建，本機檔案會被清空，導致
+    # 使用者 /start 訂閱之後，下次部署就被靜默取消訂閱，使用者跟機主都不會
+    # 收到任何通知。改存進這個已經是真正持久化的資料庫（Postgres／SQLite雙
+    # 後端），跟其他狀態走同一套持久化機制。
+    def add_subscriber(self, chat_id: str, tier: str = "free") -> bool:
+        try:
+            chat_id = str(chat_id)
+            now = datetime.now(timezone.utc).isoformat()
+            with self._conn() as conn:
+                if USE_PG:
+                    conn.execute(
+                        "INSERT INTO subscribers (chat_id, tier, added_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT (chat_id) DO UPDATE SET tier=EXCLUDED.tier",
+                        (chat_id, tier, now)
+                    )
+                else:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO subscribers (chat_id, tier, added_at) VALUES (?, ?, ?)",
+                        (chat_id, tier, now)
+                    )
+            return True
+        except Exception as e:
+            logger.warning(f"add_subscriber {chat_id}: {e}")
+            return False
+
+    def remove_subscriber(self, chat_id: str) -> bool:
+        try:
+            chat_id = str(chat_id)
+            with self._conn() as conn:
+                conn.execute("DELETE FROM subscribers WHERE chat_id=?", (chat_id,))
+            return True
+        except Exception as e:
+            logger.warning(f"remove_subscriber {chat_id}: {e}")
+            return False
+
+    def get_subscribers(self) -> Dict[str, List[str]]:
+        """回傳 {"free":[...], "paid":[...]}——admin 名單不在這裡存，
+        由呼叫端（telegram_bot._load_subscribers）用 TELEGRAM_CHAT_ID
+        動態併入，跟原本行為一致。"""
+        result = {"free": [], "paid": []}
+        try:
+            with self._conn() as conn:
+                rows = conn.execute("SELECT chat_id, tier FROM subscribers").fetchall()
+            for row in rows:
+                row = dict(row)
+                tier = row.get("tier") or "free"
+                result.setdefault(tier, []).append(str(row["chat_id"]))
+        except Exception as e:
+            logger.warning(f"get_subscribers: {e}")
+        return result
+
+    def is_paid_subscriber(self, chat_id: str) -> bool:
+        try:
+            chat_id = str(chat_id)
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT 1 FROM subscribers WHERE chat_id=? AND tier='paid'", (chat_id,)
+                ).fetchall()
+            return bool(rows)
+        except Exception as e:
+            logger.warning(f"is_paid_subscriber {chat_id}: {e}")
+            return False
 
 
 store = StateStore()
