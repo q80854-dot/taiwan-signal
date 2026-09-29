@@ -493,6 +493,11 @@ def api_instrument(ticker: str):
                 "fetched_at": meta["fetched_at"],
                 "update_freq": "每日一次（收盤後），非即時盤中報價",
                 "scan_universe_threshold": meta["scan_universe_threshold"],
+                # ★ 新增：2026-09-29——回應使用者「成交量的張數全部都有問題」的
+                # 回報：這是實際「哪一個交易日」收盤後的成交量／價格資料（不是我們
+                # 的抓取時間），漏了這欄前端就沒有東西可以顯示，等於白加了
+                # stock_universe.py 那邊的功能。見 get_universe_data_meta() 說明。
+                "quote_trading_date": meta.get("quote_trading_date"),
             },
             "technical_indicators": {
                 "source": "yfinance 日線 OHLCV，計算方式與每日訊號掃描（scanner.py）完全相同",
