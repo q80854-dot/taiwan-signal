@@ -732,7 +732,14 @@ function renderMoSourceNote(ds){
   // 避免使用者把 TWSE/TPEX 官方尚未更新（非今日）誤會成張數算錯。
   const tdate=qs.quote_trading_date;
   const tdateHtml=tdate?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">📅 以下統計為 <span style="color:var(--down)">${tdate}</span> 收盤後資料${tdate!==todayISO()?'（非今日，TWSE/TPEX 官方尚未公布更新的收盤資料，屬正常現象，不是張數算錯）':'（今日收盤後最新資料）'}</div>`:'<div style="color:var(--warn)">⚠ 無法判斷這份資料實際交易日期，請自行核對是否為最新收盤資料</div>';
-  el.innerHTML=`${tdateHtml}行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}`;
+  // ★ 新增：2026-09-29——使用者回報「市場總覽的上漲/下跌加起來的數字都有
+  // 錯」，根因是 TWSE(上市)／TPEX(上櫃) 兩邊官方資料常常不是同一交易日
+  // （見 stock_universe.get_market_breadth() 修正說明），把兩邊混在一起
+  // 加總出來的「上漲家數/下跌家數」在這種情況下沒有意義。這裡兩邊日期不
+  // 一致時明顯提示，讓使用者知道下方合計數字是「跨兩個交易日加總」，並
+  // 附上各自實際的交易日，而不是讓使用者誤以為總數本身算錯了。
+  const mismatchHtml=qs.dates_mismatch?`<div style="font-size:12px;color:var(--alert);font-weight:600;margin-bottom:4px">⚠ 上市(TWSE)與上櫃(TPEX)目前不是同一交易日的資料——上市：${safe(qs.tse_quote_date,'未知')}；上櫃：${safe(qs.otc_quote_date,'未知')}。下方「合計」欄位是把兩個不同交易日的漲跌家數加在一起，僅供粗略參考，請改看下方「上市／上櫃分開統計」才是同一天、正確可信的數字</div>`:'';
+  el.innerHTML=`${tdateHtml}${mismatchHtml}行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}`;
 }
 async function fetchMarketBreadth(){
   const el=document.getElementById('breadth-row');if(!el)return;
@@ -741,12 +748,27 @@ async function fetchMarketBreadth(){
     if(d.error)throw new Error(d.error);
     renderMoSourceNote(d.data_sources);
     const warn=(!d.coverage_ok||(d.total&&d.covered<d.total*0.5))?`<div class="kpi-sub" style="color:var(--warn)">涵蓋 ${d.covered}/${d.total} 檔，資料可能不完整</div>`:'';
+    // ★ 新增：2026-09-29——原本這裡只顯示上市+上櫃「合計」的漲跌家數，使用者
+    // 回報這個總數是錯的；根因是上市/上櫃兩邊常常不是同一交易日的資料（見
+    // renderMoSourceNote 的 mismatchHtml 說明）。兩邊日期不一致時，額外把
+    // 「上市」「上櫃」各自的漲跌家數＋各自日期分開列出來——這兩組才是真正
+    // 同一天、可信的統計數字，合計只保留給日期一致時參考。
+    const tse=d.tse||{}, otc=d.otc||{};
+    const breakdownHtml=d.dates_mismatch?`
+      <div style="grid-column:1/-1;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line,#ddd);font-size:12px">
+        <div style="font-weight:600;margin-bottom:6px">上市／上櫃分開統計（因日期不同，才是正確可信的數字）</div>
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div>上市（${safe(tse.quote_date,'未知')}）：<span style="color:var(--up)">上漲 ${tse.advancers??'—'}</span>　<span style="color:var(--down)">下跌 ${tse.decliners??'—'}</span>　平盤 ${tse.unchanged??'—'}</div>
+          <div>上櫃（${safe(otc.quote_date,'未知')}）：<span style="color:var(--up)">上漲 ${otc.advancers??'—'}</span>　<span style="color:var(--down)">下跌 ${otc.decliners??'—'}</span>　平盤 ${otc.unchanged??'—'}</div>
+        </div>
+      </div>`:'';
     el.innerHTML=`
-      <div class="kpi" style="border-left:none"><div class="kpi-label">上漲家數</div><div class="kpi-val" style="color:var(--up)">${d.advancers}</div></div>
-      <div class="kpi"><div class="kpi-label">下跌家數</div><div class="kpi-val" style="color:var(--down)">${d.decliners}</div></div>
+      <div class="kpi" style="border-left:none"><div class="kpi-label">上漲家數${d.dates_mismatch?'（合計，跨日期）':''}</div><div class="kpi-val" style="color:var(--up)">${d.advancers}</div></div>
+      <div class="kpi"><div class="kpi-label">下跌家數${d.dates_mismatch?'（合計，跨日期）':''}</div><div class="kpi-val" style="color:var(--down)">${d.decliners}</div></div>
       <div class="kpi"><div class="kpi-label">平盤家數</div><div class="kpi-val">${d.unchanged}</div></div>
       <div class="kpi"><div class="kpi-label">漲停家數</div><div class="kpi-val" style="color:var(--up)">${d.limit_up}</div></div>
       <div class="kpi"><div class="kpi-label">跌停家數</div><div class="kpi-val" style="color:var(--down)">${d.limit_down}</div>${warn}</div>
+      ${breakdownHtml}
     `;
   }catch(e){el.innerHTML='<div class="kpi" style="border-left:none"><div class="kpi-label">載入失敗</div></div>';}
 }
