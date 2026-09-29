@@ -218,6 +218,7 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
   <div class="nav-g">主介面</div>
   <div class="nav on"  onclick="go('overview')">總覽</div>
   <div class="nav"     onclick="go('signals')">今日訊號 <span class="nbadge" id="sig-count-badge">0</span></div>
+  <div class="nav"     onclick="go('watchlist')">觀察清單 <span class="nbadge" id="wl-count-badge">0</span></div>
   <div class="nav"     onclick="go('history')">交易歷史</div>
   <div class="nav"     onclick="go('perf')">績效分析</div>
   <div class="nav-g">市場</div>
@@ -261,6 +262,10 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
       <div class="ticker-item"><div class="ticker-name">Bitcoin BTC</div><div class="ticker-val" id="btc-val">—</div><div class="ticker-chg" id="btc-chg">—</div></div>
     </div>
     <div class="pad">
+    <div class="note-box" id="positioning-note" style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+      <div><b style="color:var(--t1)">用資料理解市場，用回測驗證策略。</b>　台股波段訊號研究工具：市場資料 → 技術／基本面分析 → 交易訊號 → 歷史回測 → 觀察清單，協助你建立有依據的研究流程。訊號僅供研究參考，不構成投資建議、不保證獲利。</div>
+      <span style="cursor:pointer;color:var(--t3);font-size:11px;flex-shrink:0;white-space:nowrap" onclick="dismissPositioningNote()">不再顯示 ✕</span>
+    </div>
     <div class="hero-row">
       <div class="hero">
         <div class="hero-label">市場環境評分</div>
@@ -302,6 +307,14 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
       <span style="font-size:11px;color:var(--t3)" id="sig-filter-info"></span>
     </div>
     <div id="signals-container"></div>
+    </div>
+  </div>
+
+  <!-- Watchlist -->
+  <div class="page" id="page-watchlist">
+    <div class="pad">
+    <div class="note-box" style="margin-bottom:16px">觀察清單只存在你目前這個瀏覽器（localStorage），不會同步到別的裝置、也不會送到後端。在「今日訊號」或總覽的訊號卡上按 ☆ 就會加進來。</div>
+    <div id="watchlist-container"></div>
     </div>
   </div>
 
@@ -473,7 +486,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={overview:'總覽',signals:'今日訊號',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',backtest:'回測',diag:'系統診斷'};
+const TITLES={overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',backtest:'回測',diag:'系統診斷'};
 function go(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.nav').forEach(n=>n.classList.remove('on'));
@@ -484,9 +497,78 @@ function go(id){
   if(id==='perf'&&_state)renderPerf(_state.win_rate||{});
   if(id==='market'&&_state){renderMarket(_state);fetchUniverse();}
   if(id==='news')renderMaterialNewsPage();
+  if(id==='watchlist')renderWatchlistPage();
   if(id==='diag')fetchDiag();
   closeSide();
 }
+
+// ★ 新增：2026-09-29——觀察清單（使用者要求，參考 Perplexity 規劃書「觀察清單」
+// 章節，但先用 localStorage 做，不做真的會員/資料庫——見使用者本人指示：會員
+// 系統留到最後。清單只存在使用者這台瀏覽器，不同步、不送後端。
+function getWatchlist(){
+  try{return JSON.parse(localStorage.getItem('dashWatchlist')||'[]');}catch(e){return [];}
+}
+function saveWatchlist(list){
+  try{localStorage.setItem('dashWatchlist',JSON.stringify(list));}catch(e){}
+  setEl('wl-count-badge',list.length);
+}
+function isInWatchlist(ticker){return getWatchlist().some(w=>w.ticker===ticker);}
+function toggleWatchlistByTicker(ticker){
+  let list=getWatchlist();
+  if(list.some(w=>w.ticker===ticker)){
+    list=list.filter(w=>w.ticker!==ticker);
+  }else{
+    const sig=(_signals||[]).find(s=>s.ticker===ticker);
+    list.push({ticker,code:sig?.code||ticker.split('.')[0],name:sig?.name||ticker,added_at:new Date().toISOString()});
+  }
+  saveWatchlist(list);
+  renderLatestSignals(_signals||[]);renderSignals();
+  if(document.getElementById('page-watchlist').classList.contains('on'))renderWatchlistPage();
+}
+function wlStar(ticker){
+  const on=isInWatchlist(ticker);
+  return `<span onclick="event.stopPropagation();toggleWatchlistByTicker('${ticker}')" title="${on?'移除觀察清單':'加入觀察清單'}" style="cursor:pointer;color:${on?'var(--warn)':'var(--t3)'};font-size:15px;margin-left:8px">${on?'★':'☆'}</span>`;
+}
+function renderWatchlistPage(){
+  const el=document.getElementById('watchlist-container');if(!el)return;
+  const list=getWatchlist();
+  if(!list.length){el.innerHTML='<div class="empty"><div class="empty-label">觀察清單</div>目前是空的，在訊號卡上按 ☆ 加入</div>';return;}
+  el.innerHTML=list.map(w=>{
+    const live=(_signals||[]).find(s=>s.ticker===w.ticker);
+    if(live){
+      return `<div class="sig-card ${live.direction==='buy'?'':'sell'}">
+        <div class="sig-head">
+          <div><span class="sig-name">${live.name}（${live.code}）</span><span class="sig-badge ${live.direction}">${live.direction==='buy'?'做多':'做空'}</span>${wlStar(w.ticker)}</div>
+          <div class="sig-score" style="color:${live.score>=85?'var(--up)':live.score>=75?'var(--warn)':'var(--t3)'}">${live.score||0}</div>
+        </div>
+        <div class="sig-grid">
+          <div class="sig-item"><label>現價</label><span>${safeN(live.current_price,2)}</span></div>
+          <div class="sig-item"><label>止損</label><span style="color:var(--down)">${safeN(live.stop_loss,2)}</span></div>
+          <div class="sig-item"><label>TP1</label><span style="color:var(--up)">${safeN(live.tp1,2)}</span></div>
+          <div class="sig-item"><label>張數</label><span>${safe(live.suggested_lots,1)}</span></div>
+        </div>
+        <div class="sig-footer">目前有效訊號</div>
+      </div>`;
+    }
+    return `<div class="sig-card" style="border-left-color:var(--line2)">
+      <div class="sig-head"><div><span class="sig-name">${safe(w.name)}（${safe(w.code)}）</span></div>${wlStar(w.ticker)}</div>
+      <div style="font-size:11px;color:var(--t3)">目前無有效訊號　加入時間：${toTaipeiStr(w.added_at)||'—'}</div>
+    </div>`;
+  }).join('');
+}
+(function initWatchlistBadge(){setEl('wl-count-badge',getWatchlist().length);})();
+
+// ★ 新增：2026-09-29——首頁定位說明只需要看過一次，記在 localStorage，不用
+// 每次載入都佔畫面空間。
+function dismissPositioningNote(){
+  const el=document.getElementById('positioning-note');if(el)el.style.display='none';
+  try{localStorage.setItem('dashPositioningNoteDismissed','1');}catch(e){}
+}
+(function initPositioningNote(){
+  let dismissed=null;
+  try{dismissed=localStorage.getItem('dashPositioningNoteDismissed');}catch(e){}
+  if(dismissed==='1'){const el=document.getElementById('positioning-note');if(el)el.style.display='none';}
+})();
 
 // Mobile sidebar drawer
 function toggleSide(){
@@ -623,14 +705,26 @@ async function fetchUniverse(){
   }catch(e){el.innerHTML='<div class="empty">股票池資料載入失敗</div>';}
 }
 
+let _btTicker=null;
 async function runBacktest(){
   const raw=document.getElementById('bt-ticker').value.trim();
   if(!raw){toast('請輸入股票代號');return;}
   const ticker=raw.includes('.')?raw:raw+'.TW';
+  _btTicker=ticker;
   document.getElementById('bt-result').innerHTML='<div class="empty">回測中（約10秒）…</div>';
   try{
     const d=await(await fetch('/api/backtest/'+ticker)).json();
     if(d.error){document.getElementById('bt-result').innerHTML=`<div class="empty">${d.error}</div>`;return;}
+    const bd=d.by_direction||{};
+    const dirRow=(label,s)=>s&&s.n_trades?`<div class="kv"><span>${label}（${s.n_trades} 筆）</span><span>勝率 ${s.win_rate}%　損益 ${(s.total_pnl_twd||0).toLocaleString()} TWD</span></div>`:'';
+    const trades=(d.trades||[]);
+    const tradesRows=trades.length?trades.map(t=>`
+      <tr><td><span class="tag ${t.direction==='buy'?'green':'red'}">${t.direction==='buy'?'多':'空'}</span></td>
+        <td>${safeN(t.entry,2)}</td><td>${safeN(t.close,2)}</td>
+        <td>${t.result==='tp1'?'<span class="tag green">TP1</span>':t.result==='tp2'?'<span class="tag green">TP2</span>':t.result==='sl'?'<span class="tag red">SL</span>':`<span class="tag blue">${safe(t.result)}</span>`}</td>
+        <td>${safe(t.shares)}</td><td>${safe(t.hold_days,'—')}</td>
+        <td style="color:${clr(t.pnl_twd)}">${(t.pnl_twd||0)>=0?'+':''}${(t.pnl_twd||0).toLocaleString()}</td></tr>`).join('')
+      :'<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">尚無交易記錄</td></tr>';
     document.getElementById('bt-result').innerHTML=`
       <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">${ticker} 回測結果</div></div>
       <div class="hero-row" style="grid-template-columns:repeat(4,1fr)">
@@ -638,11 +732,47 @@ async function runBacktest(){
           <div class="kpi"><div class="kpi-label">勝率</div><div class="kpi-val">${d.win_rate}%</div><div class="kpi-sub">${d.n_wins}勝/${d.n_losses}負</div></div>
           <div class="kpi"><div class="kpi-label">總損益</div><div class="kpi-val" style="color:${d.total_pnl_twd>=0?'var(--up)':'var(--down)'}">${(d.total_pnl_twd||0).toLocaleString()}</div><div class="kpi-sub">TWD</div></div>
           <div class="kpi"><div class="kpi-label">報酬率</div><div class="kpi-val" style="color:${d.return_pct>=0?'var(--up)':'var(--down)'}">${d.return_pct}%</div></div>
-          <div class="kpi" style="border-left:none"><div class="kpi-label">Sharpe</div><div class="kpi-val">${d.sharpe||'—'}</div></div>
-          <div class="kpi"><div class="kpi-label">最大回撤</div><div class="kpi-val">${d.max_drawdown}%</div></div>
-          <div class="kpi"><div class="kpi-label">平均持有</div><div class="kpi-val">${d.avg_hold_days} 天</div></div>
-      </div>`;
+          <div class="kpi" style="border-left:none"><div class="kpi-label">年化報酬</div><div class="kpi-val">${safe(d.annual_return,'—')}%</div></div>
+          <div class="kpi"><div class="kpi-label">Sharpe</div><div class="kpi-val">${d.sharpe||'—'}<span style="font-size:11px;color:var(--t3);margin-left:4px">${safe(d.grade,'')}</span></div></div>
+          <div class="kpi"><div class="kpi-label">最大回撤</div><div class="kpi-val">${d.max_drawdown}%<span style="font-size:11px;color:var(--t3);margin-left:4px">${safe(d.dd_grade,'')}</span></div></div>
+          <div class="kpi"><div class="kpi-label">Calmar</div><div class="kpi-val">${safe(d.calmar,'—')}</div></div>
+      </div>
+      <div class="grid2" style="margin-top:2px">
+        <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">分方向表現</span></div>
+          <div class="panel-body">${dirRow('做多',bd.buy)||'<div class="kv"><span>做多</span><span style="color:var(--t3)">無交易</span></div>'}${dirRow('做空',bd.sell)||'<div class="kv"><span>做空</span><span style="color:var(--t3)">無交易</span></div>'}
+            <div class="kv"><span>平均持有</span><span>${d.avg_hold_days} 天</span></div>
+            <div class="kv"><span>最大連續虧損</span><span>${safe(d.max_consec_loss,'—')} 筆</span></div>
+          </div>
+        </div>
+        <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">樣本外測試（Walk-Forward）</span></div>
+          <div class="panel-body" id="wf-body">
+            <button class="btn" onclick="runWalkForward()">執行樣本外測試</button>
+            <div style="font-size:10.5px;color:var(--t3);margin-top:8px">用「訓練期找參數、測試期驗證」的方式重跑，避免用同一段資料既調參又評分（look-ahead 偏誤）。</div>
+          </div>
+        </div>
+      </div>
+      <div class="note-box" style="margin-top:2px">此回測已計入台股手續費、交易稅與部位規模；<b>但目前不含大盤基準比較、不追蹤每筆進出場日期</b>（下面交易明細只有進出場價與結果，沒有日期），這兩項是既有規劃書提到、但這個系統目前還沒做的部分。歷史回測不代表未來績效。</div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">交易明細（最近 ${trades.length} 筆）</div></div>
+      <div class="panel card"><div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>方向</th><th>進場價</th><th>出場價</th><th>結果</th><th>股數</th><th>持有天數</th><th>損益(TWD)</th></tr></thead>
+        <tbody>${tradesRows}</tbody>
+      </table></div></div>`;
   }catch(e){document.getElementById('bt-result').innerHTML=`<div class="empty">${e.message}</div>`;}
+}
+async function runWalkForward(){
+  if(!_btTicker)return;
+  const el=document.getElementById('wf-body');if(!el)return;
+  el.innerHTML='<div class="empty">樣本外測試中…</div>';
+  try{
+    const d=await(await fetch('/api/backtest/'+_btTicker+'/walkforward')).json();
+    if(d.error){el.innerHTML=`<div class="empty">${d.error}</div>`;return;}
+    const windows=(d.window_results||[]).map(w=>`<div class="kv"><span>第 ${w.window} 期（訓練後測試）</span><span>${w.n_trades} 筆　勝率 ${w.win_rate}%　${(w.total_pnl||0)>=0?'+':''}${(w.total_pnl||0).toLocaleString()} TWD</span></div>`).join('');
+    el.innerHTML=`
+      <div class="kv"><span>整體樣本外勝率</span><span>${d.overall_win_rate}%（${d.total_trades} 筆）</span></div>
+      <div class="kv"><span>穩定度</span><span>${d.stability}%（${d.n_windows} 期中勝率 ≥50% 的比例）</span></div>
+      ${windows}
+      <div style="font-size:10.5px;color:var(--t3);margin-top:8px">訓練期 ${d.train_bars} 根K棒、測試期 ${d.test_bars} 根K棒，逐期往前滾動。</div>`;
+  }catch(e){el.innerHTML=`<div class="empty">${e.message}</div>`;}
 }
 
 // Render
@@ -728,7 +858,7 @@ function renderLatestSignals(sigs){
   el.innerHTML=sigs.slice(0,4).map(s=>`
     <div class="sig-card ${s.direction==='buy'?'':'sell'}" style="cursor:pointer;border-right:none;border-top:none" onclick="go('signals')">
       <div class="sig-head">
-        <div><span class="sig-name">${s.name}（${s.code||s.ticker}）</span><span class="sig-badge ${s.direction}">${s.direction==='buy'?'做多':'做空'}</span></div>
+        <div><span class="sig-name">${s.name}（${s.code||s.ticker}）</span><span class="sig-badge ${s.direction}">${s.direction==='buy'?'做多':'做空'}</span>${wlStar(s.ticker)}</div>
         <div class="sig-score" style="color:${s.score>=85?'var(--up)':s.score>=75?'var(--warn)':'var(--t3)'}">${s.score||0}</div>
       </div>
       <div class="sig-grid">
@@ -760,7 +890,7 @@ function renderSignals(){
       <div class="sig-head">
         <div style="display:flex;align-items:center;gap:0">
           <div><div class="sig-name">${s.name}（${s.code||s.ticker}）</div><div class="sig-sub">${safe(s.sector)} · ${safe(s.size_cat)}</div></div>
-          <span class="sig-badge ${s.direction}">${isBuy?'做多':'做空'}</span>
+          <span class="sig-badge ${s.direction}">${isBuy?'做多':'做空'}</span>${wlStar(s.ticker)}
         </div>
         <div style="text-align:right"><div class="sig-score" style="color:${gc}">${s.score||0}</div><div class="sig-grade" style="color:${gc}">${{A:'A 級',B:'B 級',C:'C 級'}[s.grade||'C']}</div></div>
       </div>
