@@ -348,6 +348,123 @@ def api_universe():
         return jsonify({"count": len(universe), "sectors": get_sector_count()})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+@app.route("/api/market/breadth")
+def api_market_breadth():
+    """★ 新增：2026-09-29——使用者要求「市場總覽頁」，這裡是漲跌家數/漲跌停
+    家數，資料來自 stock_universe.get_market_breadth()（見該函式說明：只用
+    build_universe() 既有快取算，不額外打 API）。"""
+    try:
+        from stock_universe import get_market_breadth
+        return jsonify(get_market_breadth())
+    except Exception as e: return jsonify({"error": str(e)}), 500
+
+@app.route("/api/market/sectors")
+def api_market_sectors():
+    """產業當日漲跌排行，同樣只用既有 universe 快取算，見
+    stock_universe.get_sector_performance()。"""
+    try:
+        from stock_universe import get_sector_performance
+        return jsonify({"sectors": get_sector_performance()})
+    except Exception as e: return jsonify({"error": str(e)}), 500
+
+@app.route("/api/screener")
+def api_screener():
+    """★ 新增：2026-09-29——市場總覽頁的股票篩選器。只支援 stock_universe.py
+    既有欄位（代號/名稱/產業/市值分類/價格/漲跌幅/成交量），不支援 RSI/MACD/
+    均線這類技術指標篩選——對全市場 1000+ 檔即時算技術指標成本太高，現有
+    掃描架構只對候選訊號的幾十檔算（見 scanner.py），這裡先不做，避免每次
+    篩選都變成一次重量級全市場運算。"""
+    try:
+        from stock_universe import screen_universe
+        from scanner import scanner
+        filters = {
+            "q": request.args.get("q"),
+            "sector": request.args.get("sector"),
+            "size_cat": request.args.get("size_cat"),
+        }
+        for k in ("min_price","max_price","min_chg_pct","max_chg_pct","min_volume_lots"):
+            v = request.args.get(k)
+            if v not in (None, ""):
+                try: filters[k] = float(v)
+                except ValueError: pass
+        limit = int(request.args.get("limit", 100))
+        results = screen_universe(filters)
+        # 標記目前有沒有對應的有效訊號，讓篩選結果可以直接跳去個股研究頁看訊號原因
+        signal_tickers = {s.get("ticker") for s in scanner.get_status().get("signals", [])}
+        for s in results:
+            s["has_signal"] = s.get("ticker") in signal_tickers
+        return jsonify({"count": len(results), "total_matched": len(results), "items": results[:limit]})
+    except Exception as e: return jsonify({"error": str(e)}), 500
+
+@app.route("/api/instruments/<ticker>")
+def api_instrument(ticker: str):
+    """★ 新增：2026-09-29——個股研究頁的主要資料來源，把已經存在、但分散在
+    各個模組的資料聚合成一份回應：基本資料（stock_universe）、日線行情+
+    技術指標（data_fetcher.fetch_ohlcv + indicators.calc_all_indicators，
+    跟 scanner.py 產生訊號用的是同一套計算）、基本面（get_profitability_
+    quality/估值/月營收）、重大訊息公告、目前有效訊號、近期歷史訊號。任一
+    區塊失敗只影響那個區塊（優雅降級，其餘照常回傳），不會因為某個資料源
+    掛掉就整頁失敗。"""
+    raw = ticker.upper()
+    had_suffix = "." in raw
+    t = raw if had_suffix else raw + ".TW"
+    code = t.split(".")[0]
+    out = {"ticker": t, "code": code}
+    try:
+        from stock_universe import get_stock_info
+        info = get_stock_info(t)
+        # ★ 新增：2026-09-29——使用者只輸入代號、不帶 .TW/.TWO 後綴時，這裡預設
+        # 先猜 .TW（上市），但很多股票其實是上櫃（.TWO），猜錯會導致整頁查無
+        # 資料。build_universe() 同時有上市+上櫃兩份清單，所以猜 .TW 沒找到、
+        # 使用者原本又沒指定後綴時，改猜 .TWO 再試一次；两次都沒有才真的代表
+        # 這檔不在目前的掃描池清單裡（不代表股票不存在，只代表沒被掃描池收錄，
+        # 例如成交量太低被 stock_universe.py 的門檻濾掉）。
+        if info is None and not had_suffix:
+            t2 = code + ".TWO"
+            info2 = get_stock_info(t2)
+            if info2 is not None:
+                t = t2; info = info2
+                out["ticker"] = t
+        out["info"] = info
+    except Exception as e:
+        out["info"] = None; out["info_error"] = str(e)
+    try:
+        from data_fetcher import fetch_ohlcv
+        ohlcv = fetch_ohlcv(t, "daily")
+        out["ohlcv"] = ohlcv
+        if ohlcv:
+            from indicators import calc_all_indicators
+            out["indicators"] = calc_all_indicators(ohlcv)
+        else:
+            out["indicators"] = None
+    except Exception as e:
+        out["ohlcv"] = None; out["indicators"] = None; out["ohlcv_error"] = str(e)
+    try:
+        from fundamentals import get_profitability_quality, fetch_valuation_map, fetch_monthly_revenue_map
+        out["profitability_quality"] = get_profitability_quality(code)
+        out["valuation"] = fetch_valuation_map().get(code)
+        out["monthly_revenue"] = fetch_monthly_revenue_map().get(code)
+    except Exception as e:
+        out["fundamentals_error"] = str(e)
+    try:
+        from fundamentals import fetch_material_news_risk_map
+        out["material_news"] = fetch_material_news_risk_map().get(code, [])
+    except Exception as e:
+        out["material_news"] = []; out["material_news_error"] = str(e)
+    try:
+        from scanner import scanner
+        live = [s for s in scanner.get_status().get("signals", []) if s.get("ticker") == t]
+        out["active_signal"] = live[0] if live else None
+    except Exception as e:
+        out["active_signal"] = None; out["active_signal_error"] = str(e)
+    try:
+        from state_store import store
+        history = [s for s in store.get_recent_signals(limit=300, days_back=180) if s.get("ticker") == t]
+        out["signal_history"] = history[:20]
+    except Exception as e:
+        out["signal_history"] = []; out["signal_history_error"] = str(e)
+    return jsonify(out)
+
 @app.route("/api/scan/force", methods=["POST"])
 def api_force_scan():
     # ★ 修正：2026-09-03——scanner.run_daily_scan() 現在有掃描鎖，重複觸發時

@@ -155,6 +155,22 @@ def _is_etf_code(code: str) -> bool:
     """台股慣例：ETF／ETN／受益憑證代碼一律以「00」開頭，一般股票代碼不會用這個區間。"""
     return code.startswith("00")
 
+# ★ 新增：2026-09-29——使用者要求「市場總覽頁」要有漲跌家數/產業排行，這些
+# 都需要每檔股票的當日漲跌，STOCK_DAY_ALL / tpex_mainboard_quotes 這兩個
+# OpenAPI 理論上都會附一個「Change」欄位（漲跌價差），但這支程式碼目前跑在
+# 沙盒容器裡對外連線被 proxy 擋掉，沒辦法在寫程式的當下直接打 API 驗證欄位
+# 名稱/格式是否跟文件一致。這裡刻意寫成「解析失敗就整檔記 None，不是猜一個
+# 假數字」，上線後會再用正式站實測結果回頭確認——如果欄位名稱猜錯，None
+# 會讓對應股票被市場總覽頁的漲跌家數統計跳過（不計入漲/跌/平），不會顯示
+# 錯誤的漲跌方向。
+def _parse_change(raw) -> Optional[float]:
+    try:
+        s = str(raw).strip().replace(",", "")
+        if not s or s in ("--", "-", "X0.00", "X0"): return None
+        return float(s)
+    except Exception:
+        return None
+
 def _fetch_twse_list() -> List[Dict]:
     try:
         r = requests.get(TWSE_LIST_URL, headers=HEADERS, timeout=15)
@@ -173,10 +189,13 @@ def _fetch_twse_list() -> List[Dict]:
                 vol   = float(item.get("TradeVolume","0").replace(",","") or 0)
                 close = float(item.get("ClosingPrice","0").replace(",","") or 0)
             except: continue
+            chg = _parse_change(item.get("Change"))
+            chg_pct = round(chg/(close-chg)*100, 2) if (chg is not None and close-chg > 0) else None
             stocks.append({
                 "code": code, "ticker": f"{code}.TW", "name": name,
                 "market": "TSE", "close": close,
                 "volume_lots": round(vol/1000, 0),
+                "change": chg, "change_pct": chg_pct,
                 "sector": "", "is_etf": _is_etf_code(code),
                 "size_cat": "", "scan_priority": 9,
             })
@@ -208,10 +227,13 @@ def _fetch_tpex_list() -> List[Dict]:
                 close = float(str(item.get("Close","0")).replace(",","") or 0)
                 vol   = float(str(item.get("TradingShares","0")).replace(",","") or 0)
             except: continue
+            chg = _parse_change(item.get("Change"))
+            chg_pct = round(chg/(close-chg)*100, 2) if (chg is not None and close-chg > 0) else None
             stocks.append({
                 "code": code, "ticker": f"{code}.TWO", "name": name,
                 "market": "OTC", "close": close,
                 "volume_lots": round(vol/1000, 0),
+                "change": chg, "change_pct": chg_pct,
                 "sector": "", "is_etf": _is_etf_code(code),
                 "size_cat": "", "scan_priority": 9,
             })
@@ -410,3 +432,68 @@ def get_sector_count() -> Dict[str, int]:
         sec = s.get("sector","其他")
         counts[sec] = counts.get(sec, 0) + 1
     return counts
+
+# ★ 新增：2026-09-29——市場總覽頁要的「漲跌家數」「產業排行」，都從
+# build_universe() 既有快取（每日更新一次）算出來，不額外打 API、不用即時
+# 對全市場重抓。change_pct 是 None 的股票（見 _parse_change() 說明：欄位
+# 解析失敗，或這次 TWSE/TPEX 清單抓取本身失敗）一律不計入漲/跌/平家數，
+# 避免用猜的數字冒充真的漲跌方向。
+def get_market_breadth() -> Dict:
+    universe = build_universe()
+    covered = [s for s in universe if s.get("change_pct") is not None]
+    up = [s for s in covered if s["change_pct"] > 0]
+    down = [s for s in covered if s["change_pct"] < 0]
+    flat = [s for s in covered if s["change_pct"] == 0]
+    limit_up = [s for s in up if s["change_pct"] >= 9.5]
+    limit_down = [s for s in down if s["change_pct"] <= -9.5]
+    return {
+        "total": len(universe), "covered": len(covered),
+        "advancers": len(up), "decliners": len(down), "unchanged": len(flat),
+        "limit_up": len(limit_up), "limit_down": len(limit_down),
+        "coverage_ok": len(covered) > 0,
+    }
+
+def get_sector_performance() -> List[Dict]:
+    universe = build_universe()
+    by_sector: Dict[str, List[float]] = {}
+    for s in universe:
+        cp = s.get("change_pct")
+        if cp is None: continue
+        sec = s.get("sector") or "未分類"
+        by_sector.setdefault(sec, []).append(cp)
+    out = []
+    for sec, chgs in by_sector.items():
+        out.append({
+            "sector": sec, "n": len(chgs),
+            "avg_change_pct": round(sum(chgs)/len(chgs), 2),
+            "up": sum(1 for c in chgs if c > 0), "down": sum(1 for c in chgs if c < 0),
+        })
+    out.sort(key=lambda x: x["avg_change_pct"], reverse=True)
+    return out
+
+def screen_universe(filters: Dict) -> List[Dict]:
+    """★ 新增：2026-09-29——市場總覽頁的股票篩選器。只用 build_universe()
+    既有欄位篩（代號/名稱/產業/市值分類/價格/漲跌幅/成交量），不做 RSI/MACD/
+    均線這類需要對全市場即時算技術指標的篩選——現有掃描架構只對「候選訊號」
+    的幾十檔股票算技術指標（見 scanner.py），對全市場 1000+ 檔即時算的成本
+    太高，這裡先不做，避免每次篩選都變成一次重量級全市場計算。"""
+    universe = build_universe()
+    q = (filters.get("q") or "").strip().lower()
+    sector = filters.get("sector") or ""
+    size_cat = filters.get("size_cat") or ""
+    min_price = filters.get("min_price"); max_price = filters.get("max_price")
+    min_chg = filters.get("min_chg_pct"); max_chg = filters.get("max_chg_pct")
+    min_vol = filters.get("min_volume_lots")
+    out = []
+    for s in universe:
+        if q and q not in s.get("code","").lower() and q not in s.get("name","").lower(): continue
+        if sector and s.get("sector") != sector: continue
+        if size_cat and s.get("size_cat") != size_cat: continue
+        if min_price is not None and s.get("close",0) < min_price: continue
+        if max_price is not None and s.get("close",0) > max_price: continue
+        cp = s.get("change_pct")
+        if min_chg is not None and (cp is None or cp < min_chg): continue
+        if max_chg is not None and (cp is None or cp > max_chg): continue
+        if min_vol is not None and s.get("volume_lots",0) < min_vol: continue
+        out.append(s)
+    return out
