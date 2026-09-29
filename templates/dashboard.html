@@ -50,6 +50,48 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang TC'
   .ticker-item{min-width:128px}
   .hero-row{grid-template-columns:1fr!important}
 }
+/* ★ 新增：2026-09-29——手動「電腦版／手機版」切換按鈕（見 JS toggleViewMode()）。
+   上面 @media(max-width:640px) 只依實際螢幕寬度自動切換，這裡另外用
+   html.force-mobile / html.force-desktop 兩個 class 做手動覆寫，讓使用者可以
+   在手機瀏覽器上強制看電腦排版（例如想看訊號卡的完整 4 欄，用橫向捲動也沒
+   關係），或在電腦上預覽手機排版。用 class selector 天生比單純 @media 裡的
+   同名 selector 更高 specificity，原本有標 !important 的規則這裡也照樣標，
+   確保兩種手動模式都能蓋過自動判斷的結果。*/
+html.force-mobile .hamburger{display:flex!important}
+html.force-mobile .top-l{display:flex!important;align-items:center;gap:10px;min-width:0}
+html.force-mobile .top-l span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html.force-mobile .top{gap:8px!important}
+html.force-mobile .top-r{gap:6px!important}
+html.force-mobile #tw-time{display:none!important}
+html.force-mobile .btn{padding:6px 10px!important;font-size:10px!important}
+html.force-mobile .side{position:fixed!important;top:0;bottom:0;left:0;z-index:101;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 24px rgba(10,10,12,.16)}
+html.force-mobile .side.open{transform:translateX(0)!important}
+html.force-mobile .side-backdrop.open{display:block!important;position:fixed;inset:0;background:rgba(10,10,12,.4);z-index:100}
+html.force-mobile .sig-grid{grid-template-columns:repeat(2,1fr)!important}
+html.force-mobile .ticker{overflow-x:auto!important}
+html.force-mobile .ticker-item{min-width:128px!important}
+html.force-mobile .hero-row{grid-template-columns:1fr!important}
+html.force-mobile .kpi-strip{grid-template-columns:repeat(2,1fr)!important}
+/* 電腦版強制：把 .side 拉回正常文件流（非 fixed 抽屜），並把桌面版的欄數／
+   間距數值原樣覆寫回去。手機螢幕實際寬度不夠時允許橫向捲動（body/shell 原本
+   overflow:hidden，這裡改成 auto），不強行把內容擠壞。*/
+html.force-desktop{overflow:auto!important}
+html.force-desktop body{overflow:auto!important}
+html.force-desktop .shell{min-width:1180px;height:auto!important;min-height:100vh}
+html.force-desktop .hamburger{display:none!important}
+html.force-desktop .top-l{min-width:0}
+html.force-desktop .top{gap:0}
+html.force-desktop .top-r{gap:12px!important}
+html.force-desktop #tw-time{display:inline!important}
+html.force-desktop .btn{padding:7px 16px!important;font-size:11px!important}
+html.force-desktop .side{position:static!important;transform:none!important;box-shadow:none!important;transition:none}
+html.force-desktop .side-backdrop{display:none!important}
+html.force-desktop .sig-grid{grid-template-columns:repeat(4,1fr)!important}
+html.force-desktop .ticker{overflow-x:visible!important}
+html.force-desktop .ticker-item{min-width:150px!important}
+html.force-desktop .hero-row{grid-template-columns:1.3fr 2fr!important}
+html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
+#view-toggle-btn{white-space:nowrap}
 .logo{padding:22px 20px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
 .logo-mark{width:26px;height:26px;background:var(--navy);flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:800}
 .logo-nm{font-size:14px;font-weight:800;color:var(--t1);letter-spacing:.2px;line-height:1.25}
@@ -199,6 +241,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang TC'
     <div class="top-r">
       <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
       <span id="tw-time" style="font-size:11px;color:var(--t3)"></span>
+      <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">📱 手機版</button>
       <button class="btn" onclick="fetchState()">刷新</button>
       <button class="btn primary arrow" onclick="forceScan()">立即掃描</button>
     </div>
@@ -454,6 +497,48 @@ function closeSide(){
   document.getElementById('side').classList.remove('open');
   document.getElementById('side-backdrop').classList.remove('open');
 }
+
+// ★ 新增：2026-09-29——手動切換電腦版／手機版（使用者要求）。預設不強制套用
+// 任何 class，維持原本「照實際螢幕寬度自動判斷」的行為；只有使用者真的按過
+// 一次按鈕之後，才會固定成 force-mobile／force-desktop 並記在 localStorage
+// （只存在使用者這台裝置的瀏覽器裡，不會送到後端、也不影響其他人），下次
+// 開啟同一台裝置、同一個瀏覽器會記住上次選的版本。沒按過的話，改變瀏覽器
+// 視窗寬度仍然會照原本的 @media 規則自動切換。
+function effectiveViewMode(){
+  const html=document.documentElement;
+  if(html.classList.contains('force-mobile'))return 'mobile';
+  if(html.classList.contains('force-desktop'))return 'desktop';
+  return window.matchMedia('(max-width:640px)').matches?'mobile':'desktop';
+}
+function updateViewToggleBtn(){
+  const btn=document.getElementById('view-toggle-btn');if(!btn)return;
+  const m=effectiveViewMode();
+  btn.textContent=m==='mobile'?'💻 電腦版':'📱 手機版';
+  btn.title=m==='mobile'?'切換成電腦版顯示（可能需要橫向捲動）':'切換成手機版顯示';
+}
+function applyForcedMode(mode){
+  const html=document.documentElement;
+  html.classList.remove('force-mobile','force-desktop');
+  if(mode)html.classList.add(mode==='mobile'?'force-mobile':'force-desktop');
+  updateViewToggleBtn();
+  try{
+    if(mode)localStorage.setItem('dashViewMode',mode);
+    else localStorage.removeItem('dashViewMode');
+  }catch(e){/* 私密瀏覽模式等情況下 localStorage 可能不可用，不影響切換本身 */}
+}
+function toggleViewMode(){
+  applyForcedMode(effectiveViewMode()==='mobile'?'desktop':'mobile');
+}
+(function initViewMode(){
+  let saved=null;
+  try{saved=localStorage.getItem('dashViewMode');}catch(e){}
+  if(saved==='mobile'||saved==='desktop')applyForcedMode(saved);
+  else updateViewToggleBtn();
+})();
+window.addEventListener('resize',()=>{
+  const html=document.documentElement;
+  if(!html.classList.contains('force-mobile')&&!html.classList.contains('force-desktop'))updateViewToggleBtn();
+});
 
 // Fetch
 async function fetchState(){
