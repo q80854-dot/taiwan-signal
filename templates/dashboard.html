@@ -347,6 +347,7 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
     <div class="grid2">
       <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">資金曲線</span></div><div class="panel-body"><canvas id="equity-chart" height="200"></canvas></div></div>
       <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">近期交易</span></div>
+        <div id="recent-trades-note" style="font-size:10.5px;color:var(--t3);padding:0 12px"></div>
         <div style="overflow-x:auto"><table class="tbl">
           <thead><tr><th>股票</th><th>方向</th><th>進場</th><th>結果</th><th>損益</th></tr></thead>
           <tbody id="recent-trades"></tbody>
@@ -940,12 +941,33 @@ async function forceScan(){
   try{await fetch('/api/scan/force',{method:'POST'});setTimeout(fetchState,3000);}
   catch(e){toast('掃描失敗');}
 }
+// ★ 新增：2026-09-29——使用者回報系統診斷頁「好幾個欄位顯示成[object Object]」。
+// 根因：/api/diagnostics 有幾個欄位本身就是巢狀物件（例如 ohlcv_cache、
+// macro_backfill、telegram subscribers 統計），前端原本直接把值塞進樣板字串
+// `${v}`，JS 對一般物件做字串轉換預設就是 "[object Object]"（陣列則會印成
+// 逗號分隔，不算太糟但也不好讀）。這裡依值的型別分開處理：物件攤平成多行
+// 「鍵: 值」、陣列用逗號接起來、其餘（字串/布林/數字）照原樣顯示。
+function diagValueHtml(v){
+  if(v===null||v===undefined) return '—';
+  if(Array.isArray(v)) return v.length?safe(v.join('、')):'（無）';
+  if(typeof v==='object'){
+    const entries=Object.entries(v);
+    if(!entries.length) return '（無）';
+    return `<div style="text-align:left">${entries.map(([kk,vv])=>
+      `<div style="font-size:11px;color:var(--t3)">${safe(kk)}：${safe(Array.isArray(vv)?vv.join('、'):vv)}</div>`
+    ).join('')}</div>`;
+  }
+  return safe(v);
+}
 async function fetchDiag(){
   try{
     const d=await(await fetch('/api/diagnostics')).json();
-    document.getElementById('diag-body').innerHTML=Object.entries(d).map(([k,v])=>
-      `<div class="kv"><span>${k}</span><span style="color:${String(v).includes('✅')?'var(--ok)':String(v).includes('❌')?'var(--alert)':'var(--t1)'}">${v}</span></div>`
-    ).join('');
+    document.getElementById('diag-body').innerHTML=Object.entries(d).map(([k,v])=>{
+      const isPlain=(v===null||v===undefined||typeof v!=='object');
+      const s=String(v);
+      const color=isPlain&&s.includes('✅')?'var(--ok)':isPlain&&s.includes('❌')?'var(--alert)':'var(--t1)';
+      return `<div class="kv"><span>${k}</span><span style="color:${color}">${diagValueHtml(v)}</span></div>`;
+    }).join('');
   }catch(e){document.getElementById('diag-body').innerHTML='<div class="empty">診斷失敗</div>';}
 }
 // ★ 新增：2026-09-29——重大訊息公告（真實 TWSE OpenAPI 資料，見 fundamentals.py
@@ -1138,8 +1160,15 @@ function renderKPIs(d){
   setColor('env-score',env>=70?'var(--up)':env>=40?'var(--warn)':'var(--alert)');
   setEl('sentiment-score',safeN(d.sentiment_score,0));setEl('sentiment-zh',safe(d.sentiment_zh));
   setEl('signal-count',safe(d.signal_count,0));setEl('sig-count-badge',safe(d.signal_count,0));
-  const wrPct=wr.win_rate??0;setEl('win-rate',wrPct?safeN(wrPct,1)+'%':'—%');
-  setColor('win-rate',wrPct?clr(wrPct-50):'var(--t1)');
+  // ★ 修正：2026-09-29——使用者回報「已經0勝4負，勝率卻顯示—%」。根因：
+  // `wrPct?...: '—%'` 用真假值判斷要不要顯示百分比，但 JS 裡 0 是 falsy，
+  // 0.0% 的合法勝率（真的有已平倉交易、只是全輸）跟「根本還沒有任何已平倉
+  // 交易、算不出勝率」这兩種情況被這個判斷式混為一談，全部顯示「—%」。
+  // 改成看 wr.closed（已平倉筆數）有沒有資料來決定，不是看勝率數值本身
+  // 是不是 0。
+  const wrPct=wr.win_rate??0; const hasClosedTrades=(wr.closed||0)>0;
+  setEl('win-rate',hasClosedTrades?safeN(wrPct,1)+'%':'—%');
+  setColor('win-rate',hasClosedTrades?clr(wrPct-50):'var(--t1)');
   setEl('wr-sub',wr.wins!==undefined?`${wr.wins}勝/${wr.losses}負`:'尚無記錄');
   setEl('scan-count',safe(d.scan_count,0));
   const scanHM=toTaipeiHM(d.last_scan_time);
@@ -1250,18 +1279,37 @@ function renderMarket(d){
   ).join('');
 }
 
+// ★ 新增：2026-09-29——「交易歷史」跟「績效分析」兩頁的結果欄原本各自寫一份
+// tp1/tp2/sl 才有對應標籤，其餘（尤其是到期強制平倉的 'expired'，見
+// scanner.py _resolve_pending_signals 的說明）一律落到看不出意義的「—」，
+// 讓使用者以為那筆交易的結果資料遺失了，其實只是沒有對應到標籤。這裡統一
+// 一份完整映射，兩個表格共用。
+const RESULT_LABEL={
+  tp1:'<span class="tag green">TP1</span>', tp2:'<span class="tag green">TP2</span>',
+  tp3:'<span class="tag green">TP3</span>', sl:'<span class="tag red">SL</span>',
+  expired:'<span class="tag blue">到期出場</span>',
+};
+function resultTag(result, pendingLabel){
+  return RESULT_LABEL[result] || `<span class="tag blue">${pendingLabel}</span>`;
+}
 function renderHistory(d){
   const tbody=document.getElementById('history-tbody');
-  const sigs=d.active_signals||[];
+  // ★ 修正：2026-09-29——使用者回報「交易歷史頁顯示尚無記錄，但績效頁明明有
+  // 交易資料」。根因：這裡原本讀的是 d.active_signals（「今日訊號」頁在用的
+  // 「目前有效訊號」清單，隨時可能是空的——沒有未平倉部位時就是空陣列），
+  // 跟「交易歷史」字面意思完全無關；已平倉的歷史交易其實一直都在
+  // d.win_rate.recent_trades 裡（跟績效分析頁同一個母體，見
+  // state_store.get_closed_trades()），只是這個頁面沒有去讀它。改成讀那裡。
+  const sigs=(d.win_rate&&d.win_rate.recent_trades)||[];
   if(!sigs.length){tbody.innerHTML='<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--t3)">尚無記錄</td></tr>';return;}
   tbody.innerHTML=sigs.map(s=>{
-    const res=s.result==='tp1'?'<span class="tag green">TP1</span>':s.result==='tp2'?'<span class="tag green">TP2</span>':s.result==='sl'?'<span class="tag red">SL</span>':'<span class="tag blue">待結算</span>';
+    const res=resultTag(s.result,'待結算');
     const pnl=s.pnl_twd||0;
     const genP=s.generated_at?taipeiParts(s.generated_at):null;
     const genDate=genP?`${new Date(s.generated_at).getFullYear()}/${genP.month}/${genP.day}`:'—';
     return `<tr>
       <td>${genDate}</td>
-      <td><b>${s.name}</b>（${s.code||''}）</td>
+      <td><b>${s.name}</b>（${s.code||''}）${s.research_only?' <span class="tag blue" style="font-size:9.5px">研究</span>':''}</td>
       <td style="color:var(--t3)">${safe(s.sector)}</td>
       <td><span class="tag ${s.direction==='buy'?'green':'red'}">${s.direction==='buy'?'多':'空'}</span></td>
       <td>${safeN(s.entry_price,2)}</td><td style="color:var(--down)">${safeN(s.stop_loss,2)}</td>
@@ -1275,16 +1323,25 @@ function renderHistory(d){
 }
 
 function renderPerf(wr){
-  setEl('p-total',safe(wr.total,0));setEl('p-wr',wr.win_rate?safeN(wr.win_rate,1)+'%':'—%');
+  // ★ 修正：2026-09-29——跟上面 renderKPIs() 同一個 falsy-0 bug：0%勝率（有
+  // 已平倉交易、只是全輸）被誤判成「沒有資料」。同樣改用 wr.closed 判斷。
+  const hasClosedTrades=(wr.closed||0)>0;
+  setEl('p-total',safe(wr.total,0));setEl('p-wr',hasClosedTrades?safeN(wr.win_rate,1)+'%':'—%');
   setEl('p-wr-sub',wr.wins!==undefined?`${wr.wins}勝 / ${wr.losses}負`:'');
   setEl('p-dd',wr.max_drawdown?safeN(wr.max_drawdown,1)+'%':'—%');setEl('p-sharpe',safeN(wr.sharpe,2));
   const pnl=wr.total_pnl||0;setEl('p-pnl',pnl===0?'—':(pnl>0?'+':'')+pnl.toLocaleString());setColor('p-pnl',clr(pnl));
   const trades=wr.recent_trades||[];
+  // ★ 新增：2026-09-29——ETF 空單不計入上面「勝率」加總（見
+  // state_store.get_performance_summary() 說明），但列表這裡仍然顯示，用
+  // 「研究」標籤明確標出來，讓使用者自己判斷要不要參考，同時知道它沒有
+  // 被算進上面的勝率數字，而不是誤以為勝率統計漏了這幾筆。
+  setEl('recent-trades-note', wr.excluded_etf_short_count?`有 ${wr.excluded_etf_short_count} 筆 ETF 放空交易未計入上方勝率/損益（多數券商無法對 ETF、尤其債券 ETF 融券放空，僅供研究參考，見下方標「研究」的列）`:'');
   document.getElementById('recent-trades').innerHTML=trades.length?trades.map(t=>{
     const p=t.pnl_twd||t.pnl||0;
-    return `<tr><td>${safe(t.name||t.ticker)}</td><td><span class="tag ${t.direction==='buy'?'green':'red'}">${t.direction==='buy'?'多':'空'}</span></td>
+    const researchTag=t.research_only?' <span class="tag blue" style="font-size:9.5px">研究</span>':'';
+    return `<tr><td>${safe(t.name||t.ticker)}${researchTag}</td><td><span class="tag ${t.direction==='buy'?'green':'red'}">${t.direction==='buy'?'多':'空'}</span></td>
       <td>${safeN(t.entry_price||t.entry,2)}</td>
-      <td>${t.result==='tp1'?'<span class="tag green">TP1</span>':t.result==='tp2'?'<span class="tag green">TP2</span>':t.result==='sl'?'<span class="tag red">SL</span>':'<span class="tag blue">—</span>'}</td>
+      <td>${resultTag(t.result,'—')}</td>
       <td style="color:${clr(p)}">${p===0?'—':(p>0?'+':'')+p.toLocaleString()}</td></tr>`;
   }).join(''):'<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--t3)">尚無記錄</td></tr>';
   const curve=(wr.equity_curve||[]).map(p=>typeof p==='object'?p.balance:p).filter(Boolean);
