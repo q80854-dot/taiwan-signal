@@ -406,6 +406,59 @@ def api_state():
         logger.error(f"api_state: {e}"); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/health")
+def api_health():
+    try:
+        import health
+        return jsonify(health.run_health())
+    except Exception as e:
+        logger.error(f"api_health: {e}"); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/signal_check/<key>")
+def api_signal_check(key):
+    try:
+        import health
+        return jsonify(health.check_signal(key))
+    except Exception as e:
+        logger.error(f"api_signal_check: {e}"); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/settings")
+def api_settings():
+    """唯讀：目前生效的策略與風控參數，附白話說明。調整需改程式碼並部署，避免無帳號機制下被任意竄改。"""
+    from config import THRESH, SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, CIRCUIT_BREAKER, MAX_RISK_PER_TRADE, MAX_DAILY_RISK, ACCOUNT_BALANCE_TWD, SWING_PARAMS
+    try:
+        from fund_score import fund_adjustment  # noqa
+    except Exception:
+        pass
+    g = lambda k, v, note: {"key": k, "value": v, "note": note}
+    return jsonify({"groups": [
+        {"title": "進場門檻", "items": [
+            g("做多最低分數", THRESH.get("min_score"), "高於此分才發訊號；大盤偏弱或財報季時系統會自動再提高"),
+            g("做多最低 ADX", THRESH.get("min_adx"), "趨勢強度，低於此值視為盤整不進場"),
+            g("做多最低量比", THRESH.get("min_vol_ratio"), "今日量／均量"),
+            g("最低風報比 (TP1)", THRESH.get("min_rr"), "到第一目標的獲利／停損風險"),
+            g("做空最低分數", SHORT_SIGNAL_THRESH.get("min_score"), "做空歷史回測表現明顯較差，門檻更高且週線必須偏空"),
+            g("做空允許的大盤情緒上限", SHORT_MAX_SENTIMENT, "大盤情緒分數低於此值才允許做空")]},
+        {"title": "掃描池", "items": [
+            g("最低收盤價", 5, "元；低於此價不掃"),
+            g("最低單日成交量", THRESH.get("min_avg_volume"), "張；流動性門檻")]},
+        {"title": "資金與風控", "items": [
+            g("帳戶本金（試算用）", ACCOUNT_BALANCE_TWD, "TWD；建議張數依此計算，請至環境變數 ACCOUNT_BALANCE_TWD 改成你的實際本金"),
+            g("單筆最大風險", f"{MAX_RISK_PER_TRADE*100:.1f}%", "每筆停損時最多虧本金的比例"),
+            g("單日最大風險", f"{MAX_DAILY_RISK*100:.1f}%", "當日所有新單的風險總和上限"),
+            g("同時持倉上限", 5, "達上限即暫停發新訊號"),
+            g("單日最多訊號", CIRCUIT_BREAKER.get("max_daily_signals"), "避免一天塞太多單"),
+            g("訊號有效天數", CIRCUIT_BREAKER.get("signal_expire_days"), "超過仍未觸及停損停利即結案")]},
+        {"title": "停損停利（依市值規模）", "items": [
+            g(k, f"停損 {v['sl_atr_mult']} ATR；TP1 {v['tp1_rr']}R／TP2 {v['tp2_rr']}R／TP3 {v['tp3_rr']}R", "") for k, v in SWING_PARAMS.items()]},
+        {"title": "基本面加減分（做多）", "items": [
+            g("基本面 ≥80", "+5", "月營收／獲利／估值綜合分"), g("≥65", "+3", ""), g("≥50", "+1", ""),
+            g("≥35", "−3", ""), g("≥20", "−7", ""), g("<20", "−12", "基本面明顯轉弱的標的降低排序")]},
+    ], "note": "參數為唯讀。要調整請先和我討論依據（需有足夠的結案樣本），再改程式碼部署。"})
+
+
 @app.route("/api/audit")
 def api_audit():
     try:
