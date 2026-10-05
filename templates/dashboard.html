@@ -882,6 +882,7 @@ setInterval(updateClock,1000);updateClock();
 const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 function go(id){
+  if(typeof adAuthed!=='undefined'&&adAuthed&&id!=='learning')adLogoutQuiet();
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.nav').forEach(n=>n.classList.remove('on'));
   const pg=document.getElementById('page-'+id);if(pg)pg.classList.add('on');
@@ -1431,7 +1432,7 @@ async function fetchAudit(refresh){
     const a=st.scan_audit;
     setHtml('audit-scan',a?`<div class="kv"><span>掃描日期</span><span>${safe(a.date)}　耗時 ${a.duration_sec}s</span></div>
       <div class="kv"><span>掃描池／實際檢查</span><span>${a.universe} / ${a.examined} 檔</span></div>
-      <div class="kv"><span>日線預篩 跳過／進入完整分析</span><span>${a.skipped} / ${a.passed}（跳過率 ${(a.skip_rate*100).toFixed(1)}%）</span></div>
+      <div class="kv"><span>日線預篩 跳過／進入完整分析</span><span>${a.skipped} / ${a.passed}（跳過率 ${Number(a.skip_rate).toFixed(1)}%）</span></div>
       <div class="kv"><span>隨機 5% 抽查（跳過者改走完整流程）</span><span>${a.audited} 檔　<b style="color:${a.mismatch?'var(--alert)':'var(--t1)'}">${a.mismatch?'發現 '+a.mismatch+' 檔不一致':'0 檔不一致'}</b></span></div>
       <div class="kv"><span>官方末棒校正</span><span>檢查 ${a.recon_checked} 檔，修正 ${a.recon_fixed} 檔</span></div>`:'<div class="empty">尚未有掃描稽核紀錄（下一次盤後掃描完成後出現）。</div>');
     const L={match:['完全吻合','var(--t1)'],adjusted:['還原價（形狀一致）','var(--t2)'],mismatch:['不符','var(--alert)'],nodata:['無資料','var(--t3)'],error:['取得失敗','var(--alert)']};
@@ -1484,7 +1485,7 @@ function adGate(state,msg){
     el.innerHTML='<div style="font-size:13px;line-height:1.8">後台目前是<b>鎖定</b>狀態：尚未設定管理密碼。<br>請到 Render → taiwan-signal → Environment 新增環境變數 <b>ADMIN_PASSWORD</b>（至少 8 碼，建議 12 碼以上），儲存後服務會重新啟動，再回到這裡登入。<br><span style="color:var(--t3);font-size:11px">密碼只存在 Render，不會出現在程式碼或 GitHub。</span></div>';
     return;
   }
-  el.innerHTML=`<div style="font-size:12px;color:var(--t3);margin-bottom:10px">${msg||'這裡包含策略的學習資料與後台資訊，僅限管理者查看。'}</div>
+  el.innerHTML=`<div style="font-size:12px;color:var(--t3);margin-bottom:10px">${msg||'這裡包含策略的學習資料與後台資訊，僅限管理者查看。每次進入都需要輸入密碼，離開此頁會自動登出。'}</div>
     <form onsubmit="adLogin(event)" style="display:flex;gap:8px;flex-wrap:wrap">
       <input id="ad-pw" type="password" autocomplete="current-password" placeholder="管理密碼" style="flex:1;min-width:160px;padding:8px 10px;border:1px solid var(--line2);background:var(--paper,#fff);color:var(--t1);font-size:14px">
       <button class="btn primary" type="submit" id="ad-btn">登入</button></form>
@@ -1502,7 +1503,10 @@ async function adLogin(ev){
   }catch(e){er.textContent='連線失敗：'+e.message;}
   btn.disabled=false;btn.textContent='登入';
 }
-async function adLogout(){try{await fetch('/api/admin/logout',{method:'POST'});}catch(e){}fetchLearning();}
+var adAuthed=false;
+function adLogoutQuiet(){adAuthed=false;try{fetch('/api/admin/logout',{method:'POST',keepalive:true});}catch(e){}}
+addEventListener('pagehide',()=>{if(adAuthed){try{navigator.sendBeacon('/api/admin/logout');}catch(e){}}});
+async function adLogout(){adAuthed=false;try{await fetch('/api/admin/logout',{method:'POST'});}catch(e){}fetchLearning();}
 function adAgo(iso){if(!iso)return '—';const d=new Date(iso);return isNaN(d)?'—':d.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});}
 async function fetchLearning(){
   try{
@@ -1516,6 +1520,7 @@ async function fetchLearning(){
     if(o.error)throw new Error(o.error);
     document.getElementById('ad-gate').style.display='none';
     document.getElementById('ad-main').style.display='block';
+    adAuthed=true;
     adRender(d,o);
   }catch(e){
     document.getElementById('ad-gate').style.display='none';
@@ -1543,7 +1548,7 @@ function adRender(d,o){
   setHtml('lr-groups',Object.entries(d.groups).map(([k,g])=>g.n?`<tr><td><b style="color:var(--t1)">${k}</b></td><td>${g.n}</td><td>${f(g.win_rate,'%')}</td><td>${f(g.stop_rate,'%')}</td><td>${g.expired}</td><td>${f(g.avg_r)}${g.t_vs0!==null&&g.t_vs0!==undefined?`<small style="color:var(--t3)"> (t=${g.t_vs0})</small>`:''}</td><td>${f(g.avg_r10)}${g.n_r10?`<small style="color:var(--t3)"> (n=${g.n_r10})</small>`:''}</td><td>${f(g.mfe)}</td></tr>`:`<tr><td><b style="color:var(--t1)">${k}</b></td><td colspan="7" style="color:var(--t3)">尚無已結算樣本</td></tr>`).join(''));
   const TN={loose:'var(--warn)',good:'var(--t1)',wait:'var(--t3)'};
   setHtml('lr-rules',(d.rules||[]).length?d.rules.map(r=>`<tr><td><b style="color:var(--t1)">${safe(r.label)}</b></td><td>${r.direction==='buy'?'多':'空'}</td><td>${r.n}</td><td>${f(r.win_rate,'%')}</td><td>${f(r.avg_r)}</td><td style="white-space:normal;min-width:220px;color:${TN[r.tone]||'var(--t3)'}">${safe(r.verdict)}</td></tr>`).join(''):'<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--t3)">被擋下的假想單還沒有結算結果（通常需要數個交易日）</td></tr>');
-  setHtml('lr-find',d.findings.length?d.findings.map(x=>`<div class="chk"><span class="chk-i" style="color:${x.z>0?'var(--up)':'var(--down)'};border-color:currentColor">${x.z>0?'↑':'↓'}</span><div class="chk-b"><b>${x.dim}：${x.label}　<small style="font-weight:400;color:${x.level==='strong'?'var(--t1)':'var(--warn)'}">${x.level==='strong'?'較可靠':'初步，需新樣本再驗證'}</small></b><span>勝率 ${x.win_rate}%　平均 R ${x.avg_r}　n=${x.n}　z=${x.z}</span></div></div>`).join('')+'<div style="font-size:11px;color:var(--t3);margin-top:8px">統計顯著不代表因果。同時檢驗了幾十個分組，純靠運氣也會有幾個達標，所以「初步」的發現只能當線索，要等後續新樣本再次驗證才可調整策略。</div>':`<div class="empty">${d.reliable?`還沒有任何分組達到「樣本 ≥ ${p.min_n} 且統計顯著」的標準`:`累積的交易日還不到 ${p.min_days} 天，不列結論`}——這是正常的，系統每天都在累積。請勿在此之前憑少數幾筆結果調整策略。</div>`);
+  setHtml('lr-find',d.findings.length?d.findings.map(x=>`<div class="chk"><span class="chk-i" style="color:${x.z>0?'var(--up)':'var(--down)'};border-color:currentColor">${x.z>0?'↑':'↓'}</span><div class="chk-b"><b>${x.dim}：${x.label}　<small style="font-weight:400;color:${x.level==='strong'?'var(--t1)':'var(--warn)'}">${x.level==='strong'?'較可靠（前後兩段時間一致）':'初步，需新樣本再驗證'}${x.consistent===false?'・前後兩段不一致':''}</small></b><span>勝率 ${x.win_rate}%　平均 R ${x.avg_r}　n=${x.n}　z=${x.z}</span></div></div>`).join('')+'<div style="font-size:11px;color:var(--t3);margin-top:8px">統計顯著不代表因果。同時檢驗了幾十個分組，純靠運氣也會有幾個達標，所以「初步」的發現只能當線索，要等後續新樣本再次驗證才可調整策略。</div>':`<div class="empty">${d.reliable?`還沒有任何分組達到「樣本 ≥ ${p.min_n} 且統計顯著」的標準`:`累積的交易日還不到 ${p.min_days} 天，不列結論`}——這是正常的，系統每天都在累積。請勿在此之前憑少數幾筆結果調整策略。</div>`);
   setHtml('lr-dims',d.dimensions.length?d.dimensions.map(dm=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>${dm.name}</span></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>分組</th><th>n</th><th>勝率</th><th>停損率</th><th>平均 R</th><th></th></tr></thead><tbody>${dm.items.map(i=>`<tr style="${i.enough?'':'opacity:.55'}"><td><b style="color:var(--t1)">${i.label}</b></td><td>${i.n}</td><td><div style="display:flex;align-items:center;gap:6px;min-width:90px"><div style="flex:1;height:6px;background:var(--line2)"><i style="display:block;height:100%;width:${Math.min(100,i.win_rate)}%;background:var(--t1)"></i></div>${i.win_rate}%</div></td><td>${i.stop_rate}%</td><td>${f(i.avg_r)}</td><td style="white-space:nowrap;font-size:11px;color:var(--t3)">${i.enough?(i.level?((i.z>0?'顯著較佳':'顯著較差')+(i.level==='tent'?'（初步）':'')):''):'樣本不足'}</td></tr>`).join('')}</tbody></table></div></div>`).join(''):'<div class="panel card"><div class="panel-body"><div class="empty">已結算樣本還不夠分組。第一批候選要等到停損或停利觸及後才會出現，通常需要數個交易日。</div></div></div>');
 }
 async function fetchNewsWatch(){
