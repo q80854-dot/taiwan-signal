@@ -259,6 +259,11 @@ class TWScanEngine:
         # 所以就算某一檔真的卡住，也不會拖住整批、更不會拖住整個 process
         # （跟先前修的全站凍結是同一個保護機制，這裡只是把它包進並行工作）。
         _SCAN_CONCURRENCY = 6
+        try:
+            import shadow
+            shadow.begin_run("熔斷中僅影子追蹤" if skip_new_signals else "")
+        except Exception as e:
+            logger.warning(f"影子追蹤初始化失敗（不影響掃描）: {e}")
         with self._pre_lock:
             self._ctrl = []
             self._pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0,
@@ -298,6 +303,7 @@ class TWScanEngine:
             import shadow
             shadow.capture_candidates(all_signals, market_overview)
             shadow.flush_controls(list(self._ctrl))
+            shadow.flush_rejects()
         except Exception as e:
             logger.warning(f"影子追蹤記錄失敗（不影響掃描）: {e}")
         if skip_new_signals:
@@ -432,6 +438,8 @@ class TWScanEngine:
         try:
             import shadow
             shadow.resolve_pending()
+            _p = dict(self._pre)
+            shadow.finish_run(universe=total_tickers, pre_skipped=_p.get("skipped"), pre_passed=_p.get("passed"))
         except Exception as e:
             logger.warning(f"影子追蹤結算失敗（不影響掃描）: {e}")
 

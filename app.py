@@ -406,13 +406,61 @@ def api_state():
         logger.error(f"api_state: {e}"); return jsonify({"error": str(e)}), 500
 
 
+# ── 管理後台（策略學習）：需密碼登入，見 admin_auth.py ──
+import admin_auth
+
+
+@app.route("/api/admin/status")
+def api_admin_status():
+    return admin_auth.status()
+
+
+@app.route("/api/admin/login", methods=["POST"])
+def api_admin_login():
+    return admin_auth.login()
+
+
+@app.route("/api/admin/logout", methods=["POST"])
+def api_admin_logout():
+    return admin_auth.logout()
+
+
 @app.route("/api/learning")
+@admin_auth.admin_required
 def api_learning():
     try:
         import learning
         return jsonify(learning.build_report())
     except Exception as e:
         logger.error(f"api_learning: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/shadow")
+@admin_auth.admin_required
+def api_admin_shadow():
+    try:
+        import shadow
+        return jsonify(shadow.overview())
+    except Exception as e:
+        logger.error(f"api_admin_shadow: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/shadow/export.csv")
+@admin_auth.admin_required
+def api_admin_export():
+    try:
+        import shadow
+        from flask import Response
+        kind = request.args.get("kind") or None
+        status = request.args.get("status") or None
+        if kind not in (None, "candidate", "rejected", "control") or status not in (None, "pending", "closed"):
+            return jsonify({"error": "參數錯誤"}), 400
+        body, n = shadow.export_csv(kind, status)
+        fn = f"shadow_{kind or 'all'}_{status or 'all'}_{datetime.now().strftime('%Y%m%d')}.csv"
+        return Response(body, mimetype="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{fn}"', "X-Rows": str(n)})
+    except Exception as e:
+        logger.error(f"api_admin_export: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/health")

@@ -132,6 +132,18 @@ def check_strategy():
         out.append(_c("策略樣本數", "warn", f"已結案 {len(closed)} 筆，少於 20 筆，勝率與停損率不具統計意義"))
     else:
         out.append(_c("停損率", "warn" if len(sl) / len(closed) > .5 else "ok", f"{len(sl)}／{len(closed)}＝{round(len(sl) / len(closed) * 100)}%"))
+    try:
+        import shadow
+        shadow.ensure_table()
+        with store._conn() as conn:
+            r = conn.execute("SELECT COUNT(*) AS n, SUM(CASE WHEN kind='candidate' THEN 1 ELSE 0 END) AS c, "
+                             "SUM(CASE WHEN kind='control' THEN 1 ELSE 0 END) AS k, "
+                             "SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END) AS d, MAX(bar_date) AS last FROM shadow_signals").fetchone()
+        r = dict(r)
+        out.append(_c("學習資料（影子追蹤）", "ok" if (r.get("n") or 0) > 0 else "warn",
+                      f"候選 {r.get('c') or 0}、對照組 {r.get('k') or 0}、已結算 {r.get('d') or 0}；最近記錄日 {r.get('last') or '—'}" if r.get("n") else "尚無紀錄（掃描後開始累積）"))
+    except Exception as e:
+        out.append(_c("學習資料（影子追蹤）", "warn", str(e)))
     from config import THRESH, SHORT_SIGNAL_THRESH
     out.append(_c("進場門檻", "info", f"做多分數 ≥ {THRESH.get('min_score')}；做空 ≥ {SHORT_SIGNAL_THRESH['min_score']} 且週線必須偏空"))
     return out

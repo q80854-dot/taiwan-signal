@@ -300,7 +300,25 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             _last_date = (daily_data.get("dates") or [None])[-1]
             logger.info(f"[SCORE] {ticker} dir={direction} score={score} "
                         f"bar={_last_date} close={price}")
-        if direction=="none" or score<THRESH["min_score"]: return None
+        # ★ 2026-10-05 影子追蹤（shadow.py）：
+        #   · 沒有訊號的股票（direction=none 或分數不足）隨機抽 3% 當「對照組」；
+        #   · 分數已達門檻的標的先記下特徵快照，之後若被下面任何一條規則擋下，會把「假想單」記錄起來
+        #     追蹤結果，用來驗證那條規則到底有沒有幫到我們。
+        # 只有掃描器呼叫 shadow.begin_run() 之後才會收集，回測／其他呼叫端完全不受影響。
+        try:
+            import shadow as _sh
+        except Exception:
+            _sh = None
+        if direction=="none" or score<THRESH["min_score"]:
+            if _sh is not None:
+                _sh.control_from_engine(ticker, stock_info, daily_data, daily_ind, mtf, market_overview)
+            return None
+        if _sh is not None:
+            _sh.observe(ticker, daily_data, daily_ind, mtf, market_overview)
+        def _rej(reason, sl_=None):
+            if _sh is not None:
+                _sh.note_reject(ticker, stock_info, daily_data, daily_ind, mtf, direction, score, reason,
+                                market_overview, sl_)
         # ★ 修正：2026-09-28（第二輪）——上一輪重新開放放空後，把 ChatGPT／
         # Perplexity 兩邊的審查意見貼回去複查，兩邊獨立收斂出同一個架構問題：
         # 原本把「大盤環境」「個股方向」「個股訊號強度」全部塞進同一組
@@ -318,7 +336,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         #   Layer 3  訊號強度：分數/ADX強度/量能門檻本身比做多更高。
         if direction=="sell":
             if not ENABLE_SHORT_SIGNALS:
-                return None
+                _rej("short_off"); return None
             # --- Layer 1: Market Regime Gate -------------------------------
             regime = market_overview.get("regime", {})
             if not regime.get("available"):
@@ -326,11 +344,11 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 # 「不確定」不等於「確定可以放空」，保守起見直接不放行
                 # （跟 fetch_market_regime() 的 fail-closed 說明一致）。
                 logger.info(f"[{ticker}] 放空 Layer1 Market Regime Gate 未過：大盤中期趨勢資料不可用")
-                return None
+                _rej("gate_regime"); return None
             if not regime.get("bearish_regime"):
                 logger.info(f"[{ticker}] 放空 Layer1 Market Regime Gate 未過：大盤中期趨勢={regime.get('trend')}"
                             f"（非明確中期空頭，不允許個股層級放空訊號蓋過大盤環境判斷）")
-                return None
+                _rej("gate_regime"); return None
             # 大盤單日急跌/急漲（shock）仍額外檢查一次：就算中期是空頭，
             # 如果今天大盤单日已經是極端反彈（情緒分數很高），也先觀望一天，
             # 避免對著當天的軋空行情放空；這是 Layer1 內的次要保護，不是
@@ -339,10 +357,10 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             if market_overview.get("sentiment_score", 50) >= SHORT_MAX_SENTIMENT:
                 logger.info(f"[{ticker}] 放空 Layer1 Market Shock 檢查未過：大盤單日情緒分數過高，"
                             f"疑似當日軋空行情，暫緩本次放空訊號")
-                return None
+                _rej("gate_shock"); return None
             # --- Layer 2: Stock Direction Gate ------------------------------
             if SHORT_REQUIRE_WEEKLY_BEARISH and "bearish" not in mtf.get("weekly_bias","neutral"):
-                return None
+                _rej("gate_weekly"); return None
             adx_bias = mtf.get("adx_bias","neutral")
             if adx_bias != "bearish":
                 # ADX 只衡量趨勢強度、不衡量方向，見 check_multi_timeframe_tw()
@@ -350,17 +368,19 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 # 當放空的訊號強度證據。
                 logger.info(f"[{ticker}] 放空 Layer2 Stock Direction Gate 未過：ADX方向(+DI/-DI)={adx_bias}，"
                             f"非空方主導，即使ADX數值達標也不視為有效放空訊號")
-                return None
+                _rej("gate_adxdir"); return None
             # --- Layer 3: 訊號強度（分數/ADX強度/量能，比做多更嚴格）--------
             if score < SHORT_SIGNAL_THRESH["min_score"]:
-                return None
+                _rej("short_score"); return None
         adx_val=mtf.get("adx_value",0)
         # 放空的 ADX/量能門檻比做多更嚴格（見 config.py SHORT_SIGNAL_THRESH 說明）
         min_adx_req = SHORT_SIGNAL_THRESH["min_adx"] if direction=="sell" else THRESH["min_adx"]
-        if adx_val<min_adx_req: return None
+        if adx_val<min_adx_req:
+            _rej("adx_low"); return None
         vol_ratio=mtf.get("vol_ratio",1.0)
         min_vol_req = SHORT_SIGNAL_THRESH["min_vol_ratio"] if direction=="sell" else THRESH["min_vol_ratio"]
-        if vol_ratio<min_vol_req and score<75: return None
+        if vol_ratio<min_vol_req and score<75:
+            _rej("vol_low"); return None
         # ★ 修正：2026-09-16——稽核發現 sell 方向的法人加權只有「外資賣超 → +5」
         # 這一種情況，buy 方向卻同時有「外資買超 → +5」跟「外資賣超 → -5」兩種。
         # 也就是說，一檔 sell(放空)訊號就算外資當天大買超（跟「放空」方向完全
@@ -408,10 +428,10 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             # 總分門檻，score>=70 但背後可能是靠其他項目加分蓋過 stop_buy）。
             if direction == "buy" and mc.get("action") == "stop_buy":
                 logger.info(f"[{ticker}] 大盤熔斷 extreme（{mc.get('message')}），暫停產生多單訊號")
-                return None
+                _rej("macro_stop"); return None
             if direction == "buy" and fc.get("action") == "stop_buy":
                 logger.info(f"[{ticker}] 外資賣超熔斷 extreme（{fc.get('message')}），暫停產生多單訊號")
-                return None
+                _rej("macro_stop"); return None
             if mc.get("level") == "high":
                 macro_adj -= 10; macro_notes.append(mc["message"])
             if fc.get("level") == "warning":
@@ -424,7 +444,8 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 logger.info(f"[{ticker}] 總經指標評分調整 {macro_adj:+d}：{'；'.join(macro_notes)}")
         except Exception as e:
             logger.warning(f"[{ticker}] 總經指標評分調整失敗（不影響本次訊號，維持原始分數）: {e}")
-        if score<THRESH["min_score"]: return None
+        if score<THRESH["min_score"]:
+            _rej("score_after_adj"); return None
         atr_info=daily_ind.get("atr",{}); atr=atr_info.get("value",price*0.02) or price*0.02
         # ★ 新增：2026-10-05——追高防線。實查 9/30~10/1 六檔訊號：進場價就是訊號當日
         # 收盤價，其中 南茂 +9.6%（接近漲停）、艾笛森 +4.0%、台泥 +4.0%，全部是「已經
@@ -444,10 +465,10 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         chg_dir = chg_today if direction == "buy" else -chg_today
         if chg_dir >= 6.5:
             logger.info(f"[{ticker}] 當日{'漲' if direction=='buy' else '跌'}幅 {chg_dir:.1f}% 接近漲跌停，追價風險過高，略過")
-            return None
+            _rej("chase_limit"); return None
         if ext_atr > 3.0:
             logger.info(f"[{ticker}] 與20日均線乖離 {ext_atr:.1f} ATR，延伸過度，等回檔再說，略過")
-            return None
+            _rej("extension"); return None
         chase_pen = 0
         if chg_dir >= 4: chase_pen += 6
         if ext_atr > 2.0: chase_pen += 6
@@ -468,11 +489,13 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         if sl_dist_pct > 12:
             logger.info(f"[{ticker}] 停損距離 {sl_dist_pct:.1f}%（SL={sl}, 現價={price}）過寬，"
                         f"代表已離結構性支撐/壓力太遠、不是好的風險定義進場點，跳過本次訊號")
-            return None
+            _rej("sl_wide", sl); return None
         tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
-        if tp_info["rr1"]<THRESH["min_rr"]: return None
+        if tp_info["rr1"]<THRESH["min_rr"]:
+            _rej("rr_low", sl); return None
         pos=calc_position_size(price,sl,size_cat=size_cat,avg_volume_lots=stock_info.get("volume_lots"))
-        if pos["shares"]<=0: return None
+        if pos["shares"]<=0:
+            _rej("size_zero", sl); return None
         if pos.get("liquidity_capped"):
             logger.info(f"[{ticker}] 建議部位因流動性上限（當日成交量10%）被下修至 {pos['shares']} 股")
         ema_ind=daily_ind.get("ema",{})
