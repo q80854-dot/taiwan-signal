@@ -410,6 +410,7 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
   <div class="nav"     onclick="go('perf')">績效分析</div>
   <div class="nav-g">研究</div>
   <div class="nav"     onclick="go('radar')">基本面雷達</div>
+  <div class="nav"     onclick="go('audit')">資料稽核</div>
   <div class="nav"     onclick="go('instrument')">個股研究</div>
   <div class="nav"     onclick="go('marketoverview')">市場總覽</div>
   <div class="nav-g">市場</div>
@@ -598,6 +599,24 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
     </div>
   </div>
 
+  <!-- Audit -->
+  <div class="page" id="page-audit">
+    <div class="pad">
+    <div class="note-box" style="margin-bottom:14px">這一頁回答一個問題：<b>系統用的數據，和證交所／櫃買官方公布的對得上嗎？</b>下方會把我們資料庫裡的日 K 逐日對照官方個股日成交資料，並列出每一種資料的來源與已知限制。</div>
+    <div class="panel card" style="margin-bottom:14px"><div class="panel-head"><span>最近一次掃描的自我稽核</span></div><div class="panel-body" id="audit-scan"><div class="empty">載入中…</div></div></div>
+    <div class="panel card" style="margin-bottom:14px"><div class="panel-head"><span>價格對照官方（近 10 個交易日）</span><button class="btn" onclick="fetchAudit(true)">重新稽核</button></div>
+      <div class="panel-body" id="audit-sum"></div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>股票</th><th>市場</th><th>比對天數</th><th>完全吻合</th><th>判定</th><th>量比(我們/官方)</th><th>說明</th></tr></thead>
+        <tbody id="audit-tbody"><tr><td colspan="7" style="text-align:center;padding:30px;color:var(--t3)">載入中…</td></tr></tbody>
+      </table></div></div>
+    <div class="panel card" style="margin-bottom:14px"><div class="panel-head"><span>資料來源與限制</span></div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>資料</th><th>來源</th><th>更新</th><th>涵蓋</th><th>已知限制</th></tr></thead>
+        <tbody id="audit-src"></tbody></table></div></div>
+    </div>
+  </div>
+
   <!-- Radar -->
   <div class="page" id="page-radar">
     <div class="pad">
@@ -704,6 +723,7 @@ const chgStr=(c,u='%')=>{const n=parseFloat(c);if(isNaN(n))return '—';return(n
 // 「上漲」跟「系統正常」兩種不同意思。
 const clr=(v)=>v>0?'var(--up)':v<0?'var(--down)':'var(--t3)';
 const setEl=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+const setHtml=(id,v)=>{const e=document.getElementById(id);if(e)e.innerHTML=v;};
 const setColor=(id,c)=>{const e=document.getElementById(id);if(e)e.style.color=c;};
 
 // ★ 修正：2026-09-19——舊版把後端傳來的 UTC ISO 時間字串直接切片印出（例如
@@ -780,7 +800,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
+const TITLES={audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 function go(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
@@ -795,6 +815,7 @@ function go(id){
   if(id==='watchlist')renderWatchlistPage();
   if(id==='signals')renderSignals();
   if(id==='radar'&&!_radarLoaded)fetchRadar('growth');
+  if(id==='audit')fetchAudit();
   if(id==='positions')fetchPositions();
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
@@ -1249,6 +1270,29 @@ async function fetchRadar(kind,btn){
     const pc=v=>v===null||v===undefined?'—':`<span style="color:${clr(v)}">${v>0?'+':''}${Number(v).toFixed(1)}%</span>`;
     tb.innerHTML=d.rows.length?d.rows.map(r=>`<tr style="cursor:pointer" onclick="goToInstrument('${r.code}')"><td>${r.code}${r.has_signal?'<i class="dot-sig" title="近 7 天也有技術訊號"></i>':''}</td><td><b style="color:var(--t1)">${safe(r.name)}</b></td><td>${safe(r.sector)}</td><td>${r.revenue_yi}</td><td>${pc(r.yoy)}</td><td>${pc(r.mom)}</td><td>${pc(r.cum_yoy)}</td><td>${safe(r.pe)}</td><td>${r.yield!==null&&r.yield!==undefined?r.yield+'%':'—'}</td><td>${r.score!==null?`<b>${r.score}</b>`:'—'}</td></tr>`).join(''):'<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">目前沒有符合條件的公司</td></tr>';
   }catch(e){tb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+e.message+'</td></tr>';}
+}
+let _auditTimer=null;
+async function fetchAudit(refresh){
+  clearTimeout(_auditTimer);
+  const tb=document.getElementById('audit-tbody');
+  try{
+    const [d,st]=await Promise.all([fetch('/api/audit'+(refresh?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()),fetch('/api/state',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))]);
+    if(d.error)throw new Error(d.error);
+    const a=st.scan_audit;
+    setHtml('audit-scan',a?`<div class="kv"><span>掃描日期</span><span>${safe(a.date)}　耗時 ${a.duration_sec}s</span></div>
+      <div class="kv"><span>掃描池／實際檢查</span><span>${a.universe} / ${a.examined} 檔</span></div>
+      <div class="kv"><span>日線預篩 跳過／進入完整分析</span><span>${a.skipped} / ${a.passed}（跳過率 ${(a.skip_rate*100).toFixed(1)}%）</span></div>
+      <div class="kv"><span>隨機 5% 抽查（跳過者改走完整流程）</span><span>${a.audited} 檔　<b style="color:${a.mismatch?'var(--alert)':'var(--t1)'}">${a.mismatch?'發現 '+a.mismatch+' 檔不一致':'0 檔不一致'}</b></span></div>
+      <div class="kv"><span>官方末棒校正</span><span>檢查 ${a.recon_checked} 檔，修正 ${a.recon_fixed} 檔</span></div>`:'<div class="empty">尚未有掃描稽核紀錄（下一次盤後掃描完成後出現）。</div>');
+    const L={match:['完全吻合','var(--t1)'],adjusted:['還原價（形狀一致）','var(--t2)'],mismatch:['不符','var(--alert)'],nodata:['無資料','var(--t3)'],error:['取得失敗','var(--alert)']};
+    const sm=d.summary||{};
+    setHtml('audit-sum',d.items&&d.items.length?`已稽核 ${d.items.length} 檔：吻合 ${sm.match||0}、還原價 ${sm.adjusted||0}、不符 ${sm.mismatch||0}、無資料／失敗 ${(sm.nodata||0)+(sm.error||0)}　<span style="color:var(--t3)">${d.generated_at||''}</span>`:'');
+    if(d.running&&!d.items.length)tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--t3)">正在向證交所／櫃買逐檔取得官方資料（約 30 秒）…</td></tr>';
+    else tb.innerHTML=d.items.map(i=>{const l=L[i.status]||[i.status,''];
+      return `<tr style="cursor:pointer" onclick="goToInstrument('${i.code||''}')"><td><b style="color:var(--t1)">${safe(i.ticker)}</b></td><td>${safe(i.market||'')}</td><td>${i.compared??'—'}</td><td>${i.exact??'—'}</td><td style="color:${l[1]}"><b>${l[0]}</b></td><td>${i.vol_ratio_avg??'—'}</td><td style="white-space:normal;min-width:180px">${safe(i.note||'逐日開高低收皆與官方一致')}</td></tr>`}).join('');
+    setHtml('audit-src',(d.sources||[]).map(x=>`<tr><td><b style="color:var(--t1)">${safe(x.name)}</b></td><td style="white-space:normal;min-width:150px">${safe(x.source)}</td><td style="white-space:normal;min-width:100px">${safe(x.update)}</td><td>${safe(x.coverage)}</td><td style="white-space:normal;min-width:220px">${safe(x.limits)}</td></tr>`).join(''));
+    if(d.running)_auditTimer=setTimeout(()=>{if(document.getElementById('page-audit').classList.contains('on'))fetchAudit();},6000);
+  }catch(e){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+e.message+'</td></tr>';}
 }
 async function fetchNewsWatch(){
   const el=document.getElementById('news-watch');if(!el)return;
