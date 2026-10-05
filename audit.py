@@ -59,16 +59,16 @@ def _official_month(code, is_otc, year, month):
     """回傳 {iso_date: {open,high,low,close,volume_lots}}"""
     out = {}
     if is_otc:
-        url = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-        r = requests.get(url, params={"l": "zh-tw", "d": f"{year - 1911}/{month:02d}", "stkno": code, "o": "json"},
+        url = "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock"
+        r = requests.get(url, params={"code": code, "date": f"{year}/{month:02d}/01", "response": "json"},
                          headers=HEADERS, timeout=15)
-        rows = (r.json().get("aaData") or r.json().get("tables", [{}])[0].get("data") or [])
-        for row in rows:
+        tbs = r.json().get("tables") or [{}]
+        for row in (tbs[0].get("data") or []):
             d = _roc_to_iso(row[0])
             if not d:
                 continue
             out[d] = {"open": _num(row[3]), "high": _num(row[4]), "low": _num(row[5]),
-                      "close": _num(row[6]), "volume_lots": (_num(row[1]) or 0)}  # 仟股 = 張
+                      "close": _num(row[6]), "volume_lots": (_num(row[1]) or 0)}  # 成交張數
     else:
         url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
         r = requests.get(url, params={"response": "json", "date": f"{year}{month:02d}01", "stockNo": code},
