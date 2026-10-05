@@ -540,7 +540,31 @@ def build_full_universe(force_refresh=False) -> List[Dict]:
         s["is_disposal_or_attention"] = s["code"] in BLACKLIST_CODES
         result.append(s)
     result.sort(key=lambda x: x["code"])
+    _persist_official_volumes(result)
     return result
+
+
+_ov_persisted = set()
+
+
+def _persist_official_volumes(universe):
+    """把官方日行情的成交量（張）依日期存起來（每個市場每個交易日只存一次），讓 K 線的成交量用官方數字。"""
+    try:
+        by = {}
+        for s in universe:
+            d, m = s.get("quote_date"), s.get("market")
+            if d and m and s.get("volume_lots") is not None:
+                by.setdefault((m, d), []).append((s["code"], d, s["volume_lots"]))
+        from state_store import store
+        for k, rows in by.items():
+            if k in _ov_persisted or len(rows) < 300:
+                continue
+            store.upsert_official_volumes(rows)
+            _ov_persisted.add(k)
+            logger.info(f"官方成交量已存檔：{k[0]} {k[1]} {len(rows)} 檔")
+    except Exception as e:
+        logger.warning(f"_persist_official_volumes: {e}")
+
 
 def get_universe_data_meta() -> Dict:
     """給前端標示資料來源／更新時間／產業分類資料本次是否真的抓到，避免使用者

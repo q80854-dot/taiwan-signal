@@ -588,6 +588,47 @@ class StateStore:
             logger.warning(f"get_ohlcv_last_date {ticker}/{tf_key}: {e}")
             return None
 
+    # ── 官方成交量（張）：Yahoo 的成交量與證交所／櫃買官方數字常差 5～15%，K 線改以官方為準 ──
+    _ov_ready = False
+
+    def _ensure_ov(self):
+        if self._ov_ready:
+            return
+        try:
+            with self._conn() as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS official_volume (code TEXT, bar_date TEXT, lots BIGINT, updated_at TEXT, PRIMARY KEY (code, bar_date))")
+            self._ov_ready = True
+        except Exception as e:
+            logger.warning(f"_ensure_ov: {e}")
+
+    def upsert_official_volumes(self, rows):
+        """rows: [(code, 'YYYY-MM-DD', lots)]"""
+        if not rows:
+            return
+        self._ensure_ov()
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            if USE_PG:
+                sql = ("INSERT INTO official_volume(code,bar_date,lots,updated_at) VALUES(?,?,?,?) "
+                       "ON CONFLICT (code,bar_date) DO UPDATE SET lots=EXCLUDED.lots,updated_at=EXCLUDED.updated_at")
+            else:
+                sql = "INSERT OR REPLACE INTO official_volume(code,bar_date,lots,updated_at) VALUES(?,?,?,?)"
+            with self._conn() as conn:
+                for c, d, l in rows:
+                    conn.execute(sql, (c, d, int(l), now))
+        except Exception as e:
+            logger.warning(f"upsert_official_volumes: {e}")
+
+    def get_official_volumes(self, code: str, since: str = "2000-01-01") -> Dict[str, int]:
+        self._ensure_ov()
+        try:
+            with self._conn() as conn:
+                rows = conn.execute("SELECT bar_date, lots FROM official_volume WHERE code=? AND bar_date>=?", (code, since)).fetchall()
+            return {r["bar_date"]: int(r["lots"]) for r in rows}
+        except Exception as e:
+            logger.warning(f"get_official_volumes: {e}")
+            return {}
+
     def get_daily_closes_recent(self, days: int = 10) -> Dict[str, List]:
         """一次取出全部股票最近幾天的日線收盤（市場廣度用，同一天口徑）。回傳 {ticker: [(bar_date, close), ...] 由舊到新}"""
         try:

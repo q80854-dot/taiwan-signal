@@ -975,6 +975,24 @@ def api_instrument(ticker: str):
         else:
             out["indicators"] = None
         out["ohlcv_long"] = _long_history(t)
+        try:
+            from state_store import store as _st
+            ov = _st.get_official_volumes(code)
+            n_ov = 0
+            for _o in (out.get("ohlcv"), out.get("ohlcv_long")):
+                if not _o or not _o.get("dates"):
+                    continue
+                vols = list(_o.get("volumes") or [])
+                flags = [0] * len(vols)
+                for i, d_ in enumerate(_o["dates"]):
+                    if d_ in ov and i < len(vols):
+                        vols[i] = ov[d_]; flags[i] = 1
+                _o["volumes"] = vols; _o["vol_official"] = flags
+            n_ov = len(ov)
+            out["vol_official_days"] = n_ov
+            _kick_backfill(code, t, n_ov)
+        except Exception as _e:
+            out["vol_official_days"] = 0
     except Exception as e:
         out["ohlcv"] = None; out["indicators"] = None; out["ohlcv_error"] = str(e)
     try:
@@ -1695,6 +1713,65 @@ def create_app():
     return app
 
 app = create_app()
+
+# ── 官方成交量歷史回補（背景、單飛、失敗容忍）──────────────────────
+_ov_bf_lock = __import__("threading").Lock()
+_ov_bf_tried = {}
+
+
+def _backfill_official_volume(code, is_otc, months=4):
+    """證交所 STOCK_DAY／櫃買 st43 逐月抓個股官方成交量（張）寫入 official_volume。失敗只記 log。"""
+    import time as _t, requests as _rq
+    from datetime import datetime as _dt, timedelta as _td
+    from state_store import store as _st
+    rows = []
+    now = _dt.utcnow() + _td(hours=8)
+    y, m = now.year, now.month
+    hdr = {"User-Agent": "Mozilla/5.0"}
+    for _ in range(months):
+        try:
+            if not is_otc:
+                r = _rq.get("https://www.twse.com.tw/exchangeReport/STOCK_DAY",
+                            params={"response": "json", "date": f"{y}{m:02d}01", "stockNo": code},
+                            headers=hdr, timeout=(5, 15))
+                for x in (r.json().get("data") or []):
+                    yy, mm, dd = x[0].split("/")
+                    rows.append((code, f"{int(yy)+1911}-{mm}-{dd}", int(x[1].replace(",", "")) // 1000))
+            else:
+                r = _rq.get("https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php",
+                            params={"l": "zh-tw", "d": f"{y-1911}/{m:02d}", "stkno": code},
+                            headers=hdr, timeout=(5, 15))
+                for x in (r.json().get("aaData") or []):
+                    yy, mm, dd = x[0].split("/")
+                    rows.append((code, f"{int(yy)+1911}-{mm}-{dd}", int(float(x[1].replace(",", "")))))
+        except Exception as e:
+            logger.warning(f"official volume backfill {code} {y}-{m}: {e}")
+        m -= 1
+        if m == 0:
+            m = 12; y -= 1
+        _t.sleep(0.6)
+    if rows:
+        try:
+            _st.upsert_official_volumes(rows)
+            logger.info(f"official volume backfill {code}: {len(rows)} days")
+        except Exception as e:
+            logger.warning(f"upsert official volume {code}: {e}")
+
+
+def _kick_backfill(code, ticker, n_have):
+    import time as _t, threading as _th
+    if n_have >= 60 or _t.time() - _ov_bf_tried.get(code, 0) < 6 * 3600:
+        return
+    _ov_bf_tried[code] = _t.time()
+    def _run():
+        if _ov_bf_lock.acquire(blocking=False):
+            try:
+                _backfill_official_volume(code, ticker.endswith(".TWO"))
+            finally:
+                _ov_bf_lock.release()
+    _th.Thread(target=_run, daemon=True).start()
+
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=SYSTEM["web_port"], debug=False)
