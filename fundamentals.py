@@ -136,6 +136,10 @@ from datetime import datetime as _dt, timedelta as _td, timezone as _tz
 _rev_state: Dict = {"fetched_at": None, "expected": None, "n_expected": 0, "n_total": 0, "mops_added": 0, "last_error": None}
 
 
+import threading as _threading
+_rev_bg_lock = _threading.Lock()
+
+
 def _taipei_now():
     return _dt.now(_tz.utc) + _td(hours=8)
 
@@ -243,6 +247,19 @@ def fetch_monthly_revenue_map(force: bool = False) -> Dict[str, Dict]:
     任一來源失敗只影響該來源涵蓋的個股，不會讓另一邊也連帶失效。
     公告期（每月 1～15 日）快取 10 分鐘；官方 OpenAPI 尚未更新到最新一期時，用 MOPS 補上。"""
     if not force and _rev_cache_fresh():
+        return _cache["monthly_revenue"]["data"]
+    if not force and _cache.get("monthly_revenue"):
+        # 過期但有舊資料：先回舊的（使用者不用等 10 幾秒），同時在背景更新（同時只會有一個）
+        if _rev_bg_lock.acquire(blocking=False):
+            def _bg():
+                try:
+                    fetch_monthly_revenue_map(force=True)
+                except Exception as e:
+                    logger.warning(f"月營收背景更新失敗: {e}")
+                finally:
+                    _rev_bg_lock.release()
+            import threading as _th
+            _th.Thread(target=_bg, daemon=True).start()
         return _cache["monthly_revenue"]["data"]
     merged = {}
     merged.update(_fetch_twse_monthly_revenue())
