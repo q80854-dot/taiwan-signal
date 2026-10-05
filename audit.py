@@ -155,7 +155,7 @@ def run_audit(force=False, tickers=None):
                 items.append({"ticker": t, "status": "error", "note": str(e), "rows": []})
             time.sleep(1.2)
         summ = {k: sum(1 for i in items if i["status"] == k) for k in ("match", "adjusted", "mismatch", "nodata", "error")}
-        data = {"generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "items": items, "summary": summ,
+        data = {"generated_at": (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S"), "items": items, "summary": summ,
                 "sources": SOURCES}
         if not tickers:
             _cache.update(ts=time.time(), data=data)
