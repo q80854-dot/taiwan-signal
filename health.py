@@ -191,7 +191,7 @@ def check_signal(key):
     if last and entry:
         drift = (float(last) / entry - 1) * 100 * (1 if buy else -1)
         st = "ok" if drift <= 1.5 else ("warn" if drift <= 3 else "fail")
-        out.append(_c("現價 vs 進場價", st, f"現價 {last}、建議進場 {entry}，{'高於' if drift > 0 else '低於'}進場價 {abs(round(drift, 2))}%" + ("；已追高" if st != "ok" else "")))
+        out.append(_c("現價 vs 進場價", st, f"現價 {last}、建議進場 {entry}，{'高於' if drift > 0 else '低於'}進場價 {abs(round(drift, 2))}%" + ("；若尚未進場，這筆已追高（已依訊號進場者請看持倉追蹤）" if st != "ok" else "")))
     # 4 停損結構
     if entry and sl:
         slp = abs(entry - sl) / entry * 100
@@ -205,10 +205,11 @@ def check_signal(key):
     if rr is not None:
         out.append(_c("風報比 (TP1)", "ok" if rr >= 1.5 else "warn", f"{rr}"))
     # 6 流動性
-    lots, vol = s.get("suggested_lots"), info.get("volume_lots")
+    shares = s.get("suggested_shares") or s.get("suggested_lots")  # 資料庫的 suggested_lots 欄位實際存股數
+    lots, vol = (shares / 1000.0 if shares else None), info.get("volume_lots")
     if lots and vol:
         pct = lots / vol * 100
-        out.append(_c("流動性", "ok" if pct <= 1 else "warn", f"建議 {lots} 張，占當日成交 {round(pct, 2)}%（{vol} 張）"))
+        out.append(_c("流動性", "ok" if pct <= 1 else "warn", f"建議約 {round(lots, 2)} 張，占當日成交 {round(pct, 2)}%（{vol} 張）"))
     # 7 處置/注意
     if info.get("is_disposal_or_attention"):
         out.append(_c("處置／注意股", "fail", "被列為處置或注意股，波動與流動性風險高"))
