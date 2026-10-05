@@ -388,6 +388,21 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
   .tabs button{padding:8px 12px;font-size:12px}.fund{padding:14px}
   .hero-row>.kpi,.kpi-strip>.kpi{padding:16px 14px}.kpi-val{font-size:21px}
 }
+
+.kl{padding:0}.kl-bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;padding:10px 12px 0}
+.kl-leg{font-size:11px;color:var(--t3);display:flex;align-items:center;gap:6px;flex-wrap:wrap}.kl-leg i{width:14px;height:3px;display:inline-block}.kl-leg em{font-style:normal;margin-left:6px}
+.kl-info{font-size:11.5px;color:var(--t2);padding:8px 12px;line-height:1.7;min-height:40px;word-break:break-all}
+.kl-wrap{padding:0 6px 4px;touch-action:pan-y}.kl-wrap canvas{display:block;width:100%}
+.kl-foot{font-size:10.5px;color:var(--t3);padding:2px 12px 10px}
+
+.qc-modal{position:fixed;inset:0;background:rgba(20,18,12,.55);display:none;align-items:flex-start;justify-content:center;z-index:300;overflow:auto;padding:5vh 12px}
+.qc-modal.on{display:flex}.qc-box{background:var(--s1,#fbf8ef);border:1px solid var(--line2);width:min(560px,100%);box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.qc-h{display:flex;justify-content:space-between;align-items:flex-start;padding:14px;gap:10px}
+.qc-v{margin:0 14px 8px;border:2px solid;padding:10px 12px;display:flex;flex-direction:column;gap:2px}.qc-v b{font-size:18px;font-family:'Noto Serif TC',serif}.qc-v span{font-size:11.5px}
+.chk{display:flex;gap:10px;padding:9px 0;border-bottom:1px dashed var(--line2);align-items:flex-start}.chk:last-child{border-bottom:0}
+.chk-i{flex:none;width:20px;height:20px;border:1.5px solid;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-top:1px}
+.chk-b{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:12.5px}.chk-b span{color:var(--t3);font-size:11.5px;word-break:break-all;line-height:1.6}
+.qc-btn{margin-left:auto;padding:3px 10px;font-size:11px}
 </style>
 </head>
 <body>
@@ -418,6 +433,7 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
   <div class="nav"     onclick="go('news')">重大訊息公告 <span class="nbadge" id="news-count-badge">0</span></div>
   <div class="nav-g">工具</div>
   <div class="nav"     onclick="go('backtest')">回測</div>
+  <div class="nav"     onclick="go('health')">系統檢查</div>
   <div class="nav"     onclick="go('diag')">系統診斷</div>
   <div class="sfoot">
     <div class="sfr"><div class="dot-live"></div><span id="market-session-side">載入中...</span></div>
@@ -599,6 +615,17 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
     </div>
   </div>
 
+  <!-- Health -->
+  <div class="page" id="page-health">
+    <div class="pad">
+    <div class="panel card" style="margin-bottom:14px"><div class="panel-head"><span>一鍵系統健檢</span><button class="btn primary" id="hl-btn" onclick="fetchHealth(true)">立即健檢</button></div>
+      <div class="panel-body" id="hl-sum"><div class="empty">載入中…</div></div></div>
+    <div id="hl-body"></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">目前生效的策略與風控設定（唯讀）</div></div>
+    <div id="st-body"><div class="empty">載入中…</div></div>
+    </div>
+  </div>
+
   <!-- Audit -->
   <div class="page" id="page-audit">
     <div class="pad">
@@ -710,6 +737,7 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
 </div><!-- body -->
 </div><!-- shell -->
 
+<div id="qc-modal" class="qc-modal" onclick="if(event.target===this)qcClose()"><div class="qc-box" id="qc-box"></div></div>
 <script>
 let _state=null,_signals=[],_eqChart=null;
 const safe=(v,fb='—')=>(v===null||v===undefined||v===''||v!==v)?fb:v;
@@ -800,7 +828,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
+const TITLES={health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 function go(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
@@ -816,6 +844,7 @@ function go(id){
   if(id==='signals')renderSignals();
   if(id==='radar'&&!_radarLoaded)fetchRadar('growth');
   if(id==='audit')fetchAudit();
+  if(id==='health')fetchHealth();
   if(id==='positions')fetchPositions();
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
@@ -870,6 +899,73 @@ async function fetchInstrument(){
   }catch(e){el.innerHTML='<div class="empty">查詢失敗，請稍後再試</div>';}
 }
 
+
+// ===== K線圖（純 canvas，無外部相依）=====
+let _kl=null;
+function klineHtml(d){
+  const o=d.ohlcv;
+  if(!o||!o.closes||o.closes.length<20)return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖</div></div><div class="panel card"><div class="panel-body"><div class="empty">日 K 資料不足，無法繪圖</div></div></div>`;
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖（日K・還原價）</div></div>
+  <div class="panel card kl"><div class="kl-bar"><div class="tabs" id="kl-range"><button onclick="klSet(60,this)" class="on">3個月</button><button onclick="klSet(120,this)">6個月</button><button onclick="klSet(9999,this)">全部</button></div>
+  <div class="kl-leg"><i style="background:#d9822b"></i>MA5<i style="background:#2f6fb5"></i>MA20<i style="background:#7a4fa0"></i>MA60<em>虛線＝本系統進場／停損／目標</em></div></div>
+  <div class="kl-info" id="kl-info">移動游標或手指查看每日開高低收</div>
+  <div class="kl-wrap"><canvas id="kl-cv"></canvas></div>
+  <div class="kl-foot">資料：Yahoo 還原價；抽樣與證交所／櫃買官方逐日對照結果見「資料稽核」頁。成交量為 Yahoo 數值，與官方略有差異（約 85～99%）。</div></div>`;
+}
+function klInit(d){
+  const o=d.ohlcv;if(!o||!o.closes||o.closes.length<20){_kl=null;return;}
+  const n=o.closes.length;
+  const ma=(k)=>o.closes.map((_,i)=>i<k-1?null:o.closes.slice(i-k+1,i+1).reduce((a,b)=>a+b,0)/k);
+  const sig=d.active_signal;
+  _kl={o,n,ma5:ma(5),ma20:ma(20),ma60:ma(60),range:60,hover:-1,
+    lv:sig?[['進場',sig.entry_price,'#555'],['停損',sig.stop_loss,'#2f6fb5'],['TP1',sig.tp1,'#c23b22'],['TP2',sig.tp2,'#c23b22']].filter(x=>x[1]):[]};
+  const cv=document.getElementById('kl-cv');if(!cv)return;
+  const mv=e=>{const r=cv.getBoundingClientRect();const x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;klHover(x/r.width);};
+  cv.addEventListener('mousemove',mv);cv.addEventListener('touchmove',e=>{mv(e);},{passive:true});cv.addEventListener('touchstart',mv,{passive:true});
+  cv.addEventListener('mouseleave',()=>{_kl.hover=-1;klDraw();});
+  klDraw();
+}
+function klSet(r,btn){if(!_kl)return;_kl.range=r;_kl.hover=-1;document.querySelectorAll('#kl-range button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');klDraw();}
+function klHover(fx){if(!_kl)return;const cnt=Math.min(_kl.range,_kl.n);const i=Math.max(0,Math.min(cnt-1,Math.floor(fx*cnt)));_kl.hover=_kl.n-cnt+i;klDraw();}
+function klDraw(){
+  const K=_kl,cv=document.getElementById('kl-cv');if(!K||!cv)return;
+  const W=cv.parentElement.clientWidth,H=W<520?300:380,dpr=window.devicePixelRatio||1;
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
+  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);
+  const cs=getComputedStyle(document.documentElement);
+  const UP=cs.getPropertyValue('--up').trim()||'#c23b22',DN=cs.getPropertyValue('--down').trim()||'#2f6fb5',GR='rgba(120,110,90,.18)',TX=cs.getPropertyValue('--t3').trim()||'#888';
+  const cnt=Math.min(K.range,K.n),st=K.n-cnt,o=K.o;
+  const padL=4,padR=52,top=8,volH=Math.round(H*.2),gap=14,ph=H-top-volH-gap-18;
+  let hi=-1e9,lo=1e9,vmax=0;
+  for(let i=st;i<K.n;i++){hi=Math.max(hi,o.highs[i]);lo=Math.min(lo,o.lows[i]);vmax=Math.max(vmax,o.volumes[i]||0);
+    for(const m of [K.ma5,K.ma20,K.ma60]){if(m[i]!=null){hi=Math.max(hi,m[i]);lo=Math.min(lo,m[i]);}}}
+  for(const l of K.lv){if(cnt<=130){hi=Math.max(hi,l[1]);lo=Math.min(lo,l[1]);}}
+  const pad=(hi-lo)*.06||1;hi+=pad;lo-=pad;
+  const cw=(W-padL-padR)/cnt,X=i=>padL+(i-st+.5)*cw,Y=v=>top+(hi-v)/(hi-lo)*ph;
+  c.clearRect(0,0,W,H);c.font='10px sans-serif';c.textBaseline='middle';
+  c.strokeStyle=GR;c.fillStyle=TX;c.lineWidth=1;
+  for(let g=0;g<=4;g++){const v=lo+(hi-lo)*g/4,y=Y(v);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.textAlign='left';c.fillText(v>=100?v.toFixed(0):v.toFixed(2),W-padR+4,y);}
+  const bw=Math.max(1,Math.min(14,cw*.7));
+  for(let i=st;i<K.n;i++){
+    const up=o.closes[i]>=o.opens[i],col=up?UP:DN,x=X(i);
+    c.strokeStyle=col;c.fillStyle=col;c.lineWidth=1;
+    c.beginPath();c.moveTo(x,Y(o.highs[i]));c.lineTo(x,Y(o.lows[i]));c.stroke();
+    const y1=Y(Math.max(o.opens[i],o.closes[i])),y2=Y(Math.min(o.opens[i],o.closes[i]));
+    c.fillRect(x-bw/2,y1,bw,Math.max(1,y2-y1));
+    const vh=(o.volumes[i]||0)/(vmax||1)*volH;c.globalAlpha=.55;c.fillRect(x-bw/2,H-18-vh,bw,vh);c.globalAlpha=1;
+  }
+  const line=(arr,col)=>{c.strokeStyle=col;c.lineWidth=1.3;c.beginPath();let on=false;for(let i=st;i<K.n;i++){if(arr[i]==null)continue;const x=X(i),y=Y(arr[i]);on?c.lineTo(x,y):c.moveTo(x,y);on=true;}c.stroke();};
+  line(K.ma5,'#d9822b');line(K.ma20,'#2f6fb5');line(K.ma60,'#7a4fa0');
+  if(cnt<=130)for(const l of K.lv){const y=Y(l[1]);c.strokeStyle=l[2];c.fillStyle=l[2];c.setLineDash([5,4]);c.lineWidth=1;c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.setLineDash([]);c.textAlign='right';c.fillText(l[0]+' '+l[1],W-padR-4,y-7);}
+  c.fillStyle=TX;c.textAlign='left';
+  [0,.5,1].forEach(f=>{const i=Math.min(K.n-1,st+Math.round((cnt-1)*f));c.textAlign=f===0?'left':f===1?'right':'center';c.fillText((o.dates[i]||'').slice(5,10),X(i)+(f===0?-cw/2:f===1?cw/2:0),H-6);});
+  const h=K.hover>=0?K.hover:K.n-1,ch=h>0?(o.closes[h]/o.closes[h-1]-1)*100:0;
+  if(K.hover>=0){const x=X(h);c.strokeStyle='rgba(60,50,30,.45)';c.setLineDash([3,3]);c.beginPath();c.moveTo(x,top);c.lineTo(x,H-18);c.stroke();c.setLineDash([]);}
+  const f=v=>v==null?'—':(v>=100?v.toFixed(1):v.toFixed(2));
+  document.getElementById('kl-info').innerHTML=`<b>${(o.dates[h]||'').slice(0,10)}</b>　開 ${f(o.opens[h])}　高 ${f(o.highs[h])}　低 ${f(o.lows[h])}　收 <b>${f(o.closes[h])}</b>　<span style="color:${ch>=0?UP:DN}">${ch>=0?'+':''}${ch.toFixed(2)}%</span>　量 ${Math.round(o.volumes[h]||0).toLocaleString()}張*　<span style="color:#d9822b">MA5 ${f(K.ma5[h])}</span>　<span style="color:#2f6fb5">MA20 ${f(K.ma20[h])}</span>　<span style="color:#7a4fa0">MA60 ${f(K.ma60[h])}</span>`;
+}
+window.addEventListener('resize',()=>{if(document.getElementById('kl-cv'))klDraw();});
+
 function renderInstrument(d){
   const el=document.getElementById('inst-result');if(!el)return;
   const info=d.info, ind=d.indicators, sig=d.active_signal, hist=d.signal_history||[],
@@ -894,6 +990,7 @@ function renderInstrument(d){
     ${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，下方「產業」欄位暫時一律顯示「其他」，非真實分類</span>':''}
   </div>`;
 
+  html+=klineHtml(d);
   html+=fundBlock(d.fundamental_profile);
   html+=`<div class="sec-label"><div class="bar"></div><div class="tx">基本資料與行情</div></div>`;
   if(!info){
@@ -928,7 +1025,7 @@ function renderInstrument(d){
         <div class="sig-item"><label>TP1</label><span style="color:var(--up)">${safeN(sig.tp1,2)}</span></div>
         <div class="sig-item"><label>張數</label><span>${safe(sig.suggested_lots,1)}</span></div>
       </div>
-      <div class="sig-footer" style="margin-top:6px">${qnBadge(sig.quality_check,'獲利品質')}${qnBadge(sig.news_check,'重大訊息')}</div>
+      <div class="sig-footer" style="margin-top:6px">${qnBadge(sig.quality_check,'獲利品質')}${qnBadge(sig.news_check,'重大訊息')}<button class="btn qc-btn" onclick="qcRun('${sig.code||sig.ticker}')">下單前質檢</button></div>
     </div>`;
   }else{
     html+=`<div class="panel card"><div class="panel-body"><div class="empty">目前無有效訊號</div></div></div>`;
@@ -986,6 +1083,7 @@ function renderInstrument(d){
   }
 
   el.innerHTML=html;
+  try{klInit(d);}catch(e){console.error('kline',e);}
 }
 
 // ★ 新增：2026-09-29——市場總覽頁。漲跌家數／產業排行／股票篩選器現在都從
@@ -1293,6 +1391,36 @@ async function fetchAudit(refresh){
     setHtml('audit-src',(d.sources||[]).map(x=>`<tr><td><b style="color:var(--t1)">${safe(x.name)}</b></td><td style="white-space:normal;min-width:150px">${safe(x.source)}</td><td style="white-space:normal;min-width:100px">${safe(x.update)}</td><td>${safe(x.coverage)}</td><td style="white-space:normal;min-width:220px">${safe(x.limits)}</td></tr>`).join(''));
     if(d.running)_auditTimer=setTimeout(()=>{if(document.getElementById('page-audit').classList.contains('on'))fetchAudit();},6000);
   }catch(e){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+e.message+'</td></tr>';}
+}
+
+const STI={ok:['✓','var(--t1)'],warn:['!','var(--warn)'],fail:['✕','var(--alert)'],info:['i','var(--t3)']};
+function chkRow(i){const m=STI[i.status]||STI.info;return `<div class="chk"><span class="chk-i" style="color:${m[1]};border-color:${m[1]}">${m[0]}</span><div class="chk-b"><b>${i.name}</b><span>${i.detail}</span></div></div>`;}
+async function fetchHealth(manual){
+  const b=document.getElementById('hl-btn');if(manual&&b){b.disabled=true;b.textContent='檢查中…';}
+  setHtml('hl-sum','<div class="empty">正在逐項檢查資料來源、排程、推播與策略狀態…</div>');
+  try{
+    const [h,st]=await Promise.all([fetch('/api/health',{cache:'no-store'}).then(r=>r.json()),fetch('/api/settings',{cache:'no-store'}).then(r=>r.json())]);
+    if(h.error)throw new Error(h.error);
+    const V={ok:['全部正常','var(--t1)'],warn:['有需要留意的項目','var(--warn)'],fail:['有項目異常','var(--alert)']}[h.verdict];
+    setHtml('hl-sum',`<div style="font-family:var(--serif,'Noto Serif TC',serif);font-size:20px;font-weight:700;color:${V[1]}">${V[0]}</div><div style="font-size:12px;color:var(--t3);margin-top:4px">正常 ${h.counts.ok}　留意 ${h.counts.warn}　異常 ${h.counts.fail}　參考 ${h.counts.info}　・　${h.generated_at}（台北）</div>`);
+    setHtml('hl-body',h.sections.map(sec=>`<div class="sec-label"><div class="bar"></div><div class="tx">${sec.title}</div></div><div class="panel card"><div class="panel-body" style="padding:6px 14px">${sec.items.map(chkRow).join('')}</div></div>`).join(''));
+    setHtml('st-body',st.groups.map(g=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>${g.title}</span></div><div class="panel-body" style="padding:4px 14px">${g.items.map(x=>`<div class="kv" style="align-items:flex-start;gap:10px"><span style="flex:none;max-width:48%">${x.key}</span><span style="text-align:right;white-space:normal"><b>${x.value}</b>${x.note?`<br><small style="color:var(--t3);font-weight:400">${x.note}</small>`:''}</span></div>`).join('')}</div></div>`).join('')+`<div class="note-box">${st.note}</div>`);
+  }catch(e){setHtml('hl-sum','<div class="empty">健檢失敗：'+e.message+'</div>');}
+  if(b){b.disabled=false;b.textContent='立即健檢';}
+}
+function qcClose(){document.getElementById('qc-modal').classList.remove('on');}
+async function qcRun(key){
+  const m=document.getElementById('qc-modal'),bx=document.getElementById('qc-box');m.classList.add('on');
+  bx.innerHTML='<div class="empty" style="padding:30px">正在用即時資料重新驗證這筆訊號…</div>';
+  try{
+    const d=await(await fetch('/api/signal_check/'+encodeURIComponent(key),{cache:'no-store'})).json();
+    if(d.error){bx.innerHTML=`<div class="empty" style="padding:30px">${d.error}</div><div style="text-align:center;padding-bottom:16px"><button class="btn" onclick="qcClose()">關閉</button></div>`;return;}
+    const V={pass:['可執行','var(--t1)','所有關鍵項目通過'],caution:['謹慎','var(--warn)','有多項需要留意，建議縮小部位或等待'],reject:['不建議','var(--alert)','有關鍵項目未通過，不建議依此下單']}[d.verdict];
+    bx.innerHTML=`<div class="qc-h"><div><div style="font-size:11px;color:var(--t3)">下單前質檢</div><div style="font-weight:700;font-size:16px">${d.name||''} ${d.ticker} <span class="sig-badge ${d.direction}">${d.direction==='buy'?'做多':'做空'}</span></div></div><button class="btn" onclick="qcClose()">✕</button></div>
+      <div class="qc-v" style="border-color:${V[1]};color:${V[1]}"><b>${V[0]}</b><span>${V[2]}（異常 ${d.fail}、留意 ${d.warn}）</span></div>
+      <div style="padding:2px 14px">${d.checks.map(chkRow).join('')}</div>
+      <div style="font-size:10.5px;color:var(--t3);padding:8px 14px 14px">${d.note}　${d.generated_at}</div>`;
+  }catch(e){bx.innerHTML='<div class="empty" style="padding:30px">質檢失敗：'+e.message+'</div>';}
 }
 async function fetchNewsWatch(){
   const el=document.getElementById('news-watch');if(!el)return;
@@ -1683,7 +1811,7 @@ function renderLatestSignals(sigs){
       </div>
       ${chaseHtml(s)}${fundChip(s)}
       <div class="sig-footer"><span>${safe(s.sector)}</span><span>風險 TWD ${(s.risk_twd||0).toLocaleString()}</span><span>RR 1:${safeN(s.rr1,1)}</span></div>
-      <div class="sig-footer" style="margin-top:6px">${qnBadge(s.quality_check,'獲利品質')}${qnBadge(s.news_check,'重大訊息')}</div>
+      <div class="sig-footer" style="margin-top:6px">${qnBadge(s.quality_check,'獲利品質')}${qnBadge(s.news_check,'重大訊息')}<button class="btn qc-btn" onclick="event.stopPropagation();qcRun('${s.code||s.ticker}')">下單前質檢</button></div>
     </div>`).join('');
 }
 
