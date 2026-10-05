@@ -471,6 +471,11 @@ def api_fundamentals_radar():
             yoy, cum, mom, amt = r.get("yoy_pct"), r.get("cum_yoy_pct"), r.get("mom_pct"), r.get("revenue")
             if yoy is None or amt is None or amt < 100000:   # 單月營收 < 1 億（千元為單位）不列入
                 continue
+            # 基期太小（去年同月 < 0.8 億）或年增超過 300%，多半是一次性認列（營建案交屋、
+            # 處分資產），不是可持續的成長，成長類榜單排除，避免榜首被極端值洗版。
+            base = r.get("revenue_ly")
+            if kind in ("growth", "accel") and ((base is not None and base < 80000) or yoy > 300):
+                continue
             v = val.get(code) or {}
             pe, y = v.get("pe"), v.get("yield_pct")
             try: pe = float(pe) if pe not in (None, "", "-") else None
@@ -487,8 +492,7 @@ def api_fundamentals_radar():
             rows.append({"code": code, "name": r.get("name"), "sector": r.get("sector_name"), "period": r.get("period"),
                          "revenue_yi": round(amt / 100000, 1), "yoy": yoy, "mom": mom, "cum_yoy": cum,
                          "pe": pe, "yield": y, "score": lite, "has_signal": code in sig_codes})
-        key = {"growth": "yoy", "accel": "yoy", "value": "yield"}.get(kind, "yoy")
-        rows.sort(key=lambda x: (x.get(key) or 0), reverse=True)
+        rows.sort(key=lambda x: ((x.get("score") or 0), (x.get("yoy") if kind != "value" else x.get("yield")) or 0), reverse=True)
         return jsonify({"kind": kind, "count": len(rows), "rows": rows[:60]})
     except Exception as e:
         logger.error(f"api_fundamentals_radar: {e}"); return jsonify({"error": str(e)}), 500
