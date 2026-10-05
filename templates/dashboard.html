@@ -1224,7 +1224,7 @@ function fundChip(s){
 function fundBlock(f){
   if(!f||f.error)return '';
   if(f.score===null||f.score===undefined)return `<div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">基本面體檢</div></div><div class="fund"><div class="empty" style="padding:20px">這檔的基本面資料涵蓋不足（${f.coverage}%），不評分。缺：${(f.missing||[]).join('、')||'—'}。</div></div>`;
-  const parts=Object.entries(f.parts||{}).map(([k,v])=>`<div class="fbar"><span>${k}</span><div class="t"><i style="width:${v.score}%"></i></div><b>${v.score}</b></div>`).join('');
+  const parts=['成長','獲利','估值'].filter(k=>(f.parts||{})[k]).map(k=>[k,f.parts[k]]).map(([k,v])=>`<div class="fbar"><span>${k}</span><div class="t"><i style="width:${v.score}%"></i></div><b>${v.score}</b></div>`).join('');
   const hist=(f.history||[]).filter(h=>h.yoy_pct!==null&&h.yoy_pct!==undefined);
   const mx=Math.max(10,...hist.map(h=>Math.abs(h.yoy_pct)));
   const spark=hist.length>=2?`<div style="font-size:11px;color:var(--t3);margin-top:12px">近 ${hist.length} 期月營收年增率</div><div class="spark">${hist.map(h=>`<i class="${h.yoy_pct<0?'n':''}" style="height:${Math.max(4,Math.abs(h.yoy_pct)/mx*100)}%"><b>${h.yoy_pct>0?'+':''}${Math.round(h.yoy_pct)}</b></i>`).join('')}</div>`:'<div style="font-size:11px;color:var(--t3);margin-top:12px">歷史月營收尚在累積（每月公告後自動存檔），之後這裡會出現趨勢圖。</div>';
