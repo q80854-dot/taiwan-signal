@@ -199,6 +199,36 @@ class StateStore:
             """
         with self._conn() as conn:
             conn.executescript(ddl)
+        # ★ 新增：2026-10-05——使用者回報「今日訊號 TG 有推、網頁卻什麼都沒有，
+        # 觀察清單跟通知也是空的」。根因：(1) 通知只送去 Telegram，網頁端沒有任何
+        # 地方記錄過；(2) 觀察清單只存在瀏覽器 localStorage，換裝置/清快取就消失，
+        # 後端完全不知道。這裡新增兩張持久化表（Postgres/SQLite 雙後端），讓網頁
+        # 通知中心與觀察清單跟 TG 推播共用同一份後端事實來源。
+        if USE_PG:
+            extra_ddl = """
+                CREATE TABLE IF NOT EXISTS events (
+                    id SERIAL PRIMARY KEY, ts TEXT, kind TEXT, title TEXT, body TEXT, ticker TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    ticker TEXT PRIMARY KEY, code TEXT, name TEXT, note TEXT, added_at TEXT
+                );
+            """
+        else:
+            extra_ddl = """
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, kind TEXT, title TEXT, body TEXT, ticker TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    ticker TEXT PRIMARY KEY, code TEXT, name TEXT, note TEXT, added_at TEXT
+                );
+            """
+        try:
+            with self._conn() as conn:
+                conn.executescript(extra_ddl)
+        except Exception as e:
+            logger.warning(f"建立 events/watchlist 表失敗（不影響其餘功能）: {e}")
         # ★ 新增：2026-09-16——回應三方AI交叉比對（Perplexity/ChatGPT/Gemini）中
         # ChatGPT提出的建議：訊號的「參考價位」（產生訊號當下的價格，即現有的
         # entry_price/current_price欄位）跟「使用者實際成交價」目前是同一個概念，
@@ -845,6 +875,73 @@ class StateStore:
         except Exception as e:
             logger.warning(f"get_subscribers: {e}")
         return result
+
+    # ── 網頁通知中心（與 Telegram 推播同步記錄）──
+    def add_event(self, kind: str, title: str, body: str = "", ticker: str = "") -> bool:
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            with self._conn() as conn:
+                conn.execute(
+                    "INSERT INTO events (ts, kind, title, body, ticker) VALUES (?, ?, ?, ?, ?)",
+                    (now, kind, title, body, ticker or ""),
+                )
+            return True
+        except Exception as e:
+            logger.warning(f"add_event {kind}: {e}")
+            return False
+
+    def get_events(self, limit: int = 60) -> List[Dict]:
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT id, ts, kind, title, body, ticker FROM events ORDER BY ts DESC, id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"get_events: {e}")
+            return []
+
+    # ── 觀察清單（後端持久化，跨裝置）──
+    def watchlist_get(self) -> List[Dict]:
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT ticker, code, name, note, added_at FROM watchlist ORDER BY added_at DESC"
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"watchlist_get: {e}")
+            return []
+
+    def watchlist_add(self, ticker: str, code: str = "", name: str = "", note: str = "") -> bool:
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            with self._conn() as conn:
+                if USE_PG:
+                    conn.execute(
+                        "INSERT INTO watchlist (ticker, code, name, note, added_at) VALUES (?, ?, ?, ?, ?) "
+                        "ON CONFLICT (ticker) DO UPDATE SET name=EXCLUDED.name, code=EXCLUDED.code",
+                        (ticker, code, name, note, now),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO watchlist (ticker, code, name, note, added_at) VALUES (?, ?, ?, ?, ?)",
+                        (ticker, code, name, note, now),
+                    )
+            return True
+        except Exception as e:
+            logger.warning(f"watchlist_add {ticker}: {e}")
+            return False
+
+    def watchlist_remove(self, ticker: str) -> bool:
+        try:
+            with self._conn() as conn:
+                conn.execute("DELETE FROM watchlist WHERE ticker=?", (ticker,))
+            return True
+        except Exception as e:
+            logger.warning(f"watchlist_remove {ticker}: {e}")
+            return False
 
     def is_paid_subscriber(self, chat_id: str) -> bool:
         try:

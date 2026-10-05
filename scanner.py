@@ -83,6 +83,33 @@ class TWScanEngine:
         except Exception as e:
             logger.warning(f"TWScanEngine.__init__: 讀取 last_scan_at 失敗（不影響啟動）: {e}")
         self.scan_errors:   List[str]  = []
+        # ★ 修正：2026-10-05——使用者回報「今日訊號 Telegram 有推、網頁卻完全沒有」。
+        # 根因：signals_today 只存在記憶體，Render 每次部署/重啟/休眠喚醒 process 就
+        # 歸零，網頁讀的 /api/state 就變成 0 筆，但訊號早已寫進資料庫、TG 也早就推出去
+        # 了。這裡啟動時從 DB 還原「最近一次掃描日」的訊號，讓網頁與 TG 看到同一份事實。
+        try:
+            from state_store import store as _st
+            import json as _json
+            recent = _st.get_recent_signals(limit=60, days_back=7)
+            if recent:
+                latest_day = (recent[0].get("generated_at") or "")[:10]
+                restored = []
+                for r in recent:
+                    if (r.get("generated_at") or "")[:10] != latest_day:
+                        continue
+                    try:
+                        d = _json.loads(r.get("raw_json") or "{}")
+                    except Exception:
+                        d = {}
+                    if not d:
+                        d = dict(r)
+                    d["status"] = r.get("status", d.get("status", "active"))
+                    d["result"] = r.get("result", d.get("result", "pending"))
+                    restored.append(d)
+                self.signals_today = restored
+                logger.info(f"TWScanEngine: 從資料庫還原 {len(restored)} 筆最近一次掃描（{latest_day}）的訊號")
+        except Exception as e:
+            logger.warning(f"TWScanEngine.__init__: 還原今日訊號失敗（不影響啟動）: {e}")
         # ★ 修正：2026-09-03——原本 run_daily_scan() 沒有任何「正在掃描中」的鎖，
         # 如果排程的每日掃描（16:30）跟手動觸發的 /api/scan/force（或使用者連點
         # 兩次網站上的「立即掃描」按鈕）同時執行，兩個掃描會同時打相同的資料來源
@@ -313,6 +340,18 @@ class TWScanEngine:
         from config import MAX_SIMULTANEOUS_POSITIONS
         remaining_slots = max(0, MAX_SIMULTANEOUS_POSITIONS - len(active_positions))
         signal_cap = min(TELEGRAM_CONFIG["max_signals_per_day"], remaining_slots)
+        # ★ 新增：2026-10-05——弱勢市場降載。9/30、10/1 當時市場情緒分數僅 32（偏空）、
+        # 外資連續賣超，系統卻在兩天內連推 6 檔做多，且全部同方向、同時進場，等於把
+        # 同一個「大盤再下殺」風險重複押了 6 次。情緒 < 40 時單次最多 2 檔，< 50 最多 3
+        # 檔，把部位曝險隨大盤環境往下收，而不是只靠訊號分數（分數貼頂、沒有鑑別力）。
+        try:
+            _sent = float(market_overview.get("sentiment_score", 50) or 50)
+        except Exception:
+            _sent = 50
+        _regime_cap = 2 if _sent < 40 else 3 if _sent < 50 else signal_cap
+        if _regime_cap < signal_cap:
+            logger.info(f"run_daily_scan: 市場情緒 {_sent:.0f}（偏弱），單次訊號上限由 {signal_cap} 降為 {_regime_cap}")
+            signal_cap = _regime_cap
         final_signals = filtered[:signal_cap]
         if len(filtered) > signal_cap:
             logger.info(
@@ -334,6 +373,16 @@ class TWScanEngine:
 
         for sig in final_signals:
             store.save_signal(sig)
+            # 網頁通知中心：與 TG 推播同步記錄（即使 TG 推播失敗/被去重擋掉，網頁也看得到）
+            try:
+                store.add_event(
+                    "signal",
+                    f"{sig.get('name','')}（{sig.get('code','')}）{'做多' if sig.get('direction')=='buy' else '做空'}訊號 {sig.get('score')} 分",
+                    f"進場 {sig.get('entry_price')}｜停損 {sig.get('stop_loss')}（{sig.get('sl_pct')}%）｜TP1 {sig.get('tp1')}｜追高風險 {sig.get('chase_level','—')}",
+                    sig.get("ticker", ""),
+                )
+            except Exception as e:
+                logger.warning(f"寫入網頁通知事件失敗（不影響訊號）: {e}")
 
         stats = {
             "scanned":       scanned_count,
@@ -411,7 +460,16 @@ class TWScanEngine:
                     hit_tp1 = bool(tp1) and ((direction == "buy" and hi >= tp1) or (direction == "sell" and lo <= tp1))
                     if not (hit_sl or hit_tp3 or hit_tp2 or hit_tp1):
                         continue
-                    if hit_sl:    result, close_price = "sl",  sl
+                    if hit_sl:
+                        result, close_price = "sl", sl
+                        # 跳空穿越停損：實際只能以開盤價成交（較差者），不再樂觀地填在停損價
+                        try:
+                            op = (data.get("opens") or [None] * len(dates))[i]
+                            if op:
+                                if direction == "buy" and op < sl: close_price = op
+                                elif direction == "sell" and op > sl: close_price = op
+                        except Exception:
+                            pass
                     elif hit_tp3: result, close_price = "tp3", tp3
                     elif hit_tp2: result, close_price = "tp2", tp2
                     else:         result, close_price = "tp1", tp1
@@ -425,6 +483,12 @@ class TWScanEngine:
                         record_signal_loss(pnl)
                     resolved += 1
                     hit_this_signal = True
+                    try:
+                        _rz = {"sl": "停損", "tp1": "停利一", "tp2": "停利二", "tp3": "停利三"}.get(result, result)
+                        store.add_event("result", f"{sig.get('name','')}（{sig.get('code','')}）{_rz}",
+                                        f"成交 {close_price:.2f}｜損益 {pnl:+,.0f} 元（{pnl_pct:+.1f}%）", ticker)
+                    except Exception:
+                        pass
                     try:
                         from telegram_bot import send_alert
                         result_zh = {"sl": "🔴 停損", "tp1": "✅ 停利一", "tp2": "✅ 停利二", "tp3": "🎯 停利三"}.get(result, result)
@@ -956,10 +1020,10 @@ class TWScanEngine:
             for sig in signals:
                 raw_sec = sig.get("sector", "其他")
                 key = raw_sec if raw_sec and raw_sec != "其他" else f"__unknown_sector__:{sig.get('ticker','')}"
-                if key not in sector_best or sig["score"] > sector_best[key]["score"]:
+                if key not in sector_best or (sig["score"] - sig.get("chase_pen", 0)) > (sector_best[key]["score"] - sector_best[key].get("chase_pen", 0)):
                     sector_best[key] = sig
             combined = list(sector_best.values())
-        combined.sort(key=lambda x: x["score"], reverse=True)
+        combined.sort(key=lambda x: x["score"] - x.get("chase_pen", 0), reverse=True)
         logger.info(f"_filter_and_rank: 同產業去重後剩 {len(combined)} 檔")
 
         # ★ 新增：2026-09-16——啟用 CORRELATION_GROUPS 相關性群組曝險上限（見

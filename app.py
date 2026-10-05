@@ -236,6 +236,127 @@ def index():
             f"錯誤：{e}</p>"
         ), 200
 
+
+def _db_today_signals():
+    """記憶體清單為空（剛重啟/部署）時，從資料庫還原最近一個訊號日的訊號，確保網頁與 TG 一致。"""
+    try:
+        import json as _j
+        from state_store import store
+        rows = store.get_recent_signals(limit=60, days_back=7)
+        if not rows: return []
+        day = (rows[0].get("generated_at") or "")[:10]
+        out = []
+        for r in rows:
+            if (r.get("generated_at") or "")[:10] != day: continue
+            try: d = _j.loads(r.get("raw_json") or "{}")
+            except Exception: d = {}
+            d.update({k: r.get(k) for k in ("id","ticker","code","name","direction","score","grade","entry_price","stop_loss","tp1","tp2","tp3","sl_pct","status","result","generated_at") if r.get(k) is not None})
+            out.append(d)
+        return out
+    except Exception as e:
+        logger.warning(f"_db_today_signals: {e}"); return []
+
+def _bars_since(ticker, gen_date):
+    from data_fetcher import fetch_ohlcv
+    data = fetch_ohlcv(ticker, "daily") or {}
+    ds = data.get("dates", [])
+    idx = [i for i, d in enumerate(ds) if d and d > gen_date]
+    return data, idx
+
+def _position_view(r):
+    """單筆訊號的生命週期：R倍數、離停損緩衝、持有天數、MAE/MFE、移動停損建議。"""
+    entry = r.get("entry_price") or r.get("current_price") or 0
+    sl = r.get("stop_loss") or 0
+    buy = r.get("direction") == "buy"
+    gen = (r.get("generated_at") or "")[:10]
+    out = {"id": r.get("id"), "ticker": r.get("ticker"), "code": r.get("code"), "name": r.get("name"),
+           "direction": r.get("direction"), "score": r.get("score"), "grade": r.get("grade"),
+           "entry": entry, "stop": sl, "tp1": r.get("tp1"), "tp2": r.get("tp2"), "tp3": r.get("tp3"),
+           "generated_at": r.get("generated_at"), "result": r.get("result"), "status": r.get("status"),
+           "pnl_pct": r.get("pnl_pct"), "pnl_twd": r.get("pnl_twd")}
+    risk = abs(entry - sl) if entry and sl else 0
+    out["risk_per_share"] = round(risk, 2)
+    try:
+        data, idx = _bars_since(r.get("ticker"), gen)
+        closes, highs, lows = data.get("closes", []), data.get("highs", []), data.get("lows", [])
+        last = data.get("current_price") or (closes[-1] if closes else entry)
+        out["last"] = last
+        out["days_held"] = len(idx)
+        if idx and entry:
+            hh = max(highs[i] for i in idx); ll = min(lows[i] for i in idx)
+            fav = (hh - entry) if buy else (entry - ll)
+            adv = (entry - ll) if buy else (hh - entry)
+            out["mfe_pct"] = round(fav / entry * 100, 2)
+            out["mae_pct"] = round(-max(adv, 0) / entry * 100, 2)
+            if risk:
+                out["mfe_r"] = round(fav / risk, 2); out["mae_r"] = round(-max(adv, 0) / risk, 2)
+        if entry and risk:
+            move = (last - entry) if buy else (entry - last)
+            out["r_now"] = round(move / risk, 2)
+            out["pnl_now_pct"] = round(move / entry * 100, 2)
+            out["cushion_pct"] = round(((last - sl) if buy else (sl - last)) / last * 100, 2) if last else None
+            # 進度條：停損(0) → 進場 → TP1
+            tp1 = r.get("tp1") or 0
+            if tp1:
+                span = (tp1 - sl) if buy else (sl - tp1)
+                cur = (last - sl) if buy else (sl - last)
+                out["progress"] = round(max(0, min(1, cur / span)), 3) if span else 0
+                ent = (entry - sl) if buy else (sl - entry)
+                out["entry_mark"] = round(max(0, min(1, ent / span)), 3) if span else 0
+            # 動態停損建議：已達 +1R 抬到成本；已達 +2R 鎖 +1R
+            sug, why = None, ""
+            mfe_r = out.get("mfe_r", 0) or 0
+            if r.get("result") == "pending":
+                if mfe_r >= 2: sug, why = (entry + risk if buy else entry - risk), "已曾達 +2R，建議停損上移鎖定 +1R"
+                elif mfe_r >= 1: sug, why = entry, "已曾達 +1R，建議停損上移至成本價（保本）"
+            if sug: out["stop_suggest"] = round(sug, 2); out["stop_suggest_why"] = why
+    except Exception as e:
+        out["error"] = str(e)[:80]
+    return out
+
+def _autopsy_one(r):
+    """停損解剖：為什麼這筆被洗出去。"""
+    entry = r.get("entry_price") or 0
+    sl = r.get("stop_loss") or 0
+    buy = r.get("direction") == "buy"
+    gen = (r.get("generated_at") or "")[:10]
+    tags = []
+    try:
+        import json as _j
+        raw = _j.loads(r.get("raw_json") or "{}")
+    except Exception:
+        raw = {}
+    sl_atr = raw.get("sl_atr"); sl_pct = r.get("sl_pct") or (abs(entry - sl) / entry * 100 if entry else 0)
+    if sl_atr is not None and sl_atr < 1.2: tags.append(("停損過窄", f"停損僅 {sl_atr} ATR，一般日內波動即可觸發"))
+    elif sl_atr is None and sl_pct and sl_pct < 2.5: tags.append(("停損偏窄", f"停損僅 {sl_pct:.1f}%，疑似過窄"))
+    ext = raw.get("ext_atr"); lvl = raw.get("chase_level")
+    if lvl == "high" or (ext is not None and ext > 2.5): tags.append(("追高進場", f"進場時離 20 日線 {ext} ATR，已是強勢尾段"))
+    after = None
+    try:
+        data, idx = _bars_since(r.get("ticker"), gen)
+        ds, op, hi, lo, cl = data.get("dates", []), data.get("opens", []), data.get("highs", []), data.get("lows", []), data.get("closes", [])
+        hit = None
+        for i in idx:
+            if (buy and lo[i] <= sl) or ((not buy) and hi[i] >= sl): hit = i; break
+        if hit is not None:
+            o = op[hit] if hit < len(op) else None
+            if o and ((buy and o < sl) or ((not buy) and o > sl)):
+                tags.append(("跳空穿越", f"開盤 {o} 已越過停損 {sl}，實際成交較差"))
+            if hit == idx[0]: tags.append(("隔日即停損", "訊號隔天就被打掉，進場位置不佳"))
+            later = [cl[j] for j in range(hit + 1, len(cl))]
+            if later:
+                rec = (max(later) if buy else min(later))
+                if (buy and rec > entry) or ((not buy) and rec < entry):
+                    tags.append(("洗盤後續行情", f"停損後價格回到進場價之外（{rec}），方向其實沒錯"))
+            after = {"stop_date": ds[hit], "last": cl[-1] if cl else None}
+    except Exception:
+        pass
+    if not tags: tags.append(("正常停損", "未見結構性缺陷，屬於策略的正常虧損"))
+    return {"id": r.get("id"), "name": r.get("name"), "code": r.get("code"), "direction": r.get("direction"),
+            "score": r.get("score"), "entry": entry, "stop": sl, "close_price": r.get("close_price"),
+            "pnl_pct": r.get("pnl_pct"), "pnl_twd": r.get("pnl_twd"), "generated_at": r.get("generated_at"),
+            "tags": [{"tag": t, "why": w} for t, w in tags], "after": after}
+
 @app.route("/api/state")
 def api_state():
     try:
@@ -268,7 +389,7 @@ def api_state():
             "scan_count":     scan_st["scan_count"],
             "signal_count":   scan_st["signal_count"],
             "last_scan_time": scan_st["last_scan_at"],
-            "active_signals": scan_st["signals"][:15],
+            "active_signals": (scan_st["signals"] or _db_today_signals())[:15],
             "market_overview":market,
             "market_session": session,
             "win_rate":       perf,
@@ -280,6 +401,49 @@ def api_state():
         })
     except Exception as e:
         logger.error(f"api_state: {e}"); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/events")
+def api_events():
+    from state_store import store
+    return jsonify({"events": store.get_events(limit=int(request.args.get("limit", 60)))})
+
+@app.route("/api/watchlist", methods=["GET", "POST", "DELETE"])
+def api_watchlist():
+    from state_store import store
+    if request.method == "GET":
+        return jsonify({"watchlist": store.watchlist_get()})
+    j = request.get_json(silent=True) or {}
+    t = (j.get("ticker") or request.args.get("ticker") or "").strip()
+    if not t: return jsonify({"error": "ticker required"}), 400
+    if request.method == "POST":
+        store.watchlist_add(t, j.get("code", ""), j.get("name", ""), j.get("note", ""))
+    else:
+        store.watchlist_remove(t)
+    return jsonify({"watchlist": store.watchlist_get()})
+
+@app.route("/api/positions")
+def api_positions():
+    from state_store import store
+    rows = store.get_recent_signals(limit=60, days_back=30)
+    open_rows = [r for r in rows if r.get("result") == "pending" and r.get("status") == "active"]
+    closed = [r for r in rows if r.get("result") not in ("pending", None)]
+    return jsonify({"open": [_position_view(r) for r in open_rows[:12]],
+                    "closed": [_position_view(r) for r in closed[:12]]})
+
+@app.route("/api/autopsy")
+def api_autopsy():
+    from state_store import store
+    rows = store.get_recent_signals(limit=100, days_back=60)
+    sl = [r for r in rows if r.get("result") == "sl"]
+    cases = [_autopsy_one(r) for r in sl[:20]]
+    agg = {}
+    for c in cases:
+        for t in c["tags"]: agg[t["tag"]] = agg.get(t["tag"], 0) + 1
+    closed = [r for r in rows if r.get("result") not in ("pending", None)]
+    return jsonify({"cases": cases, "tag_counts": agg, "stop_count": len(sl), "closed_count": len(closed),
+                    "total_signals": len(rows),
+                    "note": "樣本偏小時（已結案 < 20 筆）統計僅供參考，不宜據此過度調參。"})
 
 @app.route("/api/material_news")
 def api_material_news():

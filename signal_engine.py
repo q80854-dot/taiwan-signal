@@ -108,6 +108,18 @@ def calc_stop_loss_tw(direction, price, atr, indicators, size_cat="中型股", l
         sr = indicators.get("support_resistance", {})
         res = sr.get("nearest_resistance")
         if res and price < res < sl: sl = res * 1.005
+    # ★ 修正：2026-10-05——使用者回報「停損次數太高、大部分都是停損」。實查 9/30
+    # 艾笛森：ATR=1.4、現價27.45，依設定中型股應用 2.0×ATR≈2.8 元的停損，但上面
+    # 「最近支撐位在 ATR 停損與現價之間就把停損改成支撐下方」這一行把停損從 24.65
+    # 收緊成 26.71（只剩 0.53 ATR、2.7%）——日內正常波動（這檔 ATR 佔股價 5%）就足以
+    # 掃到，隔天 10/1 果然被洗出場。註解當初寫的是避免卡在雜訊區，實際效果卻是
+    # 相反（往內收）。這裡補上硬下限：不論結構支撐/壓力多近，停損距離至少
+    # 1.5×ATR，才不會小於一天正常震盪幅度。支撐離得更遠時維持原本較寬的停損。
+    min_dist = max(atr * 1.5, price * 0.015)
+    if direction == "buy" and (price - sl) < min_dist:
+        sl = price - min_dist
+    elif direction != "buy" and (sl - price) < min_dist:
+        sl = price + min_dist
     return round(sl, 2)
 
 def calc_take_profits_tw(direction, price, stop_loss, size_cat="中型股"):
@@ -414,6 +426,32 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             logger.warning(f"[{ticker}] 總經指標評分調整失敗（不影響本次訊號，維持原始分數）: {e}")
         if score<THRESH["min_score"]: return None
         atr_info=daily_ind.get("atr",{}); atr=atr_info.get("value",price*0.02) or price*0.02
+        # ★ 新增：2026-10-05——追高防線。實查 9/30~10/1 六檔訊號：進場價就是訊號當日
+        # 收盤價，其中 南茂 +9.6%（接近漲停）、艾笛森 +4.0%、台泥 +4.0%，全部是「已經
+        # 噴出之後才被趨勢指標確認」的標的——EMA多頭/站上半年線/MACD/量增/ADX這些指標
+        # 全部在測量同一件事：「已經漲了」，所以分數會一路貼頂（95~97）而沒有鑑別力，
+        # 也沒有任何一項在檢查「現在買的位置好不好」。隔天一回檔（或高開低走）就碰到
+        # 停損。這裡補兩道關卡（只對做多；做空鏡像）：
+        #   1) 當日漲幅 >= 6.5%：貼近漲停，隔日開高難成交、回測機率高，直接略過；
+        #   2) 與 20 日均線的乖離 > 3 ATR：延伸過度，等回檔再說，直接略過；
+        # 並算出 ext_atr（延伸度）供排序降權與前端顯示「追高風險」。
+        chg_today = daily_data.get("change_pct", 0) or 0
+        e_mid = (daily_ind.get("ema", {}) or {}).get("e_mid")
+        if e_mid and atr:
+            ext_atr = round(((price - e_mid) if direction == "buy" else (e_mid - price)) / atr, 2)
+        else:
+            ext_atr = 0
+        chg_dir = chg_today if direction == "buy" else -chg_today
+        if chg_dir >= 6.5:
+            logger.info(f"[{ticker}] 當日{'漲' if direction=='buy' else '跌'}幅 {chg_dir:.1f}% 接近漲跌停，追價風險過高，略過")
+            return None
+        if ext_atr > 3.0:
+            logger.info(f"[{ticker}] 與20日均線乖離 {ext_atr:.1f} ATR，延伸過度，等回檔再說，略過")
+            return None
+        chase_pen = 0
+        if chg_dir >= 4: chase_pen += 6
+        if ext_atr > 2.0: chase_pen += 6
+        chase_level = "high" if (chg_dir >= 4 or ext_atr > 2.5) else "mid" if (chg_dir >= 2.5 or ext_atr > 1.5) else "low"
         sl=calc_stop_loss_tw(direction,price,atr,daily_ind,size_cat,low_5d,high_5d)
         # ★ 新增：2026-09-16——使用者要求逐一核對歷史訊號的實際結果，核對時發現
         # 全友(2305.TW) 09-09/09-11/09-14 三次進場，SL 都是同一個 33.9（結構性
@@ -461,7 +499,8 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                      f"MACD {'多' if 'bullish' in daily_ind.get('macd',{}).get('bias','') else '空'}頭動能\n"
                      f"【量能】{vol_desc}\n【趨勢】{weekly_desc} / ADX {adx_val:.0f}\n"
                      f"【法人】{inst_signal or '資料更新中'}\n"
-                     f"【風控】止損 {round(abs(price-sl)/price*100,1)}%，TP1 盈虧比 1:{tp_info['rr1']}"
+                     f"【位置】當日{chg_today:+.1f}%｜距20日線 {ext_atr:.1f} ATR｜追高風險：{ {'low':'低','mid':'中','high':'高'}[chase_level] }\n"
+                     f"【風控】止損 {round(abs(price-sl)/price*100,1)}%（{abs(price-sl)/atr:.1f} ATR），TP1 盈虧比 1:{tp_info['rr1']}"
                      + ("\n【流動性】建議部位已因當日成交量偏低而下修，請留意實際下單時的滑價" if pos.get("liquidity_capped") else ""))
         reason_brief=(f"{ema_ind.get('alignment','')} + {vol_desc}\n"
                       f"止損 {round(abs(price-sl)/price*100,1)}% / TP1 +{round(abs(tp_info['tp1']-price)/price*100,1)}%")
@@ -481,6 +520,8 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             "suggested_shares":pos["shares"],"suggested_lots":pos["lots"],"risk_twd":pos["risk_twd"],"risk_pct":pos["risk_pct"],
             "position_value":pos["position_value"],"roundtrip_cost":pos["roundtrip_cost"],"breakeven_pct":pos["breakeven_pct"],
             "adx_value":adx_val,"rsi_value":mtf["rsi_value"],"vol_ratio":vol_ratio,"atr":round(atr,2),
+            "atr_pct":round(atr/price*100,2),"sl_atr":round(abs(price-sl)/atr,2) if atr else None,
+            "ext_atr":ext_atr,"chase_level":chase_level,"chase_pen":chase_pen,
             "inst_signal":inst_signal,"weekly_bias":mtf["weekly_bias"],
             "reason_brief":reason_brief,"reason_full":reason_full,
             "conditions_met":mtf["conditions_met"],"conditions_fail":mtf["conditions_fail"],
