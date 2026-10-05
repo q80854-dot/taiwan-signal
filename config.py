@@ -290,7 +290,7 @@ SYSTEM = {
     # 啟動間隔搭配 4 檔並行，尖峰請求速率跟原本序列模式的量級相近，
     # 是保守但仍有感縮短總時間的折衷值；如果之後觀察到外部 API 出現更多
     # 429/逾時/憑證類錯誤，優先調高這個值，而不是調高並行數。
-    "scan_delay_sec": 0.3,
+    "scan_delay_sec": 0.2,
     "cache_ttl_sec":  3600,
     "db_path":        "instance/twstock.db",
     "log_level":      "INFO",

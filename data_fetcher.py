@@ -129,9 +129,16 @@ def _cache_set(key, data):
     if len(_cache) > _CACHE_MAX_ENTRIES:
         with _cache_lock:
             if len(_cache) > _CACHE_MAX_ENTRIES:
-                oldest = sorted(_cache.keys(), key=lambda k: _cache[k]["ts"])[: len(_cache) - _CACHE_MAX_ENTRIES]
-                for k in oldest:
+                # 2026-10-05：掃描時每檔股票塞 3 筆 K 線快取，會把『三大法人、大盤、營收』等小而貴的全市場資料
+                # 擠出去（造成法人資料每隔約 130 檔就被迫重抓一次）。先只淘汰 K 線快取，其他資料盡量保留。
+                extra = len(_cache) - _CACHE_MAX_ENTRIES
+                ks = sorted((k for k in list(_cache.keys()) if str(k).startswith("ohlcv_")), key=lambda k: _cache[k]["ts"] if k in _cache else 0)[:extra]
+                for k in ks:
                     _cache.pop(k, None)
+                extra = len(_cache) - _CACHE_MAX_ENTRIES
+                if extra > 0:
+                    for k in sorted(list(_cache.keys()), key=lambda k: _cache[k]["ts"] if k in _cache else 0)[:extra]:
+                        _cache.pop(k, None)
     return data
 
 def _cache_clear(key):
@@ -742,7 +749,7 @@ def fetch_all_timeframes(ticker: str) -> Optional[Dict]:
         # 直接影響整體吞吐量，不需要的等待要拿掉）。只在還有下一個時間週期
         # 要抓時才需要間隔。
         if i < len(tf_keys) - 1:
-            time.sleep(0.3)
+            time.sleep(0.1)
     return result if "daily" in result else None
 
 def fetch_batch_current_prices(tickers: List[str]) -> Dict[str, float]:

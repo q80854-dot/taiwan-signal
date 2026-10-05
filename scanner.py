@@ -265,7 +265,7 @@ class TWScanEngine:
         # _scan_single_with_timeout 內部的獨立逾時保護（25秒不回應就放棄），
         # 所以就算某一檔真的卡住，也不會拖住整批、更不會拖住整個 process
         # （跟先前修的全站凍結是同一個保護機制，這裡只是把它包進並行工作）。
-        _SCAN_CONCURRENCY = 6
+        _SCAN_CONCURRENCY = 8
         try:
             import shadow
             shadow.begin_run("熔斷中僅影子追蹤" if skip_new_signals else "")

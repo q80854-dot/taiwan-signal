@@ -588,6 +588,26 @@ class StateStore:
             logger.warning(f"get_ohlcv_last_date {ticker}/{tf_key}: {e}")
             return None
 
+    def get_daily_closes_recent(self, days: int = 10) -> Dict[str, List]:
+        """一次取出全部股票最近幾天的日線收盤（市場廣度用，同一天口徑）。回傳 {ticker: [(bar_date, close), ...] 由舊到新}"""
+        try:
+            with self._conn() as conn:
+                row = conn.execute("SELECT MAX(bar_date) as d FROM ohlcv_bars WHERE tf_key='daily'").fetchone()
+                mx = row["d"] if row and row["d"] else None
+                if not mx:
+                    return {}
+                from datetime import datetime as _d, timedelta as _t
+                since = (_d.strptime(mx[:10], "%Y-%m-%d") - _t(days=days)).strftime("%Y-%m-%d")
+                rows = conn.execute("SELECT ticker, bar_date, close FROM ohlcv_bars WHERE tf_key='daily' AND bar_date>=? ORDER BY ticker, bar_date",
+                                    (since,)).fetchall()
+            out: Dict[str, List] = {}
+            for r in rows:
+                out.setdefault(r["ticker"], []).append((r["bar_date"], r["close"]))
+            return out
+        except Exception as e:
+            logger.warning(f"get_daily_closes_recent: {e}")
+            return {}
+
     def upsert_ohlcv_bars(self, ticker: str, tf_key: str, bars: List[Dict]):
         """bars: [{date,open,high,low,close,volume}, ...]。用 UPSERT，同一天
         重複寫入（例如盤中抓到的當日殘缺K棒，收盤後再抓一次拿到定案數字）

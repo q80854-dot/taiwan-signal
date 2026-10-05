@@ -808,8 +808,48 @@ def api_market_breadth():
         from stock_universe import get_market_breadth, get_universe_data_meta
         result = get_market_breadth()
         result["data_sources"] = get_universe_data_meta()
+        try:
+            result["pool"] = _scan_pool_breadth()
+        except Exception as e:
+            logger.warning(f"_scan_pool_breadth: {e}")
         return jsonify(result)
     except Exception as e: return jsonify({"error": str(e)}), 500
+
+
+_pool_cache = {"ts": 0, "v": None}
+
+
+def _scan_pool_breadth():
+    """掃描池（流動性 ≥ 門檻的上市＋上櫃）用我們自己的日線資料算的漲跌家數。
+    與官方全市場統計不同：官方 OpenAPI 上市常晚一天更新，這裡兩個市場一定是同一個交易日；
+    使用還原價，除權息日的漲跌幅可能與官方（用參考價）略有出入，僅供同日口徑的市場強弱參考。"""
+    import time as _t
+    if _pool_cache["v"] and _t.time() - _pool_cache["ts"] < 300:
+        return _pool_cache["v"]
+    from state_store import store
+    data = store.get_daily_closes_recent(10)
+    if not data:
+        return None
+    latest = max(v[-1][0] for v in data.values() if v)
+    up = down = flat = lu = ld = n = stale = 0
+    for t, rows in data.items():
+        if len(rows) < 2: continue
+        if rows[-1][0] != latest:
+            stale += 1; continue
+        p, c = rows[-2][1], rows[-1][1]
+        if not p or p <= 0: continue
+        chg = (c / p - 1) * 100; n += 1
+        if chg > 0.0001: up += 1
+        elif chg < -0.0001: down += 1
+        else: flat += 1
+        if chg >= 9.5: lu += 1
+        elif chg <= -9.5: ld += 1
+    v = {"date": latest[:10], "n": n, "advancers": up, "decliners": down, "unchanged": flat,
+         "limit_up": lu, "limit_down": ld, "stale": stale,
+         "adv_ratio": round(up / n * 100, 1) if n else None}
+    _pool_cache.update(ts=_t.time(), v=v)
+    return v
+
 
 @app.route("/api/market/sectors")
 def api_market_sectors():
