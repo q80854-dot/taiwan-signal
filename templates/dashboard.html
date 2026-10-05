@@ -998,7 +998,7 @@ function klineHtml(d){
   const src=(d.ohlcv_long&&d.ohlcv_long.closes&&d.ohlcv&&d.ohlcv_long.closes.length>=d.ohlcv.closes.length)?d.ohlcv_long:d.ohlcv;
   if(!src||!src.closes||src.closes.length<20)return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖</div></div><div class="panel card"><div class="panel-body"><div class="empty">日 K 資料不足，無法繪圖</div></div></div>`;
   return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖（還原價）</div></div>
-  <div class="panel card kl"><div class="kl-bar"><div class="tabs" id="kl-tf"><button onclick="klTf('D',this)" class="on">日K</button><button onclick="klTf('W',this)">週K</button><button onclick="klTf('M',this)">月K</button></div><div class="tabs" id="kl-range"></div>
+  <div class="panel card kl"><div class="kl-title" style="padding:10px 12px 0;font-size:17px;font-weight:700">${(d.code||'').replace(/[<>&]/g,'')} <span style="margin-left:6px">${((d.info&&d.info.name)||'').replace(/[<>&]/g,'')}</span><span style="font-size:12px;font-weight:400;color:var(--muted,#888);margin-left:8px">${((d.info&&d.info.market)||'').replace(/[<>&]/g,'')}</span></div><div class="kl-bar"><div class="tabs" id="kl-tf"><button onclick="klTf('D',this)" class="on">日K</button><button onclick="klTf('W',this)">週K</button><button onclick="klTf('M',this)">月K</button></div><div class="tabs" id="kl-range"></div>
   <div class="tabs" id="kl-ind"><button onclick="klInd('macd',this)" class="on">MACD</button><button onclick="klInd('rsi',this)">RSI</button><button onclick="klInd('kd',this)">KD</button><button onclick="klInd('none',this)">隱藏</button></div></div>
   <div class="kl-leg" style="padding:6px 12px 0" id="kl-leg"></div>
   <div class="kl-info" id="kl-info">移動游標或手指查看每日開高低收</div>
@@ -1046,7 +1046,7 @@ function klStats(){
   if(info.quote_date&&lastD===info.quote_date&&info.close&&Math.abs(last/info.close-1)>0.005)warns.push(`官方收盤 ${info.close}、K 線還原收盤 ${last.toFixed(2)}：差異來自除權息還原，屬正常`);
   if(info._bar)warns.push(`上方行情卡已採用 K 線最新收盤（${lastD}，Yahoo），官方行情仍停在 ${info._official.date}`);
   if(ql.bad_ohlc)warns.push(`⚠ 有 ${ql.bad_ohlc} 根 K 棒開高低收不合邏輯`);
-  setHtml('kl-foot',`資料：${ql.source||'Yahoo 還原價'}；共 ${n} 根日K（${s.dates[0]} ～ ${lastD}），成交量單位為張（Yahoo 數值，與官方略有差異，約 85～99%）。指標由系統依同一公式計算；抽樣與官方逐日對照見「資料稽核」。${warns.length?'<div style="margin-top:4px;color:var(--warn)">'+warns.join('<br>')+'</div>':''}`);
+  setHtml('kl-foot',`資料：${ql.source||'Yahoo 還原價'}；共 ${n} 根日K（${s.dates[0]} ～ ${lastD}），成交量單位為張；${(()=>{const f=s.vol_official||[];const k=f.reduce((a,b)=>a+b,0);return k?`其中 ${k} 日為證交所/櫃買官方成交量（逐日累積中），其餘為 Yahoo 估計值（約為官方的 85～104%）`:'目前為 Yahoo 估計值（約為官方的 85～104%，官方逐日量累積中）';})()}。指標由系統依同一公式計算；抽樣與官方逐日對照見「資料稽核」。${warns.length?'<div style="margin-top:4px;color:var(--warn)">'+warns.join('<br>')+'</div>':''}`);
 }
 function klDraw(){
   const K=_kl,cv=document.getElementById('kl-cv');if(!K||!cv)return;
