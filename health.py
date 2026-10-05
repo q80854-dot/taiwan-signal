@@ -101,7 +101,7 @@ def check_engine():
     a = store.get_meta("last_scan_audit")
     if a:
         out.append(_c("預篩自我稽核", "ok" if not a.get("mismatch") else "fail",
-                      f"{a.get('date')}：跳過率 {round((a.get('skip_rate') or 0) * 100, 1)}%，抽查 {a.get('audited')} 檔、不一致 {a.get('mismatch')}；官方末棒修正 {a.get('recon_fixed')}／{a.get('recon_checked')}"))
+                      f"{a.get('date')}：跳過率 {a.get('skip_rate') or 0}%，抽查 {a.get('audited')} 檔、不一致 {a.get('mismatch')}；官方末棒修正 {a.get('recon_fixed')}／{a.get('recon_checked')}"))
     else:
         out.append(_c("預篩自我稽核", "info", "尚未有紀錄（下次掃描後產生）"))
     try:
@@ -114,6 +114,15 @@ def check_engine():
             out.append(_c("排程器", "fail", "未運作"))
     except Exception as e:
         out.append(_c("排程器", "warn", f"無法讀取：{e}"))
+    try:
+        durs = [h.get("duration_min") for h in hist if h.get("duration_min") and (h.get("scanned") or 0) > 100]
+        if len(durs) >= 2 and durs[0] > 2 * (sum(durs[1:]) / len(durs[1:])):
+            out.append(_c("掃描耗時", "warn", f"最近一次 {durs[0]} 分鐘，是前幾次平均的 {round(durs[0] / (sum(durs[1:]) / len(durs[1:])), 1)} 倍，請留意資料來源是否變慢"))
+    except Exception:
+        pass
+    import admin_auth
+    out.append(_c("策略學習後台保護", "ok" if admin_auth.configured() else "fail",
+                  "已設定管理密碼，學習資料需登入才能查看" if admin_auth.configured() else "尚未設定 ADMIN_PASSWORD，後台目前鎖死（無法登入）"))
     from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     out.append(_c("Telegram 推播", "ok" if (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID) else "fail",
                   "已設定" if (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID) else "缺少 Token 或 Chat ID"))
@@ -142,6 +151,15 @@ def check_strategy():
         r = dict(r)
         out.append(_c("學習資料（影子追蹤）", "ok" if (r.get("n") or 0) > 0 else "warn",
                       f"候選 {r.get('c') or 0}、對照組 {r.get('k') or 0}、已結算 {r.get('d') or 0}；最近記錄日 {r.get('last') or '—'}" if r.get("n") else "尚無紀錄（掃描後開始累積）"))
+        with store._conn() as conn:
+            lr = conn.execute("SELECT * FROM shadow_runs ORDER BY id DESC LIMIT 1").fetchone()
+        if lr:
+            lr = dict(lr)
+            out.append(_c("最近一次學習資料收集", "warn" if lr.get("errors") else "ok",
+                          f"候選 {lr.get('cand_saved')}、被規則擋下 {lr.get('rej_saved')}、對照 {lr.get('ctrl_saved')}、新結算 {lr.get('res_closed')}；耗時 {lr.get('secs_total')}s"
+                          + (f"；有錯誤：{lr.get('errors')[:120]}" if lr.get("errors") else "")))
+        else:
+            out.append(_c("最近一次學習資料收集", "info", "尚無收集紀錄（新版第一次掃描後產生）"))
     except Exception as e:
         out.append(_c("學習資料（影子追蹤）", "warn", str(e)))
     from config import THRESH, SHORT_SIGNAL_THRESH

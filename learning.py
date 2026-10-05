@@ -7,7 +7,7 @@
 - 樣本 < 30 的分組只顯示、不下結論。
 - 多重比較防護：同時檢驗幾十個分組，純靠運氣也會有幾個「達標」。所以
     * 累積不到 10 個交易日，一律不列結論；
-    * z ≥ 1.96 只標示「初步（需新樣本再驗證）」；z ≥ 3.2（約等於對 70 個比較做 Bonferroni 校正）才標示「較可靠」。
+    * z ≥ 1.96 只標示「初步（需新樣本再驗證）」；z ≥ 3.2（約等於對 70 個比較做 Bonferroni 校正）且前後兩段時間方向一致，才標示「較可靠」。
 - 對照組（沒有訊號、隨機抽樣、同一套停損停利機制）回答「訊號有沒有比隨便買好」。
 - 被規則擋下的假想單（kind=rejected）回答「這條規則是幫了我、還是擋掉了賺錢的單」。
 """
@@ -188,6 +188,9 @@ def build_report():
     out["reliable"] = reliable
     base_w, base_n = sum(1 for r in cc if r["result"] in WIN), len(cc)
     base_r = _rl(cc)
+    # 時間穩定性：把已結算樣本依日期對半切，一個真的有效的條件在前後兩段都應該同方向
+    cds = sorted({r["bar_date"] for r in cc})
+    mid = cds[len(cds) // 2] if len(cds) >= 4 else None
     for name, fn in _dims():
         buckets = {}
         for r in cc:
@@ -207,13 +210,24 @@ def build_report():
             zrr = _zr(_rl(xs), _rl(rest)) if enough else 0.0
             z = zw if abs(zw) >= abs(zrr) else zrr
             level = "strong" if abs(z) >= Z_STRONG else "tent" if abs(z) >= Z_TENT else ""
-            st.update(label=k, z=round(z, 2), z_win=round(zw, 2), z_r=round(zrr, 2), enough=st["n"] >= MIN_N,
+            halves, consistent = None, None
+            if enough and mid and level:
+                zs = []
+                for part in (lambda r: r["bar_date"] < mid, lambda r: r["bar_date"] >= mid):
+                    a_ = [r for r in xs if part(r)]
+                    b_ = [r for r in rest if part(r)]
+                    zs.append(round(_zr(_rl(a_), _rl(b_)), 2) if len(a_) >= 10 and len(b_) >= 10 else None)
+                halves = zs
+                consistent = all(v is not None and v * z > 0 and abs(v) >= 1.0 for v in zs)
+                if level == "strong" and not consistent:
+                    level = "tent"          # 前後兩段不一致，不給「較可靠」
+            st.update(halves=halves, consistent=consistent, label=k, z=round(z, 2), z_win=round(zw, 2), z_r=round(zrr, 2), enough=st["n"] >= MIN_N,
                       level=level if (enough and reliable) else "")
             items.append(st)
             if enough and reliable and level:
                 out["findings"].append({
                     "dim": name, "label": k, "n": st["n"], "win_rate": st["win_rate"], "avg_r": st["avg_r"],
-                    "z": round(z, 2), "level": level,
+                    "z": round(z, 2), "level": level, "halves": halves, "consistent": consistent,
                     "text": f"【{name}】{k}：勝率 {st['win_rate']}%、平均 R {st['avg_r']}（n={st['n']}），"
                             f"{'明顯優於' if z > 0 else '明顯劣於'}其餘樣本"})
         items.sort(key=lambda z: z["label"])
