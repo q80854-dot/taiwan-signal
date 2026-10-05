@@ -408,6 +408,8 @@ def api_state():
 
 # ── 管理後台（策略學習）：需密碼登入，見 admin_auth.py ──
 import admin_auth
+app.before_request(admin_auth.guard)
+app.after_request(admin_auth.after)
 
 
 @app.route("/api/admin/status")
@@ -418,6 +420,11 @@ def api_admin_status():
 @app.route("/api/admin/login", methods=["POST"])
 def api_admin_login():
     return admin_auth.login()
+
+
+@app.route("/api/admin/ping", methods=["POST"])
+def api_admin_ping():
+    return admin_auth.ping()
 
 
 @app.route("/api/admin/logout", methods=["POST"])

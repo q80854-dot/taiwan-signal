@@ -3,7 +3,7 @@
 
 設計：
 - 密碼只存在 Render 環境變數 ADMIN_PASSWORD（至少 8 碼），不在程式碼、不在 GitHub。沒設定 = 後台鎖死（fail closed）。
-- 登入成功後發一張「簽名 cookie」（工作階段 cookie，關閉瀏覽器即失效；伺服器端 30 分鐘到期；網頁離開策略學習頁或關閉分頁時會主動登出，所以每次進來都要重新輸入密碼）：內容是到期時間 + HMAC-SHA256 簽章，金鑰由密碼衍生，
+- 登入成功後發一張「簽名 cookie」（工作階段 cookie，關閉瀏覽器即失效；伺服器端 5 分鐘無動作即到期（有操作時網頁每分鐘心跳順延）；網頁離開策略學習頁或關閉分頁時會主動登出，所以每次進來都要重新輸入密碼）：內容是到期時間 + HMAC-SHA256 簽章，金鑰由密碼衍生，
   所以改密碼會讓所有舊登入立刻失效。cookie 為 HttpOnly（網頁腳本讀不到）、Secure、SameSite=Strict。
 - 防暴力破解：同一來源 15 分鐘內錯 5 次、或全站 15 分鐘內錯 30 次就暫時鎖住；每次錯誤另延遲 0.6 秒。
 - 密碼比對使用固定時間比較，避免從回應時間猜密碼。
@@ -14,7 +14,8 @@ from functools import wraps
 from flask import request, jsonify
 
 COOKIE = "ts_admin"
-TTL = 30 * 60   # 最多 30 分鐘；而且是『瀏覽器工作階段 cookie』，關閉瀏覽器就消失
+TTL = 5 * 60    # 5 分鐘沒有動作就失效（每次後台請求/網頁心跳會順延）；且是『工作階段 cookie』，關閉瀏覽器就消失
+PROTECTED_PREFIXES = ('/api/health', '/api/settings', '/api/audit', '/api/diagnostics')
 WINDOW = 15 * 60
 PER_IP_MAX = 5
 GLOBAL_MAX = 30
@@ -109,9 +110,46 @@ def login():
     with _lock:
         _fails.pop(ip, None)
     resp = jsonify({"ok": True})
-    resp.set_cookie(COOKIE, issue(), httponly=True, secure=_secure(), samesite="Strict", path="/")
+    _set(resp)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _set(resp):
+    resp.set_cookie(COOKIE, issue(), httponly=True, secure=_secure(), samesite="Strict", path="/")
+
+
+def _deny():
+    resp = jsonify({"error": "需要登入", "auth": False, "configured": configured()})
+    resp.status_code = 401
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def guard():
+    """before_request：系統檢查／設定／稽核／診斷等後台 API 一律需登入。"""
+    if request.path.startswith(PROTECTED_PREFIXES) and not authed():
+        return _deny()
+    return None
+
+
+def after(resp):
+    """after_request：後台 API 回應一律不快取；已登入的請求順延 5 分鐘無動作期限。"""
+    try:
+        if request.path.startswith(PROTECTED_PREFIXES) or request.path.startswith("/api/admin/"):
+            resp.headers["Cache-Control"] = "no-store"
+            if authed() and request.path != "/api/admin/logout":
+                _set(resp)
+    except Exception:
+        pass
+    return resp
+
+
+def ping():
+    """網頁有操作時每分鐘呼叫一次，順延無動作期限；未登入回 401。"""
+    if not authed():
+        return _deny()
+    return jsonify({"ok": True, "ttl": TTL})
 
 
 def logout():
@@ -124,10 +162,7 @@ def admin_required(f):
     @wraps(f)
     def wrapper(*a, **kw):
         if not authed():
-            resp = jsonify({"error": "需要登入", "auth": False, "configured": configured()})
-            resp.status_code = 401
-            resp.headers["Cache-Control"] = "no-store"
-            return resp
+            return _deny()
         out = f(*a, **kw)
         try:
             if hasattr(out, "headers"):
