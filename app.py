@@ -208,6 +208,7 @@ def setup_scheduler():
     # 掃描全市場找新訊號——為什麼不能在盤中重新掃描找新訊號，見 scanner.py
     # check_intraday_price_alerts() 開頭的說明。
     scheduler.add_job(job_intraday_check,   CronTrigger(hour="9-13", minute="0,30", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True)
+    scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
     # ★ 新增：2026-09-18——見 job_pre_scan_restart() 說明，在每日掃描前主動
@@ -672,6 +673,63 @@ def job_news_watch():
     except Exception as e:
         logger.error(f"job_news_watch: {e}", exc_info=True)
 
+def job_revenue_watch():
+    """公告期（每月 1～15 日）每 10 分鐘重抓全市場月營收；持倉／觀察清單／有效訊號的公司有新一期就通知。"""
+    try:
+        from fundamentals import refresh_monthly_revenue, fetch_monthly_revenue_map
+        from state_store import store
+        changed = refresh_monthly_revenue()
+        try:
+            from fund_score import _persist_current_period
+            _persist_current_period(fetch_monthly_revenue_map())
+        except Exception as e:
+            logger.warning(f"job_revenue_watch persist: {e}")
+        if not changed:
+            return
+        logger.info(f"job_revenue_watch: {len(changed)} 檔營收有新一期")
+        codes = _watched_codes()
+        seen = set(store.get_meta("rev_seen", []) or [])
+        for r in changed:
+            if r["code"] not in codes:
+                continue
+            key = f"{r['code']}|{r['period']}"
+            if key in seen:
+                continue
+            seen.add(key)
+            p = str(r["period"]); ym = f"{int(p[:-2]) + 1911}/{p[-2:]}"
+            yoy = r.get("yoy_pct")
+            amt = f"{r['revenue'] / 100000:.1f} 億" if r.get("revenue") else "—"
+            body = f"{ym} 營收 {amt}，年增 {yoy:+.1f}%" if yoy is not None else f"{ym} 營收 {amt}"
+            store.add_event("revenue", f"{r['name']}（{r['code']}）公布 {ym} 月營收", body, r["code"] + ".TW")
+            try:
+                from telegram_bot import send_alert
+                send_alert(f"{r['name']}（{r['code']}）{body}", "info")
+            except Exception as e:
+                logger.warning(f"job_revenue_watch TG: {e}")
+        store.set_meta("rev_seen", list(seen)[-400:])
+    except Exception as e:
+        logger.error(f"job_revenue_watch: {e}", exc_info=True)
+
+
+@app.route("/api/revenue/refresh", methods=["POST"])
+def api_revenue_refresh():
+    """個股研究頁的『立即更新營收』：重抓全市場月營收（限流：同一時間最多每 60 秒一次）。"""
+    import time as _t
+    global _rev_refresh_ts
+    if _t.time() - _rev_refresh_ts < 60:
+        return jsonify({"ok": False, "error": "剛更新過，請稍候 1 分鐘"}), 429
+    _rev_refresh_ts = _t.time()
+    try:
+        from fundamentals import refresh_monthly_revenue, revenue_status
+        ch = refresh_monthly_revenue()
+        return jsonify({"ok": True, "changed": len(ch), "status": revenue_status()})
+    except Exception as e:
+        logger.error(f"api_revenue_refresh: {e}"); return jsonify({"ok": False, "error": str(e)}), 500
+
+
+_rev_refresh_ts = 0.0
+
+
 @app.route("/api/material_news")
 def api_material_news():
     """★ 新增：2026-09-29——公開版「重大訊息公告」清單，給前端獨立面板用。
@@ -797,6 +855,37 @@ def api_screener():
                          "data_sources": get_universe_data_meta()})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+_long_hist_cache = {}
+
+
+def _long_history(t):
+    """K 線圖用的長歷史（約 5 年日線，還原價）。與掃描共用的 fetch_ohlcv 分開，避免影響掃描快取；
+    30 分鐘快取。失敗回 None（前端退回使用一年資料）。"""
+    import time as _t
+    c = _long_hist_cache.get(t)
+    if c and _t.time() - c[0] < 1800:
+        return c[1]
+    try:
+        import yfinance as yf
+        h = yf.Ticker(t).history(period="5y", interval="1d", auto_adjust=True)
+        if h is None or h.empty:
+            return None
+        h = h.dropna(subset=["Open", "High", "Low", "Close"])
+        d = {"dates": [i.strftime("%Y-%m-%d") for i in h.index],
+             "opens": [round(float(x), 2) for x in h["Open"]], "highs": [round(float(x), 2) for x in h["High"]],
+             "lows": [round(float(x), 2) for x in h["Low"]], "closes": [round(float(x), 2) for x in h["Close"]],
+             "volumes": [int(float(x) // 1000) for x in h["Volume"].fillna(0)]}
+        bad = sum(1 for i in range(len(d["dates"])) if d["highs"][i] < d["lows"][i]
+                  or not (d["lows"][i] - 1e-6 <= d["closes"][i] <= d["highs"][i] + 1e-6))
+        d["quality"] = {"bars": len(d["dates"]), "bad_ohlc": bad, "zero_volume": sum(1 for v in d["volumes"] if v == 0),
+                        "source": "Yahoo Finance 日線（還原價，已含除權息調整）"}
+        _long_hist_cache[t] = (_t.time(), d)
+        return d
+    except Exception as e:
+        logger.warning(f"_long_history {t}: {e}")
+        return None
+
+
 @app.route("/api/instruments/<ticker>")
 def api_instrument(ticker: str):
     """★ 新增：2026-09-29——個股研究頁的主要資料來源，把已經存在、但分散在
@@ -845,6 +934,7 @@ def api_instrument(ticker: str):
             out["indicators"] = calc_all_indicators(ohlcv)
         else:
             out["indicators"] = None
+        out["ohlcv_long"] = _long_history(t)
     except Exception as e:
         out["ohlcv"] = None; out["indicators"] = None; out["ohlcv_error"] = str(e)
     try:
@@ -852,6 +942,11 @@ def api_instrument(ticker: str):
         out["profitability_quality"] = get_profitability_quality(code)
         out["valuation"] = fetch_valuation_map().get(code)
         out["monthly_revenue"] = fetch_monthly_revenue_map().get(code)
+        try:
+            from fundamentals import revenue_status
+            out["revenue_status"] = revenue_status(code)
+        except Exception as _e:
+            out["revenue_status"] = {"error": str(_e)}
         try:
             from fund_score import build_fundamental_profile
             out["fundamental_profile"] = build_fundamental_profile(code)

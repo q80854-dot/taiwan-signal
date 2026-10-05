@@ -167,8 +167,38 @@ def check_strategy():
     return out
 
 
+def check_freshness():
+    out = []
+    try:
+        from data_fetcher import inst_status
+        i = inst_status()
+        if i.get("at") is None:
+            out.append(_c("三大法人資料", "info", "本次啟動後尚未取得（掃描開始時會先抓一次）"))
+        elif i.get("ok"):
+            out.append(_c("三大法人資料", "ok", f"{i.get('n')} 檔，資料日 {i.get('date')}，耗時 {i.get('secs')}s"))
+        else:
+            out.append(_c("三大法人資料", "fail", f"最近一次取得失敗：{i.get('err')}。這段期間的訊號沒有法人籌碼加減分"))
+    except Exception as e:
+        out.append(_c("三大法人資料", "warn", str(e)))
+    try:
+        from fundamentals import revenue_status, _rev_state
+        st = revenue_status()
+        e = st["expected_period"]
+        if st.get("n_total"):
+            pct = round(st["n_expected"] / st["n_total"] * 100)
+            lvl = "ok" if pct >= 90 else ("warn" if st.get("in_window") else "info")
+            out.append(_c("月營收新鮮度", lvl, f"應有 {e[:-2]}年{e[-2:]}月：全市場已有 {st['n_expected']}／{st['n_total']} 檔（{pct}%）"
+                          + (f"；其中 {st['mops_added']} 檔由公開資訊觀測站補上" if st.get("mops_added") else "")
+                          + ("；公告期內每 10 分鐘自動更新" if st.get("in_window") else "")))
+        else:
+            out.append(_c("月營收新鮮度", "info", "本次啟動後尚未載入"))
+    except Exception as ex:
+        out.append(_c("月營收新鮮度", "warn", str(ex)))
+    return out
+
+
 def run_health():
-    sections = [("資料來源", check_data), ("基本面與消息", check_fundamentals), ("引擎與推播", check_engine), ("策略狀態", check_strategy)]
+    sections = [("資料即時性", check_freshness), ("資料來源", check_data), ("基本面與消息", check_fundamentals), ("引擎與推播", check_engine), ("策略狀態", check_strategy)]
     res, cnt = [], {"ok": 0, "warn": 0, "fail": 0, "info": 0}
     for title, fn in sections:
         items = _safe(fn, title)

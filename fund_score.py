@@ -15,21 +15,22 @@ def _persist_current_period(rev_map: Dict) -> None:
         periods = {v.get("period") for v in rev_map.values() if v.get("period")}
         if not periods:
             return
-        covered = set(store.get_monthly_revenue_periods_covered())
-        todo = []
+        # 逐期、逐檔補寫：公告期內同一期會陸續有公司公布，不能因為「這期已存過」就跳過
+        by_period = {}
         for code, v in rev_map.items():
             p = str(v.get("period") or "")
             if len(p) < 5 or v.get("yoy_pct") is None:
                 continue
             roc, mm = int(p[:-2]), p[-2:]
             period = f"{roc + 1911}-{mm}"
-            if period in covered:
-                continue
-            todo.append({"ticker": code, "period": period, "yoy_pct": v.get("yoy_pct"),
+            by_period.setdefault(period, []).append({"ticker": code, "period": period, "yoy_pct": v.get("yoy_pct"),
                          "mom_pct": v.get("mom_pct"), "market": v.get("source", "")})
-        if todo:
-            store.upsert_monthly_revenue_history(todo)
-            logger.info(f"月營收歷史：新增 {len(todo)} 筆（期別 {sorted({t['period'] for t in todo})}）")
+        for period, rows in by_period.items():
+            key = f"rev_hist_n_{period}"
+            if len(rows) > int(store.get_meta(key, 0) or 0):
+                store.upsert_monthly_revenue_history(rows)
+                store.set_meta(key, len(rows))
+                logger.info(f"月營收歷史：{period} 寫入 {len(rows)} 筆")
     except Exception as e:
         logger.warning(f"_persist_current_period: {e}")
 

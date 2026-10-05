@@ -770,40 +770,82 @@ def fetch_batch_current_prices(tickers: List[str]) -> Dict[str, float]:
 # ════════════════════════════════════════════════
 # 法人數據
 # ════════════════════════════════════════════════
+_inst_lock = threading.Lock()
+_inst_fail_until: Dict = {}
+_inst_meta: Dict = {"date": None, "n": 0, "ok": None, "err": None, "secs": None, "at": None}
+
+
+def inst_status() -> Dict:
+    """給系統檢查／掃描紀錄用：最近一次三大法人資料的取得狀況。"""
+    return dict(_inst_meta)
+
+
+def _inst_try(date_str: str):
+    """抓某一天的 T86（三大法人買賣超日報）。selectType=ALLBUT0999 排除權證／牛熊證，
+    資料量從約 2 萬列降到約 1 千多列（2026-10-05 實測：用 ALL 時回應巨大，Render 上 15 秒讀取逾時，
+    掃描時 6 檔同時各自重抓、失敗又不記錄，造成每批從 20 秒拖到 2 分鐘以上）。
+    回傳 (result_dict, status) ；status: ok / empty（該日無資料）/ error"""
+    url = f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&selectType=ALLBUT0999"
+    last_err = None
+    for attempt in range(2):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=(5, 40))
+            if r.status_code != 200:
+                last_err = f"HTTP {r.status_code}"; continue
+            data = r.json()
+            if data.get("stat") != "OK":
+                return {}, "empty"
+            result = {}
+            for row in data.get("data", []):
+                try:
+                    code = row[0].strip(); name = row[1].strip()
+                    def pi(v): return int(v.replace(",", "").replace("+", "")) if v.strip() not in ("-", "") else 0
+                    # T86 欄位：[4]外陸資買賣超 [10]投信買賣超 [18]三大法人買賣超（2026-08-31 校正過）
+                    fn = pi(row[4]) if len(row) > 4 else 0
+                    tn = pi(row[10]) if len(row) > 10 else 0
+                    tt = pi(row[18]) if len(row) > 18 else 0
+                    result[code] = {"name": name, "foreign_net": fn, "trust_net": tn, "total_net": tt,
+                                    "signal": "strong_buy" if fn > 500 and tn > 0 else "buy" if fn > 100 else "strong_sell" if fn < -500 else "sell" if fn < -100 else "neutral"}
+                except Exception:
+                    continue
+            return result, "ok"
+        except Exception as e:
+            last_err = str(e)[:160]
+    _inst_meta["err"] = last_err
+    return {}, "error"
+
+
 def fetch_institutional_flow(date_str=None) -> Dict:
     cache_k = f"inst_{date_str or 'today'}"
-    if c := _cache_get(cache_k, 1800): return c
-    if date_str is None:
-        date_str = datetime.now().strftime("%Y%m%d")
-    url = f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&selectType=ALL"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        if r.status_code != 200: return {}
-        data = r.json()
-        if data.get("stat") != "OK": return {}
-        result = {}
-        # ★ 修正：2026-08-31——T86 實際欄位順序（0-indexed）：
-        #   [0]證券代號 [1]證券名稱 [2]外陸資買進股數 [3]外陸資賣出股數
-        #   [4]外陸資買賣超股數 [5]外資自營商買進 [6]外資自營商賣出
-        #   [7]外資自營商買賣超股數 [8]投信買進股數 [9]投信賣出股數
-        #   [10]投信買賣超股數 [11]自營商買賣超股數 ... [18]三大法人買賣超股數
-        #   原本 tn 誤取 row[7]（外資自營商買賣超，不是投信）、
-        #   tt 誤取 row[11]（自營商買賣超，不是三大法人合計），修正為
-        #   正確欄位 row[10]（投信）與 row[18]（三大法人合計）。
-        for row in data.get("data", []):
-            try:
-                code = row[0].strip(); name = row[1].strip()
-                def pi(v): return int(v.replace(",","").replace("+","")) if v.strip() not in ("-","") else 0
-                fn = pi(row[4]) if len(row)>4 else 0
-                tn = pi(row[10]) if len(row)>10 else 0
-                tt = pi(row[18]) if len(row)>18 else 0
-                result[code] = {"name":name,"foreign_net":fn,"trust_net":tn,"total_net":tt,
-                                "signal":"strong_buy" if fn>500 and tn>0 else "buy" if fn>100 else "strong_sell" if fn<-500 else "sell" if fn<-100 else "neutral"}
-            except: continue
-        logger.info(f"三大法人：{len(result)} 檔")
-        return _cache_set(cache_k, result)
-    except Exception as e:
-        logger.error(f"inst_flow: {e}"); return {}
+    if c := _cache_get(cache_k, 6 * 3600): return c
+    if time.time() < _inst_fail_until.get(cache_k, 0): return {}      # 剛失敗過，短時間內不再重打（避免每檔股票各等一次逾時）
+    with _inst_lock:                                                   # 單一航班：同時多檔只有一個人真的去抓
+        if c := _cache_get(cache_k, 6 * 3600): return c
+        if time.time() < _inst_fail_until.get(cache_k, 0): return {}
+        t0 = time.time()
+        if date_str is None:
+            # 今天還沒公布就往前找最近 4 個平日（回測指定日期時不回退）
+            days = []; d = datetime.now(timezone.utc) + timedelta(hours=8)   # 台北日期
+            while len(days) < 4:
+                if d.weekday() < 5: days.append(d.strftime("%Y%m%d"))
+                d -= timedelta(days=1)
+        else:
+            days = [date_str]
+        result, used, st = {}, None, "empty"
+        for ds in days:
+            result, st = _inst_try(ds)
+            if st == "ok" and result:
+                used = ds; break
+            if st == "error":
+                break
+        _inst_meta.update({"secs": round(time.time() - t0, 1), "at": time.time(), "date": used, "n": len(result),
+                           "ok": bool(result), "err": None if result else (_inst_meta.get("err") or "查無資料")})
+        if result:
+            logger.info(f"三大法人：{len(result)} 檔（{used}，{_inst_meta['secs']}s）")
+            return _cache_set(cache_k, result)
+        _inst_fail_until[cache_k] = time.time() + 180
+        logger.error(f"inst_flow: 取不到三大法人資料（{_inst_meta['err']}），3 分鐘內不重試")
+        return {}
 
 def fetch_foreign_total_flow() -> Dict:
     if c := _cache_get("foreign_total", 3600): return c

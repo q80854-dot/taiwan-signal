@@ -241,6 +241,13 @@ class TWScanEngine:
 
         # 3. 批次掃描
         logger.info("Step 3/5: 開始批次掃描...")
+        # 三大法人資料先抓一次（單一航班＋快取）；失敗時各檔直接略過法人加減分，不再每檔各等一次逾時
+        try:
+            from data_fetcher import fetch_institutional_flow, inst_status
+            _inst = fetch_institutional_flow()
+            logger.info(f"三大法人預載：{len(_inst)} 檔 {inst_status()}")
+        except Exception as _e:
+            logger.warning(f"三大法人預載失敗: {_e}")
         all_signals   = []
         scanned_count = 0
         error_count   = 0

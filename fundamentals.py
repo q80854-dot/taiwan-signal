@@ -127,15 +127,178 @@ def _fetch_tpex_monthly_revenue() -> Dict[str, Dict]:
         return {}
 
 
-def fetch_monthly_revenue_map() -> Dict[str, Dict]:
-    """回傳 {公司代號: {yoy_pct, mom_pct, period, source}}，涵蓋上市+上櫃。
-    任一來源失敗只影響該來源涵蓋的個股，不會讓另一邊也連帶失效。"""
-    if c := _cache_get("monthly_revenue"):
-        return c
+# ── 月營收即時性 ────────────────────────────────────────────
+# 2026-10-05 使用者反映：鴻海 9 月營收已公布，系統卻還顯示 8 月。原因：①快取 12 小時、
+# ②官方 OpenAPI 的更新常晚於公司公告。改為：每月 1～15 日（公告期，法定截止日 10 日）
+# 快取只留 10 分鐘，且最新一期還沒到齊時一律視為過期；其餘日期 6 小時。
+# 另外在 OpenAPI 還沒給出新一期時，改用公開資訊觀測站（MOPS）彙總表補上（見 _fetch_mops_period）。
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+_rev_state: Dict = {"fetched_at": None, "expected": None, "n_expected": 0, "n_total": 0, "mops_added": 0, "last_error": None}
+
+
+def _taipei_now():
+    return _dt.now(_tz.utc) + _td(hours=8)
+
+
+def expected_revenue_period(now=None) -> str:
+    """目前『應該已經可以看到』的最新一期（上個月），民國格式如 '11509'。"""
+    n = now or _taipei_now()
+    y, m = n.year, n.month - 1
+    if m == 0:
+        y, m = y - 1, 12
+    return f"{y - 1911}{m:02d}"
+
+
+def _rev_ttl() -> int:
+    n = _taipei_now()
+    if n.day <= 15:
+        return 600
+    return 3600 * 6
+
+
+def _rev_cache_fresh() -> bool:
+    e = _cache.get("monthly_revenue")
+    if not e:
+        return False
+    if time.time() - e["ts"] >= _rev_ttl():
+        return False
+    return True
+
+
+def _num_or_none(s):
+    s = (s or "").strip().replace(",", "").replace("%", "")
+    if s in ("", "-", "--"):
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _parse_mops_full(html_text: str) -> List[Dict]:
+    """解析 MOPS 月營收彙總表（t21sc03），除了年增月增，也取得營收金額（千元）與累計。欄位用標題文字動態對應。"""
+    parser = _RevenueTableParser()
+    try:
+        parser.feed(html_text)
+    except Exception:
+        return []
+    out = []
+    for table in parser.tables:
+        hdr = None
+        for i, row in enumerate(table):
+            j = "".join(row)
+            if "公司代號" in j and "去年同月" in j:
+                hdr = i
+                break
+        if hdr is None:
+            continue
+        H = table[hdr]
+        def find(*keys, excl=()):
+            for k, c in enumerate(H):
+                if all(x in c for x in keys) and not any(x in c for x in excl):
+                    return k
+            return None
+        ic = find("公司代號"); iname = find("公司名稱")
+        i_cur = find("當月營收", excl=("去年", "累計")); i_ly = find("去年當月營收")
+        i_mom = find("上月比較"); i_yoy = find("去年同月")
+        i_cum = find("當月累計營收"); i_cumyoy = find("前期比較")
+        if ic is None or i_yoy is None or i_cur is None:
+            continue
+        need = max(x for x in (ic, i_yoy, i_cur, i_ly or 0, i_mom or 0, i_cum or 0, i_cumyoy or 0))
+        for row in table[hdr + 1:]:
+            if len(row) <= need:
+                continue
+            code = row[ic].strip()
+            if not re.match(r"^\d{4,6}$", code):
+                continue
+            g = lambda k: _num_or_none(row[k]) if k is not None and k < len(row) else None
+            out.append({"code": code, "name": row[iname].strip() if iname is not None else "",
+                        "yoy_pct": g(i_yoy), "mom_pct": g(i_mom), "cum_yoy_pct": g(i_cumyoy),
+                        "revenue": g(i_cur), "revenue_ly": g(i_ly), "cum_revenue": g(i_cum)})
+    return out
+
+
+def _fetch_mops_period(period_roc: str) -> Dict[str, Dict]:
+    """從 MOPS 抓某一期（如 '11509'）全市場月營收；任何失敗回傳空 dict（OpenAPI 仍是主要來源）。"""
+    roc, mm = int(period_roc[:-2]), int(period_roc[-2:])
+    res = {}
+    for market in ("sii", "otc"):
+        try:
+            from curl_cffi import requests as cffi_requests
+            url = _REV_HIST_URL_TMPL.format(market=market, roc_year=roc, month=mm)
+            r = cffi_requests.get(url, headers=HEADERS, timeout=20, impersonate="chrome", verify=False)
+            if r.status_code != 200:
+                logger.info(f"MOPS 月營收 {period_roc}/{market}: HTTP {r.status_code}（可能尚未產生）")
+                continue
+            for row in _parse_mops_full(r.content.decode("big5", errors="ignore")):
+                row.update({"period": period_roc, "source": "mops_" + market, "sector_name": ""})
+                res[row["code"]] = row
+        except Exception as e:
+            logger.warning(f"_fetch_mops_period {period_roc}/{market}: {e}")
+    return res
+
+
+def fetch_monthly_revenue_map(force: bool = False) -> Dict[str, Dict]:
+    """回傳 {公司代號: {yoy_pct, mom_pct, period, source...}}，涵蓋上市+上櫃。
+    任一來源失敗只影響該來源涵蓋的個股，不會讓另一邊也連帶失效。
+    公告期（每月 1～15 日）快取 10 分鐘；官方 OpenAPI 尚未更新到最新一期時，用 MOPS 補上。"""
+    if not force and _rev_cache_fresh():
+        return _cache["monthly_revenue"]["data"]
     merged = {}
     merged.update(_fetch_twse_monthly_revenue())
     merged.update(_fetch_tpex_monthly_revenue())
+    exp = expected_revenue_period()
+    n_exp = sum(1 for v in merged.values() if str(v.get("period")) == exp)
+    added = 0
+    # 公告期內，且最新一期家數明顯不足（OpenAPI 還沒更新完）才去補 MOPS
+    if _taipei_now().day <= 15 and merged and n_exp < 0.9 * len(merged):
+        for code, row in _fetch_mops_period(exp).items():
+            cur = merged.get(code)
+            if cur and str(cur.get("period")) == exp:
+                continue
+            if row.get("yoy_pct") is None and row.get("revenue") is None:
+                continue
+            if cur:
+                row["sector_name"] = cur.get("sector_name", "")
+                row["name"] = row.get("name") or cur.get("name", "")
+            merged[code] = row
+            added += 1
+        if added:
+            logger.info(f"月營收：OpenAPI 尚缺 {exp} 期，由 MOPS 補上 {added} 檔")
+    _rev_state.update({"fetched_at": time.time(), "expected": exp,
+                       "n_expected": sum(1 for v in merged.values() if str(v.get("period")) == exp),
+                       "n_total": len(merged), "mops_added": added})
+    if not merged and _cache.get("monthly_revenue"):
+        return _cache["monthly_revenue"]["data"]   # 兩邊都抓失敗：沿用舊資料，下次再試
     return _cache_set("monthly_revenue", merged)
+
+
+def refresh_monthly_revenue() -> List[Dict]:
+    """強制重抓並回傳『最新一期有變動』的公司清單（新公布，或期別往前進）。"""
+    old = (_cache.get("monthly_revenue") or {}).get("data") or {}
+    new = fetch_monthly_revenue_map(force=True)
+    changed = []
+    for code, v in new.items():
+        o = old.get(code)
+        if not o or str(v.get("period")) > str(o.get("period")):
+            changed.append({"code": code, "name": v.get("name", ""), "period": v.get("period"),
+                            "yoy_pct": v.get("yoy_pct"), "revenue": v.get("revenue"), "first": not o})
+    if not old:
+        return []   # 冷啟動第一次載入，不當作『新公布』
+    return changed
+
+
+def revenue_status(code: str = "") -> Dict:
+    """給個股研究頁用：顯示這檔的營收是否已是最新一期、資料取得時間、法定公告期限。"""
+    exp = expected_revenue_period()
+    cur = (fetch_monthly_revenue_map().get(code) or {}) if code else {}
+    have = str(cur.get("period") or "")
+    n = _taipei_now()
+    return {"expected_period": exp, "have_period": have or None, "is_latest": have >= exp if have else False,
+            "fetched_at": _rev_state.get("fetched_at"), "n_expected": _rev_state.get("n_expected"),
+            "n_total": _rev_state.get("n_total"), "mops_added": _rev_state.get("mops_added"),
+            "source": cur.get("source"), "in_window": n.day <= 15,
+            "deadline": f"{n.year}/{n.month:02d}/10 前（公開發行公司法定申報截止日）" if n.day <= 15 else ""}
 
 
 # ════════════════════════════════════════════════
