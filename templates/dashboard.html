@@ -331,6 +331,63 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
 .tl .ev .bd{font-size:12px;color:var(--t2);margin-top:3px}
 .tl .ev .tm{font-size:10.5px;color:var(--t3);margin-top:4px}
 .wl-note{font-size:11px;color:var(--t3);margin:-2px 0 6px}
+
+/* ===== 版面防破：長字換行、數字不撐破格子 ===== */
+.sig-head>div,.pos-h>div,.kpi,.hero,.panel-body,.note-box,.kv span,.autop,.tl .ev{min-width:0;overflow-wrap:anywhere}
+.kv{gap:14px}.kv span:last-child{text-align:right}
+.sig-name{overflow-wrap:anywhere}
+.hero-row>.kpi,.kpi-strip>.kpi{border-left:none;border-right:1px solid var(--line2);border-bottom:1px solid var(--line2)}
+.hero-row,.kpi-strip{background:var(--paper)}
+.hero-row{gap:0}
+#breadth-row{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))!important}
+.ruler .pin.start{transform:none}.ruler .pin.end{transform:translateX(-100%)}
+.ruler .pin.end::after{margin-right:0;margin-left:auto}.ruler .pin.start::after{margin-left:0}
+.ticker-val{white-space:nowrap;font-size:clamp(15px,1.5vw,20px)}
+/* ===== 今日戰報（總覽報頭） ===== */
+.mast{display:grid;grid-template-columns:auto 1fr auto;gap:22px;align-items:center;background:var(--paper);border:1px solid var(--line2);border-top:3px solid var(--ink);padding:20px 24px;margin-bottom:6px;box-shadow:2px 3px 0 rgba(19,22,29,.07)}
+.mast .dt{font-family:var(--serif);font-weight:800;line-height:1.15;border-right:1px dashed var(--line2);padding-right:22px}
+.mast .dt b{display:block;font-size:34px;letter-spacing:2px}.mast .dt span{font-size:12px;color:var(--t3);letter-spacing:1px;font-weight:600}
+.mast .say{font-family:var(--serif);font-size:17px;line-height:1.75;color:var(--t1);font-weight:600}
+.mast .say em{font-style:normal;background:linear-gradient(transparent 62%,var(--up-soft) 62%);padding:0 2px}
+.mast .say small{display:block;font-family:inherit;font-size:12px;color:var(--t3);font-weight:400;margin-top:4px}
+.mast .seal{width:78px;height:78px}.mast .seal b{font-size:28px}
+@media(max-width:760px){.mast{grid-template-columns:1fr auto;padding:16px}.mast .dt{grid-column:1/-1;border-right:none;border-bottom:1px dashed var(--line2);padding:0 0 10px;display:flex;align-items:baseline;gap:12px}.mast .dt b{font-size:24px}.mast .say{font-size:15px}.mast .seal{width:64px;height:64px}}
+/* 印章落款：只在載入時蓋一次 */
+@keyframes stampIn{0%{opacity:0;transform:scale(1.7) rotate(-14deg)}55%{opacity:1;transform:scale(.94) rotate(-4deg)}100%{transform:scale(1) rotate(-5deg)}}
+.seal{animation:stampIn .42s cubic-bezier(.2,.9,.3,1.2) both}
+@media(prefers-reduced-motion:reduce){.seal{animation:none}}
+/* ===== 基本面 ===== */
+.fchip{display:inline-flex;align-items:center;gap:7px;font-size:11px;margin:8px 0 0;flex-wrap:wrap}
+.fchip .k{font-family:var(--serif);font-weight:800;letter-spacing:1px;color:var(--t1)}
+.fchip .g{font-family:var(--serif);font-weight:800;border:1.5px solid currentColor;padding:0 7px;letter-spacing:2px;transform:rotate(-2deg)}
+.fchip .g.s{color:var(--up)}.fchip .g.m{color:var(--warn)}.fchip .g.w{color:var(--t3)}.fchip .g.x{color:var(--alert)}
+.fchip .t{color:var(--t2)}
+.fund{background:var(--paper);border:1px solid var(--line2);border-top:3px solid var(--accent);padding:18px 22px;margin-bottom:6px}
+.fund-top{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center}
+.fund-big{font-family:var(--serif);font-size:54px;font-weight:800;line-height:1;text-align:center}
+.fund-big small{display:block;font-size:12px;letter-spacing:2px;color:var(--t3);font-weight:600;margin-top:6px}
+.fbar{display:grid;grid-template-columns:48px 1fr 36px;gap:10px;align-items:center;margin:7px 0;font-size:12px}
+.fbar .t{height:10px;background:var(--paper2);border:1px solid var(--line2)}.fbar .t i{display:block;height:100%;background:var(--accent)}
+.fund .tg{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px}
+.fund .tg span{font-size:11px;border:1px solid var(--line2);padding:2px 9px;background:var(--paper2);color:var(--t1)}
+.spark{display:flex;align-items:flex-end;gap:5px;height:54px;margin-top:14px;border-bottom:1px solid var(--ink)}
+.spark i{flex:1;min-height:2px;background:var(--up);position:relative}.spark i.n{background:var(--down)}
+.spark i b{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-size:9.5px;font-weight:600;color:var(--t2);white-space:nowrap}
+@media(max-width:640px){.fund-top{grid-template-columns:1fr}.fund-big{font-size:44px}}
+.tabs{display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid var(--ink);flex-wrap:wrap}
+.tabs button{font-family:var(--serif);font-weight:800;letter-spacing:1px;border:none;background:transparent;padding:9px 18px;cursor:pointer;color:var(--t2);font-size:13px}
+.tabs button.on{background:var(--ink);color:#fff}
+.dot-sig{display:inline-block;width:8px;height:8px;background:var(--up);transform:rotate(45deg);margin-left:6px}
+#page-overview .hero-row>.hero{display:none}#page-overview .hero-row{grid-template-columns:1fr!important}
+/* 手機 */
+@media(max-width:640px){
+  .pad{padding:16px 14px 0}.panel-body{padding:14px}.sig-card{padding:16px 14px 14px 30px}.seal{width:54px;height:54px}.seal b{font-size:19px}
+  .sig-head{gap:8px}.sig-name{font-size:15px}.hero-val{font-size:44px}.top{padding:0 12px}.top-l{font-size:16px}
+  #view-toggle-btn{display:none}.bell{width:32px}.btn.primary.arrow::after{display:none}
+  .pos-r{font-size:28px}.tl{margin-left:4px;padding-left:16px}.tl .ev::before{left:-24px}
+  .tabs button{padding:8px 12px;font-size:12px}.fund{padding:14px}
+  .hero-row>.kpi,.kpi-strip>.kpi{padding:16px 14px}.kpi-val{font-size:21px}
+}
 </style>
 </head>
 <body>
@@ -352,6 +409,7 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
   <div class="nav"     onclick="go('history')">交易歷史</div>
   <div class="nav"     onclick="go('perf')">績效分析</div>
   <div class="nav-g">研究</div>
+  <div class="nav"     onclick="go('radar')">基本面雷達</div>
   <div class="nav"     onclick="go('instrument')">個股研究</div>
   <div class="nav"     onclick="go('marketoverview')">市場總覽</div>
   <div class="nav-g">市場</div>
@@ -362,6 +420,7 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
   <div class="nav"     onclick="go('diag')">系統診斷</div>
   <div class="sfoot">
     <div class="sfr"><div class="dot-live"></div><span id="market-session-side">載入中...</span></div>
+    <div style="font-size:10.5px" id="scan-dur-side"></div>
     <div style="font-size:10.5px;color:var(--t3)" id="last-scan-side">—</div>
   </div>
 </div>
@@ -396,6 +455,7 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
       <div class="ticker-item"><div class="ticker-name">Bitcoin BTC</div><div class="ticker-val" id="btc-val">—</div><div class="ticker-chg" id="btc-chg">—</div></div>
     </div>
     <div class="pad">
+    <div class="mast" id="mast"></div>
     <div class="note-box" id="positioning-note" style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
       <div><b style="color:var(--t1)">用資料理解市場，用回測驗證策略。</b>　台股波段訊號研究工具：市場資料 → 技術／基本面分析 → 交易訊號 → 歷史回測 → 觀察清單，協助你建立有依據的研究流程。訊號僅供研究參考，不構成投資建議、不保證獲利。</div>
       <span style="cursor:pointer;color:var(--t3);font-size:11px;flex-shrink:0;white-space:nowrap" onclick="dismissPositioningNote()">不再顯示 ✕</span>
@@ -528,12 +588,30 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
   <div class="page" id="page-news">
     <div class="pad">
     <div class="note-box" style="border-left-color:var(--alert);margin-bottom:16px" id="news-source-note">資料來源：TWSE OpenAPI（上市公司重大訊息公告）· 載入中…</div>
+    <div class="panel card" style="margin-bottom:14px"><div class="panel-head"><div class="bar"></div><span class="panel-title">我的標的公告（持倉／觀察清單／有效訊號，每 15 分鐘巡一次）</span></div><div class="panel-body" id="news-watch"><div class="empty">載入中…</div></div></div>
     <div class="panel card"><div class="panel-head"><div class="bar" style="background:var(--alert)"></div><span class="panel-title">重大訊息公告（風險關鍵字命中）</span></div>
       <div style="overflow-x:auto"><table class="tbl">
         <thead><tr><th>發言日期</th><th>股票</th><th>代號</th><th>公告主旨</th></tr></thead>
         <tbody id="news-tbody"><tr><td colspan="4" style="text-align:center;padding:30px;color:var(--t3)">載入中...</td></tr></tbody>
       </table></div>
     </div>
+    </div>
+  </div>
+
+  <!-- Radar -->
+  <div class="page" id="page-radar">
+    <div class="pad">
+    <div class="note-box" style="margin-bottom:14px">不看 K 線，只看基本面：用最新月營收（單月、累計）與估值，在全市場找出轉強的公司。單月營收低於 1 億的不列入。標 <span class="dot-sig"></span> 的代表近 7 天也有技術面訊號，兩邊都過關。</div>
+    <div class="tabs" id="radar-tabs">
+      <button class="on" onclick="fetchRadar('growth',this)">營收動能</button>
+      <button onclick="fetchRadar('accel',this)">營收加速</button>
+      <button onclick="fetchRadar('value',this)">高息低本益比</button>
+    </div>
+    <div class="note-box" id="radar-desc" style="margin-bottom:12px;border-left-color:var(--line2)"></div>
+    <div class="panel card"><div style="overflow-x:auto"><table class="tbl">
+      <thead><tr><th>代號</th><th>名稱</th><th>產業</th><th>月營收(億)</th><th>單月年增</th><th>月增</th><th>累計年增</th><th>本益比</th><th>殖利率</th><th>基本面</th></tr></thead>
+      <tbody id="radar-tbody"><tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">載入中…</td></tr></tbody>
+    </table></div></div>
     </div>
   </div>
 
@@ -702,7 +780,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
+const TITLES={radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 function go(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
@@ -713,9 +791,10 @@ function go(id){
   if(id==='history'&&_state)renderHistory(_state);
   if(id==='perf'&&_state)renderPerf(_state.win_rate||{});
   if(id==='market'&&_state){renderMarket(_state);fetchUniverse();}
-  if(id==='news')renderMaterialNewsPage();
+  if(id==='news'){renderMaterialNewsPage();fetchNewsWatch();}
   if(id==='watchlist')renderWatchlistPage();
   if(id==='signals')renderSignals();
+  if(id==='radar'&&!_radarLoaded)fetchRadar('growth');
   if(id==='positions')fetchPositions();
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
@@ -794,7 +873,8 @@ function renderInstrument(d){
     ${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，下方「產業」欄位暫時一律顯示「其他」，非真實分類</span>':''}
   </div>`;
 
-  html+=`<div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">基本資料與行情</div></div>`;
+  html+=fundBlock(d.fundamental_profile);
+  html+=`<div class="sec-label"><div class="bar"></div><div class="tx">基本資料與行情</div></div>`;
   if(!info){
     html+=`<div class="panel card"><div class="panel-body"><div class="empty">查無 ${d.code}——已同時查過上市(.TW)與上櫃(.TWO)，TWSE/TPEX 公開清單中都沒有這個代號（可能是代號輸入錯誤，或該股票已下市）</div></div></div>`;
   }else{
@@ -1133,6 +1213,70 @@ window.addEventListener('resize',()=>{
 
 // Fetch
 
+
+// ===== 基本面 =====
+const FG_CLS={強:'s',中:'m',弱:'w',差:'x'};
+function fundChip(s){
+  if(s.fund_grade===undefined&&s.fund_score===undefined)return '';
+  if(s.fund_score===null||s.fund_score===undefined)return `<div class="fchip"><span class="k">基本面</span><span class="t" style="color:var(--t3)">資料不足，未納入評分</span></div>`;
+  return `<div class="fchip"><span class="k">基本面</span><span class="g ${FG_CLS[s.fund_grade]||'w'}">${s.fund_grade}</span><b>${s.fund_score}</b><span class="t">${(s.fund_tags||[]).slice(0,3).join('　')}</span></div>`;
+}
+function fundBlock(f){
+  if(!f||f.error)return '';
+  if(f.score===null||f.score===undefined)return `<div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">基本面體檢</div></div><div class="fund"><div class="empty" style="padding:20px">這檔的基本面資料涵蓋不足（${f.coverage}%），不評分。缺：${(f.missing||[]).join('、')||'—'}。</div></div>`;
+  const parts=Object.entries(f.parts||{}).map(([k,v])=>`<div class="fbar"><span>${k}</span><div class="t"><i style="width:${v.score}%"></i></div><b>${v.score}</b></div>`).join('');
+  const hist=(f.history||[]).filter(h=>h.yoy_pct!==null&&h.yoy_pct!==undefined);
+  const mx=Math.max(10,...hist.map(h=>Math.abs(h.yoy_pct)));
+  const spark=hist.length>=2?`<div style="font-size:11px;color:var(--t3);margin-top:12px">近 ${hist.length} 期月營收年增率</div><div class="spark">${hist.map(h=>`<i class="${h.yoy_pct<0?'n':''}" style="height:${Math.max(4,Math.abs(h.yoy_pct)/mx*100)}%"><b>${h.yoy_pct>0?'+':''}${Math.round(h.yoy_pct)}</b></i>`).join('')}</div>`:'<div style="font-size:11px;color:var(--t3);margin-top:12px">歷史月營收尚在累積（每月公告後自動存檔），之後這裡會出現趨勢圖。</div>';
+  const r=f.revenue||{};
+  return `<div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">基本面體檢</div></div><div class="fund"><div class="fund-top">
+    <div class="fund-big" style="color:${f.score>=70?'var(--up)':f.score>=50?'var(--warn)':'var(--t3)'}">${f.score}<small>基本面${f.grade}　涵蓋 ${f.coverage}%</small></div>
+    <div>${parts}</div></div>
+    <div class="tg">${(f.tags||[]).map(t=>`<span>${t}</span>`).join('')}</div>
+    ${r.revenue?`<div style="font-size:11px;color:var(--t3);margin-top:10px">${fmtMinguoYM(r.period)} 營收 ${(r.revenue/100000).toFixed(1)} 億（去年同月 ${r.revenue_ly?(r.revenue_ly/100000).toFixed(1):'—'} 億）　累計 ${r.cum_revenue?(r.cum_revenue/100000).toFixed(1):'—'} 億</div>`:''}
+    ${spark}</div>`;
+}
+let _radarLoaded=false;
+const RADAR_DESC={growth:'單月年增 ≥ 20%，且累計年增 ≥ 10%：營收不是只有這個月好看。',accel:'單月年增 ≥ 15%，且比累計年增高 8 個百分點以上、月增為正：成長正在加速。',value:'營收年增為正、本益比 15 倍以下、殖利率 4% 以上：便宜又還在成長。'};
+async function fetchRadar(kind,btn){
+  _radarLoaded=true;
+  if(btn){document.querySelectorAll('#radar-tabs button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
+  setEl('radar-desc',RADAR_DESC[kind]||'');
+  const tb=document.getElementById('radar-tbody');tb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">載入中…</td></tr>';
+  try{
+    const d=await(await fetch('/api/fundamentals_radar?kind='+kind,{cache:'no-store'})).json();
+    if(d.error)throw new Error(d.error);
+    const pc=v=>v===null||v===undefined?'—':`<span style="color:${clr(v)}">${v>0?'+':''}${Number(v).toFixed(1)}%</span>`;
+    tb.innerHTML=d.rows.length?d.rows.map(r=>`<tr style="cursor:pointer" onclick="goToInstrument('${r.code}')"><td>${r.code}${r.has_signal?'<i class="dot-sig" title="近 7 天也有技術訊號"></i>':''}</td><td><b style="color:var(--t1)">${safe(r.name)}</b></td><td>${safe(r.sector)}</td><td>${r.revenue_yi}</td><td>${pc(r.yoy)}</td><td>${pc(r.mom)}</td><td>${pc(r.cum_yoy)}</td><td>${safe(r.pe)}</td><td>${r.yield!==null&&r.yield!==undefined?r.yield+'%':'—'}</td><td>${r.score!==null?`<b>${r.score}</b>`:'—'}</td></tr>`).join(''):'<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">目前沒有符合條件的公司</td></tr>';
+  }catch(e){tb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+e.message+'</td></tr>';}
+}
+async function fetchNewsWatch(){
+  const el=document.getElementById('news-watch');if(!el)return;
+  try{
+    const d=await(await fetch('/api/news/watch',{cache:'no-store'})).json();
+    if(!d.codes||!d.codes.length){el.innerHTML='<div class="empty">還沒有追蹤中的標的。有有效訊號或加入觀察清單後，這裡會顯示它們的最新公告。</div>';return;}
+    el.innerHTML=d.news.length?d.news.map(n=>`<div class="kv"><span style="color:var(--t3);min-width:112px;flex:none">${n.date} ${n.time||''}</span><span style="text-align:left;flex:1;font-weight:500;${n.negative?'color:var(--alert)':''}">${n.negative?'⚠ ':''}${n.name}（${n.code}）${n.subject}</span></div>`).join(''):`<div class="empty">追蹤的 ${d.codes.length} 檔標的今天都沒有新公告。</div>`;
+  }catch(e){el.innerHTML='<div class="empty">載入失敗</div>';}
+}
+// ===== 今日戰報 =====
+function renderMast(d){
+  const el=document.getElementById('mast');if(!el)return;
+  const now=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Taipei'}));
+  const wk='日一二三四五六'[now.getDay()];
+  const roc=now.getFullYear()-1911;
+  const sc=d.sentiment_score??50, sigs=(d.active_signals||[]);
+  const buys=sigs.filter(s=>s.direction==='buy').length;
+  const tone=sc<40?'偏弱':sc<60?'中性':'偏強';
+  const hot=sigs.filter(s=>s.chase_level==='high').length;
+  let line=`大盤情緒 <em>${sc}</em>（${tone}）。`;
+  line+=sigs.length?`最新一批有 <em>${sigs.length}</em> 檔訊號${buys?`，其中 ${buys} 檔做多`:''}${hot?`，<em>${hot}</em> 檔屬追高位置`:''}。`:'目前沒有新訊號。';
+  const sub=sc<40&&sigs.length?'大盤偏弱時系統會自動限縮訊號數量，寧可少做。':'訊號每個交易日 16:30 盤後掃描。';
+  const cls=sc<40?'sell':'';
+  el.innerHTML=`<div class="dt"><b>${now.getMonth()+1}月${now.getDate()}日</b><span>民國${roc}年　週${wk}</span></div>
+    <div class="say">${line}<small>${sub}</small></div>
+    <div class="seal ${cls}" title="市場環境評分"><b>${safeN(d.system_status?.env_score??sc,0)}</b><i>大盤</i></div>`;
+}
+
 // ===== 持倉追蹤 =====
 const rr=(v,d=2)=>v===null||v===undefined?'—':(v>=0?'+':'')+Number(v).toFixed(d);
 function posCard(p,closed){
@@ -1143,9 +1287,9 @@ function posCard(p,closed){
   if(p.progress!==undefined&&p.progress!==null){
     ruler=`<div class="ruler" style="--sc:${c}"><div class="trk"></div><div class="fill" style="width:${p.progress*100}%"></div>
       <div class="ent" style="left:${(p.entry_mark||0)*100}%"></div>
-      <div class="pin" style="left:0">停損 ${safeN(p.stop,2)}</div>
+      <div class="pin start" style="left:0">停損 ${safeN(p.stop,2)}</div>
       <div class="pin lo" style="left:${(p.entry_mark||0)*100}%">進場 ${safeN(p.entry,2)}</div>
-      <div class="pin" style="left:100%">TP1 ${safeN(p.tp1,2)}</div>
+      <div class="pin end" style="left:100%">TP1 ${safeN(p.tp1,2)}</div>
       <div class="now" style="left:${p.progress*100}%"></div></div>`;
   }
   const big=closed?`<div class="pos-r" style="color:${(p.pnl_pct||0)>=0?'var(--up)':'var(--down)'}">${rr(p.pnl_pct,1)}%</div>`:`<div class="pos-r" style="color:${rc}">${rr(rn,2)}<span style="font-size:15px">R</span></div>`;
@@ -1385,9 +1529,10 @@ async function runWalkForward(){
 // Render
 function renderAll(d){
   renderIndex(d.market_overview?.index||{});renderKPIs(d);
-  renderLatestSignals(d.active_signals||[]);renderSignals();renderMarketSummary(d.market_overview||{});
+  renderMast(d);renderLatestSignals(d.active_signals||[]);renderSignals();renderMarketSummary(d.market_overview||{});
   renderSidebar(d);document.getElementById('version').textContent='v'+(d.version||'1.0.0');
   updateFreshBadge(d.market_overview?.fetched_at);
+  const sh=(d.scan_history||[])[0];if(sh)setEl('scan-dur-side','上次掃描 '+(sh.scan_date||'')+'　耗時 '+(sh.duration_min!=null?Number(sh.duration_min).toFixed(1)+' 分':'—'));
 }
 
 // ★ 修正：2026-09-26（稽核發現）——原本這裡用同一個「是不是 fugle 或
@@ -1492,7 +1637,7 @@ function renderLatestSignals(sigs){
         <div class="sig-item"><label>TP1</label><span style="color:var(--up)">${safeN(s.tp1,2)}</span></div>
         <div class="sig-item"><label>張數</label><span>${safe(s.suggested_lots,1)}</span></div>
       </div>
-      ${chaseHtml(s)}
+      ${chaseHtml(s)}${fundChip(s)}
       <div class="sig-footer"><span>${safe(s.sector)}</span><span>風險 TWD ${(s.risk_twd||0).toLocaleString()}</span><span>RR 1:${safeN(s.rr1,1)}</span></div>
       <div class="sig-footer" style="margin-top:6px">${qnBadge(s.quality_check,'獲利品質')}${qnBadge(s.news_check,'重大訊息')}</div>
     </div>`).join('');
@@ -1527,7 +1672,7 @@ function renderSignals(){
         <div class="sig-item"><label style="color:var(--up)">TP1</label><span style="color:var(--up)">${safeN(s.tp1,2)}(+${safeN(s.tp1_pct,1)}%)</span></div>
         <div class="sig-item"><label style="color:var(--up)">TP2</label><span style="color:var(--up)">${safeN(s.tp2,2)}(+${safeN(s.tp2_pct,1)}%)</span></div>
       </div>
-      ${chaseHtml(s)}
+      ${chaseHtml(s)}${fundChip(s)}
       <div class="note-box" style="margin:10px 0">
         建議 <b style="color:var(--t1)">${safe(s.suggested_lots,1)} 張</b>
         　風險 <b style="color:var(--down)">TWD ${(s.risk_twd||0).toLocaleString()}(${safeN(s.risk_pct,1)}%)</b>
