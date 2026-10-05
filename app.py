@@ -473,6 +473,8 @@ def api_fundamentals_radar():
                 continue
             # 基期太小（去年同月 < 0.8 億）或年增超過 300%，多半是一次性認列（營建案交屋、
             # 處分資產），不是可持續的成長，成長類榜單排除，避免榜首被極端值洗版。
+            if "金融" in (r.get("sector_name") or ""):   # 金融保險業營收隨證券／投資損益波動，年增率不具可比性
+                continue
             base = r.get("revenue_ly")
             if kind in ("growth", "accel") and ((base is not None and base < 80000) or yoy > 300):
                 continue
