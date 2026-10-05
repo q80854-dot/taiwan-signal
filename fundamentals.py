@@ -24,13 +24,41 @@ HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 _cache: Dict = {}
 _CACHE_TTL_SEC = 3600 * 12  # 月營收一個月才更新一次，12小時已經很保守
 
+_TTL_OVERRIDE = {"material_news_risk_map": 900, "material_news_fetch_ok": 900, "all_news_rows": 600}  # 重大訊息 10~15 分鐘更新
+
 def _cache_get(key):
     e = _cache.get(key)
-    return e["data"] if e and time.time() - e["ts"] < _CACHE_TTL_SEC else None
+    ttl = _TTL_OVERRIDE.get(key, _CACHE_TTL_SEC)
+    return e["data"] if e and time.time() - e["ts"] < ttl else None
 
 def _cache_set(key, data):
     _cache[key] = {"data": data, "ts": time.time()}
     return data
+
+
+def _num(v):
+    try:
+        if v is None or str(v).strip() == "":
+            return None
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _rev_row(row: Dict, source: str) -> Dict:
+    """月營收單列：除了單月年增／月增，另外保留當月營收金額（千元）與累計年增，
+    供基本面評分判斷「這個月只是一次性衝高，還是整年都在成長」。"""
+    return {
+        "yoy_pct": _num(row.get("營業收入-去年同月增減(%)")),
+        "mom_pct": _num(row.get("營業收入-上月比較增減(%)")),
+        "cum_yoy_pct": _num(row.get("累計營業收入-前期比較增減(%)")),
+        "revenue": _num(row.get("營業收入-當月營收")),
+        "revenue_ly": _num(row.get("營業收入-去年當月營收")),
+        "cum_revenue": _num(row.get("累計營業收入-當月累計營收")),
+        "name": (row.get("公司名稱") or "").strip(),
+        "sector_name": (row.get("產業別") or "").strip(),
+        "period": row.get("資料年月", ""), "source": source,
+    }
 
 
 def _fetch_twse_monthly_revenue() -> Dict[str, Dict]:
@@ -47,18 +75,7 @@ def _fetch_twse_monthly_revenue() -> Dict[str, Dict]:
             code = (row.get("公司代號") or "").strip()
             if not code:
                 continue
-            try:
-                yoy = float(row.get("營業收入-去年同月增減(%)") or 0)
-            except (TypeError, ValueError):
-                yoy = None
-            try:
-                mom = float(row.get("營業收入-上月比較增減(%)") or 0)
-            except (TypeError, ValueError):
-                mom = None
-            result[code] = {
-                "yoy_pct": yoy, "mom_pct": mom,
-                "period": row.get("資料年月", ""), "source": "twse_openapi",
-            }
+            result[code] = _rev_row(row, "twse_openapi")
         logger.info(f"月營收（上市）：{len(result)} 檔")
         return result
     except Exception as e:
@@ -83,12 +100,7 @@ def _fetch_tpex_monthly_revenue() -> Dict[str, Dict]:
             code = (row.get("公司代號") or "").strip()
             if not code:
                 continue
-            try:
-                yoy = float(row.get("營業收入-去年同月增減(%)") or 0)
-            except (TypeError, ValueError):
-                yoy = None
-            result[code] = {"yoy_pct": yoy, "mom_pct": None,
-                             "period": row.get("資料年月", ""), "source": "tpex_openapi"}
+            result[code] = _rev_row(row, "tpex_openapi")
         return result
 
     try:
@@ -1038,6 +1050,31 @@ def _fetch_material_news_map() -> tuple:
     except Exception as e:
         logger.warning(f"_fetch_material_news_map: {e}")
         return {}, False
+
+
+def fetch_all_news_rows() -> List[Dict]:
+    """上市公司「全部」重大訊息（不只負面關鍵字），10 分鐘快取。
+    供「我的持股／觀察清單／有效訊號」的即時公告提醒使用。"""
+    if (c := _cache_get("all_news_rows")) is not None:
+        return c
+    rows = []
+    try:
+        r = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap04_L", headers=HEADERS, timeout=15)
+        if r.status_code == 200:
+            for row in r.json():
+                code = (row.get("公司代號") or "").strip()
+                subject = (row.get("主旨") or "").strip()
+                if not code or not subject:
+                    continue
+                rows.append({"code": code, "name": (row.get("公司名稱") or "").strip(),
+                             "date": row.get("發言日期", ""), "time": row.get("發言時間", ""),
+                             "subject": subject,
+                             "negative": any(kw in subject for kw in MATERIAL_NEWS_NEGATIVE_KEYWORDS)})
+        else:
+            logger.warning(f"fetch_all_news_rows: HTTP {r.status_code}")
+    except Exception as e:
+        logger.warning(f"fetch_all_news_rows: {e}")
+    return _cache_set("all_news_rows", rows)
 
 
 def fetch_material_news_risk_map() -> Dict[str, List[Dict]]:

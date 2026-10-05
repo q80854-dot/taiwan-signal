@@ -957,3 +957,33 @@ class StateStore:
 
 
 store = StateStore()
+
+
+def _rev_series(self, code: str, n: int = 8):
+    """某檔最近 n 期的月營收年增／月增（新到舊）。"""
+    try:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT period,yoy_pct,mom_pct FROM monthly_revenue_history WHERE ticker=? ORDER BY period DESC LIMIT ?",
+                (code, n)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning(f"get_revenue_series {code}: {e}")
+        return []
+
+try:
+    StateStore.get_revenue_series = _rev_series
+except NameError:
+    pass
+
+
+def _scan_hist(self, n: int = 5):
+    try:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT scan_date,scanned,signals_found,signals_sent,duration_min,errors FROM scan_history ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning(f"get_scan_history: {e}")
+        return []
+
+StateStore.get_scan_history = _scan_hist

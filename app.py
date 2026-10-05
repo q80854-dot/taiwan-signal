@@ -208,6 +208,7 @@ def setup_scheduler():
     # 掃描全市場找新訊號——為什麼不能在盤中重新掃描找新訊號，見 scanner.py
     # check_intraday_price_alerts() 開頭的說明。
     scheduler.add_job(job_intraday_check,   CronTrigger(hour="9-13", minute="0,30", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True)
+    scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
     # ★ 新增：2026-09-18——見 job_pre_scan_restart() 說明，在每日掃描前主動
     # 重啟一次 worker、重置記憶體基準，預防跟 2026-09-03/2026-09-18 同一種
@@ -396,6 +397,7 @@ def api_state():
             "system_status":  sys_stat,
             "sentiment_score":market.get("sentiment_score", 50),
             "sentiment_zh":   market.get("sentiment_zh", "中性"),
+            "scan_history":   store.get_scan_history(5),
             "material_news_count": news_count,
             "material_news_ok":    news_ok,
         })
@@ -444,6 +446,98 @@ def api_autopsy():
     return jsonify({"cases": cases, "tag_counts": agg, "stop_count": len(sl), "closed_count": len(closed),
                     "total_signals": len(rows),
                     "note": "樣本偏小時（已結案 < 20 筆）統計僅供參考，不宜據此過度調參。"})
+
+
+@app.route("/api/fundamentals/<code>")
+def api_fundamentals(code: str):
+    try:
+        from fund_score import build_fundamental_profile
+        return jsonify(build_fundamental_profile(code.split(".")[0]))
+    except Exception as e:
+        logger.error(f"api_fundamentals: {e}"); return jsonify({"error": str(e)}), 500
+
+@app.route("/api/fundamentals_radar")
+def api_fundamentals_radar():
+    """營收動能榜：不看 K 線，直接用月營收＋估值在全市場找基本面轉強的公司。"""
+    try:
+        from fundamentals import fetch_monthly_revenue_map, fetch_valuation_map
+        from fund_score import _growth, _valuation
+        from state_store import store
+        kind = request.args.get("kind", "growth")
+        rev = fetch_monthly_revenue_map(); val = fetch_valuation_map()
+        sig_codes = {r.get("code") for r in store.get_recent_signals(limit=60, days_back=7)}
+        rows = []
+        for code, r in rev.items():
+            yoy, cum, mom, amt = r.get("yoy_pct"), r.get("cum_yoy_pct"), r.get("mom_pct"), r.get("revenue")
+            if yoy is None or amt is None or amt < 100000:   # 單月營收 < 1 億（千元為單位）不列入
+                continue
+            v = val.get(code) or {}
+            pe, y = v.get("pe"), v.get("yield_pct")
+            try: pe = float(pe) if pe not in (None, "", "-") else None
+            except Exception: pe = None
+            try: y = float(y) if y not in (None, "", "-") else None
+            except Exception: y = None
+            ok = False
+            if kind == "growth":  ok = yoy >= 20 and (cum is None or cum >= 10)
+            elif kind == "accel": ok = yoy >= 15 and cum is not None and (yoy - cum) >= 8 and (mom is None or mom > 0)
+            elif kind == "value": ok = yoy > 0 and pe is not None and 0 < pe <= 15 and (y or 0) >= 4
+            if not ok: continue
+            g = _growth(r, []); vv = _valuation(v)
+            lite = round((g["got"] + (vv["got"] if vv else 0)) / (g["max"] + (vv["max"] if vv else 0)) * 100) if g else None
+            rows.append({"code": code, "name": r.get("name"), "sector": r.get("sector_name"), "period": r.get("period"),
+                         "revenue_yi": round(amt / 100000, 1), "yoy": yoy, "mom": mom, "cum_yoy": cum,
+                         "pe": pe, "yield": y, "score": lite, "has_signal": code in sig_codes})
+        key = {"growth": "yoy", "accel": "yoy", "value": "yield"}.get(kind, "yoy")
+        rows.sort(key=lambda x: (x.get(key) or 0), reverse=True)
+        return jsonify({"kind": kind, "count": len(rows), "rows": rows[:60]})
+    except Exception as e:
+        logger.error(f"api_fundamentals_radar: {e}"); return jsonify({"error": str(e)}), 500
+
+@app.route("/api/news/watch")
+def api_news_watch():
+    """我的持倉／觀察清單／今日訊號相關的最新公告（含非負面）。"""
+    try:
+        from fundamentals import fetch_all_news_rows
+        codes = _watched_codes()
+        rows = [r for r in fetch_all_news_rows() if r["code"] in codes]
+        rows.sort(key=lambda r: (r.get("date", ""), r.get("time", "")), reverse=True)
+        return jsonify({"codes": sorted(codes), "news": rows[:40]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def _watched_codes():
+    from state_store import store
+    codes = {w.get("code") or (w.get("ticker") or "").split(".")[0] for w in store.watchlist_get()}
+    for r in store.get_recent_signals(limit=60, days_back=10):
+        if r.get("result") == "pending" and r.get("status") == "active":
+            codes.add(r.get("code"))
+    return {c for c in codes if c}
+
+def job_news_watch():
+    """每 15 分鐘巡一次重大訊息：持倉／觀察清單／有效訊號的公司有新公告就推播並記進通知中心。"""
+    try:
+        from fundamentals import fetch_all_news_rows, _cache
+        from state_store import store
+        _cache.pop("all_news_rows", None)
+        codes = _watched_codes()
+        if not codes: return
+        seen = set(store.get_meta("news_seen", []) or [])
+        fresh = [r for r in fetch_all_news_rows() if r["code"] in codes and f"{r['code']}|{r['date']}|{r['time']}|{r['subject'][:30]}" not in seen]
+        for r in fresh[:6]:
+            key = f"{r['code']}|{r['date']}|{r['time']}|{r['subject'][:30]}"
+            seen.add(key)
+            tag = "⚠️ 風險公告" if r["negative"] else "重大訊息"
+            store.add_event("news", f"{r['name']}（{r['code']}）{tag}", r["subject"][:120], r["code"] + ".TW")
+            try:
+                from telegram_bot import send_alert
+                send_alert(f"{r['name']}（{r['code']}）{tag}\n{r['subject'][:160]}", "warning" if r["negative"] else "info")
+            except Exception as e:
+                logger.warning(f"job_news_watch TG: {e}")
+        if fresh:
+            store.set_meta("news_seen", list(seen)[-400:])
+            logger.info(f"job_news_watch: {len(fresh)} 則新公告")
+    except Exception as e:
+        logger.error(f"job_news_watch: {e}", exc_info=True)
 
 @app.route("/api/material_news")
 def api_material_news():
@@ -625,6 +719,11 @@ def api_instrument(ticker: str):
         out["profitability_quality"] = get_profitability_quality(code)
         out["valuation"] = fetch_valuation_map().get(code)
         out["monthly_revenue"] = fetch_monthly_revenue_map().get(code)
+        try:
+            from fund_score import build_fundamental_profile
+            out["fundamental_profile"] = build_fundamental_profile(code)
+        except Exception as _e:
+            out["fundamental_profile"] = {"error": str(_e)}
     except Exception as e:
         out["fundamentals_error"] = str(e)
     try:

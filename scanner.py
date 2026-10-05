@@ -259,7 +259,7 @@ class TWScanEngine:
         # _scan_single_with_timeout 內部的獨立逾時保護（25秒不回應就放棄），
         # 所以就算某一檔真的卡住，也不會拖住整批、更不會拖住整個 process
         # （跟先前修的全站凍結是同一個保護機制，這裡只是把它包進並行工作）。
-        _SCAN_CONCURRENCY = 4
+        _SCAN_CONCURRENCY = 6
         for batch_idx, batch in enumerate(batches):
             logger.info(f"批次 {batch_idx+1}/{len(batches)}（{len(batch)} 檔，同時 {_SCAN_CONCURRENCY} 檔）")
             with concurrent.futures.ThreadPoolExecutor(max_workers=_SCAN_CONCURRENCY) as pool:
@@ -668,6 +668,17 @@ class TWScanEngine:
     def _scan_single(self, ticker, market_overview, fetch_tf, fetch_inst, gen_signal, get_info) -> Optional[Dict]:
         stock_info = get_info(ticker)
         if not stock_info: return None
+        # ★ 掃描加速（無損）：先只抓日線做預判。週線只會「扣分或確認」、小時線最多
+        # 只「加 10 分」，所以日線單獨算出 direction=none，最終一定是 none；
+        # 日線分數 +10 仍低於門檻，也一定過不了。這兩種直接跳過週線／小時線請求，
+        # 約 7～8 成標的因此少 2 次對外請求，結果與完整流程完全一致。
+        from data_fetcher import fetch_ohlcv
+        from signal_engine import check_multi_timeframe_tw
+        daily = fetch_ohlcv(ticker, "daily")
+        if not daily: return None
+        pre = check_multi_timeframe_tw({"daily": daily})
+        if pre.get("direction") == "none" or pre.get("score", 0) + 10 < THRESH["min_score"]:
+            return None
         tf_data = fetch_tf(ticker)
         if not tf_data: return None
         code = stock_info.get("code", ticker.replace(".TW","").replace(".TWO",""))
@@ -980,6 +991,39 @@ class TWScanEngine:
                 logger.info(f"_filter_and_rank: 獲利品質/重大訊息評分調整後，{before - len(signals)} 檔跌破門檻被排除，剩 {len(signals)} 檔")
         except Exception as e:
             logger.warning(f"_filter_and_rank: 獲利品質/重大訊息評分調整失敗（不影響本次掃描，本次跳過）: {e}")
+
+        # ★ 新增：2026-10-05——基本面評分（月營收單月/累計/加速度＋獲利品質趨勢＋估值）。
+        # 使用者要求策略不能只靠 K 線：技術面決定「何時」，基本面決定「值不值得」。
+        # 做多訊號依基本面分數加減分（強 +5～弱 -12），太差的自然跌破門檻被排除；
+        # 資料涵蓋不足（<40%）時不調分，並在訊號上標示 fund_grade=None。
+        try:
+            from fund_score import build_fundamental_profile, fund_adjustment
+            from fund_score import _persist_current_period
+            from fundamentals import fetch_monthly_revenue_map as _frm
+            _persist_current_period(_frm())
+            before = len(signals)
+            for sig in signals:
+                prof = build_fundamental_profile(sig.get("code", ""))
+                adj = fund_adjustment(prof, sig["direction"])
+                sig["fund_score"] = prof.get("score")
+                sig["fund_grade"] = prof.get("grade")
+                sig["fund_coverage"] = prof.get("coverage")
+                sig["fund_tags"] = prof.get("tags", [])[:5]
+                sig["fund_adj"] = adj
+                if adj:
+                    sig["score"] = max(0, min(100, sig["score"] + adj))
+                if prof.get("score") is not None:
+                    sig["reason_full"] = sig.get("reason_full", "") + (
+                        f"\n【基本面】{prof['grade']}（{prof['score']}分，涵蓋{prof['coverage']}%）"
+                        + ("：" + "；".join(prof["tags"][:4]) if prof.get("tags") else "")
+                        + (f"｜評分{adj:+d}" if adj else ""))
+                else:
+                    sig["reason_full"] = sig.get("reason_full", "") + "\n【基本面】資料不足，本檔未納入基本面評分"
+            signals = [s for s in signals if s["score"] >= THRESH["min_score"]]
+            if len(signals) != before:
+                logger.info(f"_filter_and_rank: 基本面評分調整後，{before - len(signals)} 檔跌破門檻被排除，剩 {len(signals)} 檔")
+        except Exception as e:
+            logger.warning(f"_filter_and_rank: 基本面評分失敗（不影響本次掃描，本次跳過）: {e}")
 
         # 同產業去重（只留最高分）
         # ★ 修正：2026-08-30——今天稽核程式碼時抓到一個還沒真的發生過、但影響非常大的
