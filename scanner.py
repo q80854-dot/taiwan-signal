@@ -260,6 +260,9 @@ class TWScanEngine:
         # 所以就算某一檔真的卡住，也不會拖住整批、更不會拖住整個 process
         # （跟先前修的全站凍結是同一個保護機制，這裡只是把它包進並行工作）。
         _SCAN_CONCURRENCY = 6
+        with self._pre_lock:
+            self._pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0,
+                         "recon_checked": 0, "recon_fixed": 0, "recon_samples": []}
         for batch_idx, batch in enumerate(batches):
             logger.info(f"批次 {batch_idx+1}/{len(batches)}（{len(batch)} 檔，同時 {_SCAN_CONCURRENCY} 檔）")
             with concurrent.futures.ThreadPoolExecutor(max_workers=_SCAN_CONCURRENCY) as pool:
@@ -393,6 +396,19 @@ class TWScanEngine:
             "duration_sec":  round(time.time() - start_time, 1),
         }
         store.save_scan_history(stats)
+        try:
+            pre = dict(self._pre)
+            tot = pre["skipped"] + pre["passed"]
+            store.set_meta("last_scan_audit", {
+                "date": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M"),
+                "universe": total_tickers, "examined": tot, "skipped": pre["skipped"], "passed": pre["passed"],
+                "skip_rate": round(pre["skipped"] / tot * 100, 1) if tot else None,
+                "audited": pre["audited"], "mismatch": pre["mismatch"],
+                "recon_checked": pre["recon_checked"], "recon_fixed": pre["recon_fixed"],
+                "recon_samples": pre["recon_samples"], "duration_sec": stats["duration_sec"],
+            })
+        except Exception as e:
+            logger.warning(f"寫入掃描稽核失敗: {e}")
 
         # 5. 推播
         logger.info("Step 5/5: 推播訊號...")
@@ -635,6 +651,9 @@ class TWScanEngine:
                 logger.warning(f"check_intraday_price_alerts: 盤中現況總覽推播失敗: {e}")
 
     _SCAN_SINGLE_TIMEOUT_SEC = 25
+    _pre_lock = threading.Lock()
+    _pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0, "recon_checked": 0, "recon_fixed": 0, "recon_samples": []}
+    _PRE_AUDIT_RATE = 0.05   # 被日線預判跳過的股票，隨機抽 5% 仍跑完整流程自我驗證
     _MARKET_OVERVIEW_TIMEOUT_SEC = 45
 
     @staticmethod
@@ -665,22 +684,71 @@ class TWScanEngine:
             ticker, market_overview, fetch_tf, fetch_inst, gen_signal, get_info,
         )
 
+    def _reconcile_last_bar(self, ticker, stock_info, daily):
+        """最新一根日K的收盤價，和證交所／櫃買中心官方收盤資料（股票池來源）逐檔核對。
+        只在「兩邊是同一個交易日」時比對；差異超過 0.3% 以官方收盤價為準（進出場價位以官方為準），
+        並記錄筆數與樣本。成交量不覆寫：Yahoo 的量與官方有系統性差異，但歷史均量也是同一來源，
+        只換最後一根會讓量比失真，差異改在「資料稽核」頁揭露。"""
+        try:
+            qd = stock_info.get("quote_date")
+            oc = stock_info.get("close")
+            dates = daily.get("dates") or []
+            if not (qd and oc and dates and dates[-1] == qd):
+                return daily
+            with self._pre_lock:
+                self._pre["recon_checked"] += 1
+            cur = daily["closes"][-1]
+            if oc > 0 and abs(cur - oc) / oc > 0.003:
+                d2 = dict(daily)
+                d2["closes"] = list(daily["closes"]); d2["closes"][-1] = oc
+                d2["current_price"] = oc
+                prev = d2["closes"][-2] if len(d2["closes"]) > 1 else oc
+                d2["change_pct"] = round((oc - prev) / prev * 100, 2) if prev else 0
+                with self._pre_lock:
+                    self._pre["recon_fixed"] += 1
+                    if len(self._pre["recon_samples"]) < 8:
+                        self._pre["recon_samples"].append({"ticker": ticker, "yahoo": cur, "official": oc, "date": qd})
+                logger.warning(f"[RECON] {ticker} {qd} Yahoo收盤 {cur} ≠ 官方 {oc}，改用官方")
+                return d2
+        except Exception as e:
+            logger.warning(f"_reconcile_last_bar {ticker}: {e}")
+        return daily
+
     def _scan_single(self, ticker, market_overview, fetch_tf, fetch_inst, gen_signal, get_info) -> Optional[Dict]:
         stock_info = get_info(ticker)
         if not stock_info: return None
-        # ★ 掃描加速（無損）：先只抓日線做預判。週線只會「扣分或確認」、小時線最多
-        # 只「加 10 分」，所以日線單獨算出 direction=none，最終一定是 none；
-        # 日線分數 +10 仍低於門檻，也一定過不了。這兩種直接跳過週線／小時線請求，
-        # 約 7～8 成標的因此少 2 次對外請求，結果與完整流程完全一致。
+        # ★ 掃描加速（無損，且持續自我驗證）：先只抓日線做預判。週線只會「扣分或確認」、
+        # 小時線最多只「加 10 分」，所以日線單獨算出 direction=none，最終一定是 none；
+        # 日線分數 +10 仍低於門檻，也一定過不了。符合這兩種的股票不再重複抓週線／小時線。
+        # 為了不讓這個推論只靠「我說它無損」，每次掃描都對被跳過的股票隨機抽 5% 仍跑完整流程，
+        # 若抽驗到任何一檔其實會成為訊號，記為 mismatch 並在日誌與網頁「資料稽核」頁顯示。
         from data_fetcher import fetch_ohlcv
         from signal_engine import check_multi_timeframe_tw
+        import random
         daily = fetch_ohlcv(ticker, "daily")
         if not daily: return None
+        daily = self._reconcile_last_bar(ticker, stock_info, daily)
         pre = check_multi_timeframe_tw({"daily": daily})
         if pre.get("direction") == "none" or pre.get("score", 0) + 10 < THRESH["min_score"]:
+            with self._pre_lock:
+                self._pre["skipped"] += 1
+            if random.random() < self._PRE_AUDIT_RATE:
+                full_tf = fetch_tf(ticker)
+                if full_tf:
+                    full_tf["daily"] = daily
+                    code_ = stock_info.get("code", ticker.replace(".TW","").replace(".TWO",""))
+                    sig_ = gen_signal(ticker, stock_info, full_tf, market_overview, fetch_inst(code_))
+                    with self._pre_lock:
+                        self._pre["audited"] += 1
+                        if sig_:
+                            self._pre["mismatch"] += 1
+                            logger.error(f"[PREFILTER-AUDIT] {ticker} 被日線預判跳過，但完整流程會產生訊號！")
             return None
+        with self._pre_lock:
+            self._pre["passed"] += 1
         tf_data = fetch_tf(ticker)
         if not tf_data: return None
+        tf_data["daily"] = daily
         code = stock_info.get("code", ticker.replace(".TW","").replace(".TWO",""))
         inst_data = fetch_inst(code)
         return gen_signal(ticker, stock_info, tf_data, market_overview, inst_data)

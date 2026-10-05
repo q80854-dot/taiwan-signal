@@ -667,7 +667,23 @@ def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
                 # start 用「快取最後一天」當天（含）重抓，蓋掉可能因為盤中提早
                 # 抓取而不是定案收盤價/收盤K棒的那部分，其餘全部沿用快取，
                 # 不用重抓整段歷史。
-                h = yf.Ticker(ticker).history(start=last_date_only, interval=tf["interval"], auto_adjust=True)
+                _st = (datetime.strptime(last_date_only, "%Y-%m-%d") - timedelta(days=7 if tf_key != "weekly" else 21)).strftime("%Y-%m-%d")
+                h = yf.Ticker(ticker).history(start=_st, interval=tf["interval"], auto_adjust=True)
+                # ★ 新增：還原價漂移防護——auto_adjust=True 的歷史價會在除權息日整段被重新調整，
+                # 增量更新只覆蓋最後一天，舊快取就會與新資料差一個固定比例（K線出現假跳空，
+                # 影響均線／ATR／停損）。以重疊的那一根為準：若新抓與快取同日收盤差>0.3%，整段重抓。
+                try:
+                    if h is not None and not h.empty:
+                        ov = store.get_cached_ohlcv_bars(ticker, tf_key, limit=2)
+                        if len(ov) >= 2:  # 用「倒數第二根」(已定案) 比對，避免盤中未收盤的末棒誤判
+                            nb = {b["date"]: b for b in _yf_rows_to_bars(h, tf_key)}
+                            cb = ov[0]
+                            k = cb.get("bar_date")
+                            if k in nb and cb["close"] > 0 and abs(nb[k]["close"] / cb["close"] - 1) > 0.003:
+                                logger.warning(f"{ticker}/{tf_key} 還原價漂移 {cb['close']}→{nb[k]['close']}，整段重抓")
+                                h = yf.Ticker(ticker).history(period=tf["period"], interval=tf["interval"], auto_adjust=True)
+                except Exception as _e:
+                    logger.warning(f"{ticker} 漂移檢查失敗: {_e}")
             if h is not None and not h.empty:
                 new_bars = _yf_rows_to_bars(h, tf_key)
                 if new_bars:

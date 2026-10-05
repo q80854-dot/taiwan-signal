@@ -398,11 +398,21 @@ def api_state():
             "sentiment_score":market.get("sentiment_score", 50),
             "sentiment_zh":   market.get("sentiment_zh", "中性"),
             "scan_history":   store.get_scan_history(5),
+            "scan_audit":     store.get_meta("last_scan_audit"),
             "material_news_count": news_count,
             "material_news_ok":    news_ok,
         })
     except Exception as e:
         logger.error(f"api_state: {e}"); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/audit")
+def api_audit():
+    try:
+        import audit
+        return jsonify(audit.get_audit(refresh=request.args.get("refresh") == "1"))
+    except Exception as e:
+        logger.error(f"api_audit: {e}"); return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/events")

@@ -150,7 +150,14 @@ def calc_adx(highs,lows,closes,period=None):
         dsum=pdi+ndi; dx_list.append(100*abs(pdi-ndi)/dsum if dsum!=0 else 0)
     if len(dx_list)<period:
         return {"valid":False,"reason":"DX不足","value":0,"trend":"無趨勢","strong":False,"bias":"neutral","pdi":0,"ndi":0,"score":-1}
-    adx_val=round(sum(dx_list[-period:])/period,2)
+    # ★ 修正：2026-10-05——原本 ADX 直接取最後 14 個 DX 的「簡單平均」，不是 Wilder 定義
+    # （第一個 ADX＝前 14 個 DX 的平均，之後 ADX=(前ADX×13+當期DX)/14 遞迴平滑）。
+    # 數值會和看盤軟體（TradingView／券商 App）對不上，使用者拿來比對時會看到差異。
+    # 改成標準 Wilder 平滑，DI 與 DX 公式本來就是標準的，維持不變。
+    adx_val=sum(dx_list[:period])/period
+    for dx in dx_list[period:]:
+        adx_val=(adx_val*(period-1)+dx)/period
+    adx_val=round(adx_val,2)
     pdi_val=round(pdi_list[-1],2) if pdi_list else 0
     ndi_val=round(ndi_list[-1],2) if ndi_list else 0
     if adx_val>=35:   trend,score="強趨勢",2
