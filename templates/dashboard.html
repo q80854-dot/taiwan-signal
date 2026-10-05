@@ -427,6 +427,7 @@ html.force-mobile .content{overflow-x:hidden}
   <div class="nav"     onclick="go('perf')">績效分析</div>
   <div class="nav-g">研究</div>
   <div class="nav"     onclick="go('radar')">基本面雷達</div>
+  <div class="nav"     onclick="go('learning')">策略學習</div>
   <div class="nav"     onclick="go('audit')">資料稽核</div>
   <div class="nav"     onclick="go('instrument')">個股研究</div>
   <div class="nav"     onclick="go('marketoverview')">市場總覽</div>
@@ -625,6 +626,21 @@ html.force-mobile .content{overflow-x:hidden}
     <div id="hl-body"></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">目前生效的策略與風控設定（唯讀）</div></div>
     <div id="st-body"><div class="empty">載入中…</div></div>
+    </div>
+  </div>
+
+  <!-- Learning -->
+  <div class="page" id="page-learning">
+    <div class="pad">
+    <div class="note-box" style="margin-bottom:14px"><b>系統怎麼學習：</b>每次盤後掃描，把<b>所有通過門檻的候選</b>（不只發出去的）連同當時的技術、基本面、大盤特徵存起來，再用和實盤<b>完全相同的停損停利規則</b>追蹤結果；另外隨機抽一批「沒有訊號」的股票當對照組。累積足夠樣本後，這裡會用統計檢定列出哪些條件真的有效、哪些無效。樣本不足的分組只顯示、不下結論。</div>
+    <div class="hero-row" id="lr-progress"></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">訊號有沒有比隨便買好？</div></div>
+    <div class="panel card"><div class="panel-body" id="lr-edge"></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>組別</th><th>已結算</th><th>勝率</th><th>停損率</th><th>逾期</th><th>平均 R</th><th>10 日後平均 R</th><th>平均最大浮盈 R</th></tr></thead><tbody id="lr-groups"></tbody></table></div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">統計上站得住腳的發現</div></div>
+    <div class="panel card"><div class="panel-body" id="lr-find"></div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">各條件分組表現（已結算候選）</div></div>
+    <div id="lr-dims"></div>
+    <div class="note-box">名詞：<b>R</b>＝以「進場到停損的距離」為 1 單位的損益（+1.5R 代表賺到 1.5 倍停損距離）。勝＝觸及任一停利；敗＝停損；逾期＝超過有效天數未到價。對照組不含支撐壓力調整，停損略寬鬆於正式訊號。</div>
     </div>
   </div>
 
@@ -830,7 +846,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
+const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 function go(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
@@ -847,6 +863,7 @@ function go(id){
   if(id==='radar'&&!_radarLoaded)fetchRadar('growth');
   if(id==='audit')fetchAudit();
   if(id==='health')fetchHealth();
+  if(id==='learning')fetchLearning();
   if(id==='positions')fetchPositions();
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
@@ -1423,6 +1440,20 @@ async function qcRun(key){
       <div style="padding:2px 14px">${d.checks.map(chkRow).join('')}</div>
       <div style="font-size:10.5px;color:var(--t3);padding:8px 14px 14px">${d.note}　${d.generated_at}</div>`;
   }catch(e){bx.innerHTML='<div class="empty" style="padding:30px">質檢失敗：'+e.message+'</div>';}
+}
+
+async function fetchLearning(){
+  try{
+    const d=await(await fetch('/api/learning',{cache:'no-store'})).json();
+    if(d.error)throw new Error(d.error);
+    const p=d.progress;
+    setHtml('lr-progress',[['累積天數',p.days,p.first?`${p.first} 起`:'尚未開始'],['候選紀錄',p.candidates,'含沒發出的'],['對照組',p.controls,'隨機抽樣'],['已結算',p.closed_candidates,`對照 ${p.closed_controls}`],['追蹤中',p.pending,'尚未到價']].map(([a,b,c],i)=>`<div class="kpi"${i?'':' style="border-left:none"'}><div class="kpi-label">${a}</div><div class="kpi-val">${b}</div><div class="kpi-sub">${c}</div></div>`).join(''));
+    setHtml('lr-edge',`<div style="font-size:13.5px;line-height:1.8">${d.edge.text}</div>`);
+    const f=(v,u='')=>v===null||v===undefined?'—':v+u;
+    setHtml('lr-groups',Object.entries(d.groups).map(([k,g])=>g.n?`<tr><td><b style="color:var(--t1)">${k}</b></td><td>${g.n}</td><td>${f(g.win_rate,'%')}</td><td>${f(g.stop_rate,'%')}</td><td>${g.expired}</td><td>${f(g.avg_r)}</td><td>${f(g.avg_r10)}${g.n_r10?`<small style="color:var(--t3)"> (n=${g.n_r10})</small>`:''}</td><td>${f(g.mfe)}</td></tr>`:`<tr><td><b style="color:var(--t1)">${k}</b></td><td colspan="7" style="color:var(--t3)">尚無已結算樣本</td></tr>`).join(''));
+    setHtml('lr-find',d.findings.length?d.findings.map(x=>`<div class="chk"><span class="chk-i" style="color:${x.z>0?'var(--up)':'var(--down)'};border-color:currentColor">${x.z>0?'↑':'↓'}</span><div class="chk-b"><b>${x.dim}：${x.label}</b><span>勝率 ${x.win_rate}%　平均 R ${x.avg_r}　n=${x.n}　z=${x.z}</span></div></div>`).join('')+'<div style="font-size:11px;color:var(--t3);margin-top:8px">統計顯著不代表因果，且多重比較下偶然達標的機率不低；需在後續新樣本再次驗證才可調整策略。</div>':`<div class="empty">還沒有任何分組達到「樣本 ≥ ${p.min_n} 且統計顯著」的標準——這是正常的，系統每天都在累積。請勿在此之前憑少數幾筆結果調整策略。</div>`);
+    setHtml('lr-dims',d.dimensions.length?d.dimensions.map(dm=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>${dm.name}</span></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>分組</th><th>n</th><th>勝率</th><th>停損率</th><th>平均 R</th><th></th></tr></thead><tbody>${dm.items.map(i=>`<tr style="${i.enough?'':'opacity:.55'}"><td><b style="color:var(--t1)">${i.label}</b></td><td>${i.n}</td><td><div style="display:flex;align-items:center;gap:6px;min-width:90px"><div style="flex:1;height:6px;background:var(--line2)"><i style="display:block;height:100%;width:${Math.min(100,i.win_rate)}%;background:var(--t1)"></i></div>${i.win_rate}%</div></td><td>${i.stop_rate}%</td><td>${f(i.avg_r)}</td><td style="white-space:nowrap;font-size:11px;color:var(--t3)">${i.enough?(Math.abs(i.z)>=1.96?(i.z>0?'顯著較佳':'顯著較差'):''):'樣本不足'}</td></tr>`).join('')}</tbody></table></div></div>`).join(''):'<div class="panel card"><div class="panel-body"><div class="empty">已結算樣本還不夠分組。第一批候選要等到停損或停利觸及後才會出現，通常需要數個交易日。</div></div></div>');
+  }catch(e){setHtml('lr-find','<div class="empty">載入失敗：'+e.message+'</div>');}
 }
 async function fetchNewsWatch(){
   const el=document.getElementById('news-watch');if(!el)return;
