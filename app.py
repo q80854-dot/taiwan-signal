@@ -406,6 +406,15 @@ def api_state():
         logger.error(f"api_state: {e}"); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning")
+def api_learning():
+    try:
+        import learning
+        return jsonify(learning.build_report())
+    except Exception as e:
+        logger.error(f"api_learning: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/health")
 def api_health():
     try:

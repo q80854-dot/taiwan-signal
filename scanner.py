@@ -231,14 +231,13 @@ class TWScanEngine:
 
         # 2. 品種清單
         logger.info("Step 2/5: 建立掃描清單...")
+        # ★ 2026-10-05：風控熔斷時仍照常掃描，但只做「影子追蹤」(shadow.py) 累積學習資料，
+        # 不產生、不推播任何實際訊號（見掃描後 all_signals 被清空）。
+        batches       = get_scan_batches(batch_size=SYSTEM["scan_batch_size"])
+        total_tickers = sum(len(b) for b in batches)
         if skip_new_signals:
-            batches       = []
-            total_tickers = 0
-            logger.warning("風控熔斷中，本次跳過批次掃描（Step 2/3）")
-        else:
-            batches       = get_scan_batches(batch_size=SYSTEM["scan_batch_size"])
-            total_tickers = sum(len(b) for b in batches)
-            logger.info(f"共 {total_tickers} 檔，分 {len(batches)} 批")
+            logger.warning("風控熔斷中：本次只做影子追蹤（記錄候選與對照組），不產生實際訊號")
+        logger.info(f"共 {total_tickers} 檔，分 {len(batches)} 批")
 
         # 3. 批次掃描
         logger.info("Step 3/5: 開始批次掃描...")
@@ -261,6 +260,7 @@ class TWScanEngine:
         # （跟先前修的全站凍結是同一個保護機制，這裡只是把它包進並行工作）。
         _SCAN_CONCURRENCY = 6
         with self._pre_lock:
+            self._ctrl = []
             self._pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0,
                          "recon_checked": 0, "recon_fixed": 0, "recon_samples": []}
         for batch_idx, batch in enumerate(batches):
@@ -292,6 +292,16 @@ class TWScanEngine:
             # yfinance/pandas 呼叫產生的暫時物件，降低 512MB 方案上長時間
             # 掃描（30+ 分鐘、1000+ 檔）累積的記憶體壓力。
             gc.collect()
+
+        # 影子追蹤：記錄所有候選與對照組（學習資料），再決定是否真的往下產生實際訊號
+        try:
+            import shadow
+            shadow.capture_candidates(all_signals, market_overview)
+            shadow.flush_controls(list(self._ctrl))
+        except Exception as e:
+            logger.warning(f"影子追蹤記錄失敗（不影響掃描）: {e}")
+        if skip_new_signals:
+            all_signals = []
 
         # 4. 過濾排序
         logger.info("Step 4/5: 過濾與排序...")
@@ -363,6 +373,11 @@ class TWScanEngine:
                 f"本次只取分數最高的 {len(final_signals)} 檔，其餘留到下次未平倉數降低後再掃"
             )
 
+        try:
+            import shadow
+            shadow.mark_sent([x.get("ticker") for x in final_signals])
+        except Exception as e:
+            logger.warning(f"shadow.mark_sent: {e}")
         self.signals_today = final_signals
         self.scan_count   += 1
         self.last_scan_at  = datetime.now(timezone.utc).isoformat()
@@ -413,6 +428,12 @@ class TWScanEngine:
         # 5. 推播
         logger.info("Step 5/5: 推播訊號...")
         self._push_signals(final_signals, market_overview, stats)
+
+        try:
+            import shadow
+            shadow.resolve_pending()
+        except Exception as e:
+            logger.warning(f"影子追蹤結算失敗（不影響掃描）: {e}")
 
         logger.info(
             f"═══ 掃描完成 ═══\n"
@@ -653,6 +674,7 @@ class TWScanEngine:
     _SCAN_SINGLE_TIMEOUT_SEC = 25
     _pre_lock = threading.Lock()
     _pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0, "recon_checked": 0, "recon_fixed": 0, "recon_samples": []}
+    _ctrl = []
     _PRE_AUDIT_RATE = 0.05   # 被日線預判跳過的股票，隨機抽 5% 仍跑完整流程自我驗證
     _MARKET_OVERVIEW_TIMEOUT_SEC = 45
 
@@ -732,6 +754,11 @@ class TWScanEngine:
         if pre.get("direction") == "none" or pre.get("score", 0) + 10 < THRESH["min_score"]:
             with self._pre_lock:
                 self._pre["skipped"] += 1
+            try:
+                import shadow
+                shadow.maybe_control(ticker, stock_info, daily, pre, market_overview, self._ctrl, self._pre_lock)
+            except Exception:
+                pass
             if random.random() < self._PRE_AUDIT_RATE:
                 full_tf = fetch_tf(ticker)
                 if full_tf:
