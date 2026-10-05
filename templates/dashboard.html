@@ -632,12 +632,6 @@ html.force-mobile .content{overflow-x:hidden}
   <!-- Learning（需登入） -->
   <div class="page" id="page-learning">
     <div class="pad">
-    <div id="ad-gate" style="display:none">
-      <div class="panel card" style="max-width:420px;margin:30px auto">
-        <div class="panel-head"><span>策略學習後台・需要登入</span></div>
-        <div class="panel-body" id="ad-gate-body"></div>
-      </div>
-    </div>
     <div id="ad-main" style="display:none">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <div style="font-size:11px;color:var(--t3)" id="ad-stamp"></div>
@@ -882,7 +876,10 @@ setInterval(updateClock,1000);updateClock();
 const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 function go(id){
-  if(typeof adAuthed!=='undefined'&&adAuthed&&id!=='learning')adLogoutQuiet();
+  {const P=['learning','health','audit','diag'],prev=window._curPage;
+   if(typeof adAuthed!=='undefined'&&adAuthed&&(!P.includes(id)||(id==='learning'&&prev!=='learning')))adLogoutQuiet();
+   window._curPage=id;
+   if(!P.includes(id)){const g=document.getElementById('ad-gate');if(g)g.style.display='none';}}
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.nav').forEach(n=>n.classList.remove('on'));
   const pg=document.getElementById('page-'+id);if(pg)pg.classList.add('on');
@@ -1425,9 +1422,11 @@ async function fetchRadar(kind,btn){
 let _auditTimer=null;
 async function fetchAudit(refresh){
   clearTimeout(_auditTimer);
+  if(!await adGuard(()=>fetchAudit(refresh)))return;
   const tb=document.getElementById('audit-tbody');
   try{
     const [d,st]=await Promise.all([fetch('/api/audit'+(refresh?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()),fetch('/api/state',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))]);
+    if(d.auth===false){adLock('登入已逾時，請重新登入。');return;}
     if(d.error)throw new Error(d.error);
     const a=st.scan_audit;
     setHtml('audit-scan',a?`<div class="kv"><span>掃描日期</span><span>${safe(a.date)}　耗時 ${a.duration_sec}s</span></div>
@@ -1449,16 +1448,17 @@ async function fetchAudit(refresh){
 const STI={ok:['✓','var(--t1)'],warn:['!','var(--warn)'],fail:['✕','var(--alert)'],info:['i','var(--t3)']};
 function chkRow(i){const m=STI[i.status]||STI.info;return `<div class="chk"><span class="chk-i" style="color:${m[1]};border-color:${m[1]}">${m[0]}</span><div class="chk-b"><b>${i.name}</b><span>${i.detail}</span></div></div>`;}
 async function fetchHealth(manual){
+  if(!await adGuard(()=>fetchHealth(manual)))return;
   const b=document.getElementById('hl-btn');if(manual&&b){b.disabled=true;b.textContent='檢查中…';}
   setHtml('hl-sum','<div class="empty">正在逐項檢查資料來源、排程、推播與策略狀態…</div>');
   try{
-    const [h,st]=await Promise.all([fetch('/api/health',{cache:'no-store'}).then(r=>r.json()),fetch('/api/settings',{cache:'no-store'}).then(r=>r.json())]);
+    const [h,st]=await Promise.all([fetch('/api/health',{cache:'no-store'}).then(r=>{if(r.status===401)throw new Error('401');return r.json();}),fetch('/api/settings',{cache:'no-store'}).then(r=>r.json())]);
     if(h.error)throw new Error(h.error);
     const V={ok:['全部正常','var(--t1)'],warn:['有需要留意的項目','var(--warn)'],fail:['有項目異常','var(--alert)']}[h.verdict];
     setHtml('hl-sum',`<div style="font-family:var(--serif,'Noto Serif TC',serif);font-size:20px;font-weight:700;color:${V[1]}">${V[0]}</div><div style="font-size:12px;color:var(--t3);margin-top:4px">正常 ${h.counts.ok}　留意 ${h.counts.warn}　異常 ${h.counts.fail}　參考 ${h.counts.info}　・　${h.generated_at}（台北）</div>`);
     setHtml('hl-body',h.sections.map(sec=>`<div class="sec-label"><div class="bar"></div><div class="tx">${sec.title}</div></div><div class="panel card"><div class="panel-body" style="padding:6px 14px">${sec.items.map(chkRow).join('')}</div></div>`).join(''));
     setHtml('st-body',st.groups.map(g=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>${g.title}</span></div><div class="panel-body" style="padding:4px 14px">${g.items.map(x=>`<div class="kv" style="align-items:flex-start;gap:10px"><span style="flex:none;max-width:48%">${x.key}</span><span style="text-align:right;white-space:normal"><b>${x.value}</b>${x.note?`<br><small style="color:var(--t3);font-weight:400">${x.note}</small>`:''}</span></div>`).join('')}</div></div>`).join('')+`<div class="note-box">${st.note}</div>`);
-  }catch(e){setHtml('hl-sum','<div class="empty">健檢失敗：'+e.message+'</div>');}
+  }catch(e){if(e.message==='401'){adLock('登入已逾時，請重新登入。');}else setHtml('hl-sum','<div class="empty">健檢失敗：'+e.message+'</div>');}
   if(b){b.disabled=false;b.textContent='立即健檢';}
 }
 function qcClose(){document.getElementById('qc-modal').classList.remove('on');}
@@ -1480,6 +1480,7 @@ const AD_KIND={candidate:'候選',rejected:'被擋下',control:'對照'};
 function adGate(state,msg){
   document.getElementById('ad-main').style.display='none';
   document.getElementById('ad-gate').style.display='block';
+  setEl('ad-gate-title',({learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',diag:'系統診斷'}[window._curPage]||'管理後台')+'・需要登入');
   const el=document.getElementById('ad-gate-body');
   if(state==='unconfigured'){
     el.innerHTML='<div style="font-size:13px;line-height:1.8">後台目前是<b>鎖定</b>狀態：尚未設定管理密碼。<br>請到 Render → taiwan-signal → Environment 新增環境變數 <b>ADMIN_PASSWORD</b>（至少 8 碼，建議 12 碼以上），儲存後服務會重新啟動，再回到這裡登入。<br><span style="color:var(--t3);font-size:11px">密碼只存在 Render，不會出現在程式碼或 GitHub。</span></div>';
@@ -1498,23 +1499,52 @@ async function adLogin(ev){
   try{
     const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
     const d=await r.json();
-    if(r.ok){document.getElementById('ad-pw').value='';fetchLearning();return;}
+    if(r.ok){document.getElementById('ad-pw').value='';adAuthed=true;adLast=Date.now();document.getElementById('ad-gate').style.display='none';const f=adAfter||fetchLearning;adAfter=null;f();return;}
     er.textContent=d.error||'登入失敗';
   }catch(e){er.textContent='連線失敗：'+e.message;}
   btn.disabled=false;btn.textContent='登入';
 }
-var adAuthed=false;
-function adLogoutQuiet(){adAuthed=false;try{fetch('/api/admin/logout',{method:'POST',keepalive:true});}catch(e){}}
+var adAuthed=false,adAfter=null,adLast=Date.now(),adPing=0,AD_IDLE=5*60*1000;
+function adGateCancel(){adAfter=null;document.getElementById('ad-gate').style.display='none';go('overview');}
+// 後台頁面共用的登入檢查：未登入就跳出密碼視窗，登入成功後再執行 cb
+async function adGuard(cb){
+  try{
+    if(adLogoutP){await adLogoutP;adLogoutP=null;}
+    const st=await(await fetch('/api/admin/status',{cache:'no-store'})).json();
+    if(!st.configured){adAfter=null;adGate('unconfigured');return false;}
+    if(!st.authed){adAfter=cb;adGate('login');return false;}
+    adAuthed=true;return true;
+  }catch(e){return true;}
+}
+function adLock(msg){
+  if(!adAuthed&&document.getElementById('ad-gate').style.display==='block')return;
+  adAuthed=false;try{fetch('/api/admin/logout',{method:'POST',keepalive:true});}catch(e){}
+  const pg=window._curPage;
+  adAfter=pg==='health'?()=>fetchHealth():pg==='audit'?()=>fetchAudit():pg==='diag'?()=>fetchDiag():()=>fetchLearning();
+  ['ad-main'].forEach(i=>{const e=document.getElementById(i);if(e)e.style.display='none';});
+  ['hl-sum','diag-body'].forEach(i=>{const e=document.getElementById(i);if(e)e.innerHTML='';});
+  adGate('login',msg||'已鎖定，請重新輸入密碼。');
+}
+['mousemove','keydown','touchstart','click','scroll','wheel'].forEach(ev=>addEventListener(ev,()=>{adLast=Date.now();},{passive:true,capture:true}));
+setInterval(async()=>{
+  if(!adAuthed)return;
+  const now=Date.now();
+  if(now-adLast>AD_IDLE){adLock('超過 5 分鐘沒有動作，已自動鎖定。');return;}
+  if(now-adPing>60000&&now-adLast<60000){
+    adPing=now;
+    try{const r=await fetch('/api/admin/ping',{method:'POST',cache:'no-store'});if(r.status===401)adLock('登入已逾時，請重新登入。');}catch(e){}
+  }
+},5000);
+var adLogoutP=null;
+function adLogoutQuiet(){adAuthed=false;try{adLogoutP=fetch('/api/admin/logout',{method:'POST',keepalive:true}).catch(()=>{});}catch(e){}}
 addEventListener('pagehide',()=>{if(adAuthed){try{navigator.sendBeacon('/api/admin/logout');}catch(e){}}});
 async function adLogout(){adAuthed=false;try{await fetch('/api/admin/logout',{method:'POST'});}catch(e){}fetchLearning();}
 function adAgo(iso){if(!iso)return '—';const d=new Date(iso);return isNaN(d)?'—':d.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});}
 async function fetchLearning(){
   try{
-    const st=await(await fetch('/api/admin/status',{cache:'no-store'})).json();
-    if(!st.configured){adGate('unconfigured');return;}
-    if(!st.authed){adGate('login');return;}
+    if(!await adGuard(fetchLearning))return;
     const [rp,ov]=await Promise.all([fetch('/api/learning',{cache:'no-store'}),fetch('/api/admin/shadow',{cache:'no-store'})]);
-    if(rp.status===401||ov.status===401){adGate('login','登入已逾時，請重新登入。');return;}
+    if(rp.status===401||ov.status===401){adAuthed=false;adAfter=fetchLearning;adGate('login','登入已逾時，請重新登入。');return;}
     const d=await rp.json(),o=await ov.json();
     if(d.error)throw new Error(d.error);
     if(o.error)throw new Error(o.error);
@@ -1686,8 +1716,10 @@ function diagValueHtml(v){
   return safe(v);
 }
 async function fetchDiag(){
+  if(!await adGuard(fetchDiag))return;
   try{
-    const d=await(await fetch('/api/diagnostics')).json();
+    const r0=await fetch('/api/diagnostics');if(r0.status===401){adLock('登入已逾時，請重新登入。');return;}
+    const d=await r0.json();
     document.getElementById('diag-body').innerHTML=Object.entries(d).map(([k,v])=>{
       const isPlain=(v===null||v===undefined||typeof v!=='object');
       const s=String(v);
@@ -2109,5 +2141,12 @@ document.addEventListener('DOMContentLoaded',()=>{
   fetchMaterialNews();setInterval(fetchMaterialNews,600000);
 });
 </script>
+<div id="ad-gate" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--paper,#fff);overflow:auto;padding:16px">
+  <div class="panel card" style="max-width:420px;margin:12vh auto 0">
+    <div class="panel-head"><span id="ad-gate-title">管理後台・需要登入</span></div>
+    <div class="panel-body" id="ad-gate-body"></div>
+    <div style="padding:0 16px 14px"><button class="btn" type="button" onclick="adGateCancel()">返回總覽</button></div>
+  </div>
+</div>
 </body>
 </html>
