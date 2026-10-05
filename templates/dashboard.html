@@ -393,7 +393,8 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
 .kl-leg{font-size:11px;color:var(--t3);display:flex;align-items:center;gap:6px;flex-wrap:wrap}.kl-leg i{width:14px;height:3px;display:inline-block}.kl-leg em{font-style:normal;margin-left:6px}
 .kl-info{font-size:11.5px;color:var(--t2);padding:8px 12px;line-height:1.7;min-height:40px;word-break:break-all}
 .kl-wrap{padding:0 6px 4px;touch-action:pan-y}.kl-wrap canvas{display:block;width:100%}
-.kl-foot{font-size:10.5px;color:var(--t3);padding:2px 12px 10px}
+.kl-foot{font-size:10.5px;color:var(--t3);padding:2px 12px 10px;line-height:1.7}
+.kl-bar .tabs{margin:0}.kl-stat{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--t3);padding:2px 12px 6px}.kl-stat b{color:var(--t1)}
 
 .qc-modal{position:fixed;inset:0;background:rgba(20,18,12,.55);display:none;align-items:flex-start;justify-content:center;z-index:300;overflow:auto;padding:5vh 12px}
 .qc-modal.on{display:flex}.qc-box{background:var(--s1,#fbf8ef);border:1px solid var(--line2);width:min(560px,100%);box-shadow:0 12px 40px rgba(0,0,0,.35)}
@@ -951,71 +952,189 @@ async function fetchInstrument(){
 
 
 // ===== K線圖（純 canvas，無外部相依）=====
+// 2026-10-05 升級：日／週／月K、長歷史（約5年）、MACD／RSI／KD 副圖、成交量均線、區間與52週高低、
+// 漲跌（元）與振幅、資料完整性檢查。指標公式與 indicators.py 一致（RSI 為 Wilder 平滑）。
 let _kl=null;
+const KL_MA={D:[5,20,60],W:[5,13,26],M:[3,6,12]};
+const KL_RANGES={D:[['1個月',22],['3個月',60],['6個月',120],['1年',245],['全部',99999]],W:[['6個月',26],['1年',52],['3年',156],['全部',99999]],M:[['1年',12],['3年',36],['全部',99999]]};
+const KL_TFN={D:'日',W:'週',M:'月'};
+function klAgg(o,tf){
+  if(tf==='D')return o;
+  const key=d=>{if(tf==='M')return d.slice(0,7);const t=new Date(d+'T00:00:00Z'),w=(t.getUTCDay()+6)%7;t.setUTCDate(t.getUTCDate()-w);return t.toISOString().slice(0,10);};
+  const r={dates:[],opens:[],highs:[],lows:[],closes:[],volumes:[]};let cur=null;
+  for(let i=0;i<o.dates.length;i++){
+    const k=key(o.dates[i]);
+    if(!cur||cur.k!==k){cur={k};r.dates.push(o.dates[i]);r.opens.push(o.opens[i]);r.highs.push(o.highs[i]);r.lows.push(o.lows[i]);r.closes.push(o.closes[i]);r.volumes.push(o.volumes[i]||0);}
+    else{const j=r.dates.length-1;r.dates[j]=o.dates[i];r.highs[j]=Math.max(r.highs[j],o.highs[i]);r.lows[j]=Math.min(r.lows[j],o.lows[i]);r.closes[j]=o.closes[i];r.volumes[j]+=o.volumes[i]||0;}
+  }
+  return r;
+}
+function klSma(a,k){const out=[];let s=0;for(let i=0;i<a.length;i++){s+=a[i]||0;if(i>=k)s-=a[i-k]||0;out.push(i<k-1?null:s/k);}return out;}
+function klEma(a,k){const out=[],m=2/(k+1);let e=null;for(let i=0;i<a.length;i++){e=e==null?a[i]:(a[i]-e)*m+e;out.push(e);}return out;}
+function klRsi(c,p=14){
+  const out=c.map(()=>null);if(c.length<p+2)return out;
+  let ag=0,al=0;for(let i=1;i<=p;i++){const d=c[i]-c[i-1];ag+=Math.max(d,0);al+=Math.max(-d,0);}
+  ag/=p;al/=p;out[p]=al===0?100:100-100/(1+ag/al);
+  for(let i=p+1;i<c.length;i++){const d=c[i]-c[i-1];ag=(ag*(p-1)+Math.max(d,0))/p;al=(al*(p-1)+Math.max(-d,0))/p;out[i]=al===0?100:100-100/(1+ag/al);}
+  return out;
+}
+function klKd(o,n=9){
+  const K=[],D=[];let k=50,d=50;
+  for(let i=0;i<o.closes.length;i++){
+    if(i<n-1){K.push(null);D.push(null);continue;}
+    let hh=-1e9,ll=1e9;for(let j=i-n+1;j<=i;j++){hh=Math.max(hh,o.highs[j]);ll=Math.min(ll,o.lows[j]);}
+    const rsv=hh===ll?50:(o.closes[i]-ll)/(hh-ll)*100;k=k*2/3+rsv/3;d=d*2/3+k/3;K.push(k);D.push(d);
+  }
+  return {K,D};
+}
+function klBuild(tf){
+  const K=_kl,o=klAgg(K.src,tf),c=o.closes;
+  const e12=klEma(c,12),e26=klEma(c,26),dif=c.map((_,i)=>e12[i]-e26[i]),dea=klEma(dif,9);
+  K.tf=tf;K.o=o;K.n=c.length;
+  K.ma=KL_MA[tf].map(k=>klSma(c,k));K.vma=[klSma(o.volumes,5),klSma(o.volumes,20)];
+  K.macd={dif,dea,hist:dif.map((v,i)=>(v-dea[i])*2)};K.rsi=klRsi(c);K.kd=klKd(o);
+}
 function klineHtml(d){
-  const o=d.ohlcv;
-  if(!o||!o.closes||o.closes.length<20)return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖</div></div><div class="panel card"><div class="panel-body"><div class="empty">日 K 資料不足，無法繪圖</div></div></div>`;
-  return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖（日K・還原價）</div></div>
-  <div class="panel card kl"><div class="kl-bar"><div class="tabs" id="kl-range"><button onclick="klSet(60,this)" class="on">3個月</button><button onclick="klSet(120,this)">6個月</button><button onclick="klSet(9999,this)">全部</button></div>
-  <div class="kl-leg"><i style="background:#d9822b"></i>MA5<i style="background:#2f6fb5"></i>MA20<i style="background:#7a4fa0"></i>MA60<em>虛線＝本系統進場／停損／目標</em></div></div>
+  const src=(d.ohlcv_long&&d.ohlcv_long.closes&&d.ohlcv&&d.ohlcv_long.closes.length>=d.ohlcv.closes.length)?d.ohlcv_long:d.ohlcv;
+  if(!src||!src.closes||src.closes.length<20)return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖</div></div><div class="panel card"><div class="panel-body"><div class="empty">日 K 資料不足，無法繪圖</div></div></div>`;
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖（還原價）</div></div>
+  <div class="panel card kl"><div class="kl-bar"><div class="tabs" id="kl-tf"><button onclick="klTf('D',this)" class="on">日K</button><button onclick="klTf('W',this)">週K</button><button onclick="klTf('M',this)">月K</button></div><div class="tabs" id="kl-range"></div>
+  <div class="tabs" id="kl-ind"><button onclick="klInd('macd',this)" class="on">MACD</button><button onclick="klInd('rsi',this)">RSI</button><button onclick="klInd('kd',this)">KD</button><button onclick="klInd('none',this)">隱藏</button></div></div>
+  <div class="kl-leg" style="padding:6px 12px 0" id="kl-leg"></div>
   <div class="kl-info" id="kl-info">移動游標或手指查看每日開高低收</div>
   <div class="kl-wrap"><canvas id="kl-cv"></canvas></div>
-  <div class="kl-foot">資料：Yahoo 還原價；抽樣與證交所／櫃買官方逐日對照結果見「資料稽核」頁。成交量為 Yahoo 數值，與官方略有差異（約 85～99%）。</div></div>`;
+  <div class="kl-stat" id="kl-stat"></div>
+  <div class="kl-foot" id="kl-foot"></div></div>`;
+}
+function klRangeBtns(){
+  const K=_kl,el=document.getElementById('kl-range');if(!el)return;
+  el.innerHTML=KL_RANGES[K.tf].filter(r=>r[1]===99999||r[1]<=K.n+5).map(r=>`<button onclick="klSet(${r[1]},this)" class="${r[1]===K.range?'on':''}">${r[0]}</button>`).join('');
 }
 function klInit(d){
-  const o=d.ohlcv;if(!o||!o.closes||o.closes.length<20){_kl=null;return;}
-  const n=o.closes.length;
-  const ma=(k)=>o.closes.map((_,i)=>i<k-1?null:o.closes.slice(i-k+1,i+1).reduce((a,b)=>a+b,0)/k);
+  const src=(d.ohlcv_long&&d.ohlcv_long.closes&&d.ohlcv&&d.ohlcv_long.closes.length>=d.ohlcv.closes.length)?d.ohlcv_long:d.ohlcv;
+  if(!src||!src.closes||src.closes.length<20){_kl=null;return;}
   const sig=d.active_signal;
-  _kl={o,n,ma5:ma(5),ma20:ma(20),ma60:ma(60),range:60,hover:-1,
+  _kl={src,d,range:60,hover:-1,ind:'macd',tf:'D',
     lv:sig?[['進場',sig.entry_price,'#555'],['停損',sig.stop_loss,'#2f6fb5'],['TP1',sig.tp1,'#c23b22'],['TP2',sig.tp2,'#c23b22']].filter(x=>x[1]):[]};
+  klBuild('D');klRangeBtns();klLegend();klStats();
   const cv=document.getElementById('kl-cv');if(!cv)return;
   const mv=e=>{const r=cv.getBoundingClientRect();const x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;klHover(x/r.width);};
   cv.addEventListener('mousemove',mv);cv.addEventListener('touchmove',e=>{mv(e);},{passive:true});cv.addEventListener('touchstart',mv,{passive:true});
   cv.addEventListener('mouseleave',()=>{_kl.hover=-1;klDraw();});
   klDraw();
 }
-function klSet(r,btn){if(!_kl)return;_kl.range=r;_kl.hover=-1;document.querySelectorAll('#kl-range button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');klDraw();}
+function klLegend(){
+  const K=_kl,cols=['#d9822b','#2f6fb5','#7a4fa0'];
+  setHtml('kl-leg',KL_MA[K.tf].map((k,i)=>`<i style="background:${cols[i]}"></i>MA${k}`).join('')+'<em>虛線＝本系統進場／停損／目標（僅日K）</em>');
+}
+function klTf(tf,btn){
+  if(!_kl)return;document.querySelectorAll('#kl-tf button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+  klBuild(tf);_kl.range=tf==='D'?60:tf==='W'?52:36;_kl.hover=-1;klRangeBtns();klLegend();klStats();klDraw();
+}
+function klInd(m,btn){if(!_kl)return;_kl.ind=m;document.querySelectorAll('#kl-ind button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');klDraw();}
+function klSet(r,btn){if(!_kl)return;_kl.range=r;_kl.hover=-1;document.querySelectorAll('#kl-range button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');klStats();klDraw();}
 function klHover(fx){if(!_kl)return;const cnt=Math.min(_kl.range,_kl.n);const i=Math.max(0,Math.min(cnt-1,Math.floor(fx*cnt)));_kl.hover=_kl.n-cnt+i;klDraw();}
+function klStats(){
+  const K=_kl,d=K.d,s=K.src,n=s.closes.length,cnt=Math.min(K.range,K.n),o=K.o,st=K.n-cnt;
+  let hi=-1e9,lo=1e9,hiD='',loD='';for(let i=st;i<K.n;i++){if(o.highs[i]>hi){hi=o.highs[i];hiD=o.dates[i];}if(o.lows[i]<lo){lo=o.lows[i];loD=o.dates[i];}}
+  const y=s.dates.length-1;let h52=-1e9,l52=1e9;for(let i=Math.max(0,y-244);i<=y;i++){h52=Math.max(h52,s.highs[i]);l52=Math.min(l52,s.lows[i]);}
+  const last=s.closes[y],pos=h52>l52?((last-l52)/(h52-l52)*100):0;
+  setHtml('kl-stat',`<span>區間最高 <b>${hi.toFixed(2)}</b>（${hiD.slice(5)}）</span><span>區間最低 <b>${lo.toFixed(2)}</b>（${loD.slice(5)}）</span><span>52週高 <b>${h52.toFixed(2)}</b></span><span>52週低 <b>${l52.toFixed(2)}</b></span><span>目前在 52 週區間的 <b>${pos.toFixed(0)}%</b> 位置</span><span>距52週高 <b style="color:var(--down)">${((last/h52-1)*100).toFixed(1)}%</b></span>`);
+  const info=d.info||{},q=(d.data_sources||{}).quote_and_sector||{},lastD=s.dates[y],ql=(d.ohlcv_long&&d.ohlcv_long.quality)||{};
+  const warns=[];
+  if(info.quote_date&&lastD<info.quote_date)warns.push(`⚠ K 線最後一根是 ${lastD}，比官方行情日 ${info.quote_date} 舊，Yahoo 尚未更新`);
+  if(info.quote_date&&lastD===info.quote_date&&info.close&&Math.abs(last/info.close-1)>0.005)warns.push(`官方收盤 ${info.close}、K 線還原收盤 ${last.toFixed(2)}：差異來自除權息還原，屬正常`);
+  if(info.quote_date&&lastD>info.quote_date)warns.push(`K 線最新到 ${lastD}（Yahoo），上方行情卡為官方 ${info.quote_date} 收盤，官方資料收盤後才會更新`);
+  if(ql.bad_ohlc)warns.push(`⚠ 有 ${ql.bad_ohlc} 根 K 棒開高低收不合邏輯`);
+  setHtml('kl-foot',`資料：${ql.source||'Yahoo 還原價'}；共 ${n} 根日K（${s.dates[0]} ～ ${lastD}），成交量單位為張（Yahoo 數值，與官方略有差異，約 85～99%）。指標由系統依同一公式計算；抽樣與官方逐日對照見「資料稽核」。${warns.length?'<div style="margin-top:4px;color:var(--warn)">'+warns.join('<br>')+'</div>':''}`);
+}
 function klDraw(){
   const K=_kl,cv=document.getElementById('kl-cv');if(!K||!cv)return;
-  const W=cv.parentElement.clientWidth,H=W<520?300:380,dpr=window.devicePixelRatio||1;
+  const W=cv.parentElement.clientWidth,hasInd=K.ind!=='none',H=(W<520?340:430)+(hasInd?90:0),dpr=window.devicePixelRatio||1;
   cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
   const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);
   const cs=getComputedStyle(document.documentElement);
   const UP=cs.getPropertyValue('--up').trim()||'#c23b22',DN=cs.getPropertyValue('--down').trim()||'#2f6fb5',GR='rgba(120,110,90,.18)',TX=cs.getPropertyValue('--t3').trim()||'#888';
-  const cnt=Math.min(K.range,K.n),st=K.n-cnt,o=K.o;
-  const padL=4,padR=52,top=8,volH=Math.round(H*.2),gap=14,ph=H-top-volH-gap-18;
+  const cnt=Math.min(K.range,K.n),st=K.n-cnt,o=K.o,cols=['#d9822b','#2f6fb5','#7a4fa0'];
+  const padL=4,padR=52,top=8,volH=Math.round(H*(hasInd?.13:.2)),indH=hasInd?72:0,gap=10,axis=16;
+  const ph=H-top-volH-gap-axis-(hasInd?indH+gap:0);
   let hi=-1e9,lo=1e9,vmax=0;
   for(let i=st;i<K.n;i++){hi=Math.max(hi,o.highs[i]);lo=Math.min(lo,o.lows[i]);vmax=Math.max(vmax,o.volumes[i]||0);
-    for(const m of [K.ma5,K.ma20,K.ma60]){if(m[i]!=null){hi=Math.max(hi,m[i]);lo=Math.min(lo,m[i]);}}}
-  for(const l of K.lv){if(cnt<=130){hi=Math.max(hi,l[1]);lo=Math.min(lo,l[1]);}}
-  const pad=(hi-lo)*.06||1;hi+=pad;lo-=pad;
+    for(const m of K.ma){if(m[i]!=null){hi=Math.max(hi,m[i]);lo=Math.min(lo,m[i]);}}}
+  const lvOn=K.tf==='D'&&cnt<=130;
+  if(lvOn)for(const l of K.lv){hi=Math.max(hi,l[1]);lo=Math.min(lo,l[1]);}
+  const hi0=hi,lo0=lo;const pad=(hi-lo)*.06||1;hi+=pad;lo-=pad;
   const cw=(W-padL-padR)/cnt,X=i=>padL+(i-st+.5)*cw,Y=v=>top+(hi-v)/(hi-lo)*ph;
   c.clearRect(0,0,W,H);c.font='10px sans-serif';c.textBaseline='middle';
   c.strokeStyle=GR;c.fillStyle=TX;c.lineWidth=1;
   for(let g=0;g<=4;g++){const v=lo+(hi-lo)*g/4,y=Y(v);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.textAlign='left';c.fillText(v>=100?v.toFixed(0):v.toFixed(2),W-padR+4,y);}
-  const bw=Math.max(1,Math.min(14,cw*.7));
+  const bw=Math.max(1,Math.min(14,cw*.7)),vTop=top+ph+gap,vBase=vTop+volH;
   for(let i=st;i<K.n;i++){
     const up=o.closes[i]>=o.opens[i],col=up?UP:DN,x=X(i);
     c.strokeStyle=col;c.fillStyle=col;c.lineWidth=1;
     c.beginPath();c.moveTo(x,Y(o.highs[i]));c.lineTo(x,Y(o.lows[i]));c.stroke();
     const y1=Y(Math.max(o.opens[i],o.closes[i])),y2=Y(Math.min(o.opens[i],o.closes[i]));
     c.fillRect(x-bw/2,y1,bw,Math.max(1,y2-y1));
-    const vh=(o.volumes[i]||0)/(vmax||1)*volH;c.globalAlpha=.55;c.fillRect(x-bw/2,H-18-vh,bw,vh);c.globalAlpha=1;
+    const vh=(o.volumes[i]||0)/(vmax||1)*volH;c.globalAlpha=.55;c.fillRect(x-bw/2,vBase-vh,bw,vh);c.globalAlpha=1;
   }
-  const line=(arr,col)=>{c.strokeStyle=col;c.lineWidth=1.3;c.beginPath();let on=false;for(let i=st;i<K.n;i++){if(arr[i]==null)continue;const x=X(i),y=Y(arr[i]);on?c.lineTo(x,y):c.moveTo(x,y);on=true;}c.stroke();};
-  line(K.ma5,'#d9822b');line(K.ma20,'#2f6fb5');line(K.ma60,'#7a4fa0');
-  if(cnt<=130)for(const l of K.lv){const y=Y(l[1]);c.strokeStyle=l[2];c.fillStyle=l[2];c.setLineDash([5,4]);c.lineWidth=1;c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.setLineDash([]);c.textAlign='right';c.fillText(l[0]+' '+l[1],W-padR-4,y-7);}
+  const line=(arr,col,fy,w)=>{c.strokeStyle=col;c.lineWidth=w||1.3;c.beginPath();let on=false;for(let i=st;i<K.n;i++){if(arr[i]==null)continue;const x=X(i),y=fy(arr[i]);on?c.lineTo(x,y):c.moveTo(x,y);on=true;}c.stroke();};
+  K.ma.forEach((m,i)=>line(m,cols[i],Y));
+  line(K.vma[1],'#2f6fb5',v=>vBase-v/(vmax||1)*volH,1);
+  c.fillStyle=TX;c.textAlign='left';c.fillText('量(張) 高 '+Math.round(vmax).toLocaleString(),padL+2,vTop+4);
+  // 區間最高／最低標註
+  {let hiI=st,loI=st;for(let i=st;i<K.n;i++){if(o.highs[i]>o.highs[hiI])hiI=i;if(o.lows[i]<o.lows[loI])loI=i;}
+   c.fillStyle=TX;const lab=(i,v,above)=>{const x=X(i),right=x>W/2;c.textAlign=right?'right':'left';c.fillText(v.toFixed(2),x+(right?-4:4),Y(v)+(above?-8:8));};
+   lab(hiI,o.highs[hiI],true);lab(loI,o.lows[loI],false);}
+  if(lvOn)for(const l of K.lv){const y=Y(l[1]);c.strokeStyle=l[2];c.fillStyle=l[2];c.setLineDash([5,4]);c.lineWidth=1;c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.setLineDash([]);c.textAlign='right';c.fillText(l[0]+' '+l[1],W-padR-4,y-7);}
+  // 副圖
+  const iTop=vBase+gap;
+  if(hasInd){
+    c.strokeStyle=GR;c.strokeRect(padL,iTop,W-padL-padR,indH);c.fillStyle=TX;c.textAlign='left';
+    let a,b;
+    if(K.ind==='macd'){a=1e9;b=-1e9;for(let i=st;i<K.n;i++)for(const v of [K.macd.dif[i],K.macd.dea[i],K.macd.hist[i]]){if(v==null)continue;a=Math.min(a,v);b=Math.max(b,v);}}
+    else{a=0;b=100;}
+    if(a===b){a-=1;b+=1;}
+    const YI=v=>iTop+(b-v)/(b-a)*indH;
+    if(K.ind==='macd'){
+      const z=YI(0);c.strokeStyle='rgba(120,110,90,.35)';c.beginPath();c.moveTo(padL,z);c.lineTo(W-padR,z);c.stroke();
+      for(let i=st;i<K.n;i++){const v=K.macd.hist[i];c.fillStyle=v>=0?UP:DN;c.globalAlpha=.6;const y=YI(v);c.fillRect(X(i)-bw/2,Math.min(y,z),bw,Math.abs(y-z)||1);c.globalAlpha=1;}
+      line(K.macd.dif,'#d9822b',YI,1.2);line(K.macd.dea,'#2f6fb5',YI,1.2);
+      c.fillStyle=TX;c.textAlign='left';c.fillText('MACD(12,26,9)　橘＝DIF　藍＝DEA　柱＝OSC',padL+4,iTop+8);
+    }else if(K.ind==='rsi'){
+      for(const lv of [30,50,70]){const y=YI(lv);c.strokeStyle='rgba(120,110,90,.3)';c.setLineDash([3,3]);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.setLineDash([]);c.fillStyle=TX;c.textAlign='left';c.fillText(lv,W-padR+4,y);}
+      line(K.rsi,'#7a4fa0',YI,1.3);c.fillStyle=TX;c.textAlign='left';c.fillText('RSI(14)　70 超買／30 超賣',padL+4,iTop+8);
+    }else{
+      for(const lv of [20,50,80]){const y=YI(lv);c.strokeStyle='rgba(120,110,90,.3)';c.setLineDash([3,3]);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.setLineDash([]);c.fillStyle=TX;c.textAlign='left';c.fillText(lv,W-padR+4,y);}
+      line(K.kd.K,'#d9822b',YI,1.2);line(K.kd.D,'#2f6fb5',YI,1.2);c.fillStyle=TX;c.textAlign='left';c.fillText('KD(9,3,3)　橘＝K　藍＝D',padL+4,iTop+8);
+    }
+  }
   c.fillStyle=TX;c.textAlign='left';
-  [0,.5,1].forEach(f=>{const i=Math.min(K.n-1,st+Math.round((cnt-1)*f));c.textAlign=f===0?'left':f===1?'right':'center';c.fillText((o.dates[i]||'').slice(5,10),X(i)+(f===0?-cw/2:f===1?cw/2:0),H-6);});
-  const h=K.hover>=0?K.hover:K.n-1,ch=h>0?(o.closes[h]/o.closes[h-1]-1)*100:0;
-  if(K.hover>=0){const x=X(h);c.strokeStyle='rgba(60,50,30,.45)';c.setLineDash([3,3]);c.beginPath();c.moveTo(x,top);c.lineTo(x,H-18);c.stroke();c.setLineDash([]);}
-  const f=v=>v==null?'—':(v>=100?v.toFixed(1):v.toFixed(2));
-  document.getElementById('kl-info').innerHTML=`<b>${(o.dates[h]||'').slice(0,10)}</b>　開 ${f(o.opens[h])}　高 ${f(o.highs[h])}　低 ${f(o.lows[h])}　收 <b>${f(o.closes[h])}</b>　<span style="color:${ch>=0?UP:DN}">${ch>=0?'+':''}${ch.toFixed(2)}%</span>　量 ${Math.round(o.volumes[h]||0).toLocaleString()}張*　<span style="color:#d9822b">MA5 ${f(K.ma5[h])}</span>　<span style="color:#2f6fb5">MA20 ${f(K.ma20[h])}</span>　<span style="color:#7a4fa0">MA60 ${f(K.ma60[h])}</span>`;
+  const ay=H-axis/2+2;
+  [0,.25,.5,.75,1].forEach(f=>{const i=Math.min(K.n-1,st+Math.round((cnt-1)*f));c.textAlign=f===0?'left':f===1?'right':'center';const dd=o.dates[i]||'';c.fillText(K.tf==='D'&&cnt<=130?dd.slice(5,10):dd.slice(2,7),X(i)+(f===0?-cw/2:f===1?cw/2:0),ay);});
+  const h=K.hover>=0?K.hover:K.n-1,pc=h>0?o.closes[h-1]:o.opens[h],chv=o.closes[h]-pc,ch=pc?(chv/pc)*100:0;
+  if(K.hover>=0){const x=X(h);c.strokeStyle='rgba(60,50,30,.45)';c.setLineDash([3,3]);c.beginPath();c.moveTo(x,top);c.lineTo(x,H-axis);c.stroke();c.setLineDash([]);}
+  const f=v=>v==null?'—':(v>=100?v.toFixed(1):v.toFixed(2)),sg=chv>=0?'+':'';
+  const amp=pc?((o.highs[h]-o.lows[h])/pc*100).toFixed(2):'—',vv=o.volumes[h]||0,vm=K.vma[1][h-1]||K.vma[1][h];
+  let indTxt='';
+  if(K.ind==='macd')indTxt=`　DIF ${f(K.macd.dif[h])}　DEA ${f(K.macd.dea[h])}　OSC ${f(K.macd.hist[h])}`;
+  else if(K.ind==='rsi')indTxt=`　RSI ${f(K.rsi[h])}`;
+  else if(K.ind==='kd')indTxt=`　K ${f(K.kd.K[h])}　D ${f(K.kd.D[h])}`;
+  document.getElementById('kl-info').innerHTML=`<b>${(o.dates[h]||'').slice(0,10)}</b>（${KL_TFN[K.tf]}K）　開 ${f(o.opens[h])}　高 ${f(o.highs[h])}　低 ${f(o.lows[h])}　收 <b>${f(o.closes[h])}</b>　<span style="color:${chv>=0?UP:DN}">${sg}${chv.toFixed(2)}（${sg}${ch.toFixed(2)}%）</span>　振幅 ${amp}%　量 ${Math.round(vv).toLocaleString()}張${vm?`（均量20 的 ${(vv/vm).toFixed(2)} 倍）`:''}<br>${K.ma.map((m,i)=>`<span style="color:${cols[i]}">MA${KL_MA[K.tf][i]} ${f(m[h])}</span>`).join('　')}${indTxt}`;
 }
 window.addEventListener('resize',()=>{if(document.getElementById('kl-cv'))klDraw();});
 
+function revStatusHtml(st){
+  if(!st||st.error)return '';
+  const e=fmtMinguoYM(st.expected_period),t=st.fetched_at?toTaipeiStr(new Date(st.fetched_at*1000).toISOString()):'—';
+  const prog=st.n_total?`（全市場 ${st.n_expected}／${st.n_total} 檔已有 ${e}）`:'';
+  const msg=st.is_latest?`<span style="color:var(--up)">✓ 已是最新一期（${e}）</span>`:`<span style="color:var(--warn)">尚未取得 ${e} 營收</span>${st.in_window?`：公司須於 ${st.deadline} 公布，系統公告期內每 10 分鐘自動更新${prog}`:''}`;
+  return `<div class="kv"><span>營收新鮮度</span><span>${msg}　<button class="btn" style="padding:2px 8px;font-size:11px" onclick="revRefresh(this)">立即更新營收</button></span></div><div style="font-size:10.5px;color:var(--t3)">來源：證交所／櫃買 OpenAPI，尚未更新時以公開資訊觀測站補上；資料取得時間 ${t}</div>`;
+}
+async function revRefresh(btn){
+  btn.disabled=true;btn.textContent='更新中…';
+  try{const r=await fetch('/api/revenue/refresh',{method:'POST'});const j=await r.json();toast(j.ok?`已更新，${j.changed} 檔有新一期營收`:(j.error||'更新失敗'));if(j.ok)fetchInstrument();}catch(e){toast('更新失敗');}
+  btn.disabled=false;btn.textContent='立即更新營收';
+}
 function renderInstrument(d){
   const el=document.getElementById('inst-result');if(!el)return;
   const info=d.info, ind=d.indicators, sig=d.active_signal, hist=d.signal_history||[],
@@ -1106,7 +1225,10 @@ function renderInstrument(d){
     <div class="kv"><span>股價淨值比 PB</span><span>${safeN(val.pb,2,'—')}</span></div>
     <div class="kv"><span>月營收年增率</span><span style="color:${clr(rev.yoy_pct)}">${rev.yoy_pct!==undefined&&rev.yoy_pct!==null?safeN(rev.yoy_pct,2)+'%':'—'}</span></div>
     <div class="kv"><span>月營收月增率</span><span style="color:${clr(rev.mom_pct)}">${rev.mom_pct!==undefined&&rev.mom_pct!==null?safeN(rev.mom_pct,2)+'%':'—'}</span></div>
-    <div class="kv"><span>營收資料期間</span><span>${fmtMinguoYM(rev.period)}</span></div>
+    <div class="kv"><span>營收資料期間</span><span>${fmtMinguoYM(rev.period)}${rev.source&&String(rev.source).startsWith('mops')?'　<small style="color:var(--t3)">（公開資訊觀測站）</small>':''}</span></div>
+    ${rev.revenue?`<div class="kv"><span>當月營收</span><span>${(rev.revenue/100000).toFixed(2)} 億${rev.revenue_ly?`（去年同月 ${(rev.revenue_ly/100000).toFixed(2)} 億）`:''}</span></div>`:''}
+    ${rev.cum_revenue?`<div class="kv"><span>累計營收</span><span>${(rev.cum_revenue/100000).toFixed(1)} 億${rev.cum_yoy_pct!=null?`　累計年增 <span style="color:${clr(rev.cum_yoy_pct)}">${safeN(rev.cum_yoy_pct,2)}%</span>`:''}</span></div>`:''}
+    ${revStatusHtml(d.revenue_status)}
     <div class="kv"><span>毛利率變化</span><span style="color:${clr(pq.gross_margin_chg)}">${pq.gross_margin_chg!==undefined&&pq.gross_margin_chg!==null?safeN(pq.gross_margin_chg,2):'—'}</span></div>
     <div class="kv"><span>營益率變化</span><span style="color:${clr(pq.operating_margin_chg)}">${pq.operating_margin_chg!==undefined&&pq.operating_margin_chg!==null?safeN(pq.operating_margin_chg,2):'—'}</span></div>
     <div style="font-size:10.5px;color:var(--t3);margin-top:8px">基本面資料可能有落後（估值／營收非即時），實際期間以「營收資料期間」欄位為準</div>
