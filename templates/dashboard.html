@@ -1285,6 +1285,7 @@ function gsKey(e){
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const i=document.getElementById('gs-in');if(i){i.focus();i.select();}}});
 document.addEventListener('click',e=>{if(!e.target.closest('.gs'))document.getElementById('gs-dd')?.classList.remove('on');});
 async function instQuick(){
+  if(window._noQuick){window._noQuick=false;return;}
   const el=document.getElementById('inst-result');if(!el||!el.querySelector('.empty'))return;
   const chip=(c,n)=>`<a class="bt-chip" onclick="goToInstrument('${esc2(c)}')">${esc2(c)} ${esc2(n)}</a>`;
   const g=(t,arr)=>arr.length?`<div class="iq-g"><div class="iq-t">${t}</div><div class="bt-chips" style="margin:0">${arr.join('')}</div></div>`:'';
@@ -1327,6 +1328,7 @@ function go(id){
 }
 function goToInstrument(ticker){
   if(!ticker)return;
+  window._noQuick=true;
   go('instrument');
   const input=document.getElementById('inst-ticker');
   if(input)input.value=ticker.split('.')[0];
