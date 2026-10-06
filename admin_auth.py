@@ -13,6 +13,9 @@ import os, time, hmac, hashlib, threading
 from functools import wraps
 from flask import request, jsonify
 
+# 2026-10-06：依使用者要求暫時關閉後台登入保護（預設不需密碼）。
+# 要重新啟用：在 Render 環境變數設 ADMIN_AUTH_REQUIRED=1（並維持 ADMIN_PASSWORD 至少 8 碼）。
+REQUIRED = os.environ.get("ADMIN_AUTH_REQUIRED", "0") == "1"
 COOKIE = "ts_admin"
 TTL = 5 * 60    # 5 分鐘沒有動作就失效（每次後台請求/網頁心跳會順延）；且是『工作階段 cookie』，關閉瀏覽器就消失
 PROTECTED_PREFIXES = ('/api/health', '/api/settings', '/api/audit', '/api/diagnostics')
@@ -56,6 +59,8 @@ def valid(tok):
 
 
 def authed():
+    if not REQUIRED:
+        return True
     return valid(request.cookies.get(COOKIE, ""))
 
 
@@ -89,10 +94,12 @@ def _record_fail(ip):
 
 
 def status():
-    return jsonify({"configured": configured(), "authed": authed()})
+    return jsonify({"configured": configured() or not REQUIRED, "authed": authed(), "required": REQUIRED})
 
 
 def login():
+    if not REQUIRED:
+        return jsonify({"ok": True, "required": False})
     if not request.is_json:
         return jsonify({"error": "格式錯誤"}), 400
     if not configured():
@@ -138,7 +145,7 @@ def after(resp):
     try:
         if request.path.startswith(PROTECTED_PREFIXES) or request.path.startswith("/api/admin/"):
             resp.headers["Cache-Control"] = "no-store"
-            if authed() and request.path != "/api/admin/logout":
+            if REQUIRED and authed() and request.path != "/api/admin/logout":
                 _set(resp)
     except Exception:
         pass
