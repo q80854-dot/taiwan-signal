@@ -619,6 +619,30 @@ class StateStore:
         except Exception as e:
             logger.warning(f"upsert_official_volumes: {e}")
 
+    _notice_ready = False
+
+    def claim_notice(self, key: str, ttl_sec: int = 600) -> bool:
+        """跨實例去重：ttl_sec 秒內同一個 key 只有第一個呼叫者回傳 True（可以發送）。
+        部署時 Render 會讓新舊實例短暫並存，排程各觸發一次，靠共用資料庫擋掉重複推播。
+        資料庫出錯時採「放行」（寧可偶爾重複，也不能漏發）。"""
+        import time as _t
+        try:
+            if not self._notice_ready:
+                with self._conn() as conn:
+                    conn.execute("CREATE TABLE IF NOT EXISTS notice_log (k TEXT PRIMARY KEY, ts BIGINT)")
+                self._notice_ready = True
+            now = int(_t.time())
+            with self._conn() as conn:
+                conn.execute("DELETE FROM notice_log WHERE k=? AND ts<?", (key, now - ttl_sec))
+                if USE_PG:
+                    cur = conn.execute("INSERT INTO notice_log(k,ts) VALUES(?,?) ON CONFLICT (k) DO NOTHING", (key, now))
+                else:
+                    cur = conn.execute("INSERT OR IGNORE INTO notice_log(k,ts) VALUES(?,?)", (key, now))
+                return (cur.rowcount or 0) > 0
+        except Exception as e:
+            logger.warning(f"claim_notice: {e}")
+            return True
+
     def get_official_volumes(self, code: str, since: str = "2000-01-01") -> Dict[str, int]:
         self._ensure_ov()
         try:

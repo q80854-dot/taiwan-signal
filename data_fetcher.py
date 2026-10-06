@@ -808,9 +808,11 @@ def _inst_try(date_str: str):
                     code = row[0].strip(); name = row[1].strip()
                     def pi(v): return int(v.replace(",", "").replace("+", "")) if v.strip() not in ("-", "") else 0
                     # T86 欄位：[4]外陸資買賣超 [10]投信買賣超 [18]三大法人買賣超（2026-08-31 校正過）
-                    fn = pi(row[4]) if len(row) > 4 else 0
-                    tn = pi(row[10]) if len(row) > 10 else 0
-                    tt = pi(row[18]) if len(row) > 18 else 0
+                    # ★ 2026-10-06 單位修正：T86 回傳的是「股」，下游門檻（>200、>500）與顯示都是「張」，
+                    # 原本沒換算，等於外資只要買超 201 股就加分（訊號上看到「外資買超 +21,838,869張」即此錯誤）。
+                    fn = int(pi(row[4]) / 1000) if len(row) > 4 else 0
+                    tn = int(pi(row[10]) / 1000) if len(row) > 10 else 0
+                    tt = int(pi(row[18]) / 1000) if len(row) > 18 else 0
                     result[code] = {"name": name, "foreign_net": fn, "trust_net": tn, "total_net": tt,
                                     "signal": "strong_buy" if fn > 500 and tn > 0 else "buy" if fn > 100 else "strong_sell" if fn < -500 else "sell" if fn < -100 else "neutral"}
                 except Exception:

@@ -139,6 +139,17 @@ def send_message(chat_id: str, text: str, parse_mode: str = "HTML", _max_retries
     if not chat_id:
         logger.error("send_message: chat_id 為空，無法發送")
         return False
+    # ★ 2026-10-06：跨實例去重——部署期間新舊實例並存會讓同一則訊息被各送一次（使用者收到 2～3 則一樣的推播）。
+    # 同一個 chat_id＋完全相同內容，10 分鐘內只送一次。
+    try:
+        import hashlib
+        from state_store import store as _st
+        _k = "tg:" + str(chat_id) + ":" + hashlib.sha1(text.encode("utf-8")).hexdigest()
+        if not _st.claim_notice(_k, 600):
+            logger.info(f"send_message: 10 分鐘內已送過相同內容，略過重複推播 chat_id={chat_id}")
+            return True
+    except Exception as _e:
+        logger.warning(f"send_message 去重檢查失敗（照常發送）: {_e}")
     attempt = 0
     while True:
         attempt += 1
@@ -636,6 +647,14 @@ def send_intraday_digest(pending: List[Dict], prices: Dict[str, float]):
     使用者誤以為那筆訊號不存在了。"""
     if not pending:
         return
+    try:  # 跨實例去重：同一個整點時段只送一次（各實例抓到的現價可能差一檔，內容雜湊擋不住）
+        from state_store import store as _st
+        _slot = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
+        if not _st.claim_notice("digest:" + _slot, 1500):
+            logger.info(f"盤中持倉現況總覽：{_slot} 已由其他實例送出，略過")
+            return
+    except Exception as _e:
+        logger.warning(f"digest 去重失敗（照常發送）: {_e}")
     lines = []
     for s in pending[:10]:
         ticker    = s.get("ticker")

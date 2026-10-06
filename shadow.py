@@ -19,7 +19,9 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 TPE = timezone(timedelta(hours=8))
-CONTROL_RATE = 0.03        # 被預判跳過的股票，抽 3% 當對照組（約 30～40 檔／天）
+CONTROL_RATE = 1.0         # 沒有訊號的股票抽樣比例。2026-10-06：原 3% 實測每次只抽到 1～7 檔（約 96% 的股票日線分數都≥55，
+                           # 真正『沒有訊號』的只有少數），改成水庫抽樣：所有『沒有訊號』的股票等機率抽出 CONTROL_CAP 檔
+CONTROL_CAP = 40
 REJ_PER_REASON = 50        # 每個否決原因每次掃描最多存幾筆（依分數高到低）
 REJ_TOTAL = 220            # 每次掃描被否決樣本總上限
 _lock = threading.Lock()
@@ -383,6 +385,9 @@ def maybe_control(ticker, stock_info, daily, pre, market_overview, sink, lock):
     try:
         if random.random() >= CONTROL_RATE:
             return
+        with lock:
+            if len(sink) >= CONTROL_CAP:
+                return
         from indicators import calc_atr
         from signal_engine import calc_stop_loss_tw, calc_take_profits_tw
         closes, highs, lows = daily["closes"], daily["highs"], daily["lows"]
@@ -411,8 +416,20 @@ def control_from_engine(ticker, stock_info, daily, ind, mtf, mkt):
     """signal_engine 判定『這檔沒有訊號』時呼叫：隨機抽 CONTROL_RATE 當對照組（假設做多，同一套停損停利）。
     （日線預篩實際只跳過約 4% 的股票，所以對照組主要從這裡抽，樣本才夠。）"""
     r = _run
-    if r is None or random.random() >= CONTROL_RATE:
+    if r is None:
         return
+    # 水庫抽樣（Reservoir sampling）：掃描順序固定，若「先到先收」會偏向代號小的股票；
+    # 這樣每一檔沒訊號的股票被選進對照組的機率完全相同。
+    with r["lock"]:
+        r["ctrl_seen"] = r.get("ctrl_seen", 0) + 1
+        seen = r["ctrl_seen"]
+        if len(r["controls"]) < CONTROL_CAP:
+            slot = len(r["controls"])
+        else:
+            j = random.randrange(seen)
+            if j >= CONTROL_CAP:
+                return
+            slot = j
     try:
         from signal_engine import calc_stop_loss_tw, calc_take_profits_tw
         closes = daily.get("closes") or []
@@ -438,7 +455,10 @@ def control_from_engine(ticker, stock_info, daily, ind, mtf, mkt):
                "sector": (stock_info or {}).get("sector"),
                "created_at": datetime.now(timezone.utc).isoformat(), "features": snap}
         with r["lock"]:
-            r["controls"].append(row)
+            if slot < len(r["controls"]):
+                r["controls"][slot] = row
+            else:
+                r["controls"].append(row)
     except Exception as e:
         _err(f"control_from_engine {ticker}: {e}")
 

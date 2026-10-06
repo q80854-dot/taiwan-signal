@@ -652,6 +652,12 @@ class TWScanEngine:
             if not (hit_sl or hit_tp1):
                 continue
             self._intraday_alerted["ids"].add(sig_id)
+            try:  # 跨實例／重啟去重：同一訊號同一種到價警示，一天只發一次
+                from state_store import store as _st
+                if not _st.claim_notice(f"intra:{sig_id}:{'sl' if hit_sl else 'tp'}:{today}", 86400):
+                    continue
+            except Exception:
+                pass
             alerted += 1
             try:
                 from telegram_bot import send_alert
