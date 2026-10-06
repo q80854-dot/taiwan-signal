@@ -432,6 +432,27 @@ def _classify_size(close, volume_lots) -> str:
 _raw_mem_cache: Optional[Dict] = None
 _raw_mem_cache_at: float = 0.0
 
+def _save_raw_to_db(payload):
+    """★ 2026-10-06：Render 的硬碟每次部署都會清空，原本重啟後第一位訪客得等 8～20 秒重抓全市場。
+    把清單同步存進資料庫，重啟時直接載入。"""
+    try:
+        from state_store import store
+        store.set_meta("universe_raw", payload)
+    except Exception as e:
+        logger.warning(f"_save_raw_to_db: {e}")
+
+
+def _load_raw_from_db():
+    try:
+        from state_store import store
+        p = store.get_meta("universe_raw")
+        if isinstance(p, dict) and p.get("stocks"):
+            return p
+    except Exception as e:
+        logger.warning(f"_load_raw_from_db: {e}")
+    return None
+
+
 def _raw_cache_valid():
     if not os.path.exists(RAW_CACHE_PATH): return False
     return time.time() - os.path.getmtime(RAW_CACHE_PATH) < CACHE_TTL
@@ -446,6 +467,18 @@ def _get_raw_universe(force_refresh=False) -> Dict:
     """
     global _raw_mem_cache, _raw_mem_cache_at
     os.makedirs("instance", exist_ok=True)
+
+    if not force_refresh and not os.path.exists(RAW_CACHE_PATH):
+        _p = _load_raw_from_db()
+        if _p and time.time() - _p.get("fetched_at", 0) < CACHE_TTL:
+            try:
+                with open(RAW_CACHE_PATH, "w", encoding="utf-8") as f:
+                    json.dump(_p, f, ensure_ascii=False)
+            except Exception:
+                pass
+            _raw_mem_cache, _raw_mem_cache_at = _p, time.time()
+            logger.info(f"品種清單：從資料庫載入（{len(_p['stocks'])} 檔），免重新下載")
+            return _p
 
     if not force_refresh and _raw_cache_valid():
         if _raw_mem_cache is not None and time.time() - _raw_mem_cache_at < CACHE_TTL:
@@ -517,6 +550,7 @@ def _get_raw_universe(force_refresh=False) -> Dict:
                "dates_mismatch": bool(tse_quote_date and otc_quote_date and tse_quote_date != otc_quote_date)}
     with open(RAW_CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
+    _save_raw_to_db(payload)
     _raw_mem_cache, _raw_mem_cache_at = payload, time.time()
     logger.info(f"原始品種清單: {len(all_stocks)} 檔（上市+上櫃，未過濾）")
     return payload
