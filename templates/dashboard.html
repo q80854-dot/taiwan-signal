@@ -634,6 +634,22 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
 #ad-gate form input{font-size:15px!important;padding:12px 14px!important}
 #ad-gate form .btn{padding:0 24px}
 #ad-gate div[style*="padding:0 16px 14px"]{padding:14px 0 0!important}
+/* 全站搜尋（參考 TradingView 頂欄搜尋） */
+.gs{position:relative;flex:0 1 340px;margin:0 20px;min-width:160px}
+.gs input{width:100%;height:36px;border:1px solid var(--line2);border-radius:18px;background:var(--wash);padding:0 16px 0 38px;font-size:13.5px;color:var(--ink);font-family:var(--sans);outline:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2366768c' stroke-width='1.6'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='M11 11l4 4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:13px 10px}
+.gs input:focus{background-color:#fff;border-color:var(--navy2);box-shadow:0 0 0 3px rgba(23,51,92,.1)}
+.gs-dd{display:none;position:absolute;left:0;right:0;top:42px;background:#fff;border:1px solid var(--line2);box-shadow:0 14px 36px rgba(11,31,58,.18);z-index:500;max-height:380px;overflow:auto}
+.gs-dd.on{display:block}
+.gs-i{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;font-size:13.5px;border-bottom:1px solid var(--line)}
+.gs-i:last-child{border-bottom:0}
+.gs-i.sel,.gs-i:hover{background:var(--wash)}
+.gs-i b{font-weight:600;color:var(--ink);min-width:48px;font-variant-numeric:tabular-nums}
+.gs-i .n{flex:1;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gs-i .s{color:var(--t3);font-size:12px}
+.gs-i em{font-style:normal;font-variant-numeric:tabular-nums;font-weight:500;min-width:58px;text-align:right}
+.gs-empty{padding:16px;color:var(--t3);font-size:13px}
+@media(max-width:900px){.gs{flex-basis:200px;margin:0 10px}}
+@media(max-width:640px){.gs{display:none}}
 .nav:focus-visible,.btn:focus-visible,.tabs button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 #signals-container .sig-grid{grid-template-columns:repeat(3,1fr)!important;row-gap:16px}
@@ -693,6 +709,7 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
       <div class="hamburger" onclick="toggleSide()">☰</div>
       <span id="page-title">總覽</span>
     </div>
+    <div class="gs"><input id="gs-in" placeholder="搜尋代號或名稱　Ctrl+K" autocomplete="off" spellcheck="false" oninput="gsQuery()" onkeydown="gsKey(event)" onfocus="gsQuery()"><div id="gs-dd" class="gs-dd"></div></div>
     <div class="top-r">
       <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
       <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
@@ -1243,6 +1260,30 @@ async function addInstEvents(code){
   }catch(e){}
 }
 function esc2(x){return String(x==null?'':x).replace(/[<>&]/g,'');}
+var _gsT=null,_gsSel=-1,_gsItems=[];
+function gsQuery(){
+  clearTimeout(_gsT);const q=(document.getElementById('gs-in').value||'').trim(),dd=document.getElementById('gs-dd');
+  if(!q){dd.classList.remove('on');return;}
+  _gsT=setTimeout(async()=>{
+    try{
+      const d=await (await fetch('/api/screener?limit=8&q='+encodeURIComponent(q))).json();
+      _gsItems=(d.items||[]).sort((a,b)=>(String(a.code).startsWith(q)?0:1)-(String(b.code).startsWith(q)?0:1));_gsSel=_gsItems.length?0:-1;
+      dd.innerHTML=_gsItems.length?_gsItems.map((x,i)=>{const c=x.change_pct;const col=c==null?'var(--t3)':c>0?'var(--up)':c<0?'var(--down)':'var(--t3)';
+        return `<div class="gs-i${i===0?' sel':''}" onmousedown="gsPick('${esc2(x.code)}')"><b>${esc2(x.code)}</b><span class="n">${esc2(x.name)}</span><span class="s">${esc2(x.sector||'')}</span><em style="color:${col}">${c==null?'—':(c>0?'+':'')+c.toFixed(2)+'%'}</em></div>`}).join(''):'<div class="gs-empty">找不到符合的股票</div>';
+      dd.classList.add('on');
+    }catch(e){dd.classList.remove('on');}
+  },160);
+}
+function gsPick(code){const i=document.getElementById('gs-in');i.value='';i.blur();document.getElementById('gs-dd').classList.remove('on');goToInstrument(code);}
+function gsKey(e){
+  const dd=document.getElementById('gs-dd'),rows=dd.querySelectorAll('.gs-i');
+  if(e.key==='Escape'){dd.classList.remove('on');e.target.blur();return;}
+  if(!rows.length)return;
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();_gsSel=(_gsSel+(e.key==='ArrowDown'?1:-1)+rows.length)%rows.length;rows.forEach((r,i)=>r.classList.toggle('sel',i===_gsSel));}
+  else if(e.key==='Enter'){e.preventDefault();const x=_gsItems[Math.max(_gsSel,0)];if(x)gsPick(x.code);}
+}
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const i=document.getElementById('gs-in');if(i){i.focus();i.select();}}});
+document.addEventListener('click',e=>{if(!e.target.closest('.gs'))document.getElementById('gs-dd')?.classList.remove('on');});
 async function instQuick(){
   const el=document.getElementById('inst-result');if(!el||!el.querySelector('.empty'))return;
   const chip=(c,n)=>`<a class="bt-chip" onclick="goToInstrument('${esc2(c)}')">${esc2(c)} ${esc2(n)}</a>`;
