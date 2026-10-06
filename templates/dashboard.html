@@ -1334,7 +1334,7 @@ async function fetchRank(){
     const h=d.heat||[],mx=Math.max(3,...h.map(x=>Math.abs(x.avg)));
     document.getElementById('rk-heat').innerHTML=h.map(x=>{
       const a=Math.min(1,Math.abs(x.avg)/mx),up=x.avg>=0,bg=up?`rgba(200,16,46,${(.06+a*.5).toFixed(2)})`:`rgba(15,107,174,${(.06+a*.5).toFixed(2)})`,col=up?'var(--up)':'var(--down)';
-      return `<div class="hx" style="background:${bg}"><div class="hx-n">${esc2(x.sector)}</div><div class="hx-v" style="color:${col}">${x.avg>0?'+':''}${x.avg.toFixed(2)}%</div><div class="hx-l" onclick="goToInstrument('${esc2(x.leader.code)}')">領漲 ${esc2(x.leader.name)} <b style="color:var(--up)">${x.leader.chg>0?'+':''}${x.leader.chg.toFixed(1)}%</b></div><div class="hx-s">上漲 ${x.up}／下跌 ${x.down}　成交占比 ${x.share}%</div></div>`}).join('')||'<div class="empty">沒有資料</div>';
+      return `<div class="hx" style="background:${bg}"><div class="hx-n">${esc2(x.sector)}</div><div class="hx-v" style="color:${col}">${x.avg>0?'+':''}${x.avg.toFixed(2)}%</div><div class="hx-l" onclick="goToInstrument('${esc2(x.leader.code)}')">領漲 ${esc2(x.leader.name)} <b style="color:${x.leader.chg>0?'var(--up)':x.leader.chg<0?'var(--down)':'var(--t3)'}">${x.leader.chg>0?'+':''}${x.leader.chg.toFixed(1)}%</b></div><div class="hx-s">上漲 ${x.up}／下跌 ${x.down}　成交占比 ${x.share}%</div></div>`}).join('')||'<div class="empty">沒有資料</div>';
     rkRender();
   }catch(e){document.getElementById('rk-heat').innerHTML='<div class="empty">載入失敗：'+esc2(e.message)+'</div>';}
   finally{_rk.loading=false;}
@@ -1355,7 +1355,7 @@ async function rkRender(){
     if(_rk.tab!==t)return;
     const d=_rk.inst,L=t==='fbuy'?d.foreign_buy:t==='fsell'?d.foreign_sell:d.trust_buy;
     if(!L||!L.length){el.innerHTML='<div class="empty">目前沒有三大法人資料（證交所通常在收盤後約 16:00–17:00 公布）</div>';return;}
-    el.innerHTML=`<div class="rk-note">資料日期 ${esc2(d.date||'—')}，僅含上市個股，單位：張。</div><table class="tbl"><thead><tr><th>#</th><th>股票</th><th>產業</th><th>成交價</th><th>漲跌幅</th><th>外資</th><th>投信</th><th>三大法人</th></tr></thead><tbody>${L.map((r,i)=>`<tr><td>${i+1}</td><td>${nm(r)}</td><td>${esc2(r.sector)}</td><td>${num(r.close)}</td><td>${pc(r.change_pct)}</td><td>${net(r.foreign)}</td><td>${net(r.trust)}</td><td>${net(r.total)}</td></tr>`).join('')}</tbody></table>`;
+    el.innerHTML=`<div class="rk-note">資料日期 ${esc2(String(d.date||'—').replace(/^(\d{4})(\d{2})(\d{2})$/,'$1-$2-$3'))}，僅含上市個股，單位：張。</div><table class="tbl"><thead><tr><th>#</th><th>股票</th><th>產業</th><th>成交價</th><th>漲跌幅</th><th>外資</th><th>投信</th><th>三大法人</th></tr></thead><tbody>${L.map((r,i)=>`<tr><td>${i+1}</td><td>${nm(r)}</td><td>${esc2(r.sector)}</td><td>${num(r.close)}</td><td>${pc(r.change_pct)}</td><td>${net(r.foreign)}</td><td>${net(r.trust)}</td><td>${net(r.total)}</td></tr>`).join('')}</tbody></table>`;
     return;
   }
   const d=_rk.data;if(!d){return;}
