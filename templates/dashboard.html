@@ -612,6 +612,8 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
 .bt-hint-s{font-size:13.5px;color:var(--t3);line-height:2}
 .bt-chips{display:inline-flex;gap:10px;margin-left:8px;flex-wrap:wrap}
 .bt-chips a{cursor:pointer;border:1px solid var(--line2);padding:3px 12px;color:var(--ink);font-size:13px}
+.iq-g{margin:18px 0}.iq-t{font-size:13px;color:var(--t3);margin-bottom:8px;font-weight:500}
+.bt-chips a,.bt-chip{cursor:pointer;border:1px solid var(--line2);padding:3px 12px;color:var(--ink);font-size:13px}
 .bt-chips a:hover{border-color:var(--ink);background:var(--wash)}
 .top-r{gap:10px;flex-wrap:nowrap;white-space:nowrap}
 .top-r .btn,.bell,.mkt-pill{white-space:nowrap;flex-shrink:0}
@@ -624,9 +626,16 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
   .mkt-pill{padding:3px 8px;font-size:12px}
   .hamburger{font-size:20px;padding:4px 10px 4px 2px}
 }
+#ad-gate{background:linear-gradient(180deg,#0b1f3a,#14305a)!important}
+#ad-gate .panel{background:#fff!important;max-width:440px;padding:34px 36px 26px;border-top:3px solid var(--brass)!important;box-shadow:0 24px 60px rgba(0,0,0,.35)!important}
+#ad-gate .panel-head{border-bottom:0!important;padding:0 0 6px!important}
+#ad-gate #ad-gate-title{font-family:var(--serif);font-size:22px;color:var(--ink);font-weight:600;letter-spacing:.04em}
+#ad-gate .panel-body{padding:8px 0 4px!important}
+#ad-gate form input{font-size:15px!important;padding:12px 14px!important}
+#ad-gate form .btn{padding:0 24px}
+#ad-gate div[style*="padding:0 16px 14px"]{padding:14px 0 0!important}
 .nav:focus-visible,.btn:focus-visible,.tabs button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-#signals-container .sig-grid{grid-template-columns:repeat(3,1fr)!important;row-gap:16px}
 @media(max-width:640px){
   .sig-item span{font-size:15px}
   .sig-grid{grid-template-columns:repeat(2,1fr)!important;gap:14px}
@@ -1233,6 +1242,16 @@ async function addInstEvents(code){
   }catch(e){}
 }
 function esc2(x){return String(x==null?'':x).replace(/[<>&]/g,'');}
+async function instQuick(){
+  const el=document.getElementById('inst-result');if(!el||!el.querySelector('.empty'))return;
+  const chip=(c,n)=>`<a class="bt-chip" onclick="goToInstrument('${esc2(c)}')">${esc2(c)} ${esc2(n)}</a>`;
+  const g=(t,arr)=>arr.length?`<div class="iq-g"><div class="iq-t">${t}</div><div class="bt-chips" style="margin:0">${arr.join('')}</div></div>`:'';
+  const sig=(_signals||[]).map(x=>chip(x.code||String(x.ticker).split('.')[0],x.name||''));
+  let pos=[];try{const d=await (await fetch('/api/positions')).json();pos=(d.open||[]).map(x=>chip(x.code,x.name||''));}catch(e){}
+  const pop=[['2330','台積電'],['2317','鴻海'],['2454','聯發科'],['2881','富邦金']].map(x=>chip(x[0],x[1]));
+  if(!el.querySelector('.empty'))return;
+  el.innerHTML='<div class="empty" style="padding:28px 0 18px;text-align:left">輸入股票代號，或從下方快速選擇</div>'+g('今日訊號',sig)+g('持倉中',pos)+g('常用',pop);
+}
 function go(id){
   try{document.getElementById('content').scrollTop=0;}catch(e){}try{document.body.scrollTop=0;document.documentElement.scrollTop=0;window.scrollTo(0,0);}catch(e){}
   {const P=['learning','health','audit','diag'],prev=window._curPage;
@@ -1249,6 +1268,7 @@ function go(id){
   if(id==='market'&&_state){renderMarket(_state);fetchUniverse();}
   if(id==='news'){renderMaterialNewsPage();fetchNewsWatch();}
   if(id==='watchlist')renderWatchlistPage();
+  if(id==='instrument')instQuick();
   if(id==='signals')renderSignals();
   if(id==='radar'&&!_radarLoaded)fetchRadar('growth');
   if(id==='audit')fetchAudit();
@@ -2629,7 +2649,7 @@ function renderPerf(wr){
   if(curve.length>1){
     const ctx=document.getElementById('equity-chart').getContext('2d');
     if(_eqChart)_eqChart.destroy();
-    _eqChart=new Chart(ctx,{type:'line',data:{labels:(wr.equity_curve||[]).map((p,i)=>(p.date||'').slice(5)||('#'+i)),datasets:[{data:curve,borderColor:'#0b1f3a',backgroundColor:'rgba(11,31,58,.06)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
+    _eqChart=new Chart(ctx,{type:'line',data:{labels:(wr.equity_curve||[]).map((p,i)=>(p.date||'').slice(5)||'起始'),datasets:[{data:curve,borderColor:'#0b1f3a',backgroundColor:'rgba(11,31,58,.06)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'資金 TWD '+Math.round(c.parsed.y).toLocaleString()}}},scales:{x:{display:true,ticks:{color:'#66768c',font:{size:12},maxTicksLimit:6},grid:{display:false}},y:{ticks:{color:'#66768c',font:{size:12},callback:v=>v.toLocaleString()},grid:{color:'#e4e8ef'}}}}});
   }
 }
