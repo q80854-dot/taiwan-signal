@@ -752,7 +752,61 @@ def fetch_all_timeframes(ticker: str) -> Optional[Dict]:
             time.sleep(0.1)
     return result if "daily" in result else None
 
+_price_src: Dict = {"fugle": 0, "yahoo": 0, "diff": [], "at": None}
+
+
+def price_source_status() -> Dict:
+    return dict(_price_src)
+
+
+def _fugle_last_price(code: str):
+    """富果（Fugle）即時報價：lastPrice（盤中即時成交價），盤後退回 closePrice。失敗回 None。"""
+    if not FUGLE_API_KEY:
+        return None
+    try:
+        r = requests.get(f"{FUBON_PUBLIC_BASE}/stock/intraday/quote/{code}",
+                         headers={**HEADERS, "X-API-KEY": FUGLE_API_KEY}, timeout=(3, 6))
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        v = j.get("lastPrice") or j.get("closePrice")
+        return round(float(v), 2) if v else None
+    except Exception:
+        return None
+
+
 def fetch_batch_current_prices(tickers: List[str]) -> Dict[str, float]:
+    """盤中現價。★ 2026-10-06：優先用富果即時報價（真正的即時成交價），抓不到才退回 Yahoo 日線最後一筆
+    （Yahoo 台股有延遲，且是還原價）；同時記錄兩邊差異，之後可在日誌核對準確度。"""
+    if not tickers: return {}
+    out = {}
+    try:
+        diffs = []
+        yh = _fetch_batch_yahoo(tickers) if YFINANCE_OK else {}
+        for t in tickers:
+            code = t.split(".")[0]
+            fp = _fugle_last_price(code)
+            if fp:
+                out[t] = fp
+                _price_src["fugle"] += 1
+                if t in yh and yh[t]:
+                    diffs.append((t, fp, yh[t], round((yh[t] / fp - 1) * 100, 2)))
+            elif t in yh:
+                out[t] = yh[t]
+                _price_src["yahoo"] += 1
+        _price_src["diff"] = diffs[-20:]
+        _price_src["at"] = time.time()
+        if diffs:
+            logger.info("盤中現價來源比對（代號, 富果, Yahoo, 差%）: " + "; ".join(str(d) for d in diffs))
+        elif tickers and not out:
+            logger.warning("盤中現價：富果與 Yahoo 都抓不到")
+        return out
+    except Exception as e:
+        logger.error(f"fetch_batch_current_prices: {e}")
+        return out
+
+
+def _fetch_batch_yahoo(tickers: List[str]) -> Dict[str, float]:
     if not YFINANCE_OK or not tickers: return {}
     prices = {}
     try:
