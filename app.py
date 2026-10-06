@@ -13,6 +13,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ★ 2026-10-06：日誌一律遮蔽 Telegram Bot Token（原本 Webhook 網址會連 token 一起寫進日誌）
+import re as _re
+class _RedactFilter(logging.Filter):
+    _pat = _re.compile(r"\d{8,}:[A-Za-z0-9_-]{30,}")
+    def filter(self, record):
+        try:
+            msg = record.getMessage()
+            if self._pat.search(msg):
+                record.msg = self._pat.sub("<bot-token>", msg)
+                record.args = ()
+        except Exception:
+            pass
+        return True
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_RedactFilter())
+
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
