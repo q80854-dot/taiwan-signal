@@ -559,6 +559,13 @@ body{font-family:var(--sans);font-size:13.5px;color:var(--t2);-webkit-font-smoot
   .sig-card,.panel .sig-card{padding:20px 16px}.sig-name{font-size:18px}
   .site-foot{padding:22px 18px 8px;margin-top:48px}
 }
+
+/* 補丁：強制電腦版時 KPI 帶依欄數自動排列（原本固定 1.3fr 2fr 只適合總覽） */
+html.force-desktop .hero-row,html.force-desktop .kpi-strip{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important}
+html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
+.eq-empty{padding:48px 0;text-align:center;color:var(--t3);font-size:13px}
+#ad-gate,.ad-gate{font-family:var(--sans)}
+@media(max-width:640px){html.force-mobile .hero-row,html.force-mobile .kpi-strip{grid-template-columns:repeat(2,1fr)!important}}
 </style>
 </head>
 <body>
@@ -1159,6 +1166,7 @@ async function addInstEvents(code){
 }
 function esc2(x){return String(x==null?'':x).replace(/[<>&]/g,'');}
 function go(id){
+  try{document.getElementById('content').scrollTop=0;}catch(e){}
   {const P=['learning','health','audit','diag'],prev=window._curPage;
    if(typeof adAuthed!=='undefined'&&adAuthed&&(!P.includes(id)||(id==='learning'&&prev!=='learning')))adLogoutQuiet();
    window._curPage=id;
@@ -2530,7 +2538,7 @@ function renderPerf(wr){
   const hasClosedTrades=(wr.closed||0)>0;
   setEl('p-total',safe(wr.total,0));setEl('p-wr',hasClosedTrades?safeN(wr.win_rate,1)+'%':'—%');
   setEl('p-wr-sub',wr.wins!==undefined?`${wr.wins}勝 / ${wr.losses}負`:'');
-  setEl('p-dd',wr.max_drawdown?safeN(wr.max_drawdown,1)+'%':'—%');setEl('p-sharpe',safeN(wr.sharpe,2));
+  setEl('p-dd',wr.max_drawdown?safeN(wr.max_drawdown,1)+'%':'—%');setEl('p-sharpe',wr.sharpe==null?'樣本不足':safeN(wr.sharpe,2));
   const pnl=wr.total_pnl||0;setEl('p-pnl',pnl===0?'—':(pnl>0?'+':'')+pnl.toLocaleString());setColor('p-pnl',clr(pnl));
   const trades=wr.recent_trades||[];
   // ★ 新增：2026-09-29——ETF 空單不計入上面「勝率」加總（見
@@ -2547,11 +2555,13 @@ function renderPerf(wr){
       <td style="color:${clr(p)}">${p===0?'—':(p>0?'+':'')+p.toLocaleString()}</td></tr>`;
   }).join(''):'<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--t3)">尚無記錄</td></tr>';
   const curve=(wr.equity_curve||[]).map(p=>typeof p==='object'?p.balance:p).filter(Boolean);
+  {const cv=document.getElementById('equity-chart'),ph=document.getElementById('eq-empty');if(cv){cv.style.display=curve.length>1?'':'none';}
+   if(!ph&&cv&&curve.length<=1){const d=document.createElement('div');d.id='eq-empty';d.className='eq-empty';d.textContent='已平倉交易累積到足夠筆數後，這裡會顯示資金曲線。';cv.parentNode.appendChild(d);}else if(ph&&curve.length>1){ph.remove();}}
   if(curve.length>1){
     const ctx=document.getElementById('equity-chart').getContext('2d');
     if(_eqChart)_eqChart.destroy();
-    _eqChart=new Chart(ctx,{type:'line',data:{labels:curve.map((_,i)=>i),datasets:[{data:curve,borderColor:'#c23b22',backgroundColor:'rgba(194,59,34,.06)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
-      options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{display:false},y:{ticks:{color:'#8b8d94',font:{size:10}},grid:{color:'#e6e6e3'}}}}});
+    _eqChart=new Chart(ctx,{type:'line',data:{labels:(wr.equity_curve||[]).map(p=>p.date||''),datasets:[{data:curve,borderColor:'#0b1f3a',backgroundColor:'rgba(11,31,58,.06)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{display:true,ticks:{color:'#66768c',font:{size:10},maxTicksLimit:6},grid:{display:false}},y:{ticks:{color:'#66768c',font:{size:10}},grid:{color:'#e4e8ef'}}}}});
   }
 }
 
