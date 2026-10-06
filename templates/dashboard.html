@@ -7,6 +7,8 @@
 <meta name="description" content="台股波段訊號研究平台：多週期技術面、籌碼、基本面共振，每筆訊號全程追蹤，績效與資料來源完整公開。">
 <meta property="og:title" content="台股波段智慧交易系統"><meta property="og:description" content="多因子波段訊號、透明績效、資料來源公開（研究用途，非投資建議）">
 <meta property="og:type" content="website"><meta name="theme-color" content="#0b1f3a">
+<link rel="manifest" href="/manifest.webmanifest">
+<script>(function(){try{var t=localStorage.getItem('dashTheme');if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light';document.documentElement.setAttribute('data-theme',t);if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.content='#070d17'}}catch(e){document.documentElement.setAttribute('data-theme','light')}})();</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1f3a'/%3E%3Cpath d='M6 22l6-8 5 5 9-12' stroke='%23e5484d' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
@@ -679,12 +681,34 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
   #page-overview .grid2>div:last-child .panel{position:static}
 }
 </style>
+<style id="skin-dark-a11y">
+/* ═══ 深色模式（2026-10-06）：只覆寫變數與少數寫死白底的元件 ═══ */
+html[data-theme=dark]{color-scheme:dark;--desk:#0d1420;--paper:#131c2b;--paper2:#18233a;--bg:#0d1420;--s1:#131c2b;--s2:#18233a;--s3:#1f2c45;--wash:#18233a;--line:#243350;--line2:#33466a;--ink:#e6ecf5;--t1:#e6ecf5;--t2:#b3c0d4;--t3:#8394ad;--navy:#070d17;--navy2:#1b3a6b;--brass:#d2b25c;--brass-lt:#e0c477;--accent:#7fb0f0;--accent-soft:#17263f;--up:#ff5b6e;--up-soft:#3a1720;--up-line:#6b2a37;--down:#4aa3e6;--down-soft:#112a40;--down-line:#1f4a6e;--ok:#3fbf92;--warn:#e0a93a;--alert:#ff6b86}
+html[data-theme=dark],html[data-theme=dark] body,html[data-theme=dark] .content{background:#0d1420}
+html[data-theme=dark] .top,html[data-theme=dark] .btn,html[data-theme=dark] .bell,html[data-theme=dark] .mkt-pill,html[data-theme=dark] .mkt-pill.open,html[data-theme=dark] .sig-card,html[data-theme=dark] .panel .sig-card,html[data-theme=dark] .pos,html[data-theme=dark] .autop,html[data-theme=dark] .fund,html[data-theme=dark] .tl .ev,html[data-theme=dark] #ad-gate .panel,html[data-theme=dark] .gs input:focus,html[data-theme=dark] .gs-dd,html[data-theme=dark] .rk-mk button,html[data-theme=dark] .tl .ev::before,html[data-theme=dark] .seal i{background:var(--s1)}
+html[data-theme=dark] .ticker{background:var(--navy)}
+html[data-theme=dark] .btn:hover,html[data-theme=dark] .sig-card:hover{background:var(--s2)}
+html[data-theme=dark] .btn.primary{background:var(--navy2);border-color:var(--navy2);color:#fff}
+html[data-theme=dark] .btn.primary:hover{background:#2a5190}
+html[data-theme=dark] .top{border-bottom-color:var(--line);box-shadow:none}
+html[data-theme=dark] .tag,html[data-theme=dark] .sig-badge{color:#0d1420}
+html[data-theme=dark] .lnk,html[data-theme=dark] summary{color:var(--t2)}
+html[data-theme=dark] ::selection{background:#2a4a7c;color:#fff}
+html[data-theme=dark] *{scrollbar-color:#33466a #0d1420}
+html:not([data-theme=dark]) #theme-ic-moon,html[data-theme=dark] #theme-ic-sun{display:inline}
+html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{display:none}
+/* ═══ 無障礙：焦點樣式、跳到主要內容 ═══ */
+[role=button]:focus-visible,.bell:focus-visible,.hamburger:focus-visible,.gs-dd *:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.skip-link{position:absolute;left:-9999px;top:0;z-index:10000;background:var(--navy);color:#fff;padding:10px 16px;font-size:13px}
+.skip-link:focus{left:8px;top:8px}
+</style>
 </head>
 <body>
 <div class="shell">
 <div class="side-backdrop" id="side-backdrop" onclick="closeSide()"></div>
 <!-- Sidebar -->
-<div class="side" id="side">
+<a class="skip-link" href="#content">跳到主要內容</a>
+<div class="side" id="side" role="navigation" aria-label="主選單">
   <div class="logo">
     <div class="logo-mark">台</div>
     <div><div class="logo-nm">台股波段<br>智慧交易系統</div><div class="logo-vr" id="version">v1.0.0</div></div>
@@ -726,7 +750,7 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
 <div class="body">
   <div class="top">
     <div class="top-l">
-      <div class="hamburger" onclick="toggleSide()">☰</div>
+      <div class="hamburger" onclick="toggleSide()" aria-label="開關選單">☰</div>
       <span id="page-title">總覽</span>
     </div>
     <div class="gs"><input id="gs-in" placeholder="搜尋代號或名稱　Ctrl+K" autocomplete="off" spellcheck="false" oninput="gsQuery()" onkeydown="gsKey(event)" onfocus="gsQuery()"><div id="gs-dd" class="gs-dd"></div></div>
@@ -735,12 +759,13 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
       <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
       <span id="tw-time" style="font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums"></span>
       <div class="bell" onclick="go('events')" title="通知中心">通知<span class="cnt" id="bell-cnt">0</span></div>
+      <button class="btn" id="theme-btn" onclick="toggleTheme()" aria-label="切換深色／淺色模式" title="切換深色／淺色模式"><span id="theme-ic-moon">深色</span><span id="theme-ic-sun">淺色</span></button>
       <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">手機版</button>
       <button class="btn" onclick="fetchState()">刷新</button>
       <button class="btn primary arrow" onclick="forceScan()">立即掃描</button>
     </div>
   </div>
-  <div class="content" id="content">
+  <div class="content" id="content" role="main" tabindex="-1">
 
   <!-- Overview -->
   <div class="page on" id="page-overview">
@@ -2013,6 +2038,31 @@ function applyForcedMode(mode){
     else localStorage.removeItem('dashViewMode');
   }catch(e){/* 私密瀏覽模式等情況下 localStorage 可能不可用，不影響切換本身 */}
 }
+function _cv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+function toggleTheme(){
+  const html=document.documentElement;
+  const next=html.getAttribute('data-theme')==='dark'?'light':'dark';
+  html.setAttribute('data-theme',next);
+  try{localStorage.setItem('dashTheme',next);}catch(e){}
+  const m=document.querySelector('meta[name=theme-color]');if(m)m.content=next==='dark'?'#070d17':'#0b1f3a';
+  try{if(_eqChart){const d=_eqChart.data.datasets[0],sc=_eqChart.options.scales;d.borderColor=_cv('--ink');d.backgroundColor=_cv('--ink')+'12';sc.x.ticks.color=_cv('--t3');sc.y.ticks.color=_cv('--t3');sc.y.grid.color=_cv('--line');_eqChart.update();}}catch(e){}
+}
+// ── 無障礙：所有只有 onclick 的 div／span 補上按鈕角色與鍵盤操作（Enter／空白鍵）──
+(function a11yClickables(){
+  const SEL='[onclick]:not(button):not(a):not(input):not(select):not(textarea):not(summary):not(tr):not(td):not([role])';
+  function fix(root){
+    try{root.querySelectorAll(SEL).forEach(e=>{e.setAttribute('role','button');if(!e.hasAttribute('tabindex'))e.tabIndex=0;});}catch(x){}
+  }
+  document.addEventListener('keydown',ev=>{
+    if(ev.key!=='Enter'&&ev.key!==' ')return;
+    const t=ev.target;
+    if(t&&t.getAttribute&&t.getAttribute('role')==='button'&&t.hasAttribute('onclick')){ev.preventDefault();t.click();}
+  });
+  let pend=false;
+  function sched(){if(pend)return;pend=true;requestAnimationFrame(()=>{pend=false;fix(document);});}
+  fix(document);
+  new MutationObserver(sched).observe(document.body,{childList:true,subtree:true});
+})();
 function toggleViewMode(){
   applyForcedMode(effectiveViewMode()==='mobile'?'desktop':'mobile');
 }
@@ -2772,8 +2822,8 @@ function renderPerf(wr){
   if(curve.length>1){
     const ctx=document.getElementById('equity-chart').getContext('2d');
     if(_eqChart)_eqChart.destroy();
-    _eqChart=new Chart(ctx,{type:'line',data:{labels:(wr.equity_curve||[]).map((p,i)=>(p.date||'').slice(5)||'起始'),datasets:[{data:curve,borderColor:'#0b1f3a',backgroundColor:'rgba(11,31,58,.06)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
-      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'資金 TWD '+Math.round(c.parsed.y).toLocaleString()}}},scales:{x:{display:true,ticks:{color:'#66768c',font:{size:12},maxTicksLimit:6},grid:{display:false}},y:{ticks:{color:'#66768c',font:{size:12},callback:v=>v.toLocaleString()},grid:{color:'#e4e8ef'}}}}});
+    _eqChart=new Chart(ctx,{type:'line',data:{labels:(wr.equity_curve||[]).map((p,i)=>(p.date||'').slice(5)||'起始'),datasets:[{data:curve,borderColor:_cv('--ink'),backgroundColor:_cv('--ink')+'12',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'資金 TWD '+Math.round(c.parsed.y).toLocaleString()}}},scales:{x:{display:true,ticks:{color:_cv('--t3'),font:{size:12},maxTicksLimit:6},grid:{display:false}},y:{ticks:{color:_cv('--t3'),font:{size:12},callback:v=>v.toLocaleString()},grid:{color:_cv('--line')}}}}});
   }
 }
 
@@ -2784,7 +2834,7 @@ function renderSidebar(d){
 }
 
 function toast(msg){
-  const t=document.createElement('div');t.className='toast';t.textContent=msg;
+  const t=document.createElement('div');t.className='toast';t.setAttribute('role','status');t.setAttribute('aria-live','polite');t.textContent=msg;
   document.body.appendChild(t);setTimeout(()=>t.remove(),3000);
 }
 
