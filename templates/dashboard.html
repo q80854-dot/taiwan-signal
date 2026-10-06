@@ -411,6 +411,138 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
 @media(max-width:640px){.content{overflow-x:hidden}}
 html.force-mobile .content{overflow-x:hidden}
 </style>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style id="skin-institution">
+/* ===== 機構風：冷灰底、白卡片、細線、無襯線、數字等寬。覆蓋上面的帳簿皮膚 ===== */
+:root{
+  --sans:'Inter','Noto Sans TC','PingFang TC','Microsoft JhengHei',-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --serif:var(--sans);
+  --desk:#f3f5f8;--paper:#ffffff;--paper2:#f7f8fb;--bg:#f3f5f8;--s1:#ffffff;--s2:#f7f8fb;--s3:#eef1f6;
+  --line:#e4e8ef;--line2:#d0d7e2;--rule:transparent;
+  --ink:#0f1b2d;--t1:#0f1b2d;--t2:#465367;--t3:#667085;
+  --navy:#0b1f3a;--navy2:#143561;
+  --accent:#0b57d0;--accent-soft:#eaf1fc;
+  --up:#d12d1f;--up-soft:#fdeceb;--up-line:#f3c1bc;
+  --down:#1b6a93;--down-soft:#e8f2f8;--down-line:#bcd8e8;
+  --ok:#1a7f5a;--warn:#a16207;--alert:#a3243f;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.04);
+}
+html,body{background:var(--desk)}
+body{font-family:var(--sans);font-size:13px;color:var(--t2);-webkit-font-smoothing:antialiased;letter-spacing:0}
+.content{background-image:none;background-color:var(--desk)}
+/* 側欄 */
+.side{background:var(--navy);width:224px;min-width:224px}
+.logo{padding:20px 20px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.logo-mark{background:#fff;color:var(--navy);border-radius:4px;transform:none;box-shadow:none;font-family:var(--sans);font-weight:800;font-size:13px;width:28px;height:28px}
+.logo-nm{font-family:var(--sans);letter-spacing:.3px;color:#fff;font-size:14px}
+.logo-vr{color:#8fa3c0}
+.nav-g{color:#7f93b2;letter-spacing:1.2px;font-size:10.5px;padding:18px 20px 6px;font-weight:600}
+.nav{color:#c3cfe2;font-size:13px;padding:9px 20px;border-left:3px solid transparent;transition:background .12s,color .12s}
+.nav:hover{background:rgba(255,255,255,.06);color:#fff}
+.nav.on{background:rgba(255,255,255,.1);color:#fff;border-left-color:#5b9bff;font-weight:600}
+.nbadge{color:#8fa3c0}.nav.on .nbadge{color:#cfe0ff}
+.nbadge.hot{background:#d12d1f}
+/* 頂欄 */
+.top{height:56px;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(16,24,40,.03);padding:0 28px}
+.top-l{font-family:var(--sans);font-size:17px;font-weight:700;letter-spacing:.2px;color:var(--ink)}
+.btn{border-radius:4px;border:1px solid var(--line2);background:#fff;color:var(--t2);font-weight:600;font-size:12px;padding:7px 14px;letter-spacing:0}
+.btn:hover{border-color:var(--navy);color:var(--navy);background:#fff}
+.btn.primary{background:var(--navy);border-color:var(--navy);color:#fff}
+.btn.primary:hover{background:var(--navy2);border-color:var(--navy2)}
+.bell{border-radius:4px;font-family:var(--sans);font-size:12px;font-weight:600;color:var(--t2)}
+.fresh-badge{border-radius:999px;background:var(--paper2);padding:5px 12px}
+.mkt-pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:999px;background:var(--paper2);border:1px solid var(--line);color:var(--t2);white-space:nowrap}
+.mkt-pill i{width:7px;height:7px;border-radius:50%;background:var(--t3);display:inline-block}
+.mkt-pill.open{color:var(--ok);background:#ecf8f2;border-color:#bfe6d4}.mkt-pill.open i{background:var(--ok);box-shadow:0 0 0 3px rgba(26,127,90,.18)}
+@media(max-width:900px){.mkt-pill{display:none}}
+/* 大盤條 */
+.ticker{background:linear-gradient(180deg,#0b1f3a,#0e2748);border-bottom:none;--up:#ff8574;--down:#7ec5ee}
+.ticker-item{padding:14px 22px;border-right:1px solid rgba(255,255,255,.09)}
+.ticker-name{font-size:11px;letter-spacing:.5px;color:#9db0cc;font-weight:500}
+.ticker-val{font-family:var(--sans);font-weight:700;font-size:clamp(16px,1.5vw,21px);font-variant-numeric:tabular-nums;letter-spacing:0}
+.ticker-chg{font-variant-numeric:tabular-nums}
+/* 區塊標題 */
+.pad{padding:24px 28px 0}
+.sec-label{margin:28px 0 12px;gap:10px}
+.sec-label .bar{width:3px;height:16px;background:var(--accent);transform:none;margin:0;border-radius:2px}
+.sec-label .tx{font-family:var(--sans);font-size:15px;font-weight:700;letter-spacing:.2px;color:var(--ink)}
+.sec-label::after{background:var(--line)}
+.sec-label .lnk{color:var(--accent);font-weight:600}
+/* 面板與卡片 */
+.panel,.card,.hero,.kpi{background:#fff}
+.card,.panel{border-radius:6px}
+.hero-row,.grid2,.kpi-strip{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--line);box-shadow:var(--shadow)}
+.hero-row,.kpi-strip{background:#fff}
+.hero-row>.kpi,.kpi-strip>.kpi{border-right:1px solid var(--line);border-bottom:none}
+.hero{background:#fff;border-left:none}
+.hero-val{font-family:var(--sans);font-size:48px;font-weight:700;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.kpi{padding:20px 22px}
+.kpi-label,.hero-label,.sig-item label{font-size:12px;color:var(--t3);font-weight:500;letter-spacing:.2px;text-transform:none}
+.kpi-val{font-family:var(--sans);font-size:26px;font-weight:700;letter-spacing:-.3px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.kpi-sub{font-size:11.5px}
+.panel-head{padding:14px 20px;background:#fff;border-bottom:1px solid var(--line)}
+.panel-head .bar{width:3px;height:14px;border-radius:2px;background:var(--accent)}
+.panel-title{font-family:var(--sans);font-size:14px;font-weight:700;letter-spacing:.2px;color:var(--ink)}
+.panel.card,.panel.card.kl{box-shadow:var(--shadow)}
+/* 表格 */
+.tbl{font-size:12.5px;font-variant-numeric:tabular-nums}
+.tbl th{background:var(--paper2);border-bottom:1px solid var(--line2);color:var(--t3);font-size:11.5px;font-weight:600;letter-spacing:.3px;padding:11px 16px}
+.tbl td{padding:11px 16px;border-bottom:1px solid var(--line)}
+.tbl tr:hover td{background:#f4f8ff}
+.tbl tr:last-child td{border-bottom:none}
+.note-box{background:#f4f8ff;border:1px solid #d6e4fb;border-left:3px solid var(--accent);border-radius:4px;color:var(--t2);line-height:1.7}
+.empty{font-family:var(--sans);letter-spacing:0}.empty-label{letter-spacing:.5px}
+.toast{background:var(--navy);border-left:none;border-radius:6px;box-shadow:0 8px 24px rgba(16,24,40,.25)}
+/* 訊號卡：去掉票據打孔 */
+.sig-card{background:#fff;border:1px solid var(--line);border-left:4px solid var(--up);border-radius:6px;box-shadow:var(--shadow);padding:18px 22px;margin:0 0 12px}
+.sig-card.sell{border-left-color:var(--down)}
+.sig-card::before,.sig-card::after{display:none!important}
+.panel .sig-card{box-shadow:none;border-radius:0;border-left:4px solid var(--up);border-top:none;border-right:none}
+.panel .sig-card.sell{border-left-color:var(--down)}
+.sig-name{font-family:var(--sans);font-size:16px;font-weight:700;letter-spacing:0;color:var(--ink)}
+.sig-badge{border-radius:3px;font-family:var(--sans);letter-spacing:.5px;font-size:11px;padding:2px 8px}
+.sig-grid{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0}
+.sig-item span{font-variant-numeric:tabular-nums}
+/* 分數章 → 乾淨的評分徽章 */
+.seal,.seal.sell{transform:none!important;animation:none!important;width:64px;height:64px;border-width:1.5px;border-radius:6px;background:#fff}
+.seal b{font-family:var(--sans);font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
+.seal i{font-family:var(--sans);font-size:11px;letter-spacing:.5px;font-weight:600}
+.mast .seal{width:84px;height:84px}.mast .seal b{font-size:30px}
+/* 報頭 */
+.mast{background:#fff;border:1px solid var(--line);border-top:3px solid var(--navy);border-radius:6px;box-shadow:var(--shadow);padding:22px 26px}
+.mast .dt{font-family:var(--sans);border-right:1px solid var(--line)}
+.mast .dt b{font-size:32px;font-weight:700;letter-spacing:0}
+.mast .say{font-family:var(--sans);font-size:16px;font-weight:500;line-height:1.7}
+.mast .say em{background:none;color:var(--up);font-weight:700}
+/* 持倉、時間軸、基本面 */
+.pos,.autop,.fund,.tl .ev{border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);background:#fff}
+.pos-r,.fund-big{font-family:var(--sans);font-weight:700;font-variant-numeric:tabular-nums}
+.pos-stats{border-top:1px solid var(--line)}
+.ruler .trk{border-radius:3px}
+.tl{border-left:2px solid var(--line2)}
+.tl .ev::before{transform:none;border-radius:50%;border:2px solid var(--accent);background:#fff}
+.tl .ev.new::before{background:var(--up);border-color:var(--up)}
+.tl .ev .tt{font-family:var(--sans);font-weight:700}
+.chip,.fchip .k,.fchip .g,.chase .k{font-family:var(--sans)}
+.fchip .g{transform:none;border-radius:3px}
+.chase .k{letter-spacing:.3px}
+.tabs{border-bottom:1px solid var(--line2);gap:2px}
+.tabs button{font-family:var(--sans);font-weight:600;letter-spacing:0;border-radius:4px 4px 0 0;color:var(--t2);padding:9px 16px}
+.tabs button:hover{background:var(--paper2)}
+.tabs button.on{background:#fff;color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+.dot-sig{transform:none;border-radius:50%}
+.qc-v b{font-family:var(--sans)}
+.chk{border-bottom:1px solid var(--line)}
+/* 頁尾 */
+.site-foot{margin:36px 28px 0;padding:20px 0 6px;border-top:1px solid var(--line2);font-size:11.5px;color:var(--t3);line-height:1.8}
+.site-foot b{color:var(--t2)}
+.site-foot a{color:var(--accent);cursor:pointer;text-decoration:none;font-weight:600}
+@media(max-width:640px){
+  .pad{padding:16px 14px 0}.top{padding:0 12px}.site-foot{margin:28px 14px 0}
+  .kpi{padding:16px 14px}.kpi-val{font-size:22px}.hero-val{font-size:40px}
+  .tbl th,.tbl td{padding:10px 12px}
+}
+</style>
 </head>
 <body>
 <div class="shell">
@@ -425,6 +557,7 @@ html.force-mobile .content{overflow-x:hidden}
   <div class="nav on"  onclick="go('overview')">總覽</div>
   <div class="nav"     onclick="go('signals')">今日訊號 <span class="nbadge" id="sig-count-badge">0</span></div>
   <div class="nav"     onclick="go('positions')">持倉追蹤 <span class="nbadge" id="pos-count-badge">0</span></div>
+  <div class="nav"     onclick="go('risk')">風險管理</div>
   <div class="nav"     onclick="go('autopsy')">停損解剖</div>
   <div class="nav"     onclick="go('events')">通知中心 <span class="nbadge" id="ev-count-badge"></span></div>
   <div class="nav"     onclick="go('watchlist')">觀察清單 <span class="nbadge" id="wl-count-badge">0</span></div>
@@ -438,6 +571,7 @@ html.force-mobile .content{overflow-x:hidden}
   <div class="nav"     onclick="go('marketoverview')">市場總覽</div>
   <div class="nav-g">市場</div>
   <div class="nav"     onclick="go('market')">市場環境</div>
+  <div class="nav"     onclick="go('report')">盤後報告</div>
   <div class="nav"     onclick="go('news')">重大訊息公告 <span class="nbadge" id="news-count-badge">0</span></div>
   <div class="nav-g">工具</div>
   <div class="nav"     onclick="go('backtest')">回測</div>
@@ -460,7 +594,8 @@ html.force-mobile .content{overflow-x:hidden}
     </div>
     <div class="top-r">
       <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
-      <span id="tw-time" style="font-size:11px;color:var(--t3)"></span>
+      <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
+      <span id="tw-time" style="font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums"></span>
       <div class="bell" onclick="go('events')" title="通知中心">報<span class="cnt" id="bell-cnt">0</span></div>
       <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">📱 手機版</button>
       <button class="btn" onclick="fetchState()">刷新</button>
@@ -784,6 +919,27 @@ html.force-mobile .content{overflow-x:hidden}
   </div>
 
   <!-- Diag -->
+  <div class="page" id="page-risk"><div class="pad">
+    <div class="note-box" style="margin-bottom:16px">以「照訊號進場」的持倉計算。風險金額 ＝ 進場價到停損價的距離 × 建議張數；最大損失假設所有持倉同時觸發停損、未計滑價與跳空。</div>
+    <div class="kpi-strip" id="risk-kpi" style="grid-template-columns:repeat(4,1fr)"></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">產業集中度</div></div>
+    <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>產業</th><th>持倉數</th><th>風險金額 TWD</th><th>占總風險</th><th style="width:36%"></th></tr></thead><tbody id="risk-sec"></tbody></table></div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">各持倉風險</div></div>
+    <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>股票</th><th>產業</th><th>現價</th><th>停損</th><th>距停損</th><th>目前 R</th><th>風險金額 TWD</th></tr></thead><tbody id="risk-pos"></tbody></table></div></div>
+  </div></div>
+
+  <div class="page" id="page-report"><div class="pad">
+    <div class="mast" id="rp-mast" style="grid-template-columns:1fr"><div class="say" id="rp-say">載入中…</div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">市場概況</div></div>
+    <div class="kpi-strip" id="rp-kpi" style="grid-template-columns:repeat(4,1fr)"></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">強弱產業</div></div>
+    <div class="grid2"><div class="panel"><div class="panel-head"><div class="bar" style="background:var(--up)"></div><span class="panel-title">領漲產業</span></div><div id="rp-top" class="panel-body"></div></div>
+      <div class="panel"><div class="panel-head"><div class="bar" style="background:var(--down)"></div><span class="panel-title">落後產業</span></div><div id="rp-bot" class="panel-body"></div></div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">今日訊號與持倉</div></div>
+    <div class="panel card"><div class="panel-body" id="rp-sig"></div></div>
+    <div class="note-box" style="margin-top:14px" id="rp-note"></div>
+  </div></div>
+
   <div class="page" id="page-method">
     <div class="pad" style="max-width:860px;line-height:1.85;font-size:13.5px">
       <div class="note-box" style="margin-bottom:16px"><b>本站僅為研究與教育用途，不構成任何投資建議或邀約。</b>所有訊號皆為量化規則的機械輸出，過去績效不代表未來結果；實際交易請自行評估並承擔風險。</div>
@@ -916,11 +1072,13 @@ function updateFreshBadge(iso){
 function updateClock(){
   const tw=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Taipei'}));
   document.getElementById('tw-time').textContent=tw.toLocaleTimeString('zh-TW',{hour12:false})+' 台北';
+  try{const mp=document.getElementById('mkt-pill'),h=tw.getHours()*60+tw.getMinutes(),wd=tw.getDay(),open=wd>=1&&wd<=5&&h>=540&&h<=810,pre=wd>=1&&wd<=5&&h>=510&&h<540;
+    mp.className='mkt-pill'+(open?' open':'');document.getElementById('mkt-txt').textContent=open?'台股盤中':(pre?'即將開盤':(wd>=1&&wd<=5&&h>810?'已收盤':'休市'));}catch(e){}
 }
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',method:'方法論與風險聲明',backtest:'回測',diag:'系統診斷'};
+const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',method:'方法論與風險聲明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 async function fetchCalendar(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
@@ -934,6 +1092,55 @@ async function fetchCalendar(){
     document.getElementById('cal-watch-note').textContent=w.source||'';
   }catch(e){document.getElementById('cal-ex').innerHTML='<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--t3)">載入失敗</td></tr>';}
 }
+async function fetchRisk(){
+  const esc=x=>String(x==null?'':x).replace(/[<>&]/g,''),f0=n=>Math.round(n||0).toLocaleString();
+  try{
+    const d=await (await fetch('/api/positions')).json(),ps=d.open||[];
+    const tot=ps.reduce((a,p)=>a+(+p.risk_twd||0),0),by={};
+    ps.forEach(p=>{const k=p.sector||'未分類';(by[k]=by[k]||{n:0,r:0});by[k].n++;by[k].r+=(+p.risk_twd||0);});
+    const rows=Object.entries(by).sort((a,b)=>b[1].r-a[1].r),top=rows[0];
+    const rn=ps.map(p=>p.r_now).filter(x=>x!=null),avgR=rn.length?rn.reduce((a,b)=>a+b,0)/rn.length:null;
+    document.getElementById('risk-kpi').innerHTML=[
+      ['持倉檔數',ps.length,'最多 5 檔'],['總風險金額','TWD '+f0(tot),'若全數觸及停損的最大損失'],
+      ['最大產業占比',top&&tot?Math.round(top[1].r/tot*100)+'%':'—',top?esc(top[0]):''],['平均 R',avgR==null?'—':(avgR>=0?'+':'')+avgR.toFixed(2),'目前未實現']
+    ].map(k=>`<div class="kpi"><div class="kpi-label">${k[0]}</div><div class="kpi-val">${k[1]}</div><div class="kpi-sub">${k[2]}</div></div>`).join('');
+    document.getElementById('risk-sec').innerHTML=rows.length?rows.map(([k,v])=>{const pc=tot?v.r/tot*100:0;return `<tr><td>${esc(k)}</td><td>${v.n}</td><td>${f0(v.r)}</td><td>${pc.toFixed(0)}%</td><td><div style="height:8px;background:var(--s3);border-radius:4px"><div style="height:100%;width:${pc}%;background:${pc>50?'var(--alert)':'var(--accent)'};border-radius:4px"></div></div></td></tr>`}).join(''):'<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--t3)">目前沒有持倉</td></tr>';
+    document.getElementById('risk-pos').innerHTML=ps.length?ps.map(p=>{const r=p.r_now;return `<tr><td>${esc(p.code)} ${esc(p.name)}</td><td>${esc(p.sector)||'—'}</td><td>${p.last!=null?(+p.last).toFixed(2):'—'}</td><td>${p.stop!=null?(+p.stop).toFixed(2):'—'}</td><td>${p.cushion_pct!=null?p.cushion_pct.toFixed(1)+'%':'—'}</td><td style="color:${r>=0?'var(--up)':'var(--down)'};font-weight:700">${r==null?'—':(r>=0?'+':'')+r.toFixed(2)+'R'}</td><td>${f0(p.risk_twd)}</td></tr>`}).join(''):'<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">目前沒有持倉</td></tr>';
+  }catch(e){document.getElementById('risk-kpi').innerHTML='<div class="empty">載入失敗</div>';}
+}
+async function fetchReport(){
+  const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
+  try{
+    const [st,br,sc,ps]=await Promise.all([fetch('/api/state').then(r=>r.json()),fetch('/api/market/breadth').then(r=>r.json()).catch(()=>({})),fetch('/api/market/sectors').then(r=>r.json()).catch(()=>({})),fetch('/api/positions').then(r=>r.json()).catch(()=>({}))]);
+    const mo=st.market_overview||{},fn=(mo.foreign&&mo.foreign.net_buy_twd)||0,sigs=st.active_signals||[],open=ps.open||[];
+    const tw=mo.twii||mo.taiex||{};
+    document.getElementById('rp-say').innerHTML=`<b>${new Date().toLocaleDateString('zh-TW',{timeZone:'Asia/Taipei',year:'numeric',month:'long',day:'numeric'})}</b> 盤後報告<small>市場情緒 ${esc(st.sentiment_score)}（${esc(st.sentiment_zh)}）；外資${fn>=0?'買超':'賣超'} ${Math.abs(fn/1e8).toFixed(0)} 億；今日 ${sigs.length} 檔訊號，持倉 ${open.length} 檔。</small>`;
+    const adv=br.advancers,dec=br.decliners;
+    document.getElementById('rp-kpi').innerHTML=[
+      ['市場情緒',esc(st.sentiment_score),esc(st.sentiment_zh)],['外資買賣超',(fn>=0?'+':'−')+Math.abs(fn/1e8).toFixed(0)+' 億','外資及陸資（不含自營）'],
+      ['上漲／下跌家數',adv!=null?adv+' / '+dec:'—',br.date?('官方 '+esc(br.date)):''],['漲停／跌停',br.limit_up!=null?br.limit_up+' / '+br.limit_down:'—','']
+    ].map(k=>`<div class="kpi"><div class="kpi-label">${k[0]}</div><div class="kpi-val">${k[1]}</div><div class="kpi-sub">${k[2]}</div></div>`).join('');
+    const secs=(sc.sectors||[]).filter(x=>x.n>=8&&x.sector!=='其他'),row=x=>`<div class="kv"><span>${esc(x.sector)}（${x.n}）</span><span style="color:${x.avg_change_pct>=0?'var(--up)':'var(--down)'}">${x.avg_change_pct>=0?'+':''}${x.avg_change_pct}%</span></div>`;
+    document.getElementById('rp-top').innerHTML=secs.slice(0,5).map(row).join('')||'<div class="empty">無資料</div>';
+    document.getElementById('rp-bot').innerHTML=secs.slice(-5).reverse().map(row).join('')||'<div class="empty">無資料</div>';
+    document.getElementById('rp-sig').innerHTML=(sigs.length?'<div style="margin-bottom:10px"><b>今日訊號</b></div>'+sigs.map(s=>`<div class="kv"><span>${esc(s.code||'')} ${esc(s.name||'')}　${s.direction==='sell'?'做空':'做多'}</span><span>評分 ${esc(s.score)}　進場 ${esc(s.entry_price||s.entry||'')}</span></div>`).join(''):'<div style="color:var(--t3)">今日沒有新訊號</div>')+
+      (open.length?'<div style="margin:16px 0 10px"><b>持倉</b></div>'+open.map(p=>`<div class="kv"><span>${esc(p.code)} ${esc(p.name)}</span><span style="color:${(p.r_now||0)>=0?'var(--up)':'var(--down)'}">${p.r_now==null?'—':(p.r_now>=0?'+':'')+p.r_now.toFixed(2)+'R'}</span></div>`).join(''):'');
+    document.getElementById('rp-note').textContent='本報告由系統根據公開資料自動彙整，僅供研究參考，不構成投資建議。官方統計常晚一天公布，日期以卡片標示為準。';
+  }catch(e){document.getElementById('rp-say').textContent='載入失敗';}
+}
+async function addInstEvents(code){
+  try{
+    const c=String(code||'').split('.')[0];if(!c)return;
+    const d=await (await fetch('/api/calendar')).json(),ev=[];
+    (d.ex&&d.ex.items||[]).filter(x=>x.code===c).forEach(x=>ev.push(`除${esc2(x.type)||'權息'}日 ${x.date}${x.cash&&x.cash!=='0'?'（現金股利 '+esc2(x.cash)+'）':''}`));
+    ['disposal','attention'].forEach(k=>(d.watch&&d.watch[k]||[]).filter(x=>x.code===c).forEach(x=>ev.push((k==='disposal'?'處置股：':'注意股：')+esc2(x.period)+' '+esc2(x.reason))));
+    if(!ev.length)return;
+    const el=document.getElementById('inst-result');if(!el)return;
+    const b=document.createElement('div');b.className='note-box';b.style.cssText='margin-bottom:12px;border-left-color:var(--warn)';
+    b.innerHTML='<b>近期事件</b>　'+ev.join('；');el.insertBefore(b,el.firstChild);
+  }catch(e){}
+}
+function esc2(x){return String(x==null?'':x).replace(/[<>&]/g,'');}
 function go(id){
   {const P=['learning','health','audit','diag'],prev=window._curPage;
    if(typeof adAuthed!=='undefined'&&adAuthed&&(!P.includes(id)||(id==='learning'&&prev!=='learning')))adLogoutQuiet();
@@ -955,6 +1162,8 @@ function go(id){
   if(id==='health')fetchHealth();
   if(id==='learning')fetchLearning();
   if(id==='positions')fetchPositions();
+  if(id==='risk')fetchRisk();
+  if(id==='report')fetchReport();
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
   if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
@@ -1327,6 +1536,7 @@ function renderInstrument(d){
 
   el.innerHTML=html;
   try{klInit(d);}catch(e){console.error('kline',e);}
+  try{addInstEvents(d.code||(d.info&&d.info.code));}catch(e){}
 }
 
 // ★ 新增：2026-09-29——市場總覽頁。漲跌家數／產業排行／股票篩選器現在都從
