@@ -1947,6 +1947,7 @@ async function adGuard(cb){
   try{
     if(adLogoutP){await adLogoutP;adLogoutP=null;}
     const st=await(await fetch('/api/admin/status',{cache:'no-store'})).json();
+    if(st.required===false){adAuthed=false;return true;}
     if(!st.configured){adAfter=null;adGate('unconfigured');return false;}
     if(!st.authed){adAfter=cb;adGate('login');return false;}
     adAuthed=true;return true;
