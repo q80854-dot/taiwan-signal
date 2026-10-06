@@ -868,6 +868,81 @@ def api_market_sectors():
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 
+def _rk_row(s):
+    c, v = s.get("close") or 0, s.get("volume_lots") or 0
+    return {"code": s.get("code"), "name": s.get("name"), "sector": s.get("sector") or "", "market": s.get("market"),
+            "close": c, "change_pct": s.get("change_pct"), "volume_lots": int(v),
+            "value_yi": round(c * v * 1000 / 1e8, 2), "is_etf": bool(s.get("is_etf"))}
+
+
+@app.route("/api/market/rankings")
+def api_market_rankings():
+    """排行榜（漲幅／跌幅／成交金額／成交量，上市＋上櫃分開）＋產業熱度（每產業平均漲跌、領漲股、成交金額占比）。
+    全部由 build_full_universe() 既有快取算出，不額外打外部 API。"""
+    try:
+        from stock_universe import build_full_universe, get_universe_data_meta
+        uni = [s for s in build_full_universe() if s.get("close")]
+        out = {}
+        for mk in ("TSE", "OTC"):
+            L = [s for s in uni if s.get("market") == mk]
+            liquid = [s for s in L if (s.get("volume_lots") or 0) >= 500 and s.get("change_pct") is not None and not s.get("is_etf")]
+            val = lambda s: (s.get("close") or 0) * (s.get("volume_lots") or 0)
+            out[mk] = {
+                "gain": [_rk_row(s) for s in sorted(liquid, key=lambda s: -s["change_pct"])[:20]],
+                "loss": [_rk_row(s) for s in sorted(liquid, key=lambda s: s["change_pct"])[:20]],
+                "value": [_rk_row(s) for s in sorted(L, key=lambda s: -val(s))[:20]],
+                "volume": [_rk_row(s) for s in sorted(L, key=lambda s: -(s.get("volume_lots") or 0))[:20]],
+                "n": len(L),
+            }
+        by = {}
+        for s in uni:
+            if s.get("change_pct") is None or s.get("is_etf"):
+                continue
+            by.setdefault(s.get("sector") or "其他", []).append(s)
+        tot = sum((s.get("close") or 0) * (s.get("volume_lots") or 0) for L in by.values() for s in L) or 1
+        heat = []
+        for sec, L in by.items():
+            if len(L) < 5 or sec == "其他":
+                continue
+            liq = [s for s in L if (s.get("volume_lots") or 0) >= 500] or L
+            lead = max(liq, key=lambda s: s["change_pct"])
+            heat.append({"sector": sec, "n": len(L), "avg": round(sum(s["change_pct"] for s in L) / len(L), 2),
+                         "up": sum(1 for s in L if s["change_pct"] > 0), "down": sum(1 for s in L if s["change_pct"] < 0),
+                         "share": round(sum((s.get("close") or 0) * (s.get("volume_lots") or 0) for s in L) / tot * 100, 1),
+                         "leader": {"code": lead["code"], "name": lead["name"], "chg": lead["change_pct"]}})
+        heat.sort(key=lambda x: -x["avg"])
+        dates = [s.get("quote_date") for s in uni if s.get("quote_date")]
+        return jsonify({"date": max(dates) if dates else None, "markets": out, "heat": heat,
+                        "data_sources": get_universe_data_meta()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/market/inst-rank")
+def api_market_inst_rank():
+    """三大法人買賣超排行（T86，僅上市）。資料量大，與主排行分開載入。"""
+    try:
+        from data_fetcher import fetch_institutional_flow, inst_status
+        from stock_universe import build_full_universe
+        flow = fetch_institutional_flow() or {}
+        meta = inst_status() or {}
+        px = {s.get("code"): s for s in build_full_universe()}
+        rows = []
+        for code, v in flow.items():
+            u = px.get(code) or {}
+            if u.get("is_etf") or not u.get("close"):
+                continue
+            rows.append({"code": code, "name": v.get("name") or u.get("name"), "sector": u.get("sector") or "",
+                         "close": u.get("close"), "change_pct": u.get("change_pct"),
+                         "foreign": v.get("foreign_net", 0), "trust": v.get("trust_net", 0), "total": v.get("total_net", 0)})
+        top = lambda k, rev: sorted(rows, key=lambda r: r[k], reverse=rev)[:20]
+        return jsonify({"date": meta.get("date"), "n": len(rows),
+                        "foreign_buy": top("foreign", True), "foreign_sell": top("foreign", False),
+                        "trust_buy": top("trust", True), "trust_sell": top("trust", False)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/calendar")
 def api_calendar():
     """近期除權息＋處置／注意股，並標出與目前持倉／觀察清單重疊者。"""
