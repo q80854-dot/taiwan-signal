@@ -653,6 +653,23 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line2);border-top-color:var(--navy);border-radius:50%;margin-right:10px;vertical-align:-2px;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty.ld small{display:block;margin-top:10px}
+/* 排行榜與產業熱度（參考玩股網、Yahoo 股市） */
+.rk-note{font-size:13px;color:var(--t3);line-height:1.8;margin:0 0 14px}
+.rk-heat{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+.hx{padding:14px 16px 12px;border:1px solid var(--line)}
+.hx-n{font-size:14px;color:var(--ink);font-weight:600}
+.hx-v{font-size:24px;font-weight:300;font-variant-numeric:tabular-nums;margin:4px 0 8px}
+.hx-l{font-size:12.5px;color:var(--t2);cursor:pointer}.hx-l:hover{text-decoration:underline}
+.hx-s{font-size:12px;color:var(--t3);margin-top:6px}
+.rk-bar{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line2);margin-bottom:6px}
+.rk-bar .tabs{border-bottom:0;flex-wrap:wrap}
+.rk-mk{display:flex;gap:0;margin-bottom:8px}
+.rk-mk button{border:1px solid var(--line2);background:#fff;padding:5px 16px;font-size:13px;color:var(--t2);cursor:pointer;font-family:var(--sans)}
+.rk-mk button+button{border-left:0}
+.rk-mk button.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.rk-a{cursor:pointer;color:var(--ink)}.rk-a:hover{text-decoration:underline}.rk-a b{font-variant-numeric:tabular-nums;margin-right:6px}
+#rk-table .tbl td:first-child,#rk-table .tbl th:first-child{width:40px;color:var(--t3)}
+@media(max-width:640px){.rk-heat{grid-template-columns:repeat(2,1fr)}.hx-v{font-size:20px}#rk-table{overflow-x:auto}}
 .nav:focus-visible,.btn:focus-visible,.tabs button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 #signals-container .sig-grid{grid-template-columns:repeat(3,1fr)!important;row-gap:16px}
@@ -690,6 +707,7 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
   <div class="nav"     onclick="go('instrument')">個股研究</div>
   <div class="nav"     onclick="go('marketoverview')">市場總覽</div>
   <div class="nav-g">市場</div>
+  <div class="nav"     onclick="go('rank')">排行榜</div>
   <div class="nav"     onclick="go('market')">市場環境</div>
   <div class="nav"     onclick="go('report')">盤後報告</div>
   <div class="nav"     onclick="go('news')">重大訊息公告 <span class="nbadge" id="news-count-badge">0</span></div>
@@ -983,6 +1001,23 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
     </div>
   </div>
 
+  <!-- Rankings -->
+  <div class="page" id="page-rank">
+    <div class="pad">
+    <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">產業熱度</div></div>
+    <div id="rk-note" class="rk-note"></div>
+    <div id="rk-heat" class="rk-heat"><div class="empty ld"><i class="spin"></i>載入中…</div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">排行榜</div></div>
+    <div class="rk-bar">
+      <div class="tabs" id="rk-tabs">
+        <button class="on" data-t="gain" onclick="rkTab('gain')">漲幅</button><button data-t="loss" onclick="rkTab('loss')">跌幅</button><button data-t="value" onclick="rkTab('value')">成交金額</button><button data-t="volume" onclick="rkTab('volume')">成交量</button><button data-t="fbuy" onclick="rkTab('fbuy')">外資買超</button><button data-t="fsell" onclick="rkTab('fsell')">外資賣超</button><button data-t="tbuy" onclick="rkTab('tbuy')">投信買超</button>
+      </div>
+      <div class="rk-mk" id="rk-mk"><button class="on" data-m="TSE" onclick="rkMk('TSE')">上市</button><button data-m="OTC" onclick="rkMk('OTC')">上櫃</button></div>
+    </div>
+    <div id="rk-table"></div>
+    </div>
+  </div>
+
   <!-- Market Overview -->
   <div class="page" id="page-marketoverview">
     <div class="pad">
@@ -1200,7 +1235,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',method:'方法論與風險聲明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷'};
+const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 async function fetchCalendar(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
@@ -1287,6 +1322,46 @@ function gsKey(e){
 }
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const i=document.getElementById('gs-in');if(i){i.focus();i.select();}}});
 document.addEventListener('click',e=>{if(!e.target.closest('.gs'))document.getElementById('gs-dd')?.classList.remove('on');});
+var _rk={tab:'gain',mk:'TSE',data:null,inst:null,loading:false};
+async function fetchRank(){
+  if(_rk.data){rkRender();return;}
+  if(_rk.loading)return;_rk.loading=true;
+  try{
+    const d=await (await fetch('/api/market/rankings')).json();if(d.error)throw new Error(d.error);
+    _rk.data=d;
+    const dateTxt=d.date?('資料日期 '+d.date+' 收盤'):'';
+    document.getElementById('rk-note').textContent=dateTxt+'　漲跌幅排行僅列成交量 500 張以上、非 ETF 的個股；產業熱度為該產業內所有個股的平均漲跌幅，色塊越深代表漲跌越大。';
+    const h=d.heat||[],mx=Math.max(3,...h.map(x=>Math.abs(x.avg)));
+    document.getElementById('rk-heat').innerHTML=h.map(x=>{
+      const a=Math.min(1,Math.abs(x.avg)/mx),up=x.avg>=0,bg=up?`rgba(200,16,46,${(.06+a*.5).toFixed(2)})`:`rgba(15,107,174,${(.06+a*.5).toFixed(2)})`,col=up?'var(--up)':'var(--down)';
+      return `<div class="hx" style="background:${bg}"><div class="hx-n">${esc2(x.sector)}</div><div class="hx-v" style="color:${col}">${x.avg>0?'+':''}${x.avg.toFixed(2)}%</div><div class="hx-l" onclick="goToInstrument('${esc2(x.leader.code)}')">領漲 ${esc2(x.leader.name)} <b style="color:var(--up)">${x.leader.chg>0?'+':''}${x.leader.chg.toFixed(1)}%</b></div><div class="hx-s">上漲 ${x.up}／下跌 ${x.down}　成交占比 ${x.share}%</div></div>`}).join('')||'<div class="empty">沒有資料</div>';
+    rkRender();
+  }catch(e){document.getElementById('rk-heat').innerHTML='<div class="empty">載入失敗：'+esc2(e.message)+'</div>';}
+  finally{_rk.loading=false;}
+}
+function rkTab(t){_rk.tab=t;document.querySelectorAll('#rk-tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  const inst=['fbuy','fsell','tbuy'].includes(t);if(inst)_rk.mk='TSE';
+  document.getElementById('rk-mk').style.display=inst?'none':'';rkRender();}
+function rkMk(m){_rk.mk=m;document.querySelectorAll('#rk-mk button').forEach(b=>b.classList.toggle('on',b.dataset.m===m));rkRender();}
+async function rkRender(){
+  const el=document.getElementById('rk-table'),t=_rk.tab,inst=['fbuy','fsell','tbuy'].includes(t);
+  const pc=v=>v==null?'<span style="color:var(--t3)">—</span>':`<span style="color:${v>0?'var(--up)':v<0?'var(--down)':'var(--t3)'}">${v>0?'+':''}${v.toFixed(2)}%</span>`;
+  const nm=r=>`<a class="rk-a" onclick="goToInstrument('${esc2(r.code)}')"><b>${esc2(r.code)}</b> ${esc2(r.name)}</a>`;
+  const num=v=>v==null?'—':Number(v).toLocaleString();
+  const net=v=>`<span style="color:${v>0?'var(--up)':v<0?'var(--down)':'var(--t3)'}">${v>0?'+':''}${num(v)}</span>`;
+  if(inst){
+    if(!_rk.inst){el.innerHTML='<div class="empty ld"><i class="spin"></i>載入三大法人資料…<small>首次載入需向證交所取得資料，約 5–20 秒。</small></div>';
+      try{const d=await (await fetch('/api/market/inst-rank')).json();if(d.error)throw new Error(d.error);_rk.inst=d;}catch(e){el.innerHTML='<div class="empty">載入失敗：'+esc2(e.message)+'</div>';return;}}
+    if(_rk.tab!==t)return;
+    const d=_rk.inst,L=t==='fbuy'?d.foreign_buy:t==='fsell'?d.foreign_sell:d.trust_buy;
+    if(!L||!L.length){el.innerHTML='<div class="empty">目前沒有三大法人資料（證交所通常在收盤後約 16:00–17:00 公布）</div>';return;}
+    el.innerHTML=`<div class="rk-note">資料日期 ${esc2(d.date||'—')}，僅含上市個股，單位：張。</div><table class="tbl"><thead><tr><th>#</th><th>股票</th><th>產業</th><th>成交價</th><th>漲跌幅</th><th>外資</th><th>投信</th><th>三大法人</th></tr></thead><tbody>${L.map((r,i)=>`<tr><td>${i+1}</td><td>${nm(r)}</td><td>${esc2(r.sector)}</td><td>${num(r.close)}</td><td>${pc(r.change_pct)}</td><td>${net(r.foreign)}</td><td>${net(r.trust)}</td><td>${net(r.total)}</td></tr>`).join('')}</tbody></table>`;
+    return;
+  }
+  const d=_rk.data;if(!d){return;}
+  const L=((d.markets||{})[_rk.mk]||{})[t]||[];
+  el.innerHTML=L.length?`<table class="tbl"><thead><tr><th>#</th><th>股票</th><th>產業</th><th>成交價</th><th>漲跌幅</th><th>成交量（張）</th><th>成交金額（億）</th></tr></thead><tbody>${L.map((r,i)=>`<tr><td>${i+1}</td><td>${nm(r)}</td><td>${esc2(r.sector)}</td><td>${num(r.close)}</td><td>${pc(r.change_pct)}</td><td>${num(r.volume_lots)}</td><td>${r.value_yi}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">沒有資料</div>';
+}
 async function instQuick(){
   if(window._noQuick){window._noQuick=false;return;}
   const el=document.getElementById('inst-result');if(!el||!el.querySelector('.empty'))return;
@@ -1315,6 +1390,7 @@ function go(id){
   if(id==='news'){renderMaterialNewsPage();fetchNewsWatch();}
   if(id==='watchlist')renderWatchlistPage();
   if(id==='instrument')instQuick();
+  if(id==='rank')fetchRank();
   if(id==='signals')renderSignals();
   if(id==='radar'&&!_radarLoaded)fetchRadar('growth');
   if(id==='audit')fetchAudit();
