@@ -1124,6 +1124,19 @@ def api_market_inst_streak():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/analysis/foreign-flow")
+def api_analysis_foreign_flow():
+    """外資買賣超門檻檢驗（研究用）。第一次呼叫會在背景計算（約 5～8 分鐘），之後讀取快取結果；加 ?rerun=1 重算。"""
+    try:
+        import analysis_foreign as af
+        st = af.status()
+        if request.args.get("rerun") == "1" or (not st["result"] and not st["state"]["running"]):
+            af.start(); st = af.status()
+        return jsonify(st)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/calendar")
 def api_calendar():
     """近期除權息＋處置／注意股，並標出與目前持倉／觀察清單重疊者。"""
