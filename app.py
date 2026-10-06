@@ -426,6 +426,102 @@ app.before_request(admin_auth.guard)
 app.after_request(admin_auth.after)
 
 
+# ════════════════════════════════════════════════
+# 基礎防護：健康檢查、安全標頭、頻率限制、錯誤處理
+# ★ 新增：2026-10-06（第 1 層地基）
+# ════════════════════════════════════════════════
+import time as _time
+from collections import deque as _deque
+
+_CSP = ("default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com data:; "
+        "img-src 'self' data: blob:; connect-src 'self'; "
+        "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'")
+_RATE = {}                    # ip -> 近 60 秒的請求時間
+_RATE_LIMIT = 300             # 每個 IP 每分鐘最多 300 次 /api 請求（網頁一次載入約 20 次）
+_ERR_ALERT = {}               # path -> 上次告警時間（15 分鐘內同一路徑只通知一次）
+
+
+def _client_ip():
+    return (request.headers.get("CF-Connecting-IP")
+            or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            or request.remote_addr or "?")
+
+
+@app.before_request
+def _rate_guard():
+    if not request.path.startswith("/api/"):
+        return None
+    now = _time.time()
+    ip = _client_ip()
+    q = _RATE.get(ip)
+    if q is None:
+        if len(_RATE) > 5000:
+            _RATE.clear()
+        q = _RATE[ip] = _deque()
+    while q and now - q[0] > 60:
+        q.popleft()
+    if len(q) >= _RATE_LIMIT:
+        r = jsonify({"error": "請求過於頻繁，請稍後再試"})
+        r.status_code = 429
+        r.headers["Retry-After"] = "30"
+        return r
+    q.append(now)
+    return None
+
+
+@app.after_request
+def _security_headers(resp):
+    h = resp.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "SAMEORIGIN")
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+    h.setdefault("Strict-Transport-Security", "max-age=15552000")
+    if "text/html" in (resp.content_type or ""):
+        h.setdefault("Content-Security-Policy", _CSP)
+    return resp
+
+
+@app.route("/healthz")
+def healthz():
+    """輕量健康檢查：不碰資料庫與外部資料源，只代表程序活著。"""
+    return jsonify({"ok": True, "t": int(_time.time())})
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    return ("User-agent: *\nDisallow: /api/\nAllow: /\n", 200, {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=86400"})
+
+
+@app.route("/favicon.ico")
+def favicon_ico():
+    svg = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='#0b1f3a'/>"
+           "<path d='M6 22l6-8 5 5 9-12' stroke='#e5484d' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>")
+    return (svg, 200, {"Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=604800"})
+
+
+@app.errorhandler(Exception)
+def _unhandled(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    logger.exception(f"未處理的錯誤 {request.method} {request.path}: {e}")
+    try:
+        now = _time.time()
+        if now - _ERR_ALERT.get(request.path, 0) > 900:
+            _ERR_ALERT[request.path] = now
+            from telegram_bot import send_alert
+            send_alert(f"網站發生未預期錯誤\n{request.method} {request.path}\n{type(e).__name__}: {str(e)[:160]}", "error")
+    except Exception:
+        pass
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "伺服器發生錯誤，已通知管理員"}), 500
+    return "伺服器發生錯誤", 500
+
+
 @app.route("/api/admin/status")
 def api_admin_status():
     return admin_auth.status()
