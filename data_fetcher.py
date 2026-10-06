@@ -962,24 +962,33 @@ def fetch_margin_change() -> Dict:
     if fc := _cache_get("margin_change_fail", MARGIN_CHANGE_FAIL_TTL):
         return fc
     try:
-        today = datetime.now().strftime("%Y%m%d")
-        url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={today}&selectType=ALL"
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        if r.status_code != 200:
-            logger.warning(f"margin_change: HTTP {r.status_code}，body前200字={r.text[:200]!r}")
-            return _cache_set("margin_change_fail", _margin_fail(f"http_{r.status_code}"))
-        data = r.json()
-        if data.get("stat") != "OK":
-            logger.warning(f"margin_change: stat={data.get('stat')!r}，回應keys={list(data.keys())}")
-            # TWSE 對非交易日（週末/假日）通常回 stat!="OK"，這是預期中的「今天沒資料」，
-            # 不是故障；reason 用 no_trading_day 跟真正的 API 異常區分開。
-            return _cache_set("margin_change_fail", _margin_fail("no_trading_day_or_not_published"))
-        parsed = _parse_margin_balance_response(data)
-        if not parsed:
+        # ★ 2026-10-06：原本用伺服器（UTC）當天日期、且只試一天——融資融券統計通常收盤後才公布，
+        # 掃描時（16:30）或白天查詢一律「沒有符合條件的資料」，每 5 分鐘一筆警告，融資急縮扣分等於從未生效。
+        # 改成台北日期，從今天起往前找最近 4 個平日，取第一個有資料的日子。
+        days = []; d = datetime.now(timezone.utc) + timedelta(hours=8)
+        while len(days) < 4:
+            if d.weekday() < 5: days.append(d.strftime("%Y%m%d"))
+            d -= timedelta(days=1)
+        data = None; parsed = None; last_reason = "no_trading_day_or_not_published"
+        for ds in days:
+            url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={ds}&selectType=ALL"
+            r = requests.get(url, headers=HEADERS, timeout=15)
+            if r.status_code != 200:
+                logger.warning(f"margin_change: HTTP {r.status_code}，body前200字={r.text[:200]!r}")
+                return _cache_set("margin_change_fail", _margin_fail(f"http_{r.status_code}"))
+            data = r.json()
+            if data.get("stat") != "OK":
+                continue
+            parsed = _parse_margin_balance_response(data)
+            if parsed:
+                break
             _tables = data.get("tables") or []
-            logger.warning(f"margin_change: 解析不到資料，tables數={len(_tables)}，"
+            logger.warning(f"margin_change: {ds} 解析不到資料，tables數={len(_tables)}，"
                             f"各table標題={[t.get('title') for t in _tables]}")
-            return _cache_set("margin_change_fail", _margin_fail("parse_failed"))
+            last_reason = "parse_failed"
+        if not parsed:
+            logger.warning(f"margin_change: 最近 4 個平日都沒有可用資料（{last_reason}）")
+            return _cache_set("margin_change_fail", _margin_fail(last_reason))
         prev_bal, today_bal, date_str = parsed
         chg_pct = round((today_bal - prev_bal) / prev_bal * 100, 2) if prev_bal else 0
         # 順手把每天的餘額存進 meta（供 /api/diagnostics 等處查閱連續趨勢用），

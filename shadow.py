@@ -133,6 +133,62 @@ def _pct(a, b):
         return None
 
 
+_ix = {"t": 0, "v": None}
+
+
+def _index_rets():
+    """加權指數近 5/20/60 日報酬(%)，6 小時快取；抓不到回 None（特徵會被省略，不影響掃描）。"""
+    try:
+        if time.time() - _ix["t"] < 6 * 3600 and _ix["v"] is not None:
+            return _ix["v"]
+        if time.time() - _ix["t"] < 600:      # 剛失敗過，10 分鐘內不重試
+            return _ix["v"]
+        _ix["t"] = time.time()
+        import yfinance as yf
+        h = yf.Ticker("^TWII").history(period="6mo", interval="1d", auto_adjust=False)
+        cl = [float(x) for x in h["Close"].dropna()]
+        if len(cl) < 62:
+            return None
+        _ix["v"] = {k: round((cl[-1] / cl[-1 - k] - 1) * 100, 2) for k in (5, 20, 60)}
+        _ix["t"] = time.time()
+        return _ix["v"]
+    except Exception as e:
+        logger.debug(f"_index_rets: {e}")
+        return _ix["v"]
+
+
+def tally(stock_info, daily):
+    """掃描時對『每一檔』累計產業近 20 日報酬，之後才能算『相對產業強度』（只用候選會偏強，必須用全體）。"""
+    r = _run
+    if r is None:
+        return
+    try:
+        c = (daily or {}).get("closes") or []
+        sec = (stock_info or {}).get("sector")
+        if sec and len(c) > 20 and c[-21]:
+            with r["lock"]:
+                a = r.setdefault("sec", {}).setdefault(sec, [0.0, 0])
+                a[0] += (c[-1] / c[-21] - 1) * 100
+                a[1] += 1
+    except Exception:
+        pass
+
+
+def _add_sector_rel(rows):
+    r = _run
+    sec = (r or {}).get("sec") or {}
+    for x in rows:
+        try:
+            f = x["features"]
+            a = sec.get(x.get("sector"))
+            if a and a[1] >= 3 and f.get("ret20") is not None:
+                avg = a[0] / a[1]
+                f["sec_ret20"] = round(avg, 2)
+                f["sec_rel20"] = round(f["ret20"] - avg, 2)
+        except Exception:
+            pass
+
+
 def snapshot(daily, ind=None, mtf=None, mkt=None, atr_val=None):
     """把一檔股票「當下」的可量測特徵攤平成純量字典（價格動能、位置、量能、波動、大盤環境）。
     候選／被否決／對照組都用同一支函式，之後才能互相比較。"""
@@ -161,6 +217,20 @@ def snapshot(daily, ind=None, mtf=None, mkt=None, atr_val=None):
             f["vol20"] = round((sum((x - m) ** 2 for x in rets) / (len(rets) - 1)) ** 0.5, 2)
     if n >= 60:
         f["dist_ma60"] = _pct(px, sum(c[-60:]) / 60)
+    # ── 2026-10-06 新增特徵（只記錄、不影響訊號；之後用影子資料驗證哪些真的有預測力）──
+    if h and n >= 22:
+        f["brk20"] = _pct(px, max(h[-21:-1]))          # 相對「前 20 日最高」：>0 代表已突破前高、<0 代表還在前高之下
+        f["pull10"] = _pct(px, max(h[-10:]))           # 距近 10 日高點回檔幅度（越負代表回檔越深）
+    if h and n >= 62:
+        f["brk60"] = _pct(px, max(h[-61:-1]))
+    if n >= 26:
+        ma_now, ma_5 = sum(c[-20:]) / 20, sum(c[-25:-5]) / 20
+        f["ma20_slope"] = _pct(ma_now, ma_5)           # 20 日均線 5 日斜率(%)：>0 向上
+    ix = _index_rets()
+    if ix:
+        for k in (5, 20, 60):
+            if f.get(f"ret{k}") is not None and ix.get(k) is not None:
+                f[f"rs{k}"] = round(f[f"ret{k}"] - ix[k], 2)     # 相對加權指數的超額報酬(%)
     if len(v) >= 21:
         avg = sum(v[-21:-1]) / 20
         if avg:
@@ -227,6 +297,12 @@ def _fund_features(code, cache=None):
         out = {k: v for k, v in out.items() if v is not None}
     except Exception:
         out = {}
+    try:  # 重大訊息：近期公告筆數與是否含負面關鍵字（只記錄）
+        from fundamentals import fetch_material_news_risk_map
+        items = (fetch_material_news_risk_map() or {}).get(code) or []
+        out["news_neg"] = int(bool(items))   # 該 map 只收「命中負面關鍵字」的公司（僅上市）；0 不代表上櫃沒有
+    except Exception:
+        pass
     if cache is not None:
         cache[code] = out
     return out
@@ -238,6 +314,7 @@ def _insert(rows):
     if not rows:
         return 0
     ensure_table()
+    _add_sector_rel(rows)
     from state_store import store
     with store._conn() as conn:
         before = (conn.execute("SELECT COUNT(*) AS n FROM shadow_signals").fetchone() or {"n": 0})["n"]

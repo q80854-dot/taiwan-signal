@@ -772,6 +772,11 @@ class TWScanEngine:
         if not daily: return None
         daily = self._reconcile_last_bar(ticker, stock_info, daily)
         pre = check_multi_timeframe_tw({"daily": daily})
+        try:
+            import shadow as _shd
+            _shd.tally(stock_info, daily)
+        except Exception:
+            pass
         if pre.get("direction") == "none" or pre.get("score", 0) + 10 < THRESH["min_score"]:
             with self._pre_lock:
                 self._pre["skipped"] += 1
