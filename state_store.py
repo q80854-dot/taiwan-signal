@@ -105,6 +105,12 @@ class StateStore:
                 CREATE TABLE IF NOT EXISTS margin_chg_daily_history (
                     bar_date TEXT PRIMARY KEY, balance BIGINT, chg_pct REAL, updated_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS inst_daily (
+                    trade_date TEXT, code TEXT, name TEXT,
+                    foreign_net INTEGER, trust_net INTEGER, total_net INTEGER,
+                    PRIMARY KEY (trade_date, code)
+                );
+                CREATE INDEX IF NOT EXISTS idx_inst_daily_code ON inst_daily(code, trade_date);
                 CREATE TABLE IF NOT EXISTS quarterly_margin_snapshot (
                     code TEXT, period TEXT, gross_margin_pct REAL, operating_margin_pct REAL,
                     updated_at TEXT,
@@ -160,6 +166,12 @@ class StateStore:
                 CREATE TABLE IF NOT EXISTS margin_chg_daily_history (
                     bar_date TEXT PRIMARY KEY, balance INTEGER, chg_pct REAL, updated_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS inst_daily (
+                    trade_date TEXT, code TEXT, name TEXT,
+                    foreign_net INTEGER, trust_net INTEGER, total_net INTEGER,
+                    PRIMARY KEY (trade_date, code)
+                );
+                CREATE INDEX IF NOT EXISTS idx_inst_daily_code ON inst_daily(code, trade_date);
                 CREATE TABLE IF NOT EXISTS quarterly_margin_snapshot (
                     code TEXT, period TEXT, gross_margin_pct REAL, operating_margin_pct REAL,
                     updated_at TEXT,
@@ -856,6 +868,53 @@ class StateStore:
         except Exception as e:
             logger.warning(f"get_margin_chg_map: {e}")
             return {}
+
+    # ── 三大法人每日買賣超（多日累積，用來算連續買超／賣超）──
+    # ★ 新增：2026-10-06——T86 一次只給單日，連買天數、累計買超都需要歷史，
+    # 所以每天收盤後把全市場（上市）外資／投信／三大法人淨買賣超（單位：張）存起來。
+    def upsert_inst_daily(self, trade_date: str, rows: Dict) -> int:
+        n = 0
+        try:
+            if USE_PG:
+                sql = ("INSERT INTO inst_daily(trade_date,code,name,foreign_net,trust_net,total_net) "
+                       "VALUES(?,?,?,?,?,?) ON CONFLICT (trade_date,code) DO UPDATE SET "
+                       "name=EXCLUDED.name,foreign_net=EXCLUDED.foreign_net,"
+                       "trust_net=EXCLUDED.trust_net,total_net=EXCLUDED.total_net")
+            else:
+                sql = ("INSERT OR REPLACE INTO inst_daily"
+                       "(trade_date,code,name,foreign_net,trust_net,total_net) VALUES(?,?,?,?,?,?)")
+            with self._conn() as conn:
+                for code, v in rows.items():
+                    conn.execute(sql, (trade_date, code, v.get("name"), int(v.get("foreign_net", 0)),
+                                       int(v.get("trust_net", 0)), int(v.get("total_net", 0))))
+                    n += 1
+        except Exception as e:
+            logger.warning(f"upsert_inst_daily {trade_date}: {e}")
+        return n
+
+    def get_inst_dates(self, limit: int = 60) -> List[str]:
+        """已累積的交易日（新到舊）。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT trade_date FROM inst_daily ORDER BY trade_date DESC LIMIT ?", (limit,)
+                ).fetchall()
+            return [r["trade_date"] for r in rows]
+        except Exception as e:
+            logger.warning(f"get_inst_dates: {e}")
+            return []
+
+    def get_inst_since(self, min_date: str) -> List[Dict]:
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT trade_date,code,name,foreign_net,trust_net,total_net FROM inst_daily "
+                    "WHERE trade_date>=? ORDER BY trade_date", (min_date,)
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"get_inst_since: {e}")
+            return []
 
     # ── 獲利品質（季報毛利率/營業利益率快照，用來算「趨勢」）──
     # ★ 新增：2026-09-28——使用者要求接「獲利品質」評分。TWSE OpenAPI 的季報

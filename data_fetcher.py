@@ -910,6 +910,37 @@ def fetch_institutional_flow(date_str=None) -> Dict:
         logger.error(f"inst_flow: 取不到三大法人資料（{_inst_meta['err']}），3 分鐘內不重試")
         return {}
 
+def collect_inst_daily(date_str: str, store) -> int:
+    """抓某一天的三大法人並存進資料庫。date_str=YYYYMMDD。非交易日（查無資料）回 0。"""
+    res, st = _inst_try(date_str)
+    if st != "ok" or not res:
+        return 0
+    iso = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+    return store.upsert_inst_daily(iso, res)
+
+
+def backfill_inst_daily(store, want_days: int = 30, include_today: bool = True) -> Dict:
+    """往回補足最近 want_days 個『有資料的交易日』。已存在的日期略過；
+    每次請求間隔 3 秒，避免被 TWSE 限流。回傳 {added, have, tried}。"""
+    have = set(store.get_inst_dates(limit=120))
+    d = datetime.now(timezone.utc) + timedelta(hours=8)
+    added = tried = 0
+    got = len(have)
+    for _ in range(want_days * 2 + 10):                  # 往回最多看這麼多個日曆日（含假日）
+        if d.weekday() < 5:
+            iso = d.strftime("%Y-%m-%d")
+            if iso not in have and (include_today or d.date() < (datetime.now(timezone.utc) + timedelta(hours=8)).date()):
+                tried += 1
+                if collect_inst_daily(d.strftime("%Y%m%d"), store):
+                    added += 1; got += 1
+                time.sleep(3)
+            if got >= want_days:
+                break
+        d -= timedelta(days=1)
+    logger.info(f"三大法人回補：新增 {added} 天（嘗試 {tried}，目前共 {got}）")
+    return {"added": added, "have": got, "tried": tried}
+
+
 def fetch_foreign_total_flow() -> Dict:
     if c := _cache_get("foreign_total", 3600): return c
     # ★ 修正：2026-08-31——原本呼叫的 MI_QFIIS?selectType=Daily 其實是

@@ -112,6 +112,16 @@ def job_intraday_check():
         scanner.check_intraday_price_alerts()
     except Exception as e: logger.error(f"job_intraday_check: {e}", exc_info=True)
 
+def job_collect_inst():
+    """收盤後把當天三大法人買賣超存進資料庫（T86 約 16:00 後陸續公布，晚上再補一次）。"""
+    try:
+        from data_fetcher import backfill_inst_daily
+        from state_store import store
+        backfill_inst_daily(store, want_days=30)
+    except Exception as e:
+        logger.warning(f"job_collect_inst: {e}")
+
+
 def job_refresh_universe():
     logger.info("⏰ 品種清單更新")
     try:
@@ -217,6 +227,7 @@ def setup_scheduler():
     scheduler.add_job(job_pre_scan_restart, CronTrigger(hour=16, minute=15, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="pre_scan_restart",  replace_existing=True)
     scheduler.add_job(job_daily_scan,       CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="daily_scan",       replace_existing=True)
     scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True)
+    scheduler.add_job(job_collect_inst, CronTrigger(hour="17,19", minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="collect_inst", replace_existing=True)
     scheduler.add_job(lambda: logger.debug("❤️ 心跳"), "interval", hours=1, id="heartbeat")
     scheduler.start()
     logger.info("✅ 排程器已啟動")
@@ -939,6 +950,53 @@ def api_market_inst_rank():
         return jsonify({"date": meta.get("date"), "n": len(rows),
                         "foreign_buy": top("foreign", True), "foreign_sell": top("foreign", False),
                         "trust_buy": top("trust", True), "trust_sell": top("trust", False)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/market/inst-streak")
+def api_market_inst_streak():
+    """外資／投信連續買超、賣超排行（依累積的多日資料計算；僅上市、不含 ETF）。"""
+    try:
+        from state_store import store
+        from stock_universe import build_full_universe
+        dates = store.get_inst_dates(limit=30)            # 新到舊
+        if not dates:
+            return jsonify({"days": 0, "dates": [], "msg": "尚未累積資料"})
+        rows = store.get_inst_since(dates[-1])
+        by = {}
+        for r in rows:
+            by.setdefault(r["code"], {})[r["trade_date"]] = r
+        px = {s.get("code"): s for s in build_full_universe()}
+        out = []
+        for code, dd in by.items():
+            u = px.get(code) or {}
+            if u.get("is_etf") or not u.get("close"):
+                continue
+            rec = {"code": code, "name": u.get("name") or next(iter(dd.values())).get("name"),
+                   "sector": u.get("sector") or "", "close": u.get("close"), "change_pct": u.get("change_pct")}
+            for key, tag in (("foreign_net", "f"), ("trust_net", "t")):
+                seq = [(dd.get(d) or {}).get(key, 0) or 0 for d in dates]      # 新到舊，缺日視為 0
+                sign = 1 if seq[0] > 0 else -1 if seq[0] < 0 else 0
+                n = 0; cum = 0
+                if sign:
+                    for v in seq:
+                        if (v > 0) == (sign > 0) and v != 0:
+                            n += 1; cum += v
+                        else:
+                            break
+                rec[tag + "_streak"] = n * sign
+                rec[tag + "_cum"] = cum
+                rec[tag + "_5d"] = sum(seq[:5])
+                rec[tag + "_today"] = seq[0]
+            out.append(rec)
+        def top(tag, sign):
+            c = [r for r in out if r[tag + "_streak"] * sign >= 2]
+            c.sort(key=lambda r: (abs(r[tag + "_streak"]), abs(r[tag + "_cum"])), reverse=True)
+            return c[:30]
+        return jsonify({"days": len(dates), "dates": dates[:5], "latest": dates[0],
+                        "foreign_buy": top("f", 1), "foreign_sell": top("f", -1),
+                        "trust_buy": top("t", 1), "trust_sell": top("t", -1)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1903,6 +1961,11 @@ def _warm_caches():
 try:
     import threading as _wth
     _wth.Thread(target=_warm_caches, daemon=True).start()
+    def _inst_boot():
+        import time as _t2
+        _t2.sleep(90)
+        job_collect_inst()
+    _wth.Thread(target=_inst_boot, daemon=True).start()
 except Exception:
     pass
 
