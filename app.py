@@ -860,6 +860,31 @@ def api_market_sectors():
         return jsonify({"sectors": get_sector_performance(), "data_sources": get_universe_data_meta()})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/calendar")
+def api_calendar():
+    """近期除權息＋處置／注意股，並標出與目前持倉／觀察清單重疊者。"""
+    try:
+        from calendar_events import get_ex_dividend, get_listed_watch
+        from state_store import store
+        ex = get_ex_dividend() or {}
+        wt = get_listed_watch() or {}
+        mine = set()
+        try:
+            for p in store.get_recent_signals(limit=60, days_back=30):
+                if p.get("result") == "pending" and p.get("status") == "active":
+                    mine.add(str(p.get("ticker", "")).split(".")[0])
+        except Exception:
+            pass
+        for x in ex.get("items", []):
+            x["mine"] = x["code"] in mine
+        for k in ("disposal", "attention"):
+            for x in wt.get(k, []):
+                x["mine"] = x["code"] in mine
+        return jsonify({"ex": ex, "watch": wt})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/screener")
 def api_screener():
     """市場總覽頁的股票篩選器。只支援 stock_universe.py 既有欄位（代號/名稱/

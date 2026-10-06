@@ -34,6 +34,7 @@ RAW_CACHE_PATH = "instance/stock_universe_raw.json"
 TWSE_LIST_URL   = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
 TPEX_LIST_URL   = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
 TWSE_INFO_URL   = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+TPEX_INFO_URL   = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"  # 上櫃公司基本資料（含產業別代碼）
 TWSE_PUNISH_URL = "https://www.twse.com.tw/announcement/punish?response=json"   # 集中市場公布處置股票
 TWSE_NOTICE_URL = "https://www.twse.com.tw/announcement/notice?response=json"   # 集中市場當日公布注意股票
 
@@ -368,6 +369,38 @@ def _fetch_sector_info() -> Dict[str, str]:
             logger.warning(f"_fetch_sector_info: 有 {len(unmapped_codes)} 個產業代碼不在對照表裡（INDUSTRY_CODE_MAP 需要補上）: {sorted(unmapped_codes)}")
         if not result:
             logger.warning("_fetch_sector_info: HTTP 200 但沒有解析出任何一筆產業分類資料")
+        # 2026-10-06：補上櫃產業。原本上櫃一律「其他」（1300 多檔），讓產業排行失真。
+        # 櫃買中心「上櫃公司基本資料」同樣有兩碼產業代碼；欄位名稱用關鍵字比對，
+        # 抓不到就留下實際欄位名的 log，不讓它安靜失敗。
+        try:
+            r2 = requests.get(TPEX_INFO_URL, headers=HEADERS, timeout=20)
+            if r2.status_code == 200:
+                rows = r2.json()
+                n0 = len(result)
+                if rows:
+                    keys = list(rows[0].keys())
+                    kc = next((k for k in keys if "CompanyCode" in k or "公司代號" in k or k.lower().endswith("code") and "Industry" not in k), None)
+                    ki = next((k for k in keys if "Industry" in k or "產業" in k), None)
+                    if not kc or not ki:
+                        logger.warning(f"_fetch_sector_info(TPEx): 找不到代號/產業欄位，實際欄位={keys}")
+                    else:
+                        miss = set()
+                        for i in rows:
+                            code = str(i.get(kc, "")).strip()
+                            ic = str(i.get(ki, "")).strip()
+                            if not code or not ic or code in result: continue
+                            ic = ic.zfill(2) if ic.isdigit() else ic
+                            nm = INDUSTRY_CODE_MAP.get(ic)
+                            if nm is None:
+                                miss.add(ic); continue
+                            result[code] = nm
+                        logger.info(f"_fetch_sector_info: 上櫃補產業 {len(result)-n0} 檔（欄位 {kc}/{ki}）")
+                        if miss:
+                            logger.warning(f"_fetch_sector_info(TPEx): 未對照的產業代碼 {sorted(miss)}")
+            else:
+                logger.warning(f"_fetch_sector_info(TPEx): HTTP {r2.status_code}")
+        except Exception as e:
+            logger.warning(f"_fetch_sector_info(TPEx): {e}")
         return result
     except Exception as e:
         logger.warning(f"_fetch_sector_info: {e}")
@@ -575,7 +608,7 @@ def get_universe_data_meta() -> Dict:
         "fetch_ok": raw.get("fetch_ok", False),
         "sector_data_ok": bool(raw.get("sector_map")),
         "quote_source": "TWSE OpenAPI STOCK_DAY_ALL（上市）／TPEx OpenAPI tpex_mainboard_quotes（上櫃）",
-        "sector_source": "TWSE OpenAPI t187ap03_L（僅涵蓋上市公司；上櫃無對應公開產業分類資料源，一律顯示為「其他」）",
+        "sector_source": "TWSE OpenAPI t187ap03_L（上市）＋TPEx OpenAPI mopsfin_t187ap03_O（上櫃）；查無分類者顯示為「其他」）",
         "scan_universe_threshold": {"min_close": 5, "min_volume_lots": THRESH["min_avg_volume"]},
         # ★ 修正：2026-09-29——原本只回傳一個 quote_trading_date（優先取
         # TWSE 日期）代表「全市場」，但 TWSE／TPEX 兩邊官方資料常常不是同一
