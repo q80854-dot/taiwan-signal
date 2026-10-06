@@ -832,7 +832,12 @@ def _scan_pool_breadth():
     data = store.get_daily_closes_recent(10)
     if not data:
         return None
-    latest = max(v[-1][0] for v in data.values() if v)
+    # 取『多數股票所在的最新日期』：盤中只有持倉／訊號股會多一根今日 K 棒，不能用 max 當全市場日期
+    from collections import Counter as _C
+    _cnt = _C(v[-1][0] for v in data.values() if v)
+    if not _cnt:
+        return None
+    latest = max(d for d, c in _cnt.items() if c >= 0.5 * max(_cnt.values()))
     up = down = flat = lu = ld = n = stale = 0
     for t, rows in data.items():
         if len(rows) < 2: continue

@@ -409,7 +409,7 @@ class TWScanEngine:
                 store.add_event(
                     "signal",
                     f"{sig.get('name','')}（{sig.get('code','')}）{'做多' if sig.get('direction')=='buy' else '做空'}訊號 {sig.get('score')} 分",
-                    f"進場 {sig.get('entry_price')}｜停損 {sig.get('stop_loss')}（{sig.get('sl_pct')}%）｜TP1 {sig.get('tp1')}｜追高風險 {sig.get('chase_level','—')}",
+                    f"進場 {sig.get('entry_price')}｜停損 {sig.get('stop_loss')}（{sig.get('sl_pct')}%）｜TP1 {sig.get('tp1')}｜追高風險 {({'low':'低','mid':'中','high':'高'}).get(sig.get('chase_level'), '—')}",
                     sig.get("ticker", ""),
                 )
             except Exception as e:

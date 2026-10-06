@@ -186,8 +186,11 @@ def check_freshness():
         e = st["expected_period"]
         if st.get("n_total"):
             pct = round(st["n_expected"] / st["n_total"] * 100)
-            lvl = "ok" if pct >= 90 else ("warn" if st.get("in_window") else "info")
+            from fundamentals import _taipei_now
+            early = _taipei_now().day <= 10     # 法定截止日(10日)前，公司陸續公告，覆蓋率低屬正常
+            lvl = "ok" if pct >= 90 else ("info" if early else ("warn" if st.get("in_window") else "info"))
             out.append(_c("月營收新鮮度", lvl, f"應有 {e[:-2]}年{e[-2:]}月：全市場已有 {st['n_expected']}／{st['n_total']} 檔（{pct}%）"
+                          + ("；尚未到每月 10 日法定截止，公司陸續公告中，其餘檔數沿用上一期" if early and pct < 90 else "")
                           + (f"；其中 {st['mops_added']} 檔由公開資訊觀測站補上" if st.get("mops_added") else "")
                           + ("；公告期內每 10 分鐘自動更新" if st.get("in_window") else "")))
         else:
