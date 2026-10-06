@@ -408,6 +408,32 @@ class StateStore:
             return []
 
     # ── 績效 ──
+    def _equity_stats(self, trades):
+        """由已平倉交易（排除 ETF 放空）依平倉時間累加損益，回傳 (資金曲線, 最大回撤%, Sharpe)。
+        起始資金用 ACCOUNT_BALANCE_TWD；樣本不足 10 筆時 Sharpe 不算（回 None），避免誤導。"""
+        try:
+            from config import ACCOUNT_BALANCE_TWD as _cap
+        except Exception:
+            _cap = 500000.0
+        rows = [t for t in trades if not t.get("research_only") and t.get("pnl_twd") is not None and t.get("closed_at")]
+        rows.sort(key=lambda t: str(t.get("closed_at")))
+        bal = float(_cap); curve = [{"date": "起始", "balance": round(bal, 0)}]
+        peak = bal; max_dd = 0.0; rets = []
+        for t in rows:
+            pnl = float(t.get("pnl_twd") or 0)
+            rets.append(pnl / bal if bal else 0)
+            bal += pnl
+            curve.append({"date": str(t.get("closed_at"))[:10], "balance": round(bal, 0)})
+            peak = max(peak, bal)
+            if peak > 0:
+                max_dd = max(max_dd, (peak - bal) / peak * 100)
+        sharpe = None
+        if len(rets) >= 10:
+            import statistics as _stt
+            sd = _stt.pstdev(rets)
+            sharpe = round(_stt.mean(rets) / sd, 2) if sd else None
+        return curve, round(max_dd, 2), sharpe
+
     def get_performance_summary(self) -> Dict:
         # ★ 修正：2026-09-16——改成 Postgres 後才發現的新 bug：psycopg2 送 SQL 時會把
         # 整段字串跑一次 Python 的 % 格式化來代入 %s 參數，SQL 內容裡原本寫死的
@@ -455,7 +481,9 @@ class StateStore:
             recent = self.get_closed_trades(100)
             for t in recent:
                 t["research_only"] = (t.get("direction")=="sell" and str(t.get("code","")).startswith("00"))
+            curve, max_dd, sharpe = self._equity_stats(recent)
             return {
+                "equity_curve": curve, "max_drawdown": max_dd, "sharpe": sharpe,
                 "total":      total, "closed": closed, "pending": total-closed,
                 "wins":       wins,  "losses": losses,
                 "win_rate":   round(wins/max(closed,1)*100,1),

@@ -923,6 +923,8 @@ def api_screener():
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 _long_hist_cache = {}
+from concurrent.futures import ThreadPoolExecutor as _TPE
+_INST_POOL = _TPE(max_workers=4)
 
 
 def _long_history(t):
@@ -994,6 +996,8 @@ def api_instrument(ticker: str):
         out["info"] = None; out["info_error"] = str(e)
     try:
         from data_fetcher import fetch_ohlcv
+        # 5 年長歷史與一年日線互不相依，原本串行（冷快取時合計近 20 秒），改成同時抓。
+        _fut_long = _INST_POOL.submit(_long_history, t)
         ohlcv = fetch_ohlcv(t, "daily")
         out["ohlcv"] = ohlcv
         if ohlcv:
@@ -1001,7 +1005,10 @@ def api_instrument(ticker: str):
             out["indicators"] = calc_all_indicators(ohlcv)
         else:
             out["indicators"] = None
-        out["ohlcv_long"] = _long_history(t)
+        try:
+            out["ohlcv_long"] = _fut_long.result(timeout=45)
+        except Exception as _e:
+            logger.warning(f"ohlcv_long {t}: {_e}"); out["ohlcv_long"] = None
         try:
             from state_store import store as _st
             ov = _st.get_official_volumes(code)

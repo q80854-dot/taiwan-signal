@@ -1264,10 +1264,20 @@ def fetch_material_news_risk_map() -> Dict[str, List[Dict]]:
     本身涵蓋範圍只有上市（t187ap04_L 沒有上櫃對應端點），呼叫端要判斷
     「上櫃、本來就不在涵蓋範圍」請用 code 的市場別（例如月營收 map 的
     source 欄位），不要用這個函式的回傳值判斷涵蓋範圍。"""
-    if c := _cache_get("material_news_risk_map"):
+    # 2026-10-06：原本用 `if c := ...` 判斷，「抓成功但沒有任何負面公告」的空 dict 會被當成沒快取，
+    # 每次呼叫（/api/state 每 30 秒一次、重大訊息頁、個股頁）都重新打一次 TWSE（約 3–6 秒）。
+    # 改成 is not None；抓取失敗時不快取，但 2 分鐘內不重打，避免來源掛掉時每次請求都卡住。
+    c = _cache_get("material_news_risk_map")
+    if c is not None:
         return c
+    if _cache_get("material_news_recent_fail"):
+        return {}
     result, ok = _fetch_material_news_map()
     _cache_set("material_news_fetch_ok", ok)
+    if not ok:
+        _cache_set("material_news_recent_fail", True)
+        _TTL_OVERRIDE["material_news_recent_fail"] = 120
+        return result
     return _cache_set("material_news_risk_map", result)
 
 
