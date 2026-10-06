@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>台股波段智慧交易系統</title>
+<meta name="description" content="台股波段訊號研究平台：多週期技術面、籌碼、基本面共振，每筆訊號全程追蹤，績效與資料來源完整公開。">
+<meta property="og:title" content="台股波段智慧交易系統"><meta property="og:description" content="多因子波段訊號、透明績效、資料來源公開（研究用途，非投資建議）">
+<meta property="og:type" content="website"><meta name="theme-color" content="#0b1f3a">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1f3a'/%3E%3Cpath d='M6 22l6-8 5 5 9-12' stroke='%23e5484d' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -439,6 +443,8 @@ html.force-mobile .content{overflow-x:hidden}
   <div class="nav"     onclick="go('backtest')">回測</div>
   <div class="nav"     onclick="go('health')">系統檢查</div>
   <div class="nav"     onclick="go('diag')">系統診斷</div>
+  <div class="nav-g">關於</div>
+  <div class="nav"     onclick="go('method')">方法論與風險聲明</div>
   <div class="sfoot">
     <div class="sfr"><div class="dot-live"></div><span id="market-session-side">載入中...</span></div>
     <div style="font-size:10.5px" id="scan-dur-side"></div>
@@ -729,6 +735,11 @@ html.force-mobile .content{overflow-x:hidden}
     <div class="hero-row" style="grid-template-columns:repeat(5,1fr)" id="breadth-row">
       <div class="kpi" style="border-left:none"><div class="kpi-label">載入中</div></div>
     </div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">近期除權息與列管股票</div></div>
+    <div class="grid2" id="cal-wrap">
+      <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">未來 3 週除權息</span></div><div style="overflow-x:auto;max-height:360px"><table class="tbl"><thead><tr><th>日期</th><th>股票</th><th>類型</th><th>現金股利</th></tr></thead><tbody id="cal-ex"><tr><td colspan="4" style="text-align:center;padding:16px;color:var(--t3)">載入中...</td></tr></tbody></table></div><div id="cal-ex-note" style="font-size:10.5px;color:var(--t3);padding:6px 12px"></div></div>
+      <div class="panel"><div class="panel-head"><div class="bar" style="background:var(--alert)"></div><span class="panel-title">處置股與注意股（上市）</span></div><div style="overflow-x:auto;max-height:360px"><table class="tbl"><thead><tr><th>類別</th><th>股票</th><th>期間／原因</th></tr></thead><tbody id="cal-watch"><tr><td colspan="3" style="text-align:center;padding:16px;color:var(--t3)">載入中...</td></tr></tbody></table></div><div id="cal-watch-note" style="font-size:10.5px;color:var(--t3);padding:6px 12px"></div></div>
+    </div>
     <div class="sec-label"><div class="bar"></div><div class="tx">產業當日漲跌排行</div></div>
     <div class="panel card" style="margin-bottom:2px"><div style="overflow-x:auto"><table class="tbl">
       <thead><tr><th>產業</th><th>檔數</th><th>平均漲跌幅</th><th>上漲</th><th>下跌</th></tr></thead>
@@ -773,6 +784,41 @@ html.force-mobile .content{overflow-x:hidden}
   </div>
 
   <!-- Diag -->
+  <div class="page" id="page-method">
+    <div class="pad" style="max-width:860px;line-height:1.85;font-size:13.5px">
+      <div class="note-box" style="margin-bottom:16px"><b>本站僅為研究與教育用途，不構成任何投資建議或邀約。</b>所有訊號皆為量化規則的機械輸出，過去績效不代表未來結果；實際交易請自行評估並承擔風險。</div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">訊號如何產生</div></div>
+      <div class="panel"><div class="panel-body">
+        <p>1. <b>股票池</b>：全部上市櫃普通股，先以成交量與流動性門檻過濾，排除處置股與全額交割股。</p>
+        <p>2. <b>多週期技術面</b>：日線 12 項條件（趨勢、動能、量能、型態等）計分，再加上小時線共振；總分達 65 分且趨勢強度（ADX）、量比、風險報酬比（≥1.5）都過關才成為訊號。</p>
+        <p>3. <b>追高防護</b>：漲停附近、股價高於 20 日均線超過 3 倍 ATR、停損距離過大者一律不發出。</p>
+        <p>4. <b>籌碼與基本面</b>：三大法人買賣超、融資券、月營收、估值與重大訊息作為加減分或風險提示。</p>
+        <p>5. <b>大盤環境</b>：大盤偏空時提高門檻；做空訊號僅供研究，不計入實際績效。</p>
+        <p>6. <b>部位與風控</b>：每筆風險上限約 2% 資金，同時最多 5 檔持倉，同產業有上限；停損以 ATR 為基礎，達 TP1 後移動停損。</p>
+      </div></div>
+      <div class="sec-label" style="margin-top:20px"><div class="bar"></div><div class="tx">績效如何計算</div></div>
+      <div class="panel"><div class="panel-body">
+        <p>每筆訊號自發出當日起持續追蹤，以 <b>R</b>（進場價到停損價的距離）為單位；+1R 代表賺一個風險單位。結果為「假想成交」，<b>未計手續費、證交稅、滑價</b>，與實際帳戶會有差異。</p>
+        <p>另設「影子追蹤」：把被規則擋下的候選與隨機對照組一併追蹤，用來檢驗規則是否真的有效，並作為日後調整的依據，而非事後挑選好看的結果。</p>
+      </div></div>
+      <div class="sec-label" style="margin-top:20px"><div class="bar"></div><div class="tx">資料來源與更新頻率</div></div>
+      <div class="panel"><div class="panel-body" style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料</th><th>來源</th><th>更新</th></tr></thead><tbody>
+        <tr><td>盤中現價</td><td>富果 Fugle 即時報價（備援 Yahoo）</td><td>盤中每 30 分鐘檢查</td></tr>
+        <tr><td>日線與 K 線</td><td>Yahoo Finance（還原價）；成交量以官方數字覆蓋</td><td>每日收盤後</td></tr>
+        <tr><td>行情、漲跌家數、產業</td><td>TWSE／TPEx OpenAPI</td><td>每日收盤後</td></tr>
+        <tr><td>三大法人、融資餘額</td><td>TWSE T86、BFI82U、MI_MARGN</td><td>收盤後公布</td></tr>
+        <tr><td>月營收、重大訊息</td><td>公開資訊觀測站、TWSE OpenAPI</td><td>每日</td></tr>
+        <tr><td>國際市場（VIX、S&amp;P 500、黃金、比特幣）</td><td>Yahoo Finance</td><td>約 15 分鐘延遲</td></tr>
+      </tbody></table></div></div>
+      <div class="sec-label" style="margin-top:20px"><div class="bar"></div><div class="tx">已知限制</div></div>
+      <div class="panel"><div class="panel-body">
+        <p>・免費資料源可能延遲、缺漏或事後修正，系統會標示資料日期與失敗狀態，不會用假資料補洞。</p>
+        <p>・還原價在除權息日的漲跌幅可能與官方參考價略有差異。</p>
+        <p>・樣本期間有限，勝率與報酬可能因市場風格轉換而改變。</p>
+      </div></div>
+    </div>
+  </div>
+
   <div class="page" id="page-diag">
     <div class="pad">
     <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統診斷</span></div><div class="panel-body" id="diag-body"><div class="empty">載入中...</div></div></div>
@@ -874,8 +920,20 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',backtest:'回測',diag:'系統診斷'};
+const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',method:'方法論與風險聲明',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
+async function fetchCalendar(){
+  const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
+  try{
+    const d=await (await fetch('/api/calendar')).json();
+    const ex=(d.ex&&d.ex.items)||[],mineTag=m=>m?' <span style="color:var(--alert);font-weight:700">持倉</span>':'';
+    document.getElementById('cal-ex').innerHTML=ex.length?ex.slice(0,80).map(x=>`<tr><td>${esc(x.date.slice(5))}</td><td>${esc(x.code)} ${esc(x.name)}${mineTag(x.mine)}</td><td>${esc(x.type)||'—'}</td><td>${esc(x.cash)||'—'}</td></tr>`).join(''):`<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--t3)">${(d.ex&&d.ex.error)?'資料源本次抓取失敗':'未來 3 週無除權息'}</td></tr>`;
+    document.getElementById('cal-ex-note').textContent=((d.ex&&d.ex.source)||'')+((d.ex&&d.ex.errors&&d.ex.errors.length)?'　⚠ '+d.ex.errors.join('；').slice(0,120):'');
+    const w=d.watch||{},rows=[...(w.disposal||[]).map(x=>['處置',x]),...(w.attention||[]).map(x=>['注意',x])];
+    document.getElementById('cal-watch').innerHTML=rows.length?rows.slice(0,120).map(([k,x])=>`<tr><td>${k}</td><td>${esc(x.code)} ${esc(x.name)}${mineTag(x.mine)}</td><td style="font-size:11px">${esc(x.period)} ${esc(x.reason)}</td></tr>`).join(''):'<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--t3)">目前無資料</td></tr>';
+    document.getElementById('cal-watch-note').textContent=w.source||'';
+  }catch(e){document.getElementById('cal-ex').innerHTML='<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--t3)">載入失敗</td></tr>';}
+}
 function go(id){
   {const P=['learning','health','audit','diag'],prev=window._curPage;
    if(typeof adAuthed!=='undefined'&&adAuthed&&(!P.includes(id)||(id==='learning'&&prev!=='learning')))adLogoutQuiet();
@@ -899,7 +957,7 @@ function go(id){
   if(id==='positions')fetchPositions();
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
-  if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchMarketBreadth();fetchSectorPerf();}
+  if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
   if(id==='diag')fetchDiag();
   closeSide();
 }
