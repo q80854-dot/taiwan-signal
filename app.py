@@ -275,7 +275,9 @@ def _position_view(r):
            "direction": r.get("direction"), "score": r.get("score"), "grade": r.get("grade"),
            "entry": entry, "stop": sl, "tp1": r.get("tp1"), "tp2": r.get("tp2"), "tp3": r.get("tp3"),
            "generated_at": r.get("generated_at"), "result": r.get("result"), "status": r.get("status"),
-           "pnl_pct": r.get("pnl_pct"), "pnl_twd": r.get("pnl_twd")}
+           "pnl_pct": r.get("pnl_pct"), "pnl_twd": r.get("pnl_twd"),
+           "sector": r.get("sector"), "risk_twd": r.get("risk_twd"), "risk_pct": r.get("risk_pct"),
+           "lots": r.get("suggested_lots")}
     risk = abs(entry - sl) if entry and sl else 0
     out["risk_per_share"] = round(risk, 2)
     try:
