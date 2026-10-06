@@ -566,6 +566,72 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
 .eq-empty{padding:48px 0;text-align:center;color:var(--t3);font-size:13px}
 #ad-gate,.ad-gate{font-family:var(--sans)}
 @media(max-width:640px){html.force-mobile .hero-row,html.force-mobile .kpi-strip{grid-template-columns:repeat(2,1fr)!important}}
+/* ═══ 第三輪精修：可讀性、層次、訊號卡 ═══ */
+[style*="font-size:9px"],[style*="font-size:9.5px"],[style*="font-size:10px"],[style*="font-size:10.5px"],[style*="font-size:11px"]{font-size:12.5px!important}
+[style*="font-size:11.5px"],[style*="font-size:12px"]{font-size:13px!important}
+.sig-sub{font-size:12.5px;color:var(--t3);margin-top:4px}
+.sig-grid{font-size:13px}
+.sig-item label{font-size:12.5px;letter-spacing:.04em;text-transform:none;font-weight:500;margin-bottom:6px}
+.sig-grid .sig-item span,.sig-item span{font-size:17px;font-weight:500}
+.sig-badge{font-size:12.5px;padding:3px 10px;margin-left:12px;vertical-align:middle}
+.sig-footer,.chase,.fchip{font-size:13px}
+.chase{margin:14px 0 4px;gap:12px}
+.chase .k,.fchip .k{font-family:var(--sans);font-weight:600;letter-spacing:.04em;color:var(--ink)}
+.chase .m u{height:5px;width:24px}
+.fchip{margin:10px 0 0;gap:10px}
+.fchip .g{font-family:var(--sans);font-weight:600;font-size:12.5px;padding:1px 9px;letter-spacing:.06em}
+.sig-card{transition:background .15s}
+.sig-card:hover{background:#fbfcfe}
+.sig-head{margin-bottom:6px}
+.sig-grid{border-top:1px solid var(--line);margin-top:16px;padding-top:18px}
+.seal i{font-size:13px}
+.seal i{border:1px solid var(--line2);padding:1px 10px;margin-top:10px;color:var(--ink);background:#fff}
+@media(min-width:1500px){#signals-container{display:grid;grid-template-columns:1fr 1fr;column-gap:48px}}
+.note-box{font-size:13.5px}
+.kv{font-size:14px;padding:13px 0}
+.panel-title{font-size:18px}
+.tbl{font-size:14px}.tbl th{font-size:12.5px}
+.btn{font-size:13px}
+.qc-btn{padding:6px 14px}
+.nav-g{font-size:12px}
+.nav{font-size:14px}
+.nbadge{font-size:12px}
+.ticker-name{font-size:12.5px}
+.top-l{font-size:24px}
+#page-overview .grid2>div:last-child .panel{position:sticky;top:84px}
+.bell{width:auto;padding:0 12px;height:34px;display:inline-flex;align-items:center;gap:6px;font-size:13px}
+.bell .cnt{font-size:11.5px}
+.empty{padding:48px 0;font-size:14px}
+.empty small{display:block;margin-top:6px;font-size:12.5px}
+.loading-row{padding:40px 0;text-align:center;color:var(--t3)}
+.src-note{margin-top:8px;font-size:12.5px;color:var(--t3);line-height:1.9}
+.src-note summary{cursor:pointer;color:var(--navy2);font-weight:500;display:inline-block}
+.src-note[open] summary{margin-bottom:6px}
+.bt-hint{border-top:1px solid var(--line);padding:40px 0;text-align:left}
+.bt-hint-t{font-family:var(--serif);font-size:19px;font-weight:600;color:var(--ink);margin-bottom:10px}
+.bt-hint-s{font-size:13.5px;color:var(--t3);line-height:2}
+.bt-chips{display:inline-flex;gap:10px;margin-left:8px;flex-wrap:wrap}
+.bt-chips a{cursor:pointer;border:1px solid var(--line2);padding:3px 12px;color:var(--ink);font-size:13px}
+.bt-chips a:hover{border-color:var(--ink);background:var(--wash)}
+.top-r{gap:10px;flex-wrap:nowrap;white-space:nowrap}
+.top-r .btn,.bell,.mkt-pill{white-space:nowrap;flex-shrink:0}
+.top-l{min-width:0;white-space:nowrap}
+@media(max-width:900px){#fresh-badge,#tw-time{display:none!important}}
+@media(max-width:640px){
+  .top{gap:8px;padding:0 12px}
+  .top-r{gap:6px}
+  .top-r .btn,.bell{padding:6px 10px;font-size:12.5px;height:auto}
+  .mkt-pill{padding:3px 8px;font-size:12px}
+  .hamburger{font-size:20px;padding:4px 10px 4px 2px}
+}
+.nav:focus-visible,.btn:focus-visible,.tabs button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media(max-width:640px){
+  .sig-item span{font-size:15px}
+  .sig-grid{grid-template-columns:repeat(2,1fr)!important;gap:14px}
+  .top-l{font-size:19px}
+  #page-overview .grid2>div:last-child .panel{position:static}
+}
 </style>
 </head>
 <body>
@@ -620,8 +686,8 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
       <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
       <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
       <span id="tw-time" style="font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums"></span>
-      <div class="bell" onclick="go('events')" title="通知中心">報<span class="cnt" id="bell-cnt">0</span></div>
-      <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">📱 手機版</button>
+      <div class="bell" onclick="go('events')" title="通知中心">通知<span class="cnt" id="bell-cnt">0</span></div>
+      <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">手機版</button>
       <button class="btn" onclick="fetchState()">刷新</button>
       <button class="btn primary arrow" onclick="forceScan()">立即掃描</button>
     </div>
@@ -746,7 +812,7 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
     </div>
     <div class="sec-label" style="margin-top:24px"><div class="bar"></div><div class="tx">績效明細</div></div>
     <div class="grid2">
-      <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">資金曲線</span></div><div class="panel-body"><canvas id="equity-chart" height="200"></canvas></div></div>
+      <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">資金曲線</span></div><div class="panel-body"><div style="position:relative;height:300px"><canvas id="equity-chart"></canvas></div></div></div>
       <div class="panel"><div class="panel-head"><div class="bar"></div><span class="panel-title">近期交易</span></div>
         <div id="recent-trades-note" style="font-size:10.5px;color:var(--t3);padding:0 12px"></div>
         <div style="overflow-x:auto"><table class="tbl">
@@ -938,7 +1004,8 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
         </div>
       </div>
     </div>
-    <div id="bt-result" style="margin-top:20px"></div>
+    <div id="bt-result" style="margin-top:20px"><div class="bt-hint"><div class="bt-hint-t">輸入股票代號，用過去一年日線檢驗這套訊號邏輯</div><div class="bt-hint-s">結果包含：勝率、平均 R、最大回撤、逐筆交易，成本已含手續費與證交稅。快速選擇：
+<span class="bt-chips"><a onclick="document.getElementById('bt-ticker').value='2330';runBacktest()">2330 台積電</a><a onclick="document.getElementById('bt-ticker').value='2317';runBacktest()">2317 鴻海</a><a onclick="document.getElementById('bt-ticker').value='2454';runBacktest()">2454 聯發科</a><a onclick="document.getElementById('bt-ticker').value='2881';runBacktest()">2881 富邦金</a></span></div></div></div>
     </div>
   </div>
 
@@ -1166,7 +1233,7 @@ async function addInstEvents(code){
 }
 function esc2(x){return String(x==null?'':x).replace(/[<>&]/g,'');}
 function go(id){
-  try{document.getElementById('content').scrollTop=0;}catch(e){}
+  try{document.getElementById('content').scrollTop=0;}catch(e){}try{document.body.scrollTop=0;document.documentElement.scrollTop=0;window.scrollTo(0,0);}catch(e){}
   {const P=['learning','health','audit','diag'],prev=window._curPage;
    if(typeof adAuthed!=='undefined'&&adAuthed&&(!P.includes(id)||(id==='learning'&&prev!=='learning')))adLogoutQuiet();
    window._curPage=id;
@@ -1585,7 +1652,7 @@ function renderMoSourceNote(ds){
   // 一致時明顯提示，讓使用者知道下方合計數字是「跨兩個交易日加總」，並
   // 附上各自實際的交易日，而不是讓使用者誤以為總數本身算錯了。
   const mismatchHtml=qs.dates_mismatch?`<div style="font-size:12px;color:var(--alert);font-weight:600;margin-bottom:4px">⚠ 上市(TWSE)與上櫃(TPEX)目前不是同一交易日的資料——上市：${safe(qs.tse_quote_date,'未知')}；上櫃：${safe(qs.otc_quote_date,'未知')}。下方「合計」欄位是把兩個不同交易日的漲跌家數加在一起，僅供粗略參考，請改看下方「上市／上櫃分開統計」才是同一天、正確可信的數字</div>`:'';
-  el.innerHTML=`${tdateHtml}${mismatchHtml}行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}`;
+  el.innerHTML=`${tdateHtml}${mismatchHtml}<details class="src-note"><summary>資料來源與更新說明</summary>行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}</details>`;
 }
 async function fetchMarketBreadth(){
   const el=document.getElementById('breadth-row');if(!el)return;
@@ -1789,7 +1856,7 @@ function effectiveViewMode(){
 function updateViewToggleBtn(){
   const btn=document.getElementById('view-toggle-btn');if(!btn)return;
   const m=effectiveViewMode();
-  btn.textContent=m==='mobile'?'💻 電腦版':'📱 手機版';
+  btn.textContent=m==='mobile'?'電腦版':'手機版';
   btn.title=m==='mobile'?'切換成電腦版顯示（可能需要橫向捲動）':'切換成手機版顯示';
 }
 function applyForcedMode(mode){
@@ -2112,7 +2179,7 @@ async function fetchEvents(){
   await loadEvents();
   const seen=evLastSeen();
   const el=document.getElementById('events-body');
-  el.innerHTML=_events.length?_events.map(e=>`<div class="ev ${e.ts>seen?'new':''}"><div class="tt">${e.title}</div>${e.body?`<div class="bd">${e.body}</div>`:''}<div class="tm">${toTaipeiStr(e.ts)||''}${e.ticker?`　<a href="#" onclick="goToInstrument('${e.ticker}');return false" style="color:var(--accent)">看個股</a>`:''}</div></div>`).join(''):'<div class="empty"><div class="empty-label">通知</div>還沒有通知，下次掃描出訊號後會出現在這裡</div>';
+  el.innerHTML=_events.length?_events.map(e=>`<div class="ev ${e.ts>seen?'new':''}"><div class="tt">${e.title}</div>${e.body?`<div class="bd">${String(e.body).replace(/追高風險 (low|mid|high)/g,(m,k)=>'追高風險 '+({low:'低',mid:'中',high:'高'})[k])}</div>`:''}<div class="tm">${toTaipeiStr(e.ts)||''}${e.ticker?`　<a href="#" onclick="goToInstrument('${e.ticker}');return false" style="color:var(--accent)">看個股</a>`:''}</div></div>`).join(''):'<div class="empty"><div class="empty-label">通知</div>還沒有通知，下次掃描出訊號後會出現在這裡</div>';
 }
 function markEventsRead(){
   const t=_events.length?_events[0].ts:new Date().toISOString();
@@ -2561,8 +2628,8 @@ function renderPerf(wr){
   if(curve.length>1){
     const ctx=document.getElementById('equity-chart').getContext('2d');
     if(_eqChart)_eqChart.destroy();
-    _eqChart=new Chart(ctx,{type:'line',data:{labels:(wr.equity_curve||[]).map(p=>p.date||''),datasets:[{data:curve,borderColor:'#0b1f3a',backgroundColor:'rgba(11,31,58,.06)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
-      options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{display:true,ticks:{color:'#66768c',font:{size:10},maxTicksLimit:6},grid:{display:false}},y:{ticks:{color:'#66768c',font:{size:10}},grid:{color:'#e4e8ef'}}}}});
+    _eqChart=new Chart(ctx,{type:'line',data:{labels:(wr.equity_curve||[]).map((p,i)=>(p.date||'').slice(5)||('#'+i)),datasets:[{data:curve,borderColor:'#0b1f3a',backgroundColor:'rgba(11,31,58,.06)',borderWidth:1.5,pointRadius:0,fill:true,tension:0.25}]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'資金 TWD '+Math.round(c.parsed.y).toLocaleString()}}},scales:{x:{display:true,ticks:{color:'#66768c',font:{size:12},maxTicksLimit:6},grid:{display:false}},y:{ticks:{color:'#66768c',font:{size:12},callback:v=>v.toLocaleString()},grid:{color:'#e4e8ef'}}}}});
   }
 }
 
