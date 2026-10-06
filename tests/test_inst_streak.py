@@ -7,6 +7,7 @@ from state_store import store
 def client(monkeypatch):
     app_module.app.config["TESTING"] = True
     app_module._RATE.clear()
+    app_module._INST_STREAK_CACHE["v"] = None
     with store._conn() as conn:
         conn.execute("DELETE FROM inst_daily")
     import stock_universe
@@ -41,3 +42,11 @@ def test_missing_day_counts_as_break(client):
     _day("2026-10-06", BBB=(100, 0))             # AAA 這天沒有資料 → 視為 0 → 連買中斷
     j = client.get("/api/market/inst-streak").get_json()
     assert all(r["code"] != "AAA" for r in j["foreign_buy"])
+
+
+def test_streak_is_cached(client, monkeypatch):
+    _day("2026-10-05", AAA=(100, 0))
+    a = client.get("/api/market/inst-streak").get_json()
+    _day("2026-10-06", AAA=(100, 0))               # 快取期間內新增資料不會立刻反映
+    b = client.get("/api/market/inst-streak").get_json()
+    assert a["latest"] == b["latest"]
