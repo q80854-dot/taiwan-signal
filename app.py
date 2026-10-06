@@ -1800,5 +1800,25 @@ def _kick_backfill(code, ticker, n_have):
 
 
 
+def _warm_caches():
+    """部署／重啟後第一位訪客原本要等約 35 秒（冷快取要同時抓大盤、國際指數、全市場清單）。
+    啟動後背景先抓一次，讓使用者打開網頁時已經是暖的。失敗不影響服務。"""
+    import time as _t
+    _t.sleep(5)
+    for name, fn in (("market_overview", lambda: __import__("data_fetcher").fetch_market_overview()),
+                     ("universe", lambda: __import__("stock_universe").build_full_universe()),
+                     ("calendar", lambda: __import__("calendar_events").get_ex_dividend())):
+        try:
+            fn(); logger.info(f"預熱完成：{name}")
+        except Exception as e:
+            logger.warning(f"預熱失敗 {name}: {e}")
+
+try:
+    import threading as _wth
+    _wth.Thread(target=_warm_caches, daemon=True).start()
+except Exception:
+    pass
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=SYSTEM["web_port"], debug=False)
