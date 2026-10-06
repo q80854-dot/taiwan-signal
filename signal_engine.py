@@ -436,6 +436,10 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 macro_adj -= 10; macro_notes.append(mc["message"])
             if fc.get("level") == "warning":
                 macro_adj -= 8; macro_notes.append(fc["message"])
+            elif fc.get("level") == "extreme":
+                # 2026-10-06：近100個交易日驗證（/api/analysis/foreign-flow），外資賣超≥50億後
+                # 隔天大盤平均+0.02%、5日後平均+2.24%，沒有預測力，改為重扣分不再硬性擋單。
+                macro_adj -= 12; macro_notes.append(fc["message"])
             gc_ = check_margin_change(market_overview)
             if gc_.get("triggered"):
                 macro_adj -= 8; macro_notes.append(gc_["message"])

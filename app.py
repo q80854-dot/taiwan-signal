@@ -1080,12 +1080,31 @@ def api_market_inst_rank():
 @app.route("/api/market/inst-streak")
 def api_market_inst_streak():
     """外資／投信連續買超、賣超排行（依累積的多日資料計算；僅上市、不含 ETF）。"""
+    import time as _t
+    _c = _INST_STREAK_CACHE
+    if _c["v"] is not None and _t.time() - _c["t"] < 120:
+        return jsonify(_c["v"])
+    with _c["lock"]:
+        if _c["v"] is not None and _t.time() - _c["t"] < 120:
+            return jsonify(_c["v"])
+        resp = _inst_streak_compute()
+        if "error" in resp:
+            return jsonify(resp), 500
+        _c["v"] = resp; _c["t"] = _t.time()
+        return jsonify(resp)
+
+
+import threading as _th
+_INST_STREAK_CACHE = {"t": 0, "v": None, "lock": _th.Lock()}
+
+
+def _inst_streak_compute():
     try:
         from state_store import store
         from stock_universe import build_full_universe
         dates = store.get_inst_dates(limit=30)            # 新到舊
         if not dates:
-            return jsonify({"days": 0, "dates": [], "msg": "尚未累積資料"})
+            return {"days": 0, "dates": [], "msg": "尚未累積資料"}
         rows = store.get_inst_since(dates[-1])
         by = {}
         for r in rows:
@@ -1117,11 +1136,11 @@ def api_market_inst_streak():
             c = [r for r in out if r[tag + "_streak"] * sign >= 2]
             c.sort(key=lambda r: (abs(r[tag + "_streak"]), abs(r[tag + "_cum"])), reverse=True)
             return c[:30]
-        return jsonify({"days": len(dates), "dates": dates[:5], "latest": dates[0],
-                        "foreign_buy": top("f", 1), "foreign_sell": top("f", -1),
-                        "trust_buy": top("t", 1), "trust_sell": top("t", -1)})
+        return {"days": len(dates), "dates": dates[:5], "latest": dates[0],
+                "foreign_buy": top("f", 1), "foreign_sell": top("f", -1),
+                "trust_buy": top("t", 1), "trust_sell": top("t", -1)}
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
 @app.route("/api/analysis/foreign-flow")

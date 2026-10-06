@@ -61,7 +61,7 @@ def check_foreign_flow(market_overview: Dict) -> Dict:
         logger.warning("check_foreign_flow: market_overview 缺少 foreign 資料，net_buy_twd 會當作 0 處理，並標記 data_available=False")
     if nb<=CB["foreign_sell_stop"]:
         return {"triggered":True,"level":"extreme","net_buy_twd":nb,"data_available":data_available,
-                "message":f"🚨 外資賣超 {abs(nb)/1e8:.0f}億，暫停多單","action":"stop_buy"}
+                "message":f"🚨 外資賣超 {abs(nb)/1e8:.0f}億，大幅降低信心度（2026-10-06 起不再硬性暫停多單：近100日驗證賣超≥50億後無預測力）","action":"reduce_confidence"}
     if nb<=CB["foreign_sell_caution"]:
         return {"triggered":True,"level":"warning","net_buy_twd":nb,"data_available":data_available,
                 "message":f"⚠️ 外資賣超 {abs(nb)/1e8:.0f}億，降低信心度","action":"reduce_confidence"}
@@ -172,12 +172,12 @@ def run_all_checks(ticker, stock_info, tf_data, market_overview, active_signals=
     }
     warnings=[]; blockers=[]; score_adj=0
     if checks["market"].get("level")=="extreme":  blockers.append(checks["market"]["message"])
-    if checks["foreign"].get("level")=="extreme": blockers.append(checks["foreign"]["message"])
     if checks["daily_loss"].get("exceeded"):      blockers.append(checks["daily_loss"]["message"])
     if checks["max_pos"].get("exceeded"):         blockers.append(checks["max_pos"]["message"])
     if checks["spike"].get("spike"):              blockers.append(checks["spike"]["message"])
     if checks["market"].get("level")=="high":     warnings.append(checks["market"]["message"]); score_adj-=10
     if checks["foreign"].get("level")=="warning": warnings.append(checks["foreign"]["message"]); score_adj-=8
+    if checks["foreign"].get("level")=="extreme": warnings.append(checks["foreign"]["message"]); score_adj-=12
     if checks["margin_chg"].get("triggered"):     warnings.append(checks["margin_chg"]["message"]); score_adj-=8
     if not checks["account"].get("sufficient"):   warnings.append(checks["account"]["message"]); score_adj-=20
     if checks["margin"].get("warning"):           warnings.append(checks["margin"]["message"]); score_adj-=5
