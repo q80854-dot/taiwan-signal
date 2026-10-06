@@ -701,6 +701,10 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 [role=button]:focus-visible,.bell:focus-visible,.hamburger:focus-visible,.gs-dd *:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .skip-link{position:absolute;left:-9999px;top:0;z-index:10000;background:var(--navy);color:#fff;padding:10px 16px;font-size:13px}
 .skip-link:focus{left:8px;top:8px}
+.guide-sec{display:none;margin-top:14px}.guide-sec.on{display:block}
+#page-guide details{border-bottom:1px solid var(--line);padding:10px 0}#page-guide details:last-child{border-bottom:0}
+#page-guide summary{cursor:pointer;color:var(--t1)}#page-guide details p{margin:8px 0 2px;color:var(--t2)}
+#page-guide .panel-body p{margin:0 0 10px}
 </style>
 </head>
 <body>
@@ -739,6 +743,7 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
   <div class="nav"     onclick="go('health')">系統檢查</div>
   <div class="nav"     onclick="go('diag')">系統診斷</div>
   <div class="nav-g">關於</div>
+  <div class="nav"     onclick="go('guide')">使用說明</div>
   <div class="nav"     onclick="go('method')">方法論與風險聲明</div>
   <div class="sfoot">
     <div class="sfr"><div class="dot-live"></div><span id="market-session-side">載入中...</span></div>
@@ -782,7 +787,7 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
     <div class="pad">
     <div class="mast" id="mast"></div>
     <div class="note-box" id="positioning-note" style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
-      <div><b style="color:var(--t1)">用資料理解市場，用回測驗證策略。</b>　台股波段訊號研究工具：市場資料 → 技術／基本面分析 → 交易訊號 → 歷史回測 → 觀察清單，協助你建立有依據的研究流程。訊號僅供研究參考，不構成投資建議、不保證獲利。</div>
+      <div><b style="color:var(--t1)">用資料理解市場，用回測驗證策略。</b>　<a href="#" onclick="go('guide');return false" style="color:var(--accent);text-decoration:underline">新手？看使用說明</a>　台股波段訊號研究工具：市場資料 → 技術／基本面分析 → 交易訊號 → 歷史回測 → 觀察清單，協助你建立有依據的研究流程。訊號僅供研究參考，不構成投資建議、不保證獲利。</div>
       <span style="cursor:pointer;color:var(--t3);font-size:11px;flex-shrink:0;white-space:nowrap" onclick="dismissPositioningNote()">不再顯示 ✕</span>
     </div>
     <div class="hero-row">
@@ -1156,6 +1161,76 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
     </div>
   </div>
 
+  <div class="page" id="page-guide">
+    <div class="pad" style="max-width:920px;line-height:1.85;font-size:13.5px">
+      <div class="note-box" style="margin-bottom:16px"><b>這是研究輔助工具，不是下單建議。</b>所有訊號都是量化規則的機械輸出，請自行判斷並控管風險。完整規則見「方法論與風險聲明」。</div>
+      <div class="tabs" id="guide-tabs">
+        <button class="on" onclick="guideTab('start')">快速上手</button>
+        <button onclick="guideTab('terms')">名詞說明</button>
+        <button onclick="guideTab('faq')">常見問題</button>
+        <button onclick="guideTab('log')">更新紀錄</button>
+      </div>
+
+      <div class="guide-sec on" id="guide-start">
+        <div class="panel"><div class="panel-body">
+          <p><b>1. 先看「總覽」</b>：最上方是大盤與國際指數；中間說明今天大盤情緒與最新一批訊號；右上角的分數是「大盤環境分」，越高代表環境越適合做多。</p>
+          <p><b>2. 到「今日訊號」看候選</b>：每個交易日 16:30 收盤後掃描全市場，挑出符合條件的股票。每張卡片會寫明進場區、止損、目標價與理由。</p>
+          <p><b>3. 看懂一張訊號卡</b>：左上是股票與評級（甲／乙／丙）；右上大數字是總分。中間依序是現價、進場區、止損、TP1、TP2。下方的「追高風險」與「基本面」是兩道額外提醒。</p>
+          <p><b>4. 決定要不要追蹤</b>：按星號加入「觀察清單」。訊號發出後系統會自動追蹤，到價停損或停利時會在「通知中心」與 Telegram 提醒；「持倉追蹤」看目前進行中的訊號。</p>
+          <p><b>5. 想研究某一檔</b>：按 <b>Ctrl+K</b>（手機點上方搜尋框）輸入代號或名稱，直接打開「個股研究」：K 線、指標、基本面、法人、歷史訊號都在同一頁。</p>
+          <p><b>6. 看市場熱度</b>：「排行榜」有漲跌幅、成交值、成交量，以及產業熱度與法人買賣超。</p>
+          <p><b>7. 檢驗系統是否可信</b>：「績效分析」看實際追蹤的勝率與資金曲線；「回測」可以用歷史資料檢驗規則；「資料稽核」會比對我們的數字與官方數字是否一致。</p>
+          <p style="color:var(--t3);font-size:12.5px">小技巧：右上角可切換深色／淺色與手機版／電腦版；所有可點的項目都能用鍵盤 Tab 選取、按 Enter 開啟。</p>
+        </div></div>
+      </div>
+
+      <div class="guide-sec" id="guide-terms">
+        <div class="panel"><div class="panel-body" style="overflow-x:auto"><table class="tbl"><thead><tr><th style="min-width:110px">名詞</th><th>意思</th></tr></thead><tbody>
+          <tr><td>評級 甲／乙／丙</td><td>依總分分級：85 分以上為「甲」，75–84 為「乙」，其餘為「丙」（待觀察，可小量試探）。評級是規則強度，不是獲利保證。</td></tr>
+          <tr><td>進場區</td><td>建議的進場價格範圍。價格已明顯脫離進場區時，不建議追價。</td></tr>
+          <tr><td>止損（停損）</td><td>預先設定的認賠價位，以 ATR（近期平均波動）的倍數計算；大型股倍數較小、小型股較大。觸價即視為這筆訊號結束。</td></tr>
+          <tr><td>TP1／TP2</td><td>第一、第二停利目標，依「風險報酬比」從進場價往上推算。TP1 達成後，系統會把停損上移保護獲利。</td></tr>
+          <tr><td>R</td><td>風險單位：進場價到停損價的距離。+1R 代表賺到一倍的風險金額，−1R 代表虧掉一倍。績效統一用 R 衡量，方便跨股票比較。</td></tr>
+          <tr><td>ATR</td><td>平均真實波幅，衡量這檔股票一天通常波動多少，用來設定停損與判斷是否追高。</td></tr>
+          <tr><td>ADX</td><td>趨勢強度（不分漲跌）。數字越高代表趨勢越明確；偏低代表盤整。</td></tr>
+          <tr><td>RSI</td><td>相對強弱指標，範圍 0–100。過高可能短線過熱，過低可能超賣。</td></tr>
+          <tr><td>量比</td><td>今日成交量與近期平均量的比值。1.5 代表今天量是平常的 1.5 倍。</td></tr>
+          <tr><td>追高風險（低／中／高）</td><td>股價離 20 日均線越遠、越接近漲停，風險越高。系統會擋掉明顯追高的標的，並對仍通過者標示風險程度。</td></tr>
+          <tr><td>基本面（強／中…）</td><td>依月營收年增、累計營收、營業利益率、本益比等綜合給的提示，只作為加減分與提醒。</td></tr>
+          <tr><td>三大法人</td><td>外資、投信、自營商。買賣超單位為「張」（1 張＝1,000 股）。外資與投信連續買超，常被視為籌碼偏多的參考。</td></tr>
+          <tr><td>連買／連賣</td><td>某法人連續幾個交易日淨買超（或淨賣超）。排行榜的連買資料從 2026-10-06 起每天累積。</td></tr>
+          <tr><td>融資餘額</td><td>投資人借錢買股的總額。急速下降通常代表市場恐慌或斷頭賣壓。</td></tr>
+          <tr><td>影子追蹤</td><td>把被規則擋下的候選與隨機對照組一起追蹤，用來檢驗規則是否真的有效。</td></tr>
+          <tr><td>有效期</td><td>訊號發出後最多追蹤 15 個交易日，期間沒觸價就以到期結算。</td></tr>
+          <tr><td>處置股／注意股</td><td>交易所列管的高波動股票，限制較多、波動極端，系統預設不發出訊號。</td></tr>
+          <tr><td>紅漲藍跌</td><td>本站配色：紅色代表上漲，藍色代表下跌（台股慣例，與歐美相反）。</td></tr>
+        </tbody></table></div></div>
+      </div>
+
+      <div class="guide-sec" id="guide-faq">
+        <div class="panel"><div class="panel-body">
+          <details><summary><b>為什麼今天沒有訊號？</b></summary><p>系統只在條件同時成立時才發出訊號，市場偏空或整體量能不足時，沒有訊號是正常結果，不會為了湊數而放寬標準。</p></details>
+          <details><summary><b>訊號什麼時候更新？</b></summary><p>每個交易日 16:30 收盤後掃描一次。盤中（09:00–13:30）每 30 分鐘只檢查已追蹤訊號是否到價，不會產生新訊號。</p></details>
+          <details><summary><b>勝率與報酬怎麼算？</b></summary><p>每筆訊號從發出日起全程追蹤，以停損、停利或到期結算。結果是「假想成交」，未計手續費、證交稅與滑價，實際績效會略低。細節見「方法論與風險聲明」。</p></details>
+          <details><summary><b>數字和券商 App 不一樣？</b></summary><p>可能是資料延遲或來源不同。日線用還原價，除權息日的漲跌幅可能與官方參考價有差；成交量已改用官方數字。「資料稽核」頁會列出差異。</p></details>
+          <details><summary><b>可以照著訊號直接下單嗎？</b></summary><p>不建議。訊號僅供研究參考，不構成投資建議。請搭配自己的資金規劃，每筆風險建議不超過資金的 2%。</p></details>
+          <details><summary><b>做空訊號算績效嗎？</b></summary><p>不算。做空訊號僅供研究，不計入實際績效。</p></details>
+          <details><summary><b>資料顯示過期或缺漏怎麼辦？</b></summary><p>系統會標示資料日期與來源狀態，並在頂端顯示最後更新時間；資料抓取失敗時不會用假資料補洞。可到「系統檢查」查看各資料源狀態。</p></details>
+          <details><summary><b>手機上怎麼用？</b></summary><p>網頁會依螢幕寬度自動切換版面；也可以按右上角「手機版／電腦版」手動切換。點左上角 ☰ 開關選單。</p></details>
+          <details><summary><b>深色模式怎麼開？</b></summary><p>按右上角「深色」。第一次進站會跟隨你裝置的系統設定，之後記住你的選擇。</p></details>
+        </div></div>
+      </div>
+
+      <div class="guide-sec" id="guide-log">
+        <div class="panel"><div class="panel-body">
+          <p><b>2026-10-06</b></p>
+          <p>・新增深色模式、鍵盤操作與螢幕閱讀器支援。<br>・新增「排行榜」：漲跌幅、成交值、成交量、產業熱度、法人買賣超。<br>・新增全站搜尋（Ctrl+K）。<br>・開始每日累積三大法人買賣超，之後提供外資／投信連續買超排行。<br>・提升穩定度：多執行緒處理、健康檢查、安全標頭、重啟後免重抓全市場清單。<br>・修正：法人買賣超單位（股→張）、掃描池統計日期、追高風險中文標示、手機版頂列與多處介面細節。</p>
+          <p style="color:var(--t3);font-size:12.5px">之後的更新會陸續加在這裡。</p>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
   <div class="page" id="page-diag">
     <div class="pad">
     <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統診斷</span></div><div class="panel-body" id="diag-body"><div class="empty">載入中...</div></div></div>
@@ -1259,7 +1334,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷'};
+const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 async function fetchCalendar(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
@@ -2037,6 +2112,10 @@ function applyForcedMode(mode){
     if(mode)localStorage.setItem('dashViewMode',mode);
     else localStorage.removeItem('dashViewMode');
   }catch(e){/* 私密瀏覽模式等情況下 localStorage 可能不可用，不影響切換本身 */}
+}
+function guideTab(k){
+  document.querySelectorAll('#guide-tabs button').forEach(b=>b.classList.toggle('on',(b.getAttribute('onclick')||'').includes("'"+k+"'")));
+  document.querySelectorAll('.guide-sec').forEach(s=>s.classList.toggle('on',s.id==='guide-'+k));
 }
 function _cv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
 function toggleTheme(){
