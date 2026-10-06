@@ -507,6 +507,8 @@ body{font-family:var(--sans);font-size:13px;color:var(--t2);-webkit-font-smoothi
 .seal,.seal.sell{transform:none!important;animation:none!important;width:64px;height:64px;border-width:1.5px;border-radius:6px;background:#fff}
 .seal b{font-family:var(--sans);font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
 .seal i{font-family:var(--sans);font-size:11px;letter-spacing:.5px;font-weight:600}
+.seal,.seal.sell{box-shadow:none!important;mix-blend-mode:normal!important;background:var(--up-soft)}
+.seal.sell{background:var(--down-soft)}
 .mast .seal{width:84px;height:84px}.mast .seal b{font-size:30px}
 /* 報頭 */
 .mast{background:#fff;border:1px solid var(--line);border-top:3px solid var(--navy);border-radius:6px;box-shadow:var(--shadow);padding:22px 26px}
@@ -537,6 +539,7 @@ body{font-family:var(--sans);font-size:13px;color:var(--t2);-webkit-font-smoothi
 .site-foot{margin:36px 28px 0;padding:20px 0 6px;border-top:1px solid var(--line2);font-size:11.5px;color:var(--t3);line-height:1.8}
 .site-foot b{color:var(--t2)}
 .site-foot a{color:var(--accent);cursor:pointer;text-decoration:none;font-weight:600}
+@media(max-width:760px){.mast .dt{border-bottom:1px solid var(--line)!important}}
 @media(max-width:640px){
   .pad{padding:16px 14px 0}.top{padding:0 12px}.site-foot{margin:28px 14px 0}
   .kpi{padding:16px 14px}.kpi-val{font-size:22px}.hero-val{font-size:40px}
