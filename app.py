@@ -491,6 +491,16 @@ def healthz():
     return jsonify({"ok": True, "t": int(_time.time())})
 
 
+@app.route("/manifest.webmanifest")
+def manifest():
+    import json as _j
+    icon = "data:image/svg+xml," + ("%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1f3a'/%3E%3Cpath d='M6 22l6-8 5 5 9-12' stroke='%23e5484d' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    m = {"name": "台股波段智慧交易系統", "short_name": "台股波段", "start_url": "/", "display": "standalone",
+         "background_color": "#0b1f3a", "theme_color": "#0b1f3a", "lang": "zh-TW",
+         "icons": [{"src": icon, "sizes": "any", "type": "image/svg+xml", "purpose": "any"}]}
+    return (_j.dumps(m, ensure_ascii=False), 200, {"Content-Type": "application/manifest+json; charset=utf-8", "Cache-Control": "public, max-age=86400"})
+
+
 @app.route("/robots.txt")
 def robots_txt():
     return ("User-agent: *\nDisallow: /api/\nAllow: /\n", 200, {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=86400"})
