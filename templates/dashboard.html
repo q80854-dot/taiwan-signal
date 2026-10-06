@@ -650,6 +650,9 @@ html.force-desktop #page-overview .hero-row{grid-template-columns:1fr!important}
 .gs-empty{padding:16px;color:var(--t3);font-size:13px}
 @media(max-width:900px){.gs{flex-basis:200px;margin:0 10px}}
 @media(max-width:640px){.gs{display:none}}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line2);border-top-color:var(--navy);border-radius:50%;margin-right:10px;vertical-align:-2px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty.ld small{display:block;margin-top:10px}
 .nav:focus-visible,.btn:focus-visible,.tabs button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 #signals-container .sig-grid{grid-template-columns:repeat(3,1fr)!important;row-gap:16px}
@@ -1366,7 +1369,8 @@ async function fetchInstrument(){
   // 原始輸入（只 trim 不加「.TW」）直接交給後端做完整的上市/上櫃自動判斷。
   const ticker=raw;
   const el=document.getElementById('inst-result');
-  el.innerHTML='<div class="empty">查詢中…</div>';
+  el.innerHTML='<div class="empty ld"><i class="spin"></i>查詢中…<small id="ld-hint"></small></div>';
+  setTimeout(()=>{const h=document.getElementById('ld-hint');if(h)h.textContent='首次查詢這檔股票需要下載歷史 K 線，約 10–30 秒，之後會很快。';},5000);
   try{
     const d=await(await fetch('/api/instruments/'+encodeURIComponent(ticker),{cache:'no-store'})).json();
     if(d.error){el.innerHTML=`<div class="empty">${d.error}</div>`;return;}
