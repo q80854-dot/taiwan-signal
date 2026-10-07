@@ -69,3 +69,10 @@ def test_date_stale_logic():
     one_side = dict(old, tse_quote_date="2026-10-07")                     # 只有上市更新、上櫃還舊 → 仍過期
     assert su._date_stale(one_side, now)
     assert not su._date_stale({"fetched_at": 0}, now)                     # 沒有日期資訊 → 維持原行為
+
+
+def test_parse_mis_row_uses_last_trade_when_current_tick_empty():
+    # 實際從 Render 對 MIS 抓到的格式：z 是 "-"（這一盤沒成交），最近一筆成交在 trade.z
+    q = realtime.parse_mis_row({"c": "2330", "ex": "tse", "z": "-", "y": "2585.0000", "d": "20261007", "t": "11:36:34",
+                                "v": "8628", "trade": {"ft": 20, "t": "11:35:35", "v": 1, "z": "2575.0000"}})
+    assert q["price"] == 2575.0 and q["time"] == "11:35:35" and q["change"] == -10.0 and q["change_pct"] == -0.39
