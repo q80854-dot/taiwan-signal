@@ -653,6 +653,73 @@ def build_full_universe(force_refresh=False) -> List[Dict]:
     return result
 
 
+_live_cache = {"ts": 0.0, "snap": None}
+_LIVE_MAX_AGE = 600          # 快照超過 10 分鐘就不採用（寧可顯示官方收盤資料，也不顯示過期的「即時」）
+
+
+def _get_live_snapshot():
+    """最近一次盤中快照（記憶體快取 20 秒）；過期或不是今天的回 None。"""
+    import time as _t
+    now = _t.time()
+    if now - _live_cache["ts"] > 20:
+        try:
+            from state_store import store
+            _live_cache["snap"] = store.get_meta("intraday_snapshot") or None
+        except Exception:
+            _live_cache["snap"] = None
+        _live_cache["ts"] = now
+    snap = _live_cache["snap"]
+    if not snap or not snap.get("at") or now - snap["at"] > _LIVE_MAX_AGE:
+        return None
+    return snap
+
+
+def live_status() -> Dict:
+    """盤中即時覆蓋是否啟用，供前端標示。"""
+    import time as _t
+    snap = _get_live_snapshot()
+    if not snap:
+        return {"active": False}
+    return {"active": True, "snapshot_at": snap["at"], "age_secs": round(_t.time() - snap["at"]),
+            "n_ok": snap.get("n_ok"), "completeness": snap.get("completeness"), "source": "證交所 MIS（官方盤中即時）"}
+
+
+def build_live_universe(force_refresh=False) -> List[Dict]:
+    """全市場清單；盤中若有新鮮的官方即時快照，就把價格／漲跌幅／成交量換成即時值（官方日行情日期早於今天才覆蓋）。
+    今天沒成交的股票不沿用昨日漲跌幅（change_pct=None、量=0）。其餘欄位不變。"""
+    uni = build_full_universe(force_refresh)
+    snap = _get_live_snapshot()
+    if not snap:
+        return uni
+    quotes = snap.get("quotes") or {}
+    try:
+        import realtime
+        today = realtime.now_tpe().strftime("%Y-%m-%d")
+    except Exception:
+        return uni
+    out = []
+    for s in uni:
+        q = quotes.get(s.get("code"))
+        if not q or q[4] != today or (s.get("quote_date") or "") >= today:
+            out.append(s)
+            continue
+        price, prev, vol = q[0], q[1], q[2]
+        s2 = dict(s)
+        s2["quote_date"] = today
+        s2["live"] = True
+        s2["live_time"] = q[3]
+        if price and prev:
+            s2["close"] = price
+            s2["change_pct"] = round((price / prev - 1) * 100, 2)
+            s2["volume_lots"] = vol or 0
+        else:                                   # 今日尚無成交
+            s2["close"] = prev or s2.get("close")
+            s2["change_pct"] = None
+            s2["volume_lots"] = 0
+        out.append(s2)
+    return out
+
+
 _ov_persisted = set()
 
 
@@ -701,6 +768,7 @@ def get_universe_data_meta() -> Dict:
         "tse_quote_date": raw.get("tse_quote_date"),
         "otc_quote_date": raw.get("otc_quote_date"),
         "dates_mismatch": raw.get("dates_mismatch", False),
+        "intraday": live_status(),
     }
 
 def get_scan_batches(batch_size=None) -> List[List[str]]:
@@ -812,7 +880,7 @@ def get_sector_count() -> Dict[str, int]:
 # 標題「市場總覽」（應該代表全市場）不符，也不夠準確。全部改用不設門檻的
 # build_full_universe()，涵蓋全部上市＋上櫃股票。
 def get_market_breadth() -> Dict:
-    universe = build_full_universe()
+    universe = build_live_universe()
     covered = [s for s in universe if s.get("change_pct") is not None]
     up = [s for s in covered if s["change_pct"] > 0]
     down = [s for s in covered if s["change_pct"] < 0]
@@ -860,7 +928,7 @@ def get_market_breadth() -> Dict:
     }
 
 def get_sector_performance() -> List[Dict]:
-    universe = build_full_universe()
+    universe = build_live_universe()
     by_sector: Dict[str, List[float]] = {}
     for s in universe:
         cp = s.get("change_pct")
@@ -885,7 +953,7 @@ def screen_universe(filters: Dict) -> List[Dict]:
     重量級全市場計算。
     ★ 修正：2026-09-29——改用不設門檻的 build_full_universe()，查詢範圍涵蓋
     全部上市＋上櫃股票，不再受 build_universe() 的200張成交量門檻限制。"""
-    universe = build_full_universe()
+    universe = build_live_universe()
     q = (filters.get("q") or "").strip().lower()
     sector = filters.get("sector") or ""
     size_cat = filters.get("size_cat") or ""

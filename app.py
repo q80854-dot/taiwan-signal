@@ -173,9 +173,17 @@ def job_intraday_snapshot():
     if get_market_session().get("session") == "holiday":
         return
     try:
-        from stock_universe import build_universe
+        from stock_universe import build_full_universe
         from state_store import store
-        snap = realtime.snapshot(build_universe())
+        _uni = build_full_universe()
+        snap = realtime.snapshot(_uni)
+        try:
+            snap["quality"] = realtime.quality_check(snap["quotes"], _uni)
+            _ql = snap["quality"]
+            if (_ql.get("mismatch_rate") or 0) > 0.05 or _ql.get("out_of_limit", 0) > 5:
+                logger.warning(f"盤中快照品質異常：{_ql}")
+        except Exception as _e:
+            logger.warning(f"quality_check: {_e}")
         if snap["n_ok"] > 0:
             store.set_meta("intraday_snapshot", snap)
         logger.info(f"盤中快照：要求 {snap['n_req']} 檔、取得 {snap['n_ok']} 檔（完整度 {snap.get('completeness')}）、耗時 {snap['secs']}s、廣度 {snap.get('breadth')}")
@@ -1084,8 +1092,8 @@ def api_market_rankings():
     """排行榜（漲幅／跌幅／成交金額／成交量，上市＋上櫃分開）＋產業熱度（每產業平均漲跌、領漲股、成交金額占比）。
     全部由 build_full_universe() 既有快取算出，不額外打外部 API。"""
     try:
-        from stock_universe import build_full_universe, get_universe_data_meta
-        uni = [s for s in build_full_universe() if s.get("close")]
+        from stock_universe import build_live_universe, get_universe_data_meta
+        uni = [s for s in build_live_universe() if s.get("close")]
         out = {}
         for mk in ("TSE", "OTC"):
             L = [s for s in uni if s.get("market") == mk]
@@ -1127,10 +1135,10 @@ def api_market_inst_rank():
     """三大法人買賣超排行（T86，僅上市）。資料量大，與主排行分開載入。"""
     try:
         from data_fetcher import fetch_institutional_flow, inst_status
-        from stock_universe import build_full_universe
+        from stock_universe import build_live_universe
         flow = fetch_institutional_flow() or {}
         meta = inst_status() or {}
-        px = {s.get("code"): s for s in build_full_universe()}
+        px = {s.get("code"): s for s in build_live_universe()}
         rows = []
         for code, v in flow.items():
             u = px.get(code) or {}
@@ -1249,7 +1257,8 @@ def api_intraday_overview():
         fresh = bool(at and age is not None and age <= 600 and any((v or {}).get("date") == today for v in idx.values()))
         return jsonify({"ok": bool(snap), "fresh": fresh, "age_secs": age, "market_open": realtime.market_open(),
                         "indices": idx, "breadth": snap.get("breadth"), "n_ok": snap.get("n_ok"),
-                        "n_req": snap.get("n_req"), "completeness": snap.get("completeness")})
+                        "n_req": snap.get("n_req"), "completeness": snap.get("completeness"),
+                        "quality": snap.get("quality")})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

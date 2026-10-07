@@ -109,34 +109,47 @@ def parse_mis_row(r: Dict) -> Optional[Dict]:
     return q
 
 
-def fetch_mis(pairs: Iterable[tuple]) -> Dict[str, Dict]:
-    """pairs: [(code, market)]。回傳 {code: quote}。失敗（含被擋）回空 dict 並記錄原因。"""
+def _fetch_batch(part: List[str]) -> Dict[str, Dict]:
     global _session
     out: Dict[str, Dict] = {}
-    chans: List[str] = []
-    for code, mk in pairs:
-        chans += _ex_ch(code, mk)
-    for i in range(0, len(chans), BATCH):
-        part = chans[i:i + BATCH]
+    for attempt in (1, 2):
         try:
             r = _get_session().get(MIS_URL, params={"ex_ch": "|".join(part), "json": "1", "delay": "0",
                                                     "_": int(time.time() * 1000)}, timeout=(4, 10))
             if r.status_code != 200:
                 raise RuntimeError(f"HTTP {r.status_code}")
-            j = r.json()
-            for row in j.get("msgArray") or []:
+            for row in r.json().get("msgArray") or []:
                 q = parse_mis_row(row)
                 if q:
                     out[q["code"]] = q
             _stats["mis_ok"] += 1
             _stats["last_ok_at"] = time.time()
+            return out
         except Exception as e:
             _stats["mis_fail"] += 1
             _stats["last_error"] = f"MIS: {e}"
-            logger.warning(f"realtime.fetch_mis 失敗: {e}")
-            _session = None                              # 下次重建 session
-        if i + BATCH < len(chans):
-            time.sleep(0.4)
+            logger.warning(f"realtime.fetch_mis 批次失敗（第 {attempt} 次）: {e}")
+            _session = None                          # 下次重建 session（可能是 cookie 失效）
+            time.sleep(0.5)
+    return out
+
+
+def fetch_mis(pairs: Iterable[tuple], workers: int = 3) -> Dict[str, Dict]:
+    """pairs: [(code, market)]。回傳 {code: quote}。每批 50 檔、最多 3 條並行，失敗的批次重試一次。"""
+    chans: List[str] = []
+    for code, mk in pairs:
+        chans += _ex_ch(code, mk)
+    parts = [chans[i:i + BATCH] for i in range(0, len(chans), BATCH)]
+    out: Dict[str, Dict] = {}
+    if len(parts) <= 1:
+        for p_ in parts:
+            out.update(_fetch_batch(p_))
+        return out
+    from concurrent.futures import ThreadPoolExecutor
+    _get_session()                                   # 先建好 session，避免並行時重複建立
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for res in ex.map(_fetch_batch, parts):
+            out.update(res)
     return out
 
 
@@ -248,6 +261,35 @@ def snapshot(universe: List[Dict]) -> Dict:
             "secs": round(time.time() - t0, 1), "quotes": slim, "breadth": breadth,
             "indices": fetch_indices(),
             "completeness": round(len(quotes) / len(pairs), 4) if pairs else None}
+
+
+def quality_check(quotes: Dict[str, List], official: List[Dict], today: Optional[str] = None) -> Dict:
+    """資料品質自動核對（快照 vs 官方日行情）：
+    1. 昨收核對：官方日行情日期早於今天的股票，其官方收盤價應等於 MIS 的昨收（除權息日參考價不同屬正常，單獨計數）；
+    2. 價格合理性：成交價不得超出漲跌停價；
+    3. 完整度：官方清單有、但快照沒有的檔數。
+    回傳比率，供儀表板與告警使用。"""
+    today = today or now_tpe().strftime("%Y-%m-%d")
+    checked = mism = out_of_limit = missing = 0
+    samples: List = []
+    for s in official:
+        q = quotes.get(s.get("code"))
+        if not q:
+            missing += 1
+            continue
+        price, prev, up, dn = q[0], q[1], (q[5] if len(q) > 5 else None), (q[6] if len(q) > 6 else None)
+        od = s.get("quote_date") or ""
+        if od and od < today and prev and s.get("close"):
+            checked += 1
+            if abs(prev / s["close"] - 1) > 0.002:
+                mism += 1
+                if len(samples) < 8:
+                    samples.append([s["code"], s["close"], prev])
+        if price and up and dn and (price > up + 1e-6 or price < dn - 1e-6):
+            out_of_limit += 1
+    return {"checked": checked, "prev_close_mismatch": mism,
+            "mismatch_rate": round(mism / checked, 4) if checked else None,
+            "out_of_limit": out_of_limit, "missing": missing, "mismatch_samples": samples}
 
 
 def fresh_prices(pairs: Iterable[tuple]) -> Dict:
