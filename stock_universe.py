@@ -453,6 +453,44 @@ def _load_raw_from_db():
     return None
 
 
+def _expected_latest_date(now=None) -> str:
+    """推估官方日行情「現在應該至少是哪一天」：平日 15:30 之後＝今天；其餘時間＝前一個平日。
+    （不判斷國定假日；假日時官方不會更新，只會多抓幾次，成本很低。）"""
+    import pytz
+    from datetime import datetime, timedelta
+    now = now or datetime.now(pytz.timezone("Asia/Taipei"))
+    d = now.date()
+    if d.weekday() <= 4 and now.hour * 60 + now.minute >= 15 * 60 + 30:
+        return d.isoformat()
+    d -= timedelta(days=1)
+    while d.weekday() > 4:
+        d -= timedelta(days=1)
+    return d.isoformat()
+
+
+def _date_stale(raw, now=None) -> bool:
+    """快取裡的官方行情日期比「應有的最新交易日」舊，且距上次抓取超過 30 分鐘 → 視為過期，要重抓。
+    （2026-10-07：原本只看抓取時間 24 小時，16:00 抓到證交所還沒更新的前一天資料後，會一路沿用到隔天。）"""
+    try:
+        ds = [x for x in (raw.get("tse_quote_date"), raw.get("otc_quote_date")) if x]
+        if not ds:
+            return False
+        if min(ds) >= _expected_latest_date(now):
+            return False
+        return time.time() - raw.get("fetched_at", 0) > 1800
+    except Exception:
+        return False
+
+
+def refresh_if_date_stale() -> bool:
+    """排程用：官方日行情日期過期就強制重抓。回傳是否有重抓。"""
+    raw = _raw_mem_cache or _load_raw_from_db()
+    if raw is None or _date_stale(raw):
+        build_universe(force_refresh=True)
+        return True
+    return False
+
+
 def _raw_cache_valid():
     if not os.path.exists(RAW_CACHE_PATH): return False
     return time.time() - os.path.getmtime(RAW_CACHE_PATH) < CACHE_TTL
@@ -470,7 +508,7 @@ def _get_raw_universe(force_refresh=False) -> Dict:
 
     if not force_refresh and not os.path.exists(RAW_CACHE_PATH):
         _p = _load_raw_from_db()
-        if _p and time.time() - _p.get("fetched_at", 0) < CACHE_TTL:
+        if _p and time.time() - _p.get("fetched_at", 0) < CACHE_TTL and not _date_stale(_p):
             try:
                 with open(RAW_CACHE_PATH, "w", encoding="utf-8") as f:
                     json.dump(_p, f, ensure_ascii=False)
@@ -482,12 +520,16 @@ def _get_raw_universe(force_refresh=False) -> Dict:
 
     if not force_refresh and _raw_cache_valid():
         if _raw_mem_cache is not None and time.time() - _raw_mem_cache_at < CACHE_TTL:
-            return _raw_mem_cache
-        logger.info("使用快取原始品種清單")
-        with open(RAW_CACHE_PATH, "r", encoding="utf-8") as f:
-            _raw_mem_cache = json.load(f)
-        _raw_mem_cache_at = time.time()
-        return _raw_mem_cache
+            _c = _raw_mem_cache
+        else:
+            with open(RAW_CACHE_PATH, "r", encoding="utf-8") as f:
+                _c = json.load(f)
+        if not _date_stale(_c):
+            if _c is not _raw_mem_cache:
+                logger.info("使用快取原始品種清單")
+                _raw_mem_cache, _raw_mem_cache_at = _c, time.time()
+            return _c
+        logger.info("官方日行情的資料日期已過期，重新下載")
 
     logger.info("下載全市場原始品種清單（含上市+上櫃，未過濾）...")
     tse  = _fetch_twse_list()

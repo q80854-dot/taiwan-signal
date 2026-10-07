@@ -34,6 +34,38 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templat
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
 
+# 2026-10-07：指標算不出來時（例如新上市 ETF 的 K 線不足）會產生 NaN，Python 會把它輸出成 JSON 裡的
+# 「NaN」，但那不是合法 JSON，瀏覽器 JSON.parse 會直接失敗，整個個股頁就變成「沒有任何資料」
+# （00631L、0050 就是這樣）。這裡全站統一把 NaN／無限大轉成 null。
+import math as _math
+from flask.json.provider import DefaultJSONProvider as _DJP
+
+
+def _json_clean(o):
+    if isinstance(o, float):
+        return o if _math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: _json_clean(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_clean(v) for v in o]
+    try:                                    # numpy 純量（float32 等）
+        import numpy as _np
+        if isinstance(o, _np.generic):
+            return _json_clean(o.item())
+        if isinstance(o, _np.ndarray):
+            return _json_clean(o.tolist())
+    except Exception:
+        pass
+    return o
+
+
+class _SafeJSONProvider(_DJP):
+    def dumps(self, obj, **kwargs):
+        return super().dumps(_json_clean(obj), **kwargs)
+
+
+app.json = _SafeJSONProvider(app)
+
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -128,6 +160,37 @@ def job_intraday_check():
         from scanner import scanner
         scanner.check_intraday_price_alerts()
     except Exception as e: logger.error(f"job_intraday_check: {e}", exc_info=True)
+
+def job_intraday_snapshot():
+    """盤中每 5 分鐘：用證交所 MIS（官方即時）抓掃描池全市場報價，整份存進資料庫（meta intraday_snapshot）。"""
+    import realtime
+    if not realtime.market_open():
+        return
+    from data_fetcher import get_market_session
+    if get_market_session().get("session") == "holiday":
+        return
+    try:
+        from stock_universe import build_universe
+        from state_store import store
+        snap = realtime.snapshot(build_universe())
+        if snap["n_ok"] > 0:
+            store.set_meta("intraday_snapshot", snap)
+        logger.info(f"盤中快照：要求 {snap['n_req']} 檔、取得 {snap['n_ok']} 檔、耗時 {snap['secs']}s")
+        if snap["n_ok"] == 0:
+            logger.warning(f"盤中快照：證交所 MIS 全部抓不到（{realtime.status().get('last_error')}）")
+    except Exception as e:
+        logger.error(f"job_intraday_snapshot: {e}", exc_info=True)
+
+
+def job_refresh_universe_if_stale():
+    """官方日行情的日期若落後（例如 16:00 抓到時證交所還沒更新），收盤後每小時補抓。"""
+    try:
+        from stock_universe import refresh_if_date_stale
+        if refresh_if_date_stale():
+            logger.info("官方日行情日期過期，已重新下載")
+    except Exception as e:
+        logger.error(f"job_refresh_universe_if_stale: {e}")
+
 
 def job_collect_inst():
     """收盤後把當天三大法人買賣超存進資料庫（T86 約 16:00 後陸續公布，晚上再補一次）。"""
@@ -235,6 +298,8 @@ def setup_scheduler():
     # 掃描全市場找新訊號——為什麼不能在盤中重新掃描找新訊號，見 scanner.py
     # check_intraday_price_alerts() 開頭的說明。
     scheduler.add_job(job_intraday_check,   CronTrigger(hour="9-13", minute="0,30", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True)
+    scheduler.add_job(job_intraday_snapshot, CronTrigger(hour="9-13", minute="*/5", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_snapshot", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
@@ -1141,6 +1206,42 @@ def _inst_streak_compute():
                 "trust_buy": top("t", 1), "trust_sell": top("t", -1)}
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.route("/api/quote/<code>")
+def api_quote(code):
+    """單一檔盤中即時報價（官方：證交所 MIS；備援：富果）。抓不到就明講抓不到，不拿舊資料充數。"""
+    try:
+        import realtime
+        from stock_universe import build_full_universe
+        c = code.split(".")[0].upper()
+        mk = None
+        for s in build_full_universe():
+            if s.get("code") == c:
+                mk = s.get("market"); break
+        q = realtime.get_quote(c, mk)
+        if not q:
+            return jsonify({"ok": False, "code": c, "error": "即時報價暫時抓不到（證交所 MIS 與備援都失敗）",
+                            "status": realtime.status()}), 200
+        q["ok"] = True
+        q["market_open"] = realtime.market_open()
+        return jsonify(q)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/quote_status")
+def api_quote_status():
+    """即時報價來源健康狀態＋最近一次盤中快照的時間與檔數。"""
+    try:
+        import realtime
+        from state_store import store
+        snap = store.get_meta("intraday_snapshot") or {}
+        return jsonify({"source": realtime.status(), "market_open": realtime.market_open(),
+                        "snapshot_at": snap.get("at"), "snapshot_n": snap.get("n_ok"),
+                        "snapshot_secs": snap.get("secs")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/analysis/foreign-flow")
