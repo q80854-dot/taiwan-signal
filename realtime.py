@@ -84,7 +84,14 @@ def parse_mis_row(r: Dict) -> Optional[Dict]:
     code = r.get("c")
     if not code:
         return None
+    # z 是「這一盤（約 5 秒）的成交價」，這一盤沒有成交時是 "-"；最近一筆成交在 trade.z（含成交時間 trade.t）。
+    tr = r.get("trade") if isinstance(r.get("trade"), dict) else {}
     price = _num(r.get("z"))
+    trade_time = r.get("t")
+    if price is None:
+        price = _num(tr.get("z"))
+        if price is not None and tr.get("t"):
+            trade_time = tr.get("t")
     prev = _num(r.get("y"))
     d = str(r.get("d") or "")
     date = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 else None
@@ -92,7 +99,7 @@ def parse_mis_row(r: Dict) -> Optional[Dict]:
          "price": price, "prev_close": prev,
          "open": _num(r.get("o")), "high": _num(r.get("h")), "low": _num(r.get("l")),
          "volume_lots": int(float(r["v"])) if _num(r.get("v")) else None,
-         "time": r.get("t"), "date": date, "source": "證交所 MIS"}
+         "time": trade_time, "date": date, "source": "證交所 MIS"}
     if price and prev:
         q["change"] = round(price - prev, 2)
         q["change_pct"] = round((price / prev - 1) * 100, 2)
