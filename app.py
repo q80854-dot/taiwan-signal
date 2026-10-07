@@ -250,6 +250,9 @@ def job_market_extras():
         f = market_extras.get_flags(force=True)
         logger.info(f"補充資料旗標：{market_extras.status().get('counts')} 錯誤 {f.get('errors')}")
         market_extras.update_short_hist(store)
+        import taifex
+        _d = taifex.update_hist(store, taifex.get_taifex(force=True))
+        logger.info(f"期交所籌碼已更新：{_d}")
     except Exception as e:
         logger.error(f"job_market_extras: {e}", exc_info=True)
 
@@ -1324,6 +1327,17 @@ def api_intraday_overview():
                         "quality": snap.get("quality")})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/taifex")
+def api_taifex():
+    """期交所籌碼：外資／投信／自營商期貨未平倉（大台等效）、臺指選擇權、Put/Call 比、大額交易人。"""
+    try:
+        import taifex
+        from state_store import store
+        return jsonify(taifex.summary(store))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/db_stats")
