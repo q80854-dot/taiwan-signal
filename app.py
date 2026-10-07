@@ -1237,7 +1237,12 @@ def api_quote_status():
         import realtime
         from state_store import store
         snap = store.get_meta("intraday_snapshot") or {}
+        _probe = request.args.get("probe")
+        if _probe:
+            return jsonify({"probe": realtime.probe(_probe.split(".")[0].upper(), request.args.get("market"))})
+        _qs = (snap.get("quotes") or {})
         return jsonify({"source": realtime.status(), "market_open": realtime.market_open(),
+                        "snapshot_priced": sum(1 for v in _qs.values() if v and v[0]),
                         "snapshot_at": snap.get("at"), "snapshot_n": snap.get("n_ok"),
                         "snapshot_secs": snap.get("secs")})
     except Exception as e:

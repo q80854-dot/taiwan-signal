@@ -201,3 +201,22 @@ def snapshot(universe: List[Dict]) -> Dict:
 
 def status() -> Dict:
     return dict(_stats)
+
+
+def probe(code: str, market: Optional[str] = None) -> Dict:
+    """診斷用：原樣回傳 MIS 對單一代號的回應（含 HTTP 狀態、rtcode、原始欄位），看是哪一步出問題。"""
+    try:
+        r = _get_session().get(MIS_URL, params={"ex_ch": "|".join(_ex_ch(code, market)), "json": "1", "delay": "0",
+                                                "_": int(time.time() * 1000)}, timeout=(4, 10))
+        out = {"http": r.status_code, "len": len(r.text)}
+        try:
+            j = r.json()
+            out["rtcode"] = j.get("rtcode")
+            out["rtmessage"] = j.get("rtmessage")
+            out["rows"] = (j.get("msgArray") or [])[:2]
+        except Exception as e:
+            out["body_head"] = r.text[:300]
+            out["json_error"] = str(e)
+        return out
+    except Exception as e:
+        return {"error": str(e)}
