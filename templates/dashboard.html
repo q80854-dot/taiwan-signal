@@ -1974,7 +1974,7 @@ function renderMoSourceNote(ds){
   // 加總出來的「上漲家數/下跌家數」在這種情況下沒有意義。這裡兩邊日期不
   // 一致時明顯提示，讓使用者知道下方合計數字是「跨兩個交易日加總」，並
   // 附上各自實際的交易日，而不是讓使用者誤以為總數本身算錯了。
-  const mismatchHtml=qs.dates_mismatch?`<div style="font-size:12px;color:var(--alert);font-weight:600;margin-bottom:4px">⚠ 上市(TWSE)與上櫃(TPEX)目前不是同一交易日的資料——上市：${safe(qs.tse_quote_date,'未知')}；上櫃：${safe(qs.otc_quote_date,'未知')}。下方「合計」欄位是把兩個不同交易日的漲跌家數加在一起，僅供粗略參考，請改看下方「上市／上櫃分開統計」才是同一天、正確可信的數字</div>`:'';
+  const mismatchHtml=(qs.dates_mismatch&&!(lv&&lv.active))?`<div style="font-size:12px;color:var(--alert);font-weight:600;margin-bottom:4px">⚠ 上市(TWSE)與上櫃(TPEX)目前不是同一交易日的資料——上市：${safe(qs.tse_quote_date,'未知')}；上櫃：${safe(qs.otc_quote_date,'未知')}。下方「合計」欄位是把兩個不同交易日的漲跌家數加在一起，僅供粗略參考，請改看下方「上市／上櫃分開統計」才是同一天、正確可信的數字</div>`:'';
   el.innerHTML=`${tdateHtml}${mismatchHtml}<details class="src-note"><summary>資料來源與更新說明</summary>行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}</details>`;
 }
 var _liveStripT=null;
