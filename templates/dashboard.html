@@ -1812,6 +1812,10 @@ function renderInstrument(d){
     if(info.is_disposal_or_attention){
       html+=`<div style="font-size:11px;color:var(--alert);margin-top:6px">⚠ 這檔目前被 TWSE 列為處置或注意股票，波動可能極端，請留意</div>`;
     }
+    const fl=d.flags||{};
+    (fl.flags||[]).forEach(f=>{html+=`<div style="font-size:11px;color:${f.level==='fail'?'var(--alert)':f.level==='warn'?'var(--warn,#c80)':'var(--t3)'};margin-top:6px">${f.level==='fail'?'⛔':f.level==='warn'?'⚠':'ℹ'} ${safe(f.text)}</div>`});
+    if(fl.short){const sh=fl.short;
+      html+=`<div style="font-size:11px;color:var(--t3);margin-top:6px">融券 ${safeN(sh.margin_short_lots,0)} 張、借券賣出 ${safeN(sh.sbl_short_lots,0)} 張（${safe(sh.date)}）${sh.sbl_short_chg_lots!==undefined?`；${sh.chg_days} 日變化 融券 ${sh.margin_short_chg_lots>0?'+':''}${safeN(sh.margin_short_chg_lots,0)}／借券 ${sh.sbl_short_chg_lots>0?'+':''}${safeN(sh.sbl_short_chg_lots,0)} 張`:''}${sh.short_vs_volume_days!==undefined?`；空單餘額約為當日成交量的 ${sh.short_vs_volume_days} 倍`:''}${fl.sbl_avail_lots!==undefined?`；可借券賣出 ${safeN(fl.sbl_avail_lots,0)} 張`:''}${fl.daytrade_ok?'；可當沖':''}。來源：證交所 TWT93U／TWT96U／TWTB4U</div>`;}
     if(info.in_scan_universe===false){
       const th=qs.scan_universe_threshold||{};
       html+=`<div style="font-size:10.5px;color:var(--t3);margin-top:6px">此股票收盤價或成交量未達每日訊號掃描門檻（收盤價>${safe(th.min_close,'5')}元 且 成交量>=${safe(th.min_volume_lots,'200')}張），不在每日自動掃描候選池內，僅供本頁查詢研究，不影響下方技術指標／基本面資料的正確性</div>`;
