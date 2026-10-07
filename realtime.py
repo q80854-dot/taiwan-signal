@@ -254,7 +254,8 @@ def snapshot(universe: List[Dict]) -> Dict:
     t0 = time.time()
     quotes = fetch_mis(pairs)
     slim = {c: [q["price"], q["prev_close"], q["volume_lots"], q["time"], q["date"],
-                q.get("limit_up"), q.get("limit_down")] for c, q in quotes.items()}
+                q.get("limit_up"), q.get("limit_down"), q.get("open"), q.get("high"), q.get("low")]
+            for c, q in quotes.items()}
     breadth = compute_breadth(quotes)
     missing = len(pairs) - len(quotes)          # 來源根本沒回（不同於「有回但沒成交」）
     return {"at": time.time(), "n_req": len(pairs), "n_ok": len(quotes), "n_missing": missing,

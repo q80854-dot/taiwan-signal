@@ -502,6 +502,17 @@ class TWScanEngine:
                     continue
                 dates, highs, lows = data.get("dates", []), data.get("highs", []), data.get("lows", [])
                 hit_this_signal = False
+                # 2026-10-07：訊號是收盤後才產生，實際最早只能隔天買進。損益改以「訊號日後第一根 K 棒的開盤價」為進場價
+                # （原本用訊號日收盤價，等於假設能用收盤價成交，績效偏樂觀）。找不到開盤價才退回訊號價。
+                sim_entry = None
+                try:
+                    _opens = data.get("opens") or []
+                    for _i, _d in enumerate(dates):
+                        if _d and _d > gen_date:
+                            sim_entry = _opens[_i] if _i < len(_opens) and _opens[_i] else None
+                            break
+                except Exception:
+                    sim_entry = None
                 for i, d in enumerate(dates):
                     if not d or d <= gen_date:
                         continue  # 只看訊號產生「之後」的K棒，當天本身不算平倉
@@ -525,7 +536,7 @@ class TWScanEngine:
                     elif hit_tp3: result, close_price = "tp3", tp3
                     elif hit_tp2: result, close_price = "tp2", tp2
                     else:         result, close_price = "tp1", tp1
-                    entry  = sig.get("entry_price") or sig.get("current_price") or close_price
+                    entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or close_price
                     shares = sig.get("suggested_lots") or 1  # 欄位名稱歷史遺留，實際存的是股數
                     pnl     = calc_tw_pnl(entry, close_price, direction, shares)
                     pnl_pct = round(pnl / (entry * shares) * 100, 2) if entry and shares else 0
@@ -570,7 +581,7 @@ class TWScanEngine:
                     if gen_dt and (datetime.now(timezone.utc).replace(tzinfo=None) - gen_dt).days >= expire_days:
                         closes = data.get("closes", [])
                         last_close = closes[-1] if closes else (sig.get("entry_price") or sig.get("current_price") or 0)
-                        entry  = sig.get("entry_price") or sig.get("current_price") or last_close
+                        entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or last_close
                         shares = sig.get("suggested_lots") or 1
                         pnl     = calc_tw_pnl(entry, last_close, direction, shares) if entry else 0
                         pnl_pct = round(pnl / (entry * shares) * 100, 2) if entry and shares else 0

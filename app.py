@@ -136,8 +136,21 @@ def job_daily_scan():
         return
     logger.info("⏰ 全市場掃描")
     try:
+        # 掃描前先確認官方日行情已更新到今天（沒有就重抓一次）；仍沒更新時，最後一根 K 棒改用 MIS 盤後定案資料
+        try:
+            from stock_universe import refresh_if_date_stale, get_official_bar
+            refresh_if_date_stale()
+            _ob = get_official_bar("2330")
+            logger.info(f"掃描前官方日 K 檢查：2330 → {_ob}")
+        except Exception as _e:
+            logger.warning(f"掃描前官方日 K 檢查失敗：{_e}")
         from scanner import scanner
         scanner.run_daily_scan()
+        try:
+            import data_fetcher as _df
+            logger.info(f"掃描完成｜官方日 K 套用統計：{_df._obar_stats}")
+        except Exception:
+            pass
     except Exception as e: logger.error(f"job_daily_scan: {e}", exc_info=True)
 
 def job_intraday_check():
@@ -164,8 +177,43 @@ def job_intraday_check():
         scanner.check_intraday_price_alerts()
     except Exception as e: logger.error(f"job_intraday_check: {e}", exc_info=True)
 
+def _take_snapshot(save_live=True, save_bars=False):
+    """抓全市場 MIS 快照。save_live：存盤中快照；save_bars：把 13:33 之後的定案 OHLCV 另存（供收盤掃描當官方日 K 用）。"""
+    import realtime
+    from stock_universe import build_full_universe
+    from state_store import store
+    _uni = build_full_universe()
+    snap = realtime.snapshot(_uni)
+    try:
+        snap["quality"] = realtime.quality_check(snap["quotes"], _uni)
+        _ql = snap["quality"]
+        if (_ql.get("mismatch_rate") or 0) > 0.05 or _ql.get("out_of_limit", 0) > 5:
+            logger.warning(f"盤中快照品質異常：{_ql}")
+    except Exception as _e:
+        logger.warning(f"quality_check: {_e}")
+    if save_live and snap["n_ok"] > 0:
+        store.set_meta("intraday_snapshot", snap)
+    logger.info(f"盤中快照：要求 {snap['n_req']} 檔、取得 {snap['n_ok']} 檔（完整度 {snap.get('completeness')}）、耗時 {snap['secs']}s、廣度 {snap.get('breadth')}")
+    if snap.get("completeness") is not None and snap["completeness"] < 0.9:
+        logger.warning(f"盤中快照完整度偏低（{snap['completeness']}），來源可能限流或不完整")
+    if snap["n_ok"] == 0:
+        logger.warning(f"盤中快照：證交所 MIS 全部抓不到（{realtime.status().get('last_error')}）")
+    _nn = realtime.now_tpe()
+    if save_bars and snap["n_ok"] > 0 and _nn.hour * 60 + _nn.minute >= 13 * 60 + 33:   # 收盤定案後才存，盤中不存
+        today = _nn.strftime("%Y-%m-%d")
+        bars = {c: [q[7], q[8], q[9], q[0], q[2] or 0] for c, q in snap["quotes"].items()
+                if len(q) > 9 and q[4] == today and q[0] and q[7] and q[8] and q[9]}
+        if len(bars) >= 0.8 * snap["n_ok"]:
+            store.set_meta("day_bars_mis", {"date": today, "at": snap["at"], "n": len(bars), "bars": bars})
+            logger.info(f"當日定案 OHLCV 已存檔（MIS）：{today} {len(bars)} 檔")
+        else:
+            logger.warning(f"當日定案 OHLCV 檔數過少（{len(bars)}/{snap['n_ok']}），不存檔")
+    return snap
+
+
 def job_intraday_snapshot():
-    """盤中每 5 分鐘：用證交所 MIS（官方即時）抓掃描池全市場報價，整份存進資料庫（meta intraday_snapshot）。"""
+    """盤中每 5 分鐘：用證交所 MIS（官方即時）抓全市場報價，整份存進資料庫（meta intraday_snapshot）。
+    13:33 之後的那一輪（13:35）同時存當日定案 OHLCV。"""
     import realtime
     if not realtime.market_open():
         return
@@ -173,26 +221,25 @@ def job_intraday_snapshot():
     if get_market_session().get("session") == "holiday":
         return
     try:
-        from stock_universe import build_full_universe
-        from state_store import store
-        _uni = build_full_universe()
-        snap = realtime.snapshot(_uni)
-        try:
-            snap["quality"] = realtime.quality_check(snap["quotes"], _uni)
-            _ql = snap["quality"]
-            if (_ql.get("mismatch_rate") or 0) > 0.05 or _ql.get("out_of_limit", 0) > 5:
-                logger.warning(f"盤中快照品質異常：{_ql}")
-        except Exception as _e:
-            logger.warning(f"quality_check: {_e}")
-        if snap["n_ok"] > 0:
-            store.set_meta("intraday_snapshot", snap)
-        logger.info(f"盤中快照：要求 {snap['n_req']} 檔、取得 {snap['n_ok']} 檔（完整度 {snap.get('completeness')}）、耗時 {snap['secs']}s、廣度 {snap.get('breadth')}")
-        if snap.get("completeness") is not None and snap["completeness"] < 0.9:
-            logger.warning(f"盤中快照完整度偏低（{snap['completeness']}），來源可能限流或不完整")
-        if snap["n_ok"] == 0:
-            logger.warning(f"盤中快照：證交所 MIS 全部抓不到（{realtime.status().get('last_error')}）")
+        _n = realtime.now_tpe()
+        _take_snapshot(save_live=True, save_bars=(_n.hour * 60 + _n.minute >= 13 * 60 + 33))
     except Exception as e:
         logger.error(f"job_intraday_snapshot: {e}", exc_info=True)
+
+
+def job_final_bars():
+    """收盤後補抓當日定案 OHLCV（13:40、14:10 各一次，防 13:35 那輪失敗）。"""
+    import realtime
+    n = realtime.now_tpe()
+    if n.weekday() > 4:
+        return
+    from data_fetcher import get_market_session
+    if get_market_session().get("session") == "holiday":
+        return
+    try:
+        _take_snapshot(save_live=False, save_bars=True)
+    except Exception as e:
+        logger.error(f"job_final_bars: {e}", exc_info=True)
 
 
 def job_refresh_universe_if_stale():
@@ -312,6 +359,8 @@ def setup_scheduler():
     # check_intraday_price_alerts() 開頭的說明。
     scheduler.add_job(job_intraday_check,   CronTrigger(hour="9-13", minute="*", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_intraday_snapshot, CronTrigger(hour="9-13", minute="*/5", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_snapshot", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_final_bars, CronTrigger(hour=13, minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="final_bars_1340", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_final_bars, CronTrigger(hour=14, minute=10, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="final_bars_1410", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
@@ -1274,7 +1323,9 @@ def api_quote_status():
         if _probe:
             return jsonify({"probe": realtime.probe(_probe.split(".")[0].upper(), request.args.get("market"))})
         _qs = (snap.get("quotes") or {})
+        import data_fetcher as _df
         return jsonify({"source": realtime.status(), "market_open": realtime.market_open(),
+                        "official_bars": _df._obar_stats,
                         "snapshot_priced": sum(1 for v in _qs.values() if v and v[0]),
                         "snapshot_at": snap.get("at"), "snapshot_n": snap.get("n_ok"),
                         "snapshot_secs": snap.get("secs")})

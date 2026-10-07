@@ -637,6 +637,49 @@ def _yf_rows_to_bars(h, tf_key: str = "daily") -> List[Dict]:
                       "low": round(lo,2), "close": round(c,2), "volume": int(v//1000)})
     return rows
 
+_obar_stats = {"checked": 0, "replaced": 0, "appended": 0, "mismatch": 0, "by_source": {}, "samples": [], "at": None}
+
+
+def _apply_official_bar(ticker: str):
+    """日線最後一根改以官方為準：官方（證交所／櫃買 OpenAPI，或 MIS 盤後定案）的最新交易日 K 棒，
+    取代同日的 Yahoo K 棒；Yahoo 還沒有這天就直接補上。訊號是用這根「剛收盤的 K 棒」算的，
+    Yahoo 收盤後曾被事後修正，會讓同一天兩次掃描結果差很多。同日收盤價差 >0.3% 記為不一致（含樣本）。"""
+    try:
+        import stock_universe as su
+        from state_store import store
+        code = ticker.split(".")[0]
+        ob = su.get_official_bar(code)
+        if not ob:
+            return
+        last_bars = store.get_cached_ohlcv_bars(ticker, "daily", limit=1)
+        last = last_bars[0] if last_bars else None
+        ld = (last or {}).get("bar_date") or (last or {}).get("date") or ""
+        ld = ld[:10]
+        if ld and ob["date"] < ld:
+            return
+        st = _obar_stats
+        st["checked"] += 1
+        st["at"] = time.time()
+        new = {"date": ob["date"], "open": round(ob["open"], 2), "high": round(ob["high"], 2),
+               "low": round(ob["low"], 2), "close": round(ob["close"], 2), "volume": int(ob["volume"])}
+        if last and ld == ob["date"]:
+            if last["close"] and abs(last["close"] / new["close"] - 1) > 0.003:
+                st["mismatch"] += 1
+                if len(st["samples"]) < 10:
+                    st["samples"].append([ticker, ob["date"], last["close"], new["close"], ob["source"]])
+            same = all(abs(float(last[k]) - new[k]) < 0.006 for k in ("open", "high", "low", "close")) \
+                and int(last.get("volume") or 0) == new["volume"]
+            if same:
+                return
+            st["replaced"] += 1
+        else:
+            st["appended"] += 1
+        st["by_source"][ob["source"]] = st["by_source"].get(ob["source"], 0) + 1
+        store.upsert_ohlcv_bars(ticker, "daily", [new])
+    except Exception as e:
+        logger.warning(f"_apply_official_bar {ticker}: {e}")
+
+
 def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
     from state_store import store
     tf = TIMEFRAMES.get(tf_key, TIMEFRAMES["daily"])
@@ -702,6 +745,8 @@ def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
             if last_date is None:
                 return None
 
+    if tf_key == "daily":
+        _apply_official_bar(ticker)
     cached = store.get_cached_ohlcv_bars(ticker, tf_key, limit=tf["bars"] + 20)
     cached = [b for b in cached if (b.get("volume") or 0) > 0][-tf["bars"]:]
     if len(cached) < 20:

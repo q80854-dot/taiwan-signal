@@ -218,6 +218,15 @@ def _parse_roc_date(raw) -> Optional[str]:
     except Exception:
         return None
 
+def _pf(x) -> Optional[float]:
+    """官方欄位轉浮點數；空字串、"--"、0 以下一律視為沒有。"""
+    try:
+        v = float(str(x).replace(",", "").strip())
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
 def _fetch_twse_list() -> List[Dict]:
     try:
         r = requests.get(TWSE_LIST_URL, headers=HEADERS, timeout=15)
@@ -241,6 +250,7 @@ def _fetch_twse_list() -> List[Dict]:
             stocks.append({
                 "code": code, "ticker": f"{code}.TW", "name": name,
                 "market": "TSE", "close": close,
+                "open": _pf(item.get("OpeningPrice")), "high": _pf(item.get("HighestPrice")), "low": _pf(item.get("LowestPrice")),
                 "volume_lots": round(vol/1000, 0),
                 "change": chg, "change_pct": chg_pct,
                 "sector": "", "is_etf": _is_etf_code(code),
@@ -291,6 +301,7 @@ def _fetch_tpex_list() -> List[Dict]:
             stocks.append({
                 "code": code, "ticker": f"{code}.TWO", "name": name,
                 "market": "OTC", "close": close,
+                "open": _pf(item.get("Open")), "high": _pf(item.get("High")), "low": _pf(item.get("Low")),
                 "volume_lots": round(vol/1000, 0),
                 "change": chg, "change_pct": chg_pct,
                 "sector": "", "is_etf": _is_etf_code(code),
@@ -718,6 +729,63 @@ def build_live_universe(force_refresh=False) -> List[Dict]:
             s2["volume_lots"] = 0
         out.append(s2)
     return out
+
+
+_bar_idx = {"key": None, "map": {}}
+_mis_bars_cache = {"ts": 0.0, "v": None}
+
+
+def _official_index() -> Dict[str, Dict]:
+    raw = _get_raw_universe()
+    key = (raw.get("fetched_at"), len(raw.get("stocks") or []))
+    if _bar_idx["key"] != key:
+        _bar_idx["map"] = {x.get("code"): x for x in (raw.get("stocks") or []) if x.get("code")}
+        _bar_idx["key"] = key
+    return _bar_idx["map"]
+
+
+def _mis_final_bars():
+    """盤後（13:33 之後）由證交所 MIS 定案的當日 OHLCV（meta day_bars_mis）；60 秒記憶體快取。"""
+    import time as _t
+    if _t.time() - _mis_bars_cache["ts"] > 60:
+        try:
+            from state_store import store
+            _mis_bars_cache["v"] = store.get_meta("day_bars_mis") or None
+        except Exception:
+            _mis_bars_cache["v"] = None
+        _mis_bars_cache["ts"] = _t.time()
+    return _mis_bars_cache["v"]
+
+
+def _valid_bar(o, h, l, c) -> bool:
+    try:
+        return bool(o and h and l and c and l <= min(o, c) + 1e-9 and h >= max(o, c) - 1e-9 and h >= l)
+    except Exception:
+        return False
+
+
+def get_official_bar(code: str) -> Optional[Dict]:
+    """某檔最新一個交易日的官方日 K（開高低收、成交張數）。
+    來源優先序：證交所／櫃買 OpenAPI 日行情（收盤後彙整）→ 證交所 MIS 盤後定案（OpenAPI 還沒更新到今天時用）。
+    欄位不全或高低價不合理就不回傳（寧可沿用原資料，也不寫入壞資料）。"""
+    bar = None
+    try:
+        st = _official_index().get(code)
+        if st and st.get("quote_date") and _valid_bar(st.get("open"), st.get("high"), st.get("low"), st.get("close")) \
+                and st.get("volume_lots") is not None:
+            bar = {"date": st["quote_date"], "open": st["open"], "high": st["high"], "low": st["low"],
+                   "close": st["close"], "volume": int(st["volume_lots"]), "source": "OpenAPI"}
+    except Exception as e:
+        logger.warning(f"get_official_bar({code}) OpenAPI: {e}")
+    try:
+        mb = _mis_final_bars()
+        b = (mb or {}).get("bars", {}).get(code)
+        if b and (not bar or mb["date"] > bar["date"]) and _valid_bar(b[0], b[1], b[2], b[3]):
+            bar = {"date": mb["date"], "open": b[0], "high": b[1], "low": b[2], "close": b[3],
+                   "volume": int(b[4] or 0), "source": "MIS"}
+    except Exception as e:
+        logger.warning(f"get_official_bar({code}) MIS: {e}")
+    return bar
 
 
 _ov_persisted = set()
