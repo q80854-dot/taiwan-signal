@@ -117,12 +117,23 @@ def get_taifex(force: bool = False) -> Dict:
     with _lock:
         if not force and _cache["v"] and time.time() - _cache["ts"] < _TTL:
             return _cache["v"]
-    v = fetch_taifex()
-    if len(v["errors"]) < 4 or not _cache["v"]:
-        with _lock:
-            _cache["v"], _cache["ts"] = v, time.time()
-        return v
-    return _cache["v"]
+    v = merge_keep_last(fetch_taifex(), _cache["v"])
+    with _lock:
+        _cache["v"], _cache["ts"] = v, time.time()
+    return v
+
+
+def merge_keep_last(new: Dict, old: Optional[Dict]) -> Dict:
+    """某個來源這次抓失敗（例如期交所收盤後資料重發佈、回傳空內容）就沿用上一次成功的值，並標記 stale。"""
+    new["stale"] = []
+    if not old:
+        return new
+    for k in ("futures", "options", "pcr", "large"):
+        bad = k not in new or not new.get(k) or (k == "futures" and not (new.get(k) or {}).get("items"))
+        if bad and old.get(k):
+            new[k] = old[k]
+            new["stale"].append(k)
+    return new
 
 
 def update_hist(store, data: Optional[Dict] = None) -> Optional[str]:
@@ -132,6 +143,10 @@ def update_hist(store, data: Optional[Dict] = None) -> Optional[str]:
     d = fut.get("date")
     if not d or not fut.get("items"):
         return None
+    try:
+        store.set_meta("taifex_last", {k: data.get(k) for k in ("futures", "options", "pcr", "large")})
+    except Exception:
+        pass
     hist = store.get_meta("taifex_hist") or {}
     pcr = next((p for p in reversed((data.get("pcr") or [])) if p["date"] == d), None)
     hist[d] = {"equiv": {k: v["equiv_net_oi"] for k, v in fut["items"].items()}, "pcr_oi": pcr["oi_ratio"] if pcr else None}
@@ -144,8 +159,15 @@ def update_hist(store, data: Optional[Dict] = None) -> Optional[str]:
 def summary(store=None) -> Dict:
     """給網頁用：最新一日數字＋ 5 日變化＋白話判讀（只描述，不下買賣建議）。"""
     data = get_taifex()
+    if not (data.get("futures") or {}).get("items") and store is not None:
+        try:   # 重啟後記憶體快取是空的、來源又剛好暫時失敗：改用資料庫裡最後一次成功的值
+            last = store.get_meta("taifex_last") or {}
+            if (last.get("futures") or {}).get("items"):
+                data = dict(data, **{k: last[k] for k in last if last[k]}, stale=["futures"])
+        except Exception:
+            pass
     fut, pcr = data.get("futures") or {}, data.get("pcr") or []
-    out = {"date": fut.get("date"), "errors": data.get("errors", []), "items": fut.get("items", {}),
+    out = {"date": fut.get("date"), "errors": data.get("errors", []), "stale": data.get("stale", []), "items": fut.get("items", {}),
            "options": data.get("options"), "large": data.get("large"), "pcr": pcr[-1] if pcr else None}
     if len(pcr) >= 6:
         out["pcr_chg_5d"] = round(pcr[-1]["oi_ratio"] - pcr[-6]["oi_ratio"], 2)

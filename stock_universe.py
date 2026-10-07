@@ -677,6 +677,17 @@ _live_cache = {"ts": 0.0, "snap": None}
 _LIVE_MAX_AGE = 600          # 快照超過 10 分鐘就不採用（寧可顯示官方收盤資料，也不顯示過期的「即時」）
 
 
+def snap_is_final(snap, now_ts) -> bool:
+    """收盤後（台北時間 13:33 起）拍下、且與現在同一天的快照＝當日最終資料，收盤後仍可採用，不受 10 分鐘限制。"""
+    try:
+        from datetime import datetime, timedelta
+        t = datetime.utcfromtimestamp(snap["at"]) + timedelta(hours=8)
+        n = datetime.utcfromtimestamp(now_ts) + timedelta(hours=8)
+        return t.date() == n.date() and t.hour * 60 + t.minute >= 13 * 60 + 33
+    except Exception:
+        return False
+
+
 def _get_live_snapshot():
     """最近一次盤中快照（記憶體快取 20 秒）；過期或不是今天的回 None。"""
     import time as _t
@@ -689,7 +700,9 @@ def _get_live_snapshot():
             _live_cache["snap"] = None
         _live_cache["ts"] = now
     snap = _live_cache["snap"]
-    if not snap or not snap.get("at") or now - snap["at"] > _LIVE_MAX_AGE:
+    if not snap or not snap.get("at"):
+        return None
+    if now - snap["at"] > _LIVE_MAX_AGE and not snap_is_final(snap, now):
         return None
     return snap
 
@@ -701,7 +714,7 @@ def live_status() -> Dict:
     if not snap:
         return {"active": False}
     return {"active": True, "snapshot_at": snap["at"], "age_secs": round(_t.time() - snap["at"]),
-            "n_ok": snap.get("n_ok"), "completeness": snap.get("completeness"), "source": "證交所 MIS（官方盤中即時）"}
+            "final": snap_is_final(snap, _t.time()), "n_ok": snap.get("n_ok"), "completeness": snap.get("completeness"), "source": "證交所 MIS（官方盤中即時）"}
 
 
 def build_live_universe(force_refresh=False) -> List[Dict]:

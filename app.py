@@ -177,6 +177,27 @@ def job_intraday_check():
         scanner.check_intraday_price_alerts()
     except Exception as e: logger.error(f"job_intraday_check: {e}", exc_info=True)
 
+def _append_index_series(store, snap):
+    """把當日指數走勢逐筆累積進 meta index_intraday（每輪快照一點，約 5 分鐘一點），供網頁畫當日走勢圖。隔日自動重置。"""
+    import realtime
+    today = realtime.now_tpe().strftime("%Y-%m-%d")
+    cur = store.get_meta("index_intraday") or {}
+    if cur.get("date") != today:
+        cur = {"date": today, "series": {}, "prev": {}}
+    for k, v in (snap.get("indices") or {}).items():
+        if not v or v.get("date") != today or not v.get("price"):
+            continue
+        pts = cur["series"].setdefault(k, [])
+        t = str(v.get("time") or "")[:5]
+        if pts and pts[-1][0] == t:
+            pts[-1][1] = v["price"]
+        else:
+            pts.append([t, v["price"]])
+        cur["prev"][k] = v.get("prev_close")
+    if cur["series"]:
+        store.set_meta("index_intraday", cur)
+
+
 def _take_snapshot(save_live=True, save_bars=False):
     """抓全市場 MIS 快照。save_live：存盤中快照；save_bars：把 13:33 之後的定案 OHLCV 另存（供收盤掃描當官方日 K 用）。"""
     import realtime
@@ -193,6 +214,10 @@ def _take_snapshot(save_live=True, save_bars=False):
         logger.warning(f"quality_check: {_e}")
     if save_live and snap["n_ok"] > 0:
         store.set_meta("intraday_snapshot", snap)
+        try:
+            _append_index_series(store, snap)
+        except Exception as _e:
+            logger.warning(f"index_intraday: {_e}")
     logger.info(f"盤中快照：要求 {snap['n_req']} 檔、取得 {snap['n_ok']} 檔（完整度 {snap.get('completeness')}）、耗時 {snap['secs']}s、廣度 {snap.get('breadth')}")
     if snap.get("completeness") is not None and snap["completeness"] < 0.9:
         logger.warning(f"盤中快照完整度偏低（{snap['completeness']}），來源可能限流或不完整")
@@ -237,7 +262,7 @@ def job_final_bars():
     if get_market_session().get("session") == "holiday":
         return
     try:
-        _take_snapshot(save_live=False, save_bars=True)
+        _take_snapshot(save_live=True, save_bars=True)
     except Exception as e:
         logger.error(f"job_final_bars: {e}", exc_info=True)
 
@@ -1320,11 +1345,30 @@ def api_intraday_overview():
         age = round(_t.time() - at) if at else None
         today = realtime.now_tpe().strftime("%Y-%m-%d")
         idx = snap.get("indices") or {}
+        from stock_universe import snap_is_final
+        final = bool(at and snap_is_final(snap, _t.time()))
         fresh = bool(at and age is not None and age <= 600 and any((v or {}).get("date") == today for v in idx.values()))
-        return jsonify({"ok": bool(snap), "fresh": fresh, "age_secs": age, "market_open": realtime.market_open(),
+        if final and any((v or {}).get("date") == today for v in idx.values()):
+            fresh = True
+        return jsonify({"ok": bool(snap), "fresh": fresh, "final": final, "age_secs": age, "market_open": realtime.market_open(),
                         "indices": idx, "breadth": snap.get("breadth"), "n_ok": snap.get("n_ok"),
                         "n_req": snap.get("n_req"), "completeness": snap.get("completeness"),
                         "quality": snap.get("quality")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/intraday/series")
+def api_intraday_series():
+    """當日指數走勢（每 5 分鐘一點，從開盤累積；隔日重置）。"""
+    try:
+        import realtime
+        from state_store import store
+        cur = store.get_meta("index_intraday") or {}
+        today = realtime.now_tpe().strftime("%Y-%m-%d")
+        if cur.get("date") != today:
+            return jsonify({"ok": True, "date": today, "series": {}, "prev": {}})
+        return jsonify({"ok": True, "date": today, "series": cur.get("series", {}), "prev": cur.get("prev", {})})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
