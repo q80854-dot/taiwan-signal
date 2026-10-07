@@ -155,6 +155,9 @@ def job_intraday_check():
     if session.get("session") == "holiday":
         logger.info(f"⏰ 盤中安全網檢查：今天是國定假日休市，跳過本次檢查")
         return
+    import realtime
+    if not realtime.market_open():
+        return
     logger.info("⏰ 盤中安全網檢查")
     try:
         from scanner import scanner
@@ -175,7 +178,9 @@ def job_intraday_snapshot():
         snap = realtime.snapshot(build_universe())
         if snap["n_ok"] > 0:
             store.set_meta("intraday_snapshot", snap)
-        logger.info(f"盤中快照：要求 {snap['n_req']} 檔、取得 {snap['n_ok']} 檔、耗時 {snap['secs']}s")
+        logger.info(f"盤中快照：要求 {snap['n_req']} 檔、取得 {snap['n_ok']} 檔（完整度 {snap.get('completeness')}）、耗時 {snap['secs']}s、廣度 {snap.get('breadth')}")
+        if snap.get("completeness") is not None and snap["completeness"] < 0.9:
+            logger.warning(f"盤中快照完整度偏低（{snap['completeness']}），來源可能限流或不完整")
         if snap["n_ok"] == 0:
             logger.warning(f"盤中快照：證交所 MIS 全部抓不到（{realtime.status().get('last_error')}）")
     except Exception as e:
@@ -297,7 +302,7 @@ def setup_scheduler():
     # 收盤。這仍然只是「現價 vs 已追蹤訊號的SL/TP」輕量比對（通常<5檔），不是重新
     # 掃描全市場找新訊號——為什麼不能在盤中重新掃描找新訊號，見 scanner.py
     # check_intraday_price_alerts() 開頭的說明。
-    scheduler.add_job(job_intraday_check,   CronTrigger(hour="9-13", minute="0,30", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True)
+    scheduler.add_job(job_intraday_check,   CronTrigger(hour="9-13", minute="*", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_check", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_intraday_snapshot, CronTrigger(hour="9-13", minute="*/5", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_snapshot", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
@@ -1226,6 +1231,25 @@ def api_quote(code):
         q["ok"] = True
         q["market_open"] = realtime.market_open()
         return jsonify(q)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/intraday/overview")
+def api_intraday_overview():
+    """盤中市場總覽：指數、漲跌家數、漲跌停家數，皆來自最近一次官方即時快照；超過 10 分鐘就標示過期。"""
+    try:
+        import realtime, time as _t
+        from state_store import store
+        snap = store.get_meta("intraday_snapshot") or {}
+        at = snap.get("at")
+        age = round(_t.time() - at) if at else None
+        today = realtime.now_tpe().strftime("%Y-%m-%d")
+        idx = snap.get("indices") or {}
+        fresh = bool(at and age is not None and age <= 600 and any((v or {}).get("date") == today for v in idx.values()))
+        return jsonify({"ok": bool(snap), "fresh": fresh, "age_secs": age, "market_open": realtime.market_open(),
+                        "indices": idx, "breadth": snap.get("breadth"), "n_ok": snap.get("n_ok"),
+                        "n_req": snap.get("n_req"), "completeness": snap.get("completeness")})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

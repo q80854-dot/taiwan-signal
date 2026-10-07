@@ -608,7 +608,7 @@ class TWScanEngine:
         給「未收盤K棒」用的訊號邏輯，不能直接沿用現有日K邏輯。
         """
         from state_store import store
-        from data_fetcher import fetch_batch_current_prices
+        import realtime
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if self._intraday_alerted.get("date") != today:
             self._intraday_alerted = {"date": today, "ids": set()}
@@ -617,8 +617,15 @@ class TWScanEngine:
             logger.info("check_intraday_price_alerts: 目前無未平倉訊號，跳過本次盤中檢查")
             return
         tickers = list({s["ticker"] for s in pending if s.get("ticker")})
+        # 2026-10-07：現價只用官方即時（MIS，備援富果）且資料日期必須是今天；抓不到/過期就不判斷（fail closed），
+        # 不再退回 Yahoo（延遲且是還原價，拿來比停損會誤報或漏報）。
         try:
-            prices = fetch_batch_current_prices(tickers)
+            pairs = [(t, "OTC" if t.upper().endswith(".TWO") else None) for t in tickers]
+            fp = realtime.fresh_prices(pairs)
+            by_code = fp["prices"]
+            prices = {t: by_code[t.split(".")[0].upper()] for t in tickers if t.split(".")[0].upper() in by_code}
+            if fp["reasons"]:
+                logger.info(f"check_intraday_price_alerts: 未納入比對 {fp['reasons']}")
         except Exception as e:
             logger.warning(f"check_intraday_price_alerts: 批次抓現價失敗: {e}")
             return

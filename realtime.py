@@ -99,6 +99,7 @@ def parse_mis_row(r: Dict) -> Optional[Dict]:
          "price": price, "prev_close": prev,
          "open": _num(r.get("o")), "high": _num(r.get("h")), "low": _num(r.get("l")),
          "volume_lots": int(float(r["v"])) if _num(r.get("v")) else None,
+         "limit_up": _num(r.get("u")), "limit_down": _num(r.get("w")),
          "time": trade_time, "date": date, "source": "證交所 MIS"}
     if price and prev:
         q["change"] = round(price - prev, 2)
@@ -196,14 +197,82 @@ def get_quote(code: str, market: Optional[str] = None) -> Optional[Dict]:
     return q
 
 
+def compute_breadth(quotes: Dict[str, Dict], today: Optional[str] = None) -> Dict:
+    """由即時報價算盤中市場廣度。只算資料日期是今天的；沒成交價的歸 no_trade，資料日期不是今天的歸 stale。"""
+    today = today or now_tpe().strftime("%Y-%m-%d")
+    b = {"up": 0, "down": 0, "flat": 0, "limit_up": 0, "limit_down": 0, "no_trade": 0, "stale": 0}
+    for q in quotes.values():
+        if q.get("date") != today:
+            b["stale"] += 1
+            continue
+        p, pv = q.get("price"), q.get("prev_close")
+        if not p or not pv:
+            b["no_trade"] += 1
+            continue
+        b["up" if p > pv else "down" if p < pv else "flat"] += 1
+        if q.get("limit_up") and p >= q["limit_up"]:
+            b["limit_up"] += 1
+        elif q.get("limit_down") and p <= q["limit_down"]:
+            b["limit_down"] += 1
+    return b
+
+
+def fetch_indices() -> Dict[str, Dict]:
+    """加權指數與櫃買指數（MIS：t00 / o00）。"""
+    out = {}
+    for key, ex, nm in (("TAIEX", "tse_t00.tw", "加權指數"), ("OTC", "otc_o00.tw", "櫃買指數")):
+        try:
+            r = _get_session().get(MIS_URL, params={"ex_ch": ex, "json": "1", "delay": "0",
+                                                    "_": int(time.time() * 1000)}, timeout=(4, 8))
+            rows = (r.json().get("msgArray") or []) if r.status_code == 200 else []
+            q = parse_mis_row(rows[0]) if rows else None
+            if q and q.get("price"):
+                out[key] = {"name": nm, "price": q["price"], "prev_close": q["prev_close"], "change": q["change"],
+                            "change_pct": q["change_pct"], "high": q["high"], "low": q["low"],
+                            "time": q["time"], "date": q["date"]}
+        except Exception as e:
+            _stats["last_error"] = f"指數: {e}"
+    return out
+
+
 def snapshot(universe: List[Dict]) -> Dict:
-    """對掃描池全部代號抓一次 MIS，回傳可存資料庫的快照。"""
+    """對掃描池全部代號抓一次 MIS，回傳可存資料庫的快照（含廣度、指數、完整度）。"""
     pairs = [(s["code"], s.get("market")) for s in universe if s.get("code")]
     t0 = time.time()
     quotes = fetch_mis(pairs)
-    slim = {c: [q["price"], q["prev_close"], q["volume_lots"], q["time"], q["date"]] for c, q in quotes.items()}
-    return {"at": time.time(), "n_req": len(pairs), "n_ok": len(quotes),
-            "secs": round(time.time() - t0, 1), "quotes": slim}
+    slim = {c: [q["price"], q["prev_close"], q["volume_lots"], q["time"], q["date"],
+                q.get("limit_up"), q.get("limit_down")] for c, q in quotes.items()}
+    breadth = compute_breadth(quotes)
+    missing = len(pairs) - len(quotes)          # 來源根本沒回（不同於「有回但沒成交」）
+    return {"at": time.time(), "n_req": len(pairs), "n_ok": len(quotes), "n_missing": missing,
+            "secs": round(time.time() - t0, 1), "quotes": slim, "breadth": breadth,
+            "indices": fetch_indices(),
+            "completeness": round(len(quotes) / len(pairs), 4) if pairs else None}
+
+
+def fresh_prices(pairs: Iterable[tuple]) -> Dict:
+    """風控用現價：只收「資料日期是今天」的即時成交價（MIS，抓不到再用 Fugle）。
+    不退回 Yahoo／日線——現價不新鮮就不判斷，寧可漏報也不用舊價誤報。
+    回傳 {"prices": {code: price}, "reasons": {code: 原因}}，原因為 no_trade / stale / source_missing。"""
+    pairs = [(c.split(".")[0].upper(), m) for c, m in pairs]
+    today = now_tpe().strftime("%Y-%m-%d")
+    got = fetch_mis(pairs)
+    prices, reasons = {}, {}
+    for code, mk in pairs:
+        q = got.get(code)
+        if not q or not q.get("price"):
+            fq = fetch_fugle(code)
+            if fq and fq.get("date") in (today, None) and fq.get("price"):
+                q = fq
+        if not q:
+            reasons[code] = "source_missing"
+        elif not q.get("price"):
+            reasons[code] = "no_trade"
+        elif q.get("date") != today:
+            reasons[code] = "stale"
+        else:
+            prices[code] = q["price"]
+    return {"prices": prices, "reasons": reasons}
 
 
 def status() -> Dict:
