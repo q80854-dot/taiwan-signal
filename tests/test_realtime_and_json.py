@@ -76,3 +76,23 @@ def test_parse_mis_row_uses_last_trade_when_current_tick_empty():
     q = realtime.parse_mis_row({"c": "2330", "ex": "tse", "z": "-", "y": "2585.0000", "d": "20261007", "t": "11:36:34",
                                 "v": "8628", "trade": {"ft": 20, "t": "11:35:35", "v": 1, "z": "2575.0000"}})
     assert q["price"] == 2575.0 and q["time"] == "11:35:35" and q["change"] == -10.0 and q["change_pct"] == -0.39
+
+
+def test_breadth_and_fresh_prices(monkeypatch):
+    import realtime
+    q = {"A": {"date": "2026-10-07", "price": 11.0, "prev_close": 10.0, "limit_up": 11.0, "limit_down": 9.0},
+         "B": {"date": "2026-10-07", "price": 9.0, "prev_close": 10.0, "limit_up": 11.0, "limit_down": 9.0},
+         "C": {"date": "2026-10-07", "price": 10.0, "prev_close": 10.0},
+         "D": {"date": "2026-10-07", "price": None, "prev_close": 10.0},
+         "E": {"date": "2026-10-06", "price": 10.0, "prev_close": 10.0}}
+    b = realtime.compute_breadth(q, "2026-10-07")
+    assert (b["up"], b["down"], b["flat"], b["limit_up"], b["limit_down"], b["no_trade"], b["stale"]) == (1, 1, 1, 1, 1, 1, 1)
+
+    today = realtime.now_tpe().strftime("%Y-%m-%d")
+    monkeypatch.setattr(realtime, "fetch_mis", lambda pairs: {
+        "1101": {"price": 50.0, "date": today}, "1102": {"price": 40.0, "date": "2000-01-01"},
+        "1103": {"price": None, "date": today}})
+    monkeypatch.setattr(realtime, "fetch_fugle", lambda c: None)
+    r = realtime.fresh_prices([("1101.TW", None), ("1102.TW", None), ("1103.TW", None), ("1104.TW", None)])
+    assert r["prices"] == {"1101": 50.0}
+    assert r["reasons"] == {"1102": "stale", "1103": "no_trade", "1104": "source_missing"}
