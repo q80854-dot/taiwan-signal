@@ -1278,6 +1278,25 @@ function taipeiParts(iso){
 // 用來跟後端回傳的 quote_trading_date 比對，判斷使用者現在看到的成交量／
 // 價格資料是不是「今天」收盤後的資料，還是 TWSE/TPEX 官方尚未更新、其實
 // 是前幾個交易日的舊資料（這是正常現象，不代表張數算錯）。
+let _lqTimer=null;
+function _mktOpenNow(){
+  try{const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Taipei',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date());
+  const g=t=>p.find(x=>x.type===t).value;const m=(+g('hour'))*60+(+g('minute'));
+  return !['Sat','Sun'].includes(g('weekday'))&&m>=540&&m<=815;}catch(e){return false;}
+}
+async function liveQuote(code){
+  const box=document.getElementById('live-quote');if(!box){clearInterval(_lqTimer);return;}
+  try{
+    const r=await fetch('/api/quote/'+encodeURIComponent(code),{cache:'no-store'});const q=await r.json();
+    if(!q.ok){box.innerHTML=`<div style="font-size:12px;color:var(--warn);margin-bottom:8px">⚠ 即時報價目前抓不到（${safe(q.error||'來源無回應')}）。下方價格是官方收盤後資料，不是即時價。</div>`;return;}
+    const cp=q.change_pct;
+    box.innerHTML=`<div style="font-size:13px;margin-bottom:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px">📡 <b>${q.live?'盤中即時':'最新成交'}</b>　<span style="font-size:16px;font-weight:700">${safeN(q.price,2)}</span>　<span style="color:${clr(cp)}">${cp!==null&&cp!==undefined?(cp>0?'+':'')+cp+'%':''}</span>　<span style="color:var(--t3);font-size:11px">${safe(q.date)} ${safe(q.time)}｜來源：${safe(q.source)}${q.live?'｜盤中每 15 秒更新':''}</span></div>`;
+  }catch(e){box.innerHTML='<div style="font-size:12px;color:var(--warn);margin-bottom:8px">⚠ 即時報價載入失敗</div>';}
+}
+function startLiveQuote(code){
+  clearInterval(_lqTimer);liveQuote(code);
+  _lqTimer=setInterval(()=>{if(!document.getElementById('live-quote')){clearInterval(_lqTimer);return;}if(_mktOpenNow())liveQuote(code);},15000);
+}
 function todayISO(){
   const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'});
   return fmt.format(new Date()); // en-CA locale 固定輸出 YYYY-MM-DD
@@ -1772,6 +1791,7 @@ function renderInstrument(d){
     ${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，下方「產業」欄位暫時一律顯示「其他」，非真實分類</span>':''}
   </div>`;
 
+  html+='<div id="live-quote"></div>';
   html+=klineHtml(d);
   html+=fundBlock(d.fundamental_profile);
   html+=`<div class="sec-label"><div class="bar"></div><div class="tx">基本資料與行情</div></div>`;
@@ -1871,6 +1891,7 @@ function renderInstrument(d){
   }
 
   el.innerHTML=html;
+  try{if(info&&info.code)startLiveQuote(info.code);}catch(e){}
   try{klInit(d);}catch(e){console.error('kline',e);}
   try{addInstEvents(d.code||(d.info&&d.info.code));}catch(e){}
 }
