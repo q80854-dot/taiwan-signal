@@ -706,6 +706,53 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 #page-guide summary{cursor:pointer;color:var(--t1)}#page-guide details p{margin:8px 0 2px;color:var(--t2)}
 #page-guide .panel-body p{margin:0 0 10px}
 </style>
+<style id="skin-market">
+/* ═══ 2026-10-07 市場報價帶／籌碼帳／骨架載入（參考 TradingView 的走勢小圖、Bloomberg 的細線與深色頂線、Project Syndicate 的外框標籤） ═══ */
+.mbar,.ledger{margin:0 0 22px;border-top:2px solid var(--navy);border-bottom:1px solid var(--line);background:var(--s1)}
+.mbar[hidden],.ledger[hidden]{display:none}
+.mbar>header,.ledger>header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 0 8px}
+.ledger>header h3{margin:0;font-family:var(--serif);font-weight:600;font-size:17px;letter-spacing:.04em;color:var(--ink)}
+.mut{color:var(--t3);font-size:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);border-radius:999px;padding:2px 11px;font-size:12px;font-weight:500;color:var(--ink);letter-spacing:.03em;background:transparent;margin-left:8px}
+.mbar .pill{margin-left:0}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--t3)}
+.pill.live{border-color:var(--ok);color:var(--ok)}.pill.live::before{background:var(--ok);animation:pulse 2s ease-in-out infinite}
+.pill.late,.pill.warn{border-color:var(--warn);color:var(--warn)}.pill.late::before,.pill.warn::before{background:var(--warn)}
+.pill.warn::before{display:none}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.tile{padding:6px 24px 14px 0;margin-right:24px;border-right:1px solid var(--line);display:grid;grid-template-columns:1fr minmax(120px,42%);grid-template-areas:"n sp" "v sp" "c sp" "m sp";column-gap:18px;align-items:start}
+.tile:last-child{border-right:0;margin-right:0}
+.tn{grid-area:n;font-size:12.5px;color:var(--t3);letter-spacing:.04em}
+.tv{grid-area:v;font-weight:300;font-size:clamp(26px,3vw,38px);letter-spacing:-.015em;color:var(--ink);line-height:1.15}
+.tc{grid-area:c;font-size:13.5px;font-weight:500}
+.tm{grid-area:m;font-size:11.5px;color:var(--t3);margin-top:2px}
+.tsp{grid-area:sp;position:relative;align-self:stretch;min-height:56px}
+.spark{width:100%;height:100%;min-height:56px;display:block}
+.spark-note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11.5px;color:var(--t3);padding:0 6px}
+.num{font-variant-numeric:tabular-nums}
+.breadth{padding:10px 0 14px;border-top:1px solid var(--line)}
+.breadth .bl{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--t2);margin-bottom:7px}
+.breadth .bb{display:flex;height:6px;gap:2px}.breadth .bb i{display:block;min-width:2px}
+.ledger dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:0;border-top:1px solid var(--line)}
+.ledger dl>div{padding:11px 16px 11px 0;border-bottom:1px solid var(--line)}
+.ledger dt{font-size:12px;color:var(--t3);letter-spacing:.03em}
+.ledger dd{margin:2px 0 0;font-size:20px;font-weight:300;color:var(--ink)}
+.ledger dd small{font-size:12px;color:var(--t3);margin-left:3px}
+.ledger dl em{font-style:normal;font-size:11.5px;color:var(--t3)}
+.ledger>p{margin:8px 0 10px}
+@keyframes pulse{50%{opacity:.35}}
+@media(max-width:640px){
+  .tile{border-right:0;margin-right:0;border-bottom:1px solid var(--line);grid-template-columns:1fr 44%}
+  .tile:last-child{border-bottom:0}
+  .ledger dd{font-size:17px}
+}
+/* 骨架載入：取代「載入中…」文字，避免版面跳動 */
+.skel-wrap{display:grid;gap:10px;padding:14px 0}
+.skel{display:block;height:14px;border-radius:2px;background:linear-gradient(90deg,var(--s3) 25%,var(--s2) 37%,var(--s3) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite}
+.skel.s2{width:72%}.skel.s3{width:48%}
+@keyframes shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+@media(prefers-reduced-motion:reduce){.skel,.pill.live::before{animation:none}}
+</style>
 </head>
 <body>
 <div class="shell">
@@ -810,11 +857,11 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
       </div>
       <div class="panel">
         <div class="panel-head"><div class="bar"></div><span class="panel-title">今日大盤</span></div>
-        <div class="panel-body" id="market-summary"><div class="empty">載入中...</div></div>
+        <div class="panel-body" id="market-summary"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div>
       </div>
     </div>
     <div class="sec-label"><div class="bar" style="background:var(--alert)"></div><div class="tx">重大訊息公告</div><div class="lnk" onclick="go('news')">查看全部 →</div></div>
-    <div class="panel card" style="margin-bottom:2px"><div class="panel-body" id="news-preview" style="padding:0"><div class="empty">載入中...</div></div></div>
+    <div class="panel card" style="margin-bottom:2px"><div class="panel-body" id="news-preview" style="padding:0"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     </div>
   </div>
 
@@ -1050,8 +1097,8 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
   <!-- Market Overview -->
   <div class="page" id="page-marketoverview">
     <div class="pad">
-    <div id="taifex-strip" style="display:none;margin-bottom:10px;padding:8px 12px;border:1px solid var(--line,#ddd);border-radius:8px;font-size:12.5px;gap:18px;flex-wrap:wrap;align-items:center"></div>
-    <div id="live-strip" style="display:none;margin-bottom:10px;padding:8px 12px;border:1px solid var(--line,#ddd);border-radius:8px;font-size:12.5px;gap:18px;flex-wrap:wrap;align-items:center"></div>
+    <section id="live-strip" class="mbar" aria-label="大盤指數與市場廣度" hidden><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></section>
+    <section id="taifex-strip" class="ledger" aria-label="期交所籌碼" hidden></section>
     <div id="mo-source-note" style="font-size:10.5px;color:var(--t3);margin-bottom:12px"></div>
     <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">漲跌家數</div></div>
     <div class="hero-row" style="grid-template-columns:repeat(5,1fr)" id="breadth-row">
@@ -1225,6 +1272,10 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-10-07</b></p>
+          <p><b>資料更準、更即時</b><br>・盤中改用證交所「官方即時」資料，全市場約每 5 分鐘更新一次，上市、上櫃同一時點；並自動核對昨收價與官方是否吻合。<br>・收盤後保存當日「定案」的開高低收量，16:30 掃描優先採用官方當日 K 棒，不再用推估值。<br>・訊號的假想進場價改為「發出訊號後下一根 K 棒的開盤價」，績效更貼近實際能成交的價格。<br>・修正部分標的（例如 00631L）抓不到資料的問題。<br>・系統升級至 Pro 方案，查詢與掃描更快、更穩。</p>
+          <p><b>新增證交所／期交所資料</b><br>・暫停交易、分盤交易（變更交易）的股票自動排除，不再出訊號。<br>・個股頁顯示：停資停券、新上市首五日無漲跌幅、是否為當沖標的、可借券賣出股數。<br>・個股頁顯示融券與借券賣出餘額與 5 日變化（資料自今日起逐日累積）。<br>・市場總覽新增「期交所籌碼」：外資／投信／自營商期貨未平倉（大台等效）、選擇權、Put/Call 比、前十大交易人。以上都只顯示、不改變訊號分數（驗證前不加規則）。<br>・資料量與 API 統計：可在系統檢查查看。</p>
+          <p><b>介面</b><br>・市場總覽頂端改為「報價帶」：加權與櫃買指數、當日走勢小圖、漲跌家數比例條與狀態標籤；收盤後顯示「今日收盤・最終」。走勢圖從下一個交易日的盤中開始累積。<br>・「期交所籌碼」改為整齊的對照表；載入中改為骨架動畫，版面不再跳動。<br>・修正收盤後市場總覽統計仍顯示前一天資料、期交所籌碼收盤後消失的問題。</p>
           <p><b>2026-10-06</b></p>
           <p>・新增深色模式、鍵盤操作與螢幕閱讀器支援。<br>・新增「排行榜」：漲跌幅、成交值、成交量、產業熱度、法人買賣超。<br>・新增全站搜尋（Ctrl+K）。<br>・開始每日累積三大法人買賣超，之後提供外資／投信連續買超排行。<br>・提升穩定度：多執行緒處理、健康檢查、安全標頭、重啟後免重抓全市場清單。<br>・修正：法人買賣超單位（股→張）、掃描池統計日期、追高風險中文標示、手機版頂列與多處介面細節。</p>
           <p style="color:var(--t3);font-size:12.5px">之後的更新會陸續加在這裡。</p>
@@ -1235,7 +1286,7 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 
   <div class="page" id="page-diag">
     <div class="pad">
-    <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統診斷</span></div><div class="panel-body" id="diag-body"><div class="empty">載入中...</div></div></div>
+    <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統診斷</span></div><div class="panel-body" id="diag-body"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     </div>
   </div>
 
@@ -1916,7 +1967,7 @@ function renderMoSourceNote(ds){
   // 避免使用者把 TWSE/TPEX 官方尚未更新（非今日）誤會成張數算錯。
   const tdate=qs.quote_trading_date;
   const lv=ds.intraday||(ds.quote_and_sector||{}).intraday;
-  const tdateHtml=(lv&&lv.active)?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">⚡ 盤中即時資料（證交所 MIS，更新於 ${new Date(lv.snapshot_at*1000).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false})}，約 5 分鐘更新一次；${lv.n_ok} 檔，完整度 ${lv.completeness!=null?(lv.completeness*100).toFixed(1)+'%':'—'}）。上市／上櫃皆為同一時點。</div>`:tdate?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">📅 以下統計為 <span style="color:var(--down)">${tdate}</span> 收盤後資料${tdate!==todayISO()?'（非今日，TWSE/TPEX 官方尚未公布更新的收盤資料，屬正常現象，不是張數算錯）':'（今日收盤後最新資料）'}</div>`:'<div style="color:var(--warn)">⚠ 無法判斷這份資料實際交易日期，請自行核對是否為最新收盤資料</div>';
+  const tdateHtml=(lv&&lv.active)?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">${lv.final?'📌 今日收盤最終資料':'⚡ 盤中即時資料'}（證交所 MIS，${lv.final?'定案於':'更新於'} ${new Date(lv.snapshot_at*1000).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false})}${lv.final?'；官方日行情公布後會自動換成官方數字':'，約 5 分鐘更新一次'}；${lv.n_ok} 檔，完整度 ${lv.completeness!=null?(lv.completeness*100).toFixed(1)+'%':'—'}）。上市／上櫃皆為同一時點。</div>`:tdate?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">📅 以下統計為 <span style="color:var(--down)">${tdate}</span> 收盤後資料${tdate!==todayISO()?'（非今日，TWSE/TPEX 官方尚未公布更新的收盤資料，屬正常現象，不是張數算錯）':'（今日收盤後最新資料）'}</div>`:'<div style="color:var(--warn)">⚠ 無法判斷這份資料實際交易日期，請自行核對是否為最新收盤資料</div>';
   // ★ 新增：2026-09-29——使用者回報「市場總覽的上漲/下跌加起來的數字都有
   // 錯」，根因是 TWSE(上市)／TPEX(上櫃) 兩邊官方資料常常不是同一交易日
   // （見 stock_universe.get_market_breadth() 修正說明），把兩邊混在一起
@@ -1927,39 +1978,79 @@ function renderMoSourceNote(ds){
   el.innerHTML=`${tdateHtml}${mismatchHtml}<details class="src-note"><summary>資料來源與更新說明</summary>行情／產業分類來源：${safe(qs.quote_source)}；${safe(qs.sector_source)}${fetchedTxt?'　清單更新時間：'+fetchedTxt+'（每日收盤後刷新一次，非即時盤中）':''}　本頁統計涵蓋全部上市＋上櫃股票，不受每日訊號掃描的200張成交量門檻限制${qs.sector_data_ok===false?'　<span style="color:var(--warn)">⚠ 本次產業分類資料抓取失敗，「產業」欄位暫時一律顯示「其他」</span>':''}</details>`;
 }
 var _liveStripT=null;
+const _fmtN=(n,d=0)=>Number(n).toLocaleString('zh-TW',{minimumFractionDigits:d,maximumFractionDigits:d});
+const _sg=(n,d=0)=>(n>0?'+':'')+_fmtN(n,d);
+const _col=n=>n>0?'var(--up)':n<0?'var(--down)':'var(--t3)';
+function _mins(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'');return m?(+m[1])*60+(+m[2]):null;}
+/* 當日走勢：x 軸固定 09:00–13:30，隨盤中逐步畫滿；虛線＝昨收 */
+function sparkSvg(pts,prev,up){
+  const W=240,H=56,x0=540,x1=810,pad=4;
+  const P=(pts||[]).map(p=>[_mins(p[0]),p[1]]).filter(p=>p[0]!=null&&p[0]>=x0-5&&p[0]<=x1+5);
+  if(prev==null&&!P.length)return '';
+  const vals=P.map(p=>p[1]).concat(prev!=null?[prev]:[]);
+  let lo=Math.min(...vals),hi=Math.max(...vals);if(hi-lo<1e-9){hi+=1;lo-=1;}
+  const r=(hi-lo)*.12;lo-=r;hi+=r;
+  const X=m=>((Math.min(Math.max(m,x0),x1)-x0)/(x1-x0)*W).toFixed(1),Y=v=>(pad+(1-(v-lo)/(hi-lo))*(H-2*pad)).toFixed(1);
+  const c=up?'var(--up)':'var(--down)';
+  let g=prev!=null?`<line x1="0" x2="${W}" y1="${Y(prev)}" y2="${Y(prev)}" stroke="var(--line2)" stroke-dasharray="3 3" stroke-width="1"/>`:'';
+  if(P.length>=2){
+    const d=P.map((p,i)=>(i?'L':'M')+X(p[0])+' '+Y(p[1])).join(' ');
+    const last=P[P.length-1];
+    g+=`<path d="${d} L${X(last[0])} ${H} L${X(P[0][0])} ${H} Z" fill="${c}" opacity=".10"/><path d="${d}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${X(last[0])}" cy="${Y(last[1])}" r="2.6" fill="${c}"/>`;
+  }
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="當日走勢">${g}</svg>`;
+}
 async function fetchTaifexStrip(){
   const el=document.getElementById('taifex-strip');if(!el)return;
   try{
     const d=await(await fetch('/api/taifex')).json();
-    if(d.error||!d.date||!d.items){el.style.display='none';return;}
-    const sg=n=>(n>0?'+':'')+Math.round(n).toLocaleString('zh-TW');
-    const col=n=>n>0?'var(--up)':n<0?'var(--down)':'var(--t3)';
-    const cell=(who,lab)=>{const x=d.items[who];return x?`<span>${lab} <b style="color:${col(x.equiv_net_oi)}">${sg(x.equiv_net_oi)}</b> 口</span>`:'';};
+    if(d.error||!d.date||!d.items){el.hidden=true;return;}
     const o=(d.options||{})['外資及陸資']||{};
     const p=d.pcr,l=d.large;
-    el.style.display='flex';
-    el.innerHTML=`<span><b>期交所籌碼</b> <small style="color:var(--t3)">${d.date}　大台等效淨未平倉</small></span>`
-      +cell('外資及陸資','外資')+(d.foreign_chg_5d!==undefined?`<small style="color:var(--t3)">（5日 ${sg(d.foreign_chg_5d)}）</small>`:'')+cell('投信','投信')+cell('自營商','自營商')
-      +(o.call_net_oi!==undefined?`<span>外資臺指選擇權淨未平倉 Call <b>${sg(o.call_net_oi)}</b>／Put <b>${sg(o.put_net_oi||0)}</b></span>`:'')
-      +(p?`<span>Put/Call 未平倉比 <b>${p.oi_ratio}%</b>${d.pcr_chg_5d!==undefined?`<small style="color:var(--t3)">（5日 ${d.pcr_chg_5d>0?'+':''}${d.pcr_chg_5d}）</small>`:''}</span>`:'')
-      +(l?`<span>臺股期貨前十大交易人淨部位 <b>${sg(l.top10_net)}</b> 口（占市場 ${l.top10_net_pct}%）</span>`:'')
-      +(d.foreign_note?`<span style="color:var(--t3)">${d.foreign_note}（僅描述，不影響訊號）</span>`:'')
-      +`<small style="color:var(--t3)">來源：期交所 OpenAPI</small>`;
-  }catch(e){el.style.display='none';}
+    const cell=(lab,who,sub)=>{const x=d.items[who];return x?`<div><dt>${lab}</dt><dd class="num" style="color:${_col(x.equiv_net_oi)}">${_sg(x.equiv_net_oi)}<small>口</small></dd>${sub?`<em>${sub}</em>`:''}</div>`:'';};
+    const stale=(d.stale||[]).length?`<span class="pill warn" title="期交所這次沒回資料，先沿用上一次成功取得的數字">沿用前次資料</span>`:'';
+    el.hidden=false;
+    el.innerHTML=`<header><h3>期交所籌碼</h3><span class="mut">${d.date}　大台等效淨未平倉${stale}</span></header>
+    <dl>
+      ${cell('外資','外資及陸資',d.foreign_chg_5d!==undefined?'5 日 '+_sg(d.foreign_chg_5d):'')}${cell('投信','投信')}${cell('自營商','自營商')}
+      ${o.call_net_oi!==undefined?`<div><dt>外資臺指選擇權</dt><dd class="num">Call ${_sg(o.call_net_oi)}<small> ／ </small>Put ${_sg(o.put_net_oi||0)}</dd></div>`:''}
+      ${p?`<div><dt>Put/Call 未平倉比</dt><dd class="num">${p.oi_ratio}<small>%</small></dd>${d.pcr_chg_5d!==undefined?`<em>5 日 ${d.pcr_chg_5d>0?'+':''}${d.pcr_chg_5d}</em>`:''}</div>`:''}
+      ${l?`<div><dt>前十大交易人淨部位</dt><dd class="num" style="color:${_col(l.top10_net)}">${_sg(l.top10_net)}<small>口</small></dd><em>占市場 ${l.top10_net_pct}%</em></div>`:''}
+    </dl>
+    <p class="mut">${d.foreign_note?d.foreign_note+'（僅描述部位，不影響訊號分數）。':''}來源：期交所 OpenAPI。</p>`;
+  }catch(e){el.hidden=true;}
 }
 async function fetchLiveStrip(){
   const el=document.getElementById('live-strip');if(!el)return;
   try{
-    const d=await(await fetch('/api/intraday/overview',{cache:'no-store'})).json();
-    if(!d.ok||!d.indices||!Object.keys(d.indices).length){el.style.display='none';return;}
-    const cell=x=>{const c=x.change_pct>=0?'var(--up)':'var(--down)';return `<span><b>${x.name}</b> <span style="color:${c};font-weight:600">${x.price.toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2})}　${x.change>=0?'+':''}${x.change}（${x.change_pct>=0?'+':''}${x.change_pct}%）</span> <small style="color:var(--t3)">${x.time||''}</small></span>`;};
-    const b=d.breadth||{};
-    const state=d.market_open?(d.fresh?'<span style="color:var(--up)">● 盤中即時</span>':'<span style="color:var(--warn)">● 資料延遲</span>'):'<span style="color:var(--t3)">● 休市／收盤</span>';
-    el.style.display='flex';
-    el.innerHTML=state+Object.values(d.indices).map(cell).join('')+(b.up!=null?`<span>上漲 <b style="color:var(--up)">${b.up}</b>　下跌 <b style="color:var(--down)">${b.down}</b>　平盤 ${b.flat}　漲停 <b style="color:var(--up)">${b.limit_up}</b>　跌停 <b style="color:var(--down)">${b.limit_down}</b></span>`:'');
-    const ql=d.quality;if(ql&&ql.mismatch_rate!=null){el.innerHTML+=`<span style="color:var(--t3)">資料核對：昨收與官方吻合 ${((1-ql.mismatch_rate)*100).toFixed(1)}%（${ql.checked} 檔）</span>`;}
+    const [d,sr]=await Promise.all([
+      fetch('/api/intraday/overview',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/api/intraday/series',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))]);
+    if(!d.ok||!d.indices||!Object.keys(d.indices).length){el.hidden=true;return;}
+    const ser=(sr&&sr.series)||{};
+    const st=d.market_open?(d.fresh?['live','盤中即時']:['late','資料延遲']):(d.final?['closed','今日收盤・最終']:['closed','休市']);
+    const tiles=Object.entries(d.indices).map(([k,x])=>{
+      const up=x.change>=0,c=up?'var(--up)':'var(--down)';
+      const pts=ser[k]||[];
+      const chart=sparkSvg(pts,x.prev_close,up)||'';
+      const note=pts.length<2?`<span class="spark-note">${d.market_open?'走勢圖開始累積中':'當日走勢圖從下個盤中起累積'}</span>`:'';
+      return `<div class="tile"><div class="tn">${safe(x.name)}</div>
+        <div class="tv num">${_fmtN(x.price,2)}</div>
+        <div class="tc num" style="color:${c}">${up?'▲':'▼'} ${_fmtN(Math.abs(x.change),2)}　${_sg(x.change_pct,2)}%</div>
+        <div class="tsp">${chart}${note}</div>
+        <div class="tm num">${x.date&&x.date!==todayISO()?x.date+' ':''}${x.time||''}</div></div>`;}).join('');
+    const b=d.breadth||{};let br='';
+    if(b.up!=null){
+      const tot=(b.up+b.down+(b.flat||0))||1;
+      br=`<div class="breadth"><div class="bl"><span>市場廣度</span><span class="num"><b style="color:var(--up)">上漲 ${b.up}</b>　<b style="color:var(--down)">下跌 ${b.down}</b>　平盤 ${b.flat}　漲停 <b style="color:var(--up)">${b.limit_up}</b>　跌停 <b style="color:var(--down)">${b.limit_down}</b></span></div>
+        <div class="bb" role="img" aria-label="上漲${b.up}檔、平盤${b.flat}檔、下跌${b.down}檔"><i style="width:${b.up/tot*100}%;background:var(--up)"></i><i style="width:${(b.flat||0)/tot*100}%;background:var(--line2)"></i><i style="width:${b.down/tot*100}%;background:var(--down)"></i></div></div>`;
+    }
+    const ql=d.quality;
+    const qn=(ql&&ql.mismatch_rate!=null)?`資料核對：昨收與官方吻合 ${((1-ql.mismatch_rate)*100).toFixed(1)}%（${ql.checked} 檔）`:'';
+    el.hidden=false;
+    el.innerHTML=`<header><span class="pill ${st[0]}">${st[1]}</span><span class="mut">${qn}</span></header><div class="tiles">${tiles}</div>${br}`;
     if(!_liveStripT)_liveStripT=setInterval(()=>{if(document.hidden)return;fetchLiveStrip();},30000);
-  }catch(e){el.style.display='none';}
+  }catch(e){el.hidden=true;}
 }
 async function fetchMarketBreadth(){
   const el=document.getElementById('breadth-row');if(!el)return;
