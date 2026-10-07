@@ -27,10 +27,17 @@ def test_build_flags(monkeypatch):
         "TWT88U": [{"SecurCode": "7689", "5thTradingDate": "1151010"}, {"SecurCode": "7000", "5thTradingDate": "1150101"}],
         "TWTB4U": [{"Code": "2330", "Suspension": ""}, {"Code": "2317", "Suspension": "Y"}],
         "TWT96U": [{"TWSECode": "2330", "TWSEAvailableVolume": "1,000,000", "GRETAICode": "6488", "GRETAIAvailableVolume": "5,000"}],
+        "tpex_disposal_information": [{"SecuritiesCompanyCode": "3441", "CompanyName": "聯一光", "DispositionPeriod": "1151008~1151019", "DispositionReasons": "連續3個營業日"}],
+        "tpex_trading_warning_information": [{"Date": "1151007", "SecuritiesCompanyCode": "3081", "CompanyName": "聯亞", "TradingInformation": "本益比270"}],
+        "tpex_cmode": [{"SecuritiesCompanyCode": "2067", "Date": "1151007", "AlteredTrading": "", "PeriodicTrading": "", "ManagedStock": "", "SuspensionOfTrading": "Ｙ"},
+                       {"SecuritiesCompanyCode": "3064", "Date": "1151007", "AlteredTrading": "Ｙ", "PeriodicTrading": "", "ManagedStock": "", "SuspensionOfTrading": ""},
+                       {"SecuritiesCompanyCode": "9999", "Date": "1151007", "AlteredTrading": "", "PeriodicTrading": "", "ManagedStock": "", "SuspensionOfTrading": ""}],
+        "tpex_spendi_today": [{"SecuritiesCompanyCode": "", "暫停交易": "", "恢復交易": ""}, {"SecuritiesCompanyCode": "6000", "暫停交易": "09:00", "恢復交易": ""}],
     }
     monkeypatch.setattr(mx, "_get", lambda url, timeout=20: next(v for k, v in data.items() if url.endswith(k)))
     f = mx.build_flags(datetime(2026, 10, 7, 12, 0))
-    assert list(f["halt"]) == ["1218"] and f["altered"] == ["1213"]
+    assert set(f["halt"]) == {"1218", "2067", "6000"} and f["altered"] == ["1213", "3064"]
+    assert list(f["otc_disposal"]) == ["3441"] and f["otc_attention"]["3081"]["period"] == "2026-10-07"
     assert list(f["margin_stop"]) == ["00400A"] and f["no_limit"] == ["7689"]
     assert f["daytrade_ok"] == ["2317", "2330"] and f["daytrade_suspended"] == ["2317"]
     assert f["sbl_avail"] == {"2330": 1000000, "6488": 5000} and not f["errors"]
@@ -44,8 +51,9 @@ def test_failed_source_isolated_and_hard_exclude(monkeypatch):
     monkeypatch.setattr(mx, "_get", fake)
     f = mx.build_flags(datetime(2026, 10, 7, 12, 0))
     assert len(f["errors"]) == 1 and "變更交易" in f["errors"][0]
-    monkeypatch.setattr(mx, "get_flags", lambda force=False: {"halt": {"1": {}}, "altered": ["2"]})
+    monkeypatch.setattr(mx, "get_flags", lambda force=False: {"halt": {"1": {}}, "altered": ["2"], "otc_disposal": {"3": {}}, "otc_attention": {"4": {}}})
     assert mx.hard_exclude_codes() == {"1", "2"}
+    assert mx.otc_watch_codes() == {"3", "4"}
 
 
 def test_short_summary():
