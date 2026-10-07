@@ -127,3 +127,41 @@ def test_quality_check():
          "C": [12.0, 10.0, 1, "t", "d", 11.0, 9.0]}
     r = realtime.quality_check(q, off, "2026-10-07")
     assert r["checked"] == 3 and r["prev_close_mismatch"] == 1 and r["out_of_limit"] == 1 and r["missing"] == 1
+
+
+def test_official_bar_selection(monkeypatch):
+    import stock_universe as su
+    st = {"code": "2330", "quote_date": "2026-10-06", "open": 100.0, "high": 105.0, "low": 99.0, "close": 104.0, "volume_lots": 5000}
+    bad = {"code": "9999", "quote_date": "2026-10-06", "open": 100.0, "high": 90.0, "low": 99.0, "close": 104.0, "volume_lots": 1}
+    monkeypatch.setattr(su, "_official_index", lambda: {"2330": st, "9999": bad})
+    monkeypatch.setattr(su, "_mis_final_bars", lambda: None)
+    b = su.get_official_bar("2330")
+    assert b["source"] == "OpenAPI" and b["close"] == 104.0 and b["volume"] == 5000
+    assert su.get_official_bar("9999") is None                       # 高低價不合理 → 不採用
+    monkeypatch.setattr(su, "_mis_final_bars", lambda: {"date": "2026-10-07", "bars": {"2330": [104.0, 108.0, 103.0, 107.0, 6000]}})
+    b = su.get_official_bar("2330")
+    assert b["source"] == "MIS" and b["date"] == "2026-10-07" and b["close"] == 107.0   # OpenAPI 還沒更新到今天 → 用 MIS 定案
+
+
+def test_apply_official_bar_appends_and_replaces(monkeypatch):
+    import data_fetcher as df, stock_universe as su
+    from state_store import store
+    saved = []
+    monkeypatch.setattr(su, "get_official_bar", lambda c: {"date": "2026-10-07", "open": 10.0, "high": 11.0, "low": 9.5, "close": 10.5,
+                                                          "volume": 100, "source": "MIS"})
+    monkeypatch.setattr(store, "get_cached_ohlcv_bars", lambda t, tf, limit=300: [{"bar_date": "2026-10-06", "open": 9, "high": 10, "low": 8, "close": 9.5, "volume": 90}])
+    monkeypatch.setattr(store, "upsert_ohlcv_bars", lambda t, tf, bars: saved.append(bars))
+    before = dict(df._obar_stats)
+    df._apply_official_bar("1234.TW")
+    assert saved and saved[0][0]["date"] == "2026-10-07" and saved[0][0]["close"] == 10.5
+    assert df._obar_stats["appended"] == before["appended"] + 1
+    # 同日、Yahoo 收盤差很多 → 取代並記為不一致
+    saved.clear()
+    monkeypatch.setattr(store, "get_cached_ohlcv_bars", lambda t, tf, limit=300: [{"bar_date": "2026-10-07", "open": 10, "high": 11, "low": 9.5, "close": 12.0, "volume": 100}])
+    df._apply_official_bar("1234.TW")
+    assert saved and saved[0][0]["close"] == 10.5 and df._obar_stats["mismatch"] >= 1
+    # 完全相同 → 不重複寫入
+    saved.clear()
+    monkeypatch.setattr(store, "get_cached_ohlcv_bars", lambda t, tf, limit=300: [{"bar_date": "2026-10-07", "open": 10.0, "high": 11.0, "low": 9.5, "close": 10.5, "volume": 100}])
+    df._apply_official_bar("1234.TW")
+    assert not saved
