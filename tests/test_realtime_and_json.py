@@ -96,3 +96,34 @@ def test_breadth_and_fresh_prices(monkeypatch):
     r = realtime.fresh_prices([("1101.TW", None), ("1102.TW", None), ("1103.TW", None), ("1104.TW", None)])
     assert r["prices"] == {"1101": 50.0}
     assert r["reasons"] == {"1102": "stale", "1103": "no_trade", "1104": "source_missing"}
+
+
+def test_live_universe_overlay(monkeypatch):
+    import stock_universe as su, realtime, time
+    today = realtime.now_tpe().strftime("%Y-%m-%d")
+    base = [{"code": "1101", "close": 40.0, "change_pct": 1.0, "volume_lots": 5000, "quote_date": "2000-01-01"},
+            {"code": "1102", "close": 30.0, "change_pct": 2.0, "volume_lots": 100, "quote_date": "2000-01-01"},
+            {"code": "1103", "close": 20.0, "change_pct": 3.0, "volume_lots": 100, "quote_date": today},
+            {"code": "1104", "close": 10.0, "change_pct": 4.0, "volume_lots": 100, "quote_date": "2000-01-01"}]
+    monkeypatch.setattr(su, "build_full_universe", lambda force_refresh=False: base)
+    snap = {"at": time.time(), "quotes": {"1101": [44.0, 40.0, 9000, "10:00:00", today, None, None],
+                                          "1102": [None, 30.0, None, None, today, None, None],
+                                          "1103": [99.0, 20.0, 1, "10:00:00", today, None, None]}}
+    monkeypatch.setattr(su, "_get_live_snapshot", lambda: snap)
+    out = {s["code"]: s for s in su.build_live_universe()}
+    assert out["1101"]["close"] == 44.0 and out["1101"]["change_pct"] == 10.0 and out["1101"]["volume_lots"] == 9000 and out["1101"]["live"]
+    assert out["1102"]["change_pct"] is None and out["1102"]["volume_lots"] == 0       # 今日無成交，不沿用昨日漲跌幅
+    assert out["1103"]["close"] == 20.0 and "live" not in out["1103"]                    # 官方日期已是今天，不覆蓋
+    assert out["1104"]["close"] == 10.0                                                  # 不在快照內，維持官方資料
+    monkeypatch.setattr(su, "_get_live_snapshot", lambda: None)
+    assert su.build_live_universe()[0]["close"] == 40.0                                  # 快照過期 → 退回官方
+
+
+def test_quality_check():
+    import realtime
+    off = [{"code": "A", "close": 10.0, "quote_date": "2000-01-01"}, {"code": "B", "close": 10.0, "quote_date": "2000-01-01"},
+           {"code": "C", "close": 10.0, "quote_date": "2000-01-01"}, {"code": "D", "close": 5.0, "quote_date": "2000-01-01"}]
+    q = {"A": [10.5, 10.0, 1, "t", "d", 11.0, 9.0], "B": [9.0, 9.5, 1, "t", "d", 11.0, 9.0],
+         "C": [12.0, 10.0, 1, "t", "d", 11.0, 9.0]}
+    r = realtime.quality_check(q, off, "2026-10-07")
+    assert r["checked"] == 3 and r["prev_close_mismatch"] == 1 and r["out_of_limit"] == 1 and r["missing"] == 1
