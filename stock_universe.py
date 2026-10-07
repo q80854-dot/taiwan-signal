@@ -120,6 +120,15 @@ def _fetch_disposal_and_attention_codes() -> set:
             logger.info(f"TWSE {label}股票：{n} 檔")
         except Exception as e:
             logger.warning(f"_fetch_disposal_and_attention_codes ({label}): {e}")
+    # 暫停交易中、分盤／變更交易的標的買不到或流動性極差，一併排除（market_extras；失敗不影響原清單）
+    try:
+        import market_extras
+        _hx = market_extras.hard_exclude_codes()
+        if _hx:
+            logger.info(f"暫停交易／變更交易排除：{len(_hx)} 檔")
+            codes |= _hx
+    except Exception as e:
+        logger.warning(f"market_extras 排除清單失敗：{e}")
     return codes
 
 # ★ 修正：2026-09-29——這裡原本的 key（"半導體"、"電子零組件"…不帶「業」/

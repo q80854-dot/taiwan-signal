@@ -278,6 +278,21 @@ def check_signal(key):
         out.append(_c("處置／注意股", "fail", "被列為處置或注意股，波動與流動性風險高"))
     else:
         out.append(_c("處置／注意股", "ok", "否"))
+    # 7b 暫停交易／變更交易／停資停券／借券賣出
+    try:
+        import market_extras
+        from state_store import store as _store
+        _sf = market_extras.stock_flags(code, info.get("volume_lots"), _store)
+        for _f in _sf["flags"]:
+            if _f["key"] in ("halt", "altered", "margin_stop", "no_limit"):
+                out.append(_c({"halt": "暫停交易", "altered": "變更交易", "margin_stop": "停資停券", "no_limit": "無漲跌幅"}[_f["key"]], _f["level"], _f["text"]))
+        _sh = _sf.get("short")
+        if _sh and _sh.get("sbl_short_chg_lots") is not None and _sh.get("short_vs_volume_days") is not None:
+            _hot = _sh["short_vs_volume_days"] >= 3 and _sh["sbl_short_chg_lots"] > 0
+            out.append(_c("借券賣出餘額", "warn" if _hot else "info",
+                          f"借券賣出 {_sh['sbl_short_lots']} 張（{_sh['chg_days']} 日 {_sh['sbl_short_chg_lots']:+} 張），空單餘額約為成交量 {_sh['short_vs_volume_days']} 天"))
+    except Exception as e:
+        out.append(_c("交易限制／借券", "warn", str(e)))
     # 8 重大訊息
     try:
         from fundamentals import fetch_material_news_risk_map

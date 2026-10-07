@@ -242,6 +242,18 @@ def job_final_bars():
         logger.error(f"job_final_bars: {e}", exc_info=True)
 
 
+def job_market_extras():
+    """證交所補充資料：交易限制旗標（暫停/變更交易、停資停券…）與融券／借券賣出餘額歷史。"""
+    try:
+        import market_extras
+        from state_store import store
+        f = market_extras.get_flags(force=True)
+        logger.info(f"補充資料旗標：{market_extras.status().get('counts')} 錯誤 {f.get('errors')}")
+        market_extras.update_short_hist(store)
+    except Exception as e:
+        logger.error(f"job_market_extras: {e}", exc_info=True)
+
+
 def job_refresh_universe_if_stale():
     """官方日行情的日期若落後（例如 16:00 抓到時證交所還沒更新），收盤後每小時補抓。"""
     try:
@@ -361,6 +373,8 @@ def setup_scheduler():
     scheduler.add_job(job_intraday_snapshot, CronTrigger(hour="9-13", minute="*/5", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="intraday_snapshot", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_final_bars, CronTrigger(hour=13, minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="final_bars_1340", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_final_bars, CronTrigger(hour=14, minute=10, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="final_bars_1410", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_market_extras, CronTrigger(hour="8,17,21", minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="market_extras", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
@@ -1312,6 +1326,18 @@ def api_intraday_overview():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/market_extras")
+def api_market_extras():
+    """交易限制旗標與借券／融券歷史的狀態（資料筆數、錯誤、最近日期）。"""
+    import market_extras
+    from state_store import store
+    f = market_extras.get_flags()
+    h = store.get_meta("short_hist") or {}
+    return jsonify({"status": market_extras.status(), "date": f.get("date"), "errors": f.get("errors"),
+                    "halt": f.get("halt"), "altered": f.get("altered"), "margin_stop": len(f.get("margin_stop") or {}),
+                    "short_hist_days": sorted(h.keys())})
+
+
 @app.route("/api/quote_status")
 def api_quote_status():
     """即時報價來源健康狀態＋最近一次盤中快照的時間與檔數。"""
@@ -1477,6 +1503,12 @@ def api_instrument(ticker: str):
         out["info"] = info
     except Exception as e:
         out["info"] = None; out["info_error"] = str(e)
+    try:
+        import market_extras
+        from state_store import store as _st2
+        out["flags"] = market_extras.stock_flags(code, (out.get("info") or {}).get("volume_lots"), _st2)
+    except Exception as e:
+        out["flags"] = {"flags": [], "error": str(e)}
     try:
         from data_fetcher import fetch_ohlcv
         # 5 年長歷史與一年日線互不相依，原本串行（冷快取時合計近 20 秒），改成同時抓。
