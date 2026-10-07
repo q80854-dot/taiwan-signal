@@ -165,3 +165,13 @@ def test_apply_official_bar_appends_and_replaces(monkeypatch):
     monkeypatch.setattr(store, "get_cached_ohlcv_bars", lambda t, tf, limit=300: [{"bar_date": "2026-10-07", "open": 10.0, "high": 11.0, "low": 9.5, "close": 10.5, "volume": 100}])
     df._apply_official_bar("1234.TW")
     assert not saved
+
+
+def test_snap_is_final_after_close_same_day():
+    import stock_universe as su
+    from datetime import datetime, timedelta
+    def ts(y, m, d, hh, mm):   # 台北時間 → epoch
+        return (datetime(y, m, d, hh, mm) - timedelta(hours=8) - datetime(1970, 1, 1)).total_seconds()
+    assert su.snap_is_final({"at": ts(2026, 10, 7, 13, 35)}, ts(2026, 10, 7, 15, 10))
+    assert not su.snap_is_final({"at": ts(2026, 10, 7, 13, 0)}, ts(2026, 10, 7, 15, 10))      # 盤中拍的不算最終
+    assert not su.snap_is_final({"at": ts(2026, 10, 7, 13, 35)}, ts(2026, 10, 8, 9, 5))        # 隔天作廢

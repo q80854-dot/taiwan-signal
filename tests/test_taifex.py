@@ -44,3 +44,17 @@ def test_summary_and_hist(monkeypatch):
     s = tf.summary(st)
     assert s["foreign_equiv_net_oi"] == -80000 and "淨空單" in s["foreign_note"]
     assert s["foreign_chg_5d"] == -80000 - (-70000 - 22)          # 往前第 5 個交易日
+
+
+def test_merge_keep_last_uses_old_when_source_fails():
+    old = {"futures": {"date": "2026-10-07", "items": {"外資及陸資": {"equiv_net_oi": -100}}}, "options": {"x": 1}, "pcr": [{"date": "2026-10-07", "oi_ratio": 1}], "large": {"a": 1}}
+    new = {"errors": ["futures: empty"], "options": {"y": 2}, "pcr": [], "large": None}
+    m = tf.merge_keep_last(new, old)
+    assert m["futures"] == old["futures"] and m["pcr"] == old["pcr"] and m["large"] == old["large"]
+    assert m["options"] == {"y": 2}
+    assert set(m["stale"]) == {"futures", "pcr", "large"}
+
+
+def test_merge_keep_last_without_old():
+    m = tf.merge_keep_last({"errors": []}, None)
+    assert m["stale"] == []
