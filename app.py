@@ -1326,6 +1326,38 @@ def api_intraday_overview():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/db_stats")
+def api_db_stats():
+    """資料庫用量：各表筆數與大小、meta 各鍵大小、K 線覆蓋檔數與日期範圍（只有計數，不含內容）。"""
+    from state_store import store, USE_PG
+    out = {"engine": "postgres" if USE_PG else "sqlite", "tables": [], "meta_top": []}
+    try:
+        with store._conn() as conn:
+            if USE_PG:
+                out["db_bytes"] = conn.execute("SELECT pg_database_size(current_database()) AS b").fetchone()["b"]
+                names = [r["t"] for r in conn.execute("SELECT relname AS t FROM pg_stat_user_tables").fetchall()]
+            else:
+                names = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+            for t in names:
+                try:
+                    n = conn.execute(f'SELECT COUNT(*) AS n FROM "{t}"').fetchone()["n"]
+                    b = conn.execute("SELECT pg_total_relation_size(?::regclass) AS b", (t,)).fetchone()["b"] if USE_PG else None
+                    out["tables"].append({"table": t, "rows": n, "bytes": b})
+                except Exception as e:
+                    out["tables"].append({"table": t, "error": str(e)})
+            out["tables"].sort(key=lambda x: -(x.get("bytes") or x.get("rows") or 0))
+            for r in conn.execute("SELECT key, LENGTH(value) AS b FROM meta ORDER BY 2 DESC LIMIT 12").fetchall():
+                out["meta_top"].append({"key": r["key"], "bytes": r["b"]})
+            try:
+                r = conn.execute("SELECT COUNT(DISTINCT ticker) AS n, MIN(bar_date) AS a, MAX(bar_date) AS z FROM ohlcv_bars WHERE tf_key='daily'").fetchone()
+                out["ohlcv_daily"] = {"tickers": r["n"], "from": r["a"], "to": r["z"]}
+            except Exception:
+                pass
+    except Exception as e:
+        out["error"] = str(e)
+    return jsonify(out)
+
+
 @app.route("/api/market_extras")
 def api_market_extras():
     """交易限制旗標與借券／融券歷史的狀態（資料筆數、錯誤、最近日期）。"""
