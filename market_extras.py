@@ -8,6 +8,11 @@
   OpenAPI exchangeReport/TWTB4U   當日沖銷標的（Code, Suspension=Y 表暫停先賣後買）
   OpenAPI SBL/TWT96U              當日可借券賣出股數（TWSECode/GRETAICode，含上櫃）
   RWD marginTrading/TWT93U        融券＋借券賣出餘額（逐日，可帶 date）
+上櫃（TPEx OpenAPI，欄位 2026-10-07 以瀏覽器實測）：
+  tpex_disposal_information       處置有價證券（SecuritiesCompanyCode, DispositionPeriod, DispositionReasons；民國年 YYYMMDD）
+  tpex_trading_warning_information 注意股票（SecuritiesCompanyCode, TradingInformation）
+  tpex_cmode                      變更交易／分盤／管理股票／停止交易（AlteredTrading, PeriodicTrading, ManagedStock, SuspensionOfTrading；值為全形「Ｙ」）
+  tpex_spendi_today               當日公布暫停／恢復交易
 """
 import logging
 import re
@@ -22,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 OPENAPI = "https://openapi.twse.com.tw/v1/"
+TPEX = "https://www.tpex.org.tw/openapi/v1/"
 TWT93U = "https://www.twse.com.tw/rwd/zh/marginTrading/TWT93U?response=json&date={d}"
 
 _TTL = 900
@@ -67,7 +73,8 @@ def build_flags(now: Optional[datetime] = None) -> Dict:
     today = now.strftime("%Y-%m-%d")
     now_s = now.strftime("%Y-%m-%d %H:%M:%S")
     out = {"date": today, "at": time.time(), "halt": {}, "altered": [], "margin_stop": {},
-           "no_limit": [], "daytrade_ok": [], "daytrade_suspended": [], "sbl_avail": {}, "errors": []}
+           "no_limit": [], "daytrade_ok": [], "daytrade_suspended": [], "sbl_avail": {},
+           "otc_disposal": {}, "otc_attention": {}, "errors": []}
 
     def run(name, fn):
         try:
@@ -117,8 +124,44 @@ def build_flags(now: Optional[datetime] = None) -> Dict:
                 if c and v is not None:
                     out["sbl_avail"][c] = v
 
+    def _yes(v) -> bool:
+        return str(v or "").strip() in ("Y", "y", "Ｙ")
+
+    def otc_watch():
+        for r in _get(TPEX + "tpex_disposal_information"):
+            c = str(r.get("SecuritiesCompanyCode", "")).strip()
+            if c:
+                out["otc_disposal"][c] = {"name": str(r.get("CompanyName", "")).strip(),
+                                          "period": str(r.get("DispositionPeriod", "")).strip(),
+                                          "reason": str(r.get("DispositionReasons", "")).strip()[:80]}
+        for r in _get(TPEX + "tpex_trading_warning_information"):
+            c = str(r.get("SecuritiesCompanyCode", "")).strip()
+            if c:
+                out["otc_attention"][c] = {"name": str(r.get("CompanyName", "")).strip(),
+                                           "period": _roc(r.get("Date")) or "",
+                                           "reason": str(r.get("TradingInformation", "")).strip()[:80]}
+
+    def otc_cmode():
+        alt = set(out["altered"])
+        for r in _get(TPEX + "tpex_cmode"):
+            c = str(r.get("SecuritiesCompanyCode", "")).strip()
+            if not c:
+                continue
+            if _yes(r.get("SuspensionOfTrading")):
+                out["halt"].setdefault(c, {"from": _roc(r.get("Date")) or today, "to": None})
+            if any(_yes(r.get(k)) for k in ("AlteredTrading", "PeriodicTrading", "ManagedStock")):
+                alt.add(c)
+        out["altered"] = sorted(alt)
+
+    def otc_halt_today():
+        for r in _get(TPEX + "tpex_spendi_today"):
+            c = str(r.get("SecuritiesCompanyCode", "")).strip()
+            if c and str(r.get("暫停交易", "")).strip() and not str(r.get("恢復交易", "")).strip():
+                out["halt"].setdefault(c, {"from": today, "to": None})
+
     for n, f in (("暫停交易", halts), ("變更交易", altered), ("停資停券", mstop), ("首五日無漲跌幅", nolimit),
-                 ("當沖標的", daytrade), ("可借券", sbl)):
+                 ("當沖標的", daytrade), ("可借券", sbl),
+                 ("上櫃處置注意", otc_watch), ("上櫃變更交易", otc_cmode), ("上櫃暫停交易", otc_halt_today)):
         run(n, f)
     return out
 
@@ -130,7 +173,7 @@ def get_flags(force: bool = False) -> Dict:
             return _cache["v"]
     try:
         v = build_flags()
-        n_ok = 6 - len(v["errors"])
+        n_ok = 9 - len(v["errors"])
         if n_ok <= 0 and _cache["v"]:
             _status["last_error"] = "; ".join(v["errors"])[:200]
             return _cache["v"]
@@ -140,18 +183,26 @@ def get_flags(force: bool = False) -> Dict:
         _status["last_error"] = "; ".join(v["errors"])[:200] or None
         _status["counts"] = {"halt": len(v["halt"]), "altered": len(v["altered"]), "margin_stop": len(v["margin_stop"]),
                              "no_limit": len(v["no_limit"]), "daytrade_ok": len(v["daytrade_ok"]),
-                             "sbl_avail": len(v["sbl_avail"])}
+                             "sbl_avail": len(v["sbl_avail"]),
+                             "otc_disposal": len(v["otc_disposal"]), "otc_attention": len(v["otc_attention"])}
         return v
     except Exception as e:
         _status["last_error"] = str(e)
         return _cache["v"] or {"date": None, "halt": {}, "altered": [], "margin_stop": {}, "no_limit": [],
-                               "daytrade_ok": [], "daytrade_suspended": [], "sbl_avail": {}, "errors": [str(e)]}
+                               "daytrade_ok": [], "daytrade_suspended": [], "sbl_avail": {},
+                               "otc_disposal": {}, "otc_attention": {}, "errors": [str(e)]}
 
 
 def hard_exclude_codes() -> set:
-    """買不到或流動性極差、不該出訊號的標的：目前暫停交易中、分盤／變更交易。"""
+    """買不到或流動性極差、不該出訊號的標的：目前暫停交易中、分盤／變更交易（含上櫃）。"""
     f = get_flags()
     return set(f.get("halt", {}).keys()) | set(f.get("altered", []))
+
+
+def otc_watch_codes() -> set:
+    """上櫃處置＋注意股代號（與上市處置／注意股同樣排除，不出訊號）。"""
+    f = get_flags()
+    return set(f.get("otc_disposal", {}).keys()) | set(f.get("otc_attention", {}).keys())
 
 
 def status() -> Dict:

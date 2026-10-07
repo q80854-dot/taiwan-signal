@@ -91,8 +91,8 @@ def _fetch_disposal_and_attention_codes() -> set:
     """
     抓 TWSE 官方「公布處置股票」(punish) + 「當日公布注意股票」(notice) 的即時名單，
     回傳證券代號集合。這是台股全市場都掃時，排除波動最極端族群的關鍵一步。
-    限制：這兩支是上市(TSE)專屬的官方 JSON API，上櫃(TPEX)目前沒有對應的公開端點，
-    所以上櫃股票目前無法用同樣方式過濾（TPEX 官網的處置查詢是表單送出，不是 JSON API）。
+    上櫃(TPEX)的處置／注意股由 market_extras 從 TPEx OpenAPI（tpex_disposal_information、
+    tpex_trading_warning_information）取得，併入同一份排除名單（2026-10-07 起）。
     """
     codes = set()
     for url, label in [(TWSE_PUNISH_URL, "處置"), (TWSE_NOTICE_URL, "注意")]:
@@ -127,6 +127,10 @@ def _fetch_disposal_and_attention_codes() -> set:
         if _hx:
             logger.info(f"暫停交易／變更交易排除：{len(_hx)} 檔")
             codes |= _hx
+        _ow = market_extras.otc_watch_codes()
+        if _ow:
+            logger.info(f"上櫃處置／注意股排除：{len(_ow)} 檔")
+            codes |= _ow
     except Exception as e:
         logger.warning(f"market_extras 排除清單失敗：{e}")
     return codes

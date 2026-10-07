@@ -93,7 +93,7 @@ def get_ex_dividend(days=21):
 
 
 def get_listed_watch():
-    """處置股、注意股（上市）。保留官方欄位，前端自行顯示。"""
+    """處置股、注意股（上市＋上櫃）。保留官方欄位，前端自行顯示。"""
     def _do():
         from stock_universe import TWSE_PUNISH_URL, TWSE_NOTICE_URL
         res = {"disposal": [], "attention": [], "errors": []}
@@ -111,6 +111,17 @@ def get_listed_watch():
                                      "reason": str(d.get("處置條件") or d.get("注意交易資訊") or "").strip()[:80]})
             except Exception as e:
                 res["errors"].append(f"{key}: {e}")
-        res["source"] = "TWSE 處置股票／注意股票公告（僅上市，上櫃無公開 JSON 端點）"
+        try:   # 上櫃：TPEx OpenAPI（由 market_extras 取得，15 分鐘快取）
+            import market_extras
+            f = market_extras.get_flags()
+            for key, src in (("disposal", "otc_disposal"), ("attention", "otc_attention")):
+                for code, d in (f.get(src) or {}).items():
+                    res[key].append({"code": code, "name": d.get("name", "") + "（櫃）", "period": d.get("period", ""), "reason": d.get("reason", "")})
+            for e in f.get("errors", []):
+                if "上櫃處置注意" in e:
+                    res["errors"].append(e)
+        except Exception as e:
+            res["errors"].append(f"上櫃: {e}")
+        res["source"] = "TWSE 處置股票／注意股票公告（上市）＋ TPEx OpenAPI 處置有價證券／注意股票（上櫃，名稱後標「櫃」）"
         return res
     return _cached("watch", 1800, _do)
