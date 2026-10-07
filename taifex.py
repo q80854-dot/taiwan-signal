@@ -38,11 +38,22 @@ def _iso(d) -> Optional[str]:
     return f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 and d.isdigit() else None
 
 
-def _get(path: str):
-    r = requests.get(BASE + path, headers=HEADERS, timeout=20)
-    if r.status_code != 200:
-        raise RuntimeError(f"HTTP {r.status_code}")
-    return r.json()
+def _get(path: str, tries: int = 3):
+    """期交所偶爾回 200 但內容是空的（資料重發佈時段），重試幾次再放棄；失敗訊息帶狀態碼與長度方便查。"""
+    last = None
+    for i in range(tries):
+        try:
+            r = requests.get(BASE + path, headers=HEADERS, timeout=20)
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}")
+            if not r.content.strip():
+                raise RuntimeError(f"空回應（HTTP 200, {len(r.content)} bytes）")
+            return r.json()
+        except Exception as e:
+            last = e
+            if i < tries - 1:
+                time.sleep(2 * (i + 1))
+    raise last
 
 
 def parse_futures(rows: List[Dict]) -> Dict:
