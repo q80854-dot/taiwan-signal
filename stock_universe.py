@@ -502,7 +502,7 @@ def _date_stale(raw, now=None) -> bool:
             return False
         if min(ds) >= _expected_latest_date(now):
             return False
-        return time.time() - raw.get("fetched_at", 0) > 1800
+        return time.time() - raw.get("fetched_at", 0) > 600   # 落後時每 10 分鐘追一次（原為 30 分鐘），上游一補上就立刻拿到
     except Exception:
         return False
 
