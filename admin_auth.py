@@ -65,8 +65,9 @@ def authed():
 
 
 def _ip():
+    # 優先用 Cloudflare 覆寫的 CF-Connecting-IP；X-Forwarded-For 第一段可由用戶端偽造，不能拿來做限流
     xff = request.headers.get("X-Forwarded-For", "")
-    return (xff.split(",")[0].strip() or request.remote_addr or "?")
+    return (request.headers.get("CF-Connecting-IP") or xff.split(",")[-1].strip() or request.remote_addr or "?")
 
 
 def _secure():

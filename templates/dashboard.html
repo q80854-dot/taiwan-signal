@@ -991,6 +991,8 @@ html:not(.force-desktop) #breadth-row .kpi-label{font-size:11.5px!important}
 html:not(.force-desktop) #breadth-row .kpi-val{font-size:20px!important}
 html:not(.force-desktop) #breadth-row .kpi-sub{text-align:left}
 html:not(.force-desktop) #breadth-row{gap:0!important}
+html:not(.force-desktop) #inst-result .hero-row{grid-template-columns:1fr 1fr!important}
+html:not(.force-desktop) #inst-result .hero-row .kpi-val{font-size:16px!important}
 html:not(.force-desktop) #breadth-row>div[style*="grid-column"]{padding:10px 14px 12px!important;margin-top:0!important}
 html:not(.force-desktop) .pad{padding:6px 14px 18px!important}
 html:not(.force-desktop) .mast{display:block!important;padding:14px 2px 2px!important}
@@ -1948,6 +1950,7 @@ function go(id){
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
   if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
+  if(id==='marketoverview'&&!window._moTimer){window._moTimer=setInterval(()=>{if(document.hidden||window._curPage!=='marketoverview')return;fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();},300000);}
   if(id==='diag')fetchDiag();
   if(id==='members')loadMembersPage();
   syncTabbar(id);
@@ -2187,6 +2190,61 @@ async function revRefresh(btn){
   try{const r=await fetch('/api/revenue/refresh',{method:'POST'});const j=await r.json();toast(j.ok?`已更新，${j.changed} 檔有新一期營收`:(j.error||'更新失敗'));if(j.ok)fetchInstrument();}catch(e){toast('更新失敗');}
   btn.disabled=false;btn.textContent='立即更新營收';
 }
+/* 2026-10-08 個股研究補強：區間績效、三大法人近 20 日、融資融券 */
+function instExtraHtml(d){
+  let h='';const L=d.ohlcv_long&&d.ohlcv_long.closes&&d.ohlcv_long.closes.length?d.ohlcv_long:d.ohlcv;
+  const fmtPct=v=>v==null||!isFinite(v)?'—':`<span style="color:${clr(v)}">${v>0?'+':''}${v.toFixed(2)}%</span>`;
+  const lots=v=>v==null?'—':`<span style="color:${_col(v)}">${_sg(v)}</span>`;
+  if(L&&L.closes&&L.closes.length>5){
+    // 只用同一條 K 線序列（還原價）計算，避免把未還原的即時價跟還原歷史混算；長歷史少了今天那根時，用一年日線補上同一根
+    const c=L.closes.slice(),dts=(L.dates||[]).slice(),o1=d.ohlcv;
+    if(o1&&o1.dates&&o1.dates.length&&dts.length&&o1.dates[o1.dates.length-1]>dts[dts.length-1]){c.push(o1.closes[o1.closes.length-1]);dts.push(o1.dates[o1.dates.length-1]);}
+    const last=c[c.length-1];
+    const n=c.length,ret=k=>n>k?(last/c[n-1-k]-1)*100:null;
+    const y=String((d.info&&d.info.quote_date)||dts[dts.length-1]||'').slice(0,4);let ytd=null;
+    for(let i=0;i<dts.length;i++){if(String(dts[i]).slice(0,4)===y){ytd=i>0?(last/c[i-1]-1)*100:null;break;}}
+    const w=c.slice(-240),hi=Math.max(...w),lo=Math.min(...w);
+    const v=(L.volumes||[]).slice(-20).filter(x=>x>0),av=v.length?v.reduce((a,b)=>a+b,0)/v.length:null;
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">區間績效與價格位置</div></div>
+    <div class="hero-row inst-perf" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="kpi" style="border-left:none"><div class="kpi-label">近 1 週／1 月</div><div class="kpi-val" style="font-size:17px">${fmtPct(ret(5))}　${fmtPct(ret(20))}</div></div>
+      <div class="kpi"><div class="kpi-label">近 3 月／今年以來</div><div class="kpi-val" style="font-size:17px">${fmtPct(ret(60))}　${fmtPct(ytd)}</div></div>
+      <div class="kpi"><div class="kpi-label">52 週高／低</div><div class="kpi-val" style="font-size:17px">${_fmtN(hi,2)}／${_fmtN(lo,2)}</div><div class="kpi-sub">距高點 ${fmtPct((last/hi-1)*100)}</div></div>
+      <div class="kpi"><div class="kpi-label">20 日均量</div><div class="kpi-val" style="font-size:17px">${av==null?'—':_fmtN(av,0)}</div><div class="kpi-sub">張</div></div>
+    </div>`;
+  }
+  const I=d.inst;
+  if(I&&I.days&&I.days.length){
+    const st=k=>{const v=I.streak[k]||0;return v?`<span style="color:${_col(v)}">連${v>0?'買':'賣'} ${Math.abs(v)} 日</span>`:'—';};
+    const late=I.days[0].date<I.latest_market_date?`<div style="font-size:11px;color:var(--warn);margin-top:6px">⚠ ${safe(I.latest_market_date)} 這天沒有這檔的資料</div>`:'';
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">三大法人買賣超（近 ${I.days.length} 日）</div></div>
+    <div class="panel card"><div class="panel-body">
+      <div class="hero-row" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:10px">
+        <div class="kpi" style="border-left:none"><div class="kpi-label">外資 5 日／20 日</div><div class="kpi-val" style="font-size:16px">${lots(I.sum5.foreign)}／${lots(I.sum20.foreign)}</div><div class="kpi-sub">${st('foreign')}</div></div>
+        <div class="kpi"><div class="kpi-label">投信 5 日／20 日</div><div class="kpi-val" style="font-size:16px">${lots(I.sum5.trust)}／${lots(I.sum20.trust)}</div><div class="kpi-sub">${st('trust')}</div></div>
+        <div class="kpi"><div class="kpi-label">自營商 5 日／20 日</div><div class="kpi-val" style="font-size:16px">${lots(I.sum5.dealer)}／${lots(I.sum20.dealer)}</div></div>
+        <div class="kpi"><div class="kpi-label">合計 5 日／20 日</div><div class="kpi-val" style="font-size:16px">${lots(I.sum5.total)}／${lots(I.sum20.total)}</div></div>
+      </div>
+      <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>日期</th><th style="text-align:right">外資</th><th style="text-align:right">投信</th><th style="text-align:right">自營商</th><th style="text-align:right">合計</th></tr></thead><tbody>
+      ${I.days.slice(0,10).map(x=>`<tr><td>${safe(x.date)}</td><td style="text-align:right">${lots(x.foreign)}</td><td style="text-align:right">${lots(x.trust)}</td><td style="text-align:right">${lots(x.dealer)}</td><td style="text-align:right">${lots(x.total)}</td></tr>`).join('')}
+      </tbody></table></div>${late}
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(I.source)}</div>
+    </div></div>`;
+  }else if((d.ticker||'').includes('.TWO')){
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">三大法人買賣超</div></div><div class="panel card"><div class="panel-body"><div class="empty">上櫃股票的三大法人逐日資料尚未接入（目前只有證交所 T86 上市資料）</div></div></div>`;
+  }
+  const M=d.margin;
+  if(M){
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">融資融券</div></div>
+    <div class="hero-row" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="kpi" style="border-left:none"><div class="kpi-label">融資餘額</div><div class="kpi-val" style="font-size:17px">${M.margin_balance==null?'—':_fmtN(M.margin_balance,0)}</div><div class="kpi-sub">張${M.margin_quota?`，使用率 ${(M.margin_balance/M.margin_quota*100).toFixed(1)}%`:''}</div></div>
+      <div class="kpi"><div class="kpi-label">融券餘額</div><div class="kpi-val" style="font-size:17px">${M.short_balance==null?'—':_fmtN(M.short_balance,0)}</div><div class="kpi-sub">較前日 ${M.short_balance_chg==null?'—':_sg(M.short_balance_chg)} 張</div></div>
+      <div class="kpi"><div class="kpi-label">券資比</div><div class="kpi-val" style="font-size:17px">${M.margin_balance?(M.short_balance/M.margin_balance*100).toFixed(1)+'%':'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">資券互抵</div><div class="kpi-val" style="font-size:17px">${M.offsetting==null?'—':_fmtN(M.offsetting,0)}</div><div class="kpi-sub">張</div></div>
+    </div><div style="font-size:11px;color:var(--t3);margin-top:6px">來源：${M.source==='tpex_openapi'?'櫃買中心 OpenAPI':'證交所 OpenAPI MI_MARGN'}（每日收盤後更新）</div>`;
+  }
+  return h;
+}
 function renderInstrument(d){
   const el=document.getElementById('inst-result');if(!el)return;
   const info=d.info, ind=d.indicators, sig=d.active_signal, hist=d.signal_history||[],
@@ -2235,7 +2293,10 @@ function renderInstrument(d){
       <div class="kpi"><div class="kpi-label">市場</div><div class="kpi-val" style="font-size:14px">${(d.ticker||'').includes('.TWO')?'上櫃':'上市'}</div></div>
       <div class="kpi"><div class="kpi-label">成交量</div><div class="kpi-val">${safe(info.volume_lots)}</div><div class="kpi-sub">張</div></div>
     </div>`;
-    if(info._bar){
+    if(info.official&&info.quote_source){
+      html+=`<div style="font-size:11px;color:var(--t3);margin-top:6px">價格、漲跌與成交量為 <b>${safe(info.quote_date)} ${safe(info.quote_time||'')}</b>（${safe(info.quote_source)}${info.live?'，盤中即時':'，當日收盤定案'}）。官方日行情目前停在 ${safe(info.official.quote_date)}，官方更新後自動改用官方數字。</div>`;
+    }
+    else if(info._bar){
       html+=`<div style="font-size:11px;color:var(--t3);margin-top:6px">價格、漲跌與成交量為 <b>${info._bar}</b> 收盤（Yahoo 日線；成交量約為官方的 85～99%）。官方行情目前仍停在 ${info._official.date}（收 ${info._official.close}），官方更新後會自動改用官方數字。</div>`;
     }
     if(info.is_disposal_or_attention){
@@ -2251,6 +2312,7 @@ function renderInstrument(d){
     }
   }
 
+  html+=instExtraHtml(d);
   html+=`<div class="sec-label"><div class="bar"></div><div class="tx">目前有效訊號</div></div>`;
   if(sig){
     html+=`<div class="sig-card ${sig.direction==='buy'?'':'sell'}">
@@ -2385,7 +2447,8 @@ async function fetchTaifexStrip(){
     const o=(d.options||{})['外資及陸資']||{};
     const p=d.pcr,l=d.large;
     const cell=(lab,who,sub)=>{const x=d.items[who];if(!x)return '';const tx=(x.tx_net_oi!=null&&x.tx_net_oi!==x.equiv_net_oi)?`臺股期貨 ${_sg(x.tx_net_oi)}`:'';const ss=[tx,sub].filter(Boolean).join('　');return `<div><dt>${lab}</dt><dd class="num" style="color:${_col(x.equiv_net_oi)}">${_sg(x.equiv_net_oi)}<small>口</small></dd>${ss?`<em>${ss}</em>`:''}</div>`;};
-    const stale=(d.stale||[]).length?`<span class="pill warn" title="期交所這次沒回資料，先沿用上一次成功取得的數字">沿用前次資料</span>`:'';
+    const _tp=new Date(Date.now()+8*3600e3),_late=_tp.getUTCDay()>=1&&_tp.getUTCDay()<=5&&_tp.getUTCHours()>=15&&d.date<todayISO();
+    const stale=(d.stale||[]).length?`<span class="pill warn" title="期交所這次沒回資料，先沿用上一次成功取得的數字">沿用前次資料</span>`:_late?`<span class="pill warn" title="期交所今日資料尚未取得，系統每 10 分鐘重抓一次">今日資料尚未公布</span>`:'';
     el.hidden=false;
     el.innerHTML=`<header><h3>期交所籌碼</h3><span class="mut"><span>${d.date}</span><span>期貨：大台等效淨未平倉</span>${stale}</span></header>
     <dl>

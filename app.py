@@ -635,6 +635,7 @@ app.before_request(members.gate)   # 登入牆：登入功能啟用後，/api/* 
 app.after_request(admin_auth.after)
 import protect
 protect.install(app)   # 流量湧入防護：全域限流、參數檢查、短時間快取、重端點並行上限、5xx 不外洩內容
+app.after_request(members.scrub_private)   # 一般會員移除本金相關欄位（註冊在 protect 之後＝在快取寫入之前執行）
 
 
 # ════════════════════════════════════════════════
@@ -1655,11 +1656,39 @@ def api_instrument(ticker: str):
         out["flags"] = market_extras.stock_flags(code, (out.get("info") or {}).get("volume_lots"), _st2)
     except Exception as e:
         out["flags"] = {"flags": [], "error": str(e)}
+    # 2026-10-08：官方日行情（上市）常晚一天更新，研究頁會停在前一天。改抓證交所 MIS 這一檔的最新成交，
+    # 日期較新就以 MIS 為準（收盤後為當日定案價），官方數字保留在 info.official 供對照。
+    _q = None
+    try:
+        import realtime
+        _inf = out.get("info") or {}
+        _q = realtime.get_quote(code, _inf.get("market"))
+        if _q and _q.get("price") and _q.get("date") and _inf and _q["date"] > (_inf.get("quote_date") or ""):
+            _inf["official"] = {k: _inf.get(k) for k in ("close", "change_pct", "volume_lots", "quote_date")}
+            _inf.update({"close": _q["price"], "change_pct": _q.get("change_pct"), "change": _q.get("change"),
+                         "volume_lots": _q.get("volume_lots") if _q.get("volume_lots") is not None else _inf.get("volume_lots"),
+                         "quote_date": _q["date"], "quote_time": _q.get("time"), "quote_source": _q.get("source"),
+                         "live": bool(_q.get("live"))})
+        out["quote"] = _q
+    except Exception as e:
+        out["quote_error"] = str(e)
     try:
         from data_fetcher import fetch_ohlcv
         # 5 年長歷史與一年日線互不相依，原本串行（冷快取時合計近 20 秒），改成同時抓。
         _fut_long = _INST_POOL.submit(_long_history, t)
         ohlcv = fetch_ohlcv(t, "daily")
+        try:   # 收盤後 K 線（Yahoo）還沒有今天這根時，用 MIS 當日定案的開高低收補上，指標才會是最新的
+            import realtime as _rt
+            if (ohlcv and ohlcv.get("dates") and _q and _q.get("price") and _q.get("open") and _q.get("high")
+                    and _q.get("low") and _q.get("date") and _q["date"] > ohlcv["dates"][-1] and not _rt.market_open()):
+                ohlcv = dict(ohlcv)
+                for k, v in (("dates", _q["date"]), ("opens", _q["open"]), ("highs", _q["high"]), ("lows", _q["low"]),
+                             ("closes", _q["price"]), ("volumes", _q.get("volume_lots") or 0)):
+                    if isinstance(ohlcv.get(k), list):
+                        ohlcv[k] = ohlcv[k] + [v]
+                ohlcv["appended_mis_bar"] = _q["date"]
+        except Exception as _e:
+            logger.warning(f"append MIS bar {t}: {_e}")
         out["ohlcv"] = ohlcv
         if ohlcv:
             from indicators import calc_all_indicators
@@ -1707,6 +1736,34 @@ def api_instrument(ticker: str):
             out["fundamental_profile"] = {"error": str(_e)}
     except Exception as e:
         out["fundamentals_error"] = str(e)
+    try:   # 三大法人近 20 個交易日（T86，僅上市；張）
+        from state_store import store as _st3
+        dates = _st3.get_inst_dates(limit=20)
+        if dates:
+            rows = [r for r in _st3.get_inst_since(dates[-1]) if r.get("code") == code]
+            seq = [{"date": r["trade_date"], "foreign": r["foreign_net"], "trust": r["trust_net"],
+                    "dealer": (r["total_net"] or 0) - (r["foreign_net"] or 0) - (r["trust_net"] or 0),
+                    "total": r["total_net"]} for r in sorted(rows, key=lambda r: r["trade_date"], reverse=True)]
+            def _streak(k):
+                n, sg = 0, 0
+                for x in seq:
+                    v = x[k] or 0
+                    if v == 0 or (sg and (v > 0) != (sg > 0)):
+                        break
+                    sg = sg or (1 if v > 0 else -1); n += 1
+                return n * sg
+            out["inst"] = {"days": seq, "latest_market_date": dates[0],
+                           "sum5": {k: sum((x[k] or 0) for x in seq[:5]) for k in ("foreign", "trust", "dealer", "total")},
+                           "sum20": {k: sum((x[k] or 0) for x in seq) for k in ("foreign", "trust", "dealer", "total")},
+                           "streak": {k: _streak(k) for k in ("foreign", "trust")},
+                           "source": "證交所 T86 三大法人買賣超日報（僅上市；單位：張）"}
+    except Exception as e:
+        out["inst_error"] = str(e)
+    try:
+        from fundamentals import fetch_margin_short_map
+        out["margin"] = fetch_margin_short_map().get(code)
+    except Exception as e:
+        out["margin_error"] = str(e)
     try:
         from fundamentals import fetch_material_news_risk_map
         out["material_news"] = fetch_material_news_risk_map().get(code, [])
