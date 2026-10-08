@@ -32,6 +32,7 @@ for _h in logging.getLogger().handlers:
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 256 * 1024     # 請求內容上限 256KB，避免被塞超大請求
 app.config["JSON_AS_ASCII"] = False
 
 # 2026-10-07：指標算不出來時（例如新上市 ETF 的 K 線不足）會產生 NaN，Python 會把它輸出成 JSON 裡的
@@ -668,7 +669,13 @@ def _security_headers(resp):
     h.setdefault("X-Frame-Options", "SAMEORIGIN")
     h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
-    h.setdefault("Strict-Transport-Security", "max-age=15552000")
+    h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    h.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    h.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+    if request.path.startswith(("/api/", "/auth/")):
+        h["Cache-Control"] = "no-store"          # 帶登入狀態的回應不讓瀏覽器或中間代理快取
+        h.pop("Server", None)
     if "text/html" in (resp.content_type or ""):
         h.setdefault("Content-Security-Policy", _CSP)
     return resp
@@ -1335,6 +1342,29 @@ def api_quote(code):
         return jsonify(q)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/public/pulse")
+def api_public_pulse():
+    """未登入首頁用：只公開加權指數的最近快照與當日走勢（唯讀、讀快取、不打外部來源）。其餘資料都要登入。"""
+    try:
+        import realtime, time as _t
+        from state_store import store
+        snap = store.get_meta("intraday_snapshot") or {}
+        idx = snap.get("indices") or {}
+        name = "TAIEX" if "TAIEX" in idx else next(iter(idx), None)
+        v = idx.get(name) or {}
+        cur = store.get_meta("index_intraday") or {}
+        today = realtime.now_tpe().strftime("%Y-%m-%d")
+        series = (cur.get("series") or {}).get(name, []) if cur.get("date") == today else []
+        prev = v.get("prev_close")
+        price = v.get("price")
+        chg = round(price - prev, 2) if price is not None and prev else None
+        pct = round(chg / prev * 100, 2) if chg is not None and prev else None
+        return jsonify({"ok": bool(v), "name": name, "price": price, "prev": prev, "chg": chg, "pct": pct,
+                        "date": v.get("date"), "series": series[-80:], "market_open": realtime.market_open()})
+    except Exception:
+        return jsonify({"ok": False})
 
 
 @app.route("/api/intraday/overview")
