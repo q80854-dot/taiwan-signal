@@ -175,9 +175,63 @@ def _note_denied(status: int):
         logger.warning(f"protect: 來源 {ip[:7]}… {BAN_WINDOW // 60} 分鐘內被拒絕超過 {BAN_DENIES} 次，封鎖 {BAN_SECS // 60} 分鐘")
 
 
+# 任何回應裡只要出現這些片段，就代表是程式內部細節（連線字串、驅動程式錯誤、
+# 檔案/socket 路徑、堆疊追蹤…），絕不能回給使用者——例如資料庫短暫斷線時
+# psycopg2 的原始錯誤會夾帶 socket 路徑。中文的使用者提示（如「請選擇回報類別」）
+# 不會命中這些片段，照常顯示。
+_SENSITIVE = re.compile(
+    r"postgres(?:ql)?://|psycopg2|sqlite3|Traceback|File \"|\.py\", line|"
+    r"\.s\.PGSQL|/home/|/usr/|/var/|host=|dbname=|password|FATAL:|"
+    r"could not connect|connection to server|FileNotFoundError|OperationalError",
+    re.IGNORECASE)
+_SAFE_ERR = "系統暫時無法取得資料，請稍後再試"
+
+
+def _redact(o):
+    """遞迴把夾帶內部細節的字串值換成固定訊息，其餘原樣保留。"""
+    if isinstance(o, dict):
+        return {k: _redact(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_redact(v) for v in o]
+    if isinstance(o, str) and _SENSITIVE.search(o):
+        return _SAFE_ERR
+    return o
+
+
+def _scrub_internal(resp):
+    """2xx 的 /api JSON 若夾帶內部細節就就地淨化（5xx 另有整段取代）。
+    先做一次便宜的子字串掃描，命中才解析、淨化、重新序列化。"""
+    if not (request.path.startswith("/api/") and (resp.content_type or "").startswith("application/json")):
+        return
+    if resp.direct_passthrough or resp.status_code >= 500:
+        return
+    try:
+        raw = resp.get_data(as_text=True)
+    except Exception:
+        return
+    if not _SENSITIVE.search(raw):
+        return
+    logger.warning(f"內部細節外洩攔截 {request.method} {request.path} ({resp.status_code}): {raw[:200]}")
+    try:
+        import json as _json
+        resp.set_data(_json.dumps(_redact(_json.loads(raw)), ensure_ascii=False))
+        resp.headers["Content-Length"] = str(len(resp.get_data()))
+    except Exception:
+        resp.set_data(jsonify({"error": _SAFE_ERR}).get_data())
+        resp.headers["Content-Length"] = str(len(resp.get_data()))
+
+
 def after(resp):
     try:
         _note_denied(resp.status_code)
+        # 5xx 的 JSON 不外洩例外內容
+        if resp.status_code >= 500 and request.path.startswith("/api/") and (resp.content_type or "").startswith("application/json"):
+            logger.warning(f"5xx {request.method} {request.path}: {resp.get_data(as_text=True)[:200]}")
+            body = jsonify({"error": "伺服器暫時無法處理，請稍後再試"})
+            resp.set_data(body.get_data())
+            resp.headers["Content-Length"] = str(len(resp.get_data()))
+        else:
+            _scrub_internal(resp)      # 淨化須在寫入快取之前，否則會把帶細節的內容也快取起來
         key = getattr(g, "_pc_key", None)
         if key and resp.status_code == 200 and not resp.direct_passthrough and len(resp.get_data()) < 600_000:
             with _cache_lock:
@@ -185,12 +239,6 @@ def after(resp):
                 _cache.move_to_end(key)
                 while len(_cache) > CACHE_MAX:
                     _cache.popitem(last=False)
-        # 5xx 的 JSON 不外洩例外內容
-        if resp.status_code >= 500 and request.path.startswith("/api/") and (resp.content_type or "").startswith("application/json"):
-            logger.warning(f"5xx {request.method} {request.path}: {resp.get_data(as_text=True)[:200]}")
-            body = jsonify({"error": "伺服器暫時無法處理，請稍後再試"})
-            resp.set_data(body.get_data())
-            resp.headers["Content-Length"] = str(len(resp.get_data()))
     except Exception as e:
         logger.warning(f"protect.after: {e}")
     return resp

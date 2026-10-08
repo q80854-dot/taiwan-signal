@@ -166,6 +166,34 @@ def test_server_errors_do_not_leak_internals(cl, monkeypatch):
     assert r.status_code == 500 and "secretpw" not in r.get_data(as_text=True)
 
 
+# ── 7b. 資料庫斷線／連線耗盡：即使端點用 200 夾帶 str(e)，也不得外洩 socket 路徑、連線字串、驅動程式錯誤 ──
+_LEAK_MARKERS = ["postgres://", "postgresql://", "psycopg2", "Traceback", ".s.PGSQL",
+                 "/home/", "/usr/", "/var/", "could not connect", "connection to server", "password"]
+
+
+def test_db_outage_does_not_leak_internals_even_on_200(cl, monkeypatch):
+    # 模擬 Render Postgres 短暫斷線：連線時丟出帶 socket 路徑與連線字串的原始錯誤
+    _login(cl)
+    import state_store
+    msg = ('connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed: '
+           'FATAL password authentication failed; dsn=postgres://u:pw@host:5432/db')
+
+    def down(*a, **k):
+        raise RuntimeError(msg)
+    monkeypatch.setattr(state_store.store, "_conn", down)
+    for path in ("/api/db_stats", "/api/instruments/2330", "/api/market_extras"):
+        body = cl.get(path).get_data(as_text=True)
+        hit = [m for m in _LEAK_MARKERS if m in body]
+        assert not hit, f"{path} 外洩內部細節：{hit}"
+
+
+def test_redactor_keeps_user_messages(cl):
+    import protect
+    assert protect._redact({"error": "請選擇回報類別"}) == {"error": "請選擇回報類別"}      # 中文提示照常
+    assert protect._redact({"error": 'psycopg2 OperationalError: /var/x'})["error"] == protect._SAFE_ERR
+    assert protect._redact({"a": [{"error": "host=db password=x"}]})["a"][0]["error"] == protect._SAFE_ERR
+
+
 # ── 8. 安全標頭 ──
 def test_security_headers_present(cl):
     r = cl.get("/")
