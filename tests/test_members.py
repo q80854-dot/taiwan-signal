@@ -152,3 +152,19 @@ def test_high_conf_exception():
     assert rm.high_conf_ok({"score": 95, "direction": "buy"}, rec)
     assert not rm.high_conf_ok({"score": 85, "direction": "buy"}, rec)
     assert not rm.high_conf_ok({"score": 99, "direction": "buy"}, rm.high_conf_record([]))
+
+
+def test_member_roles(cl):
+    import uuid
+    login(cl)                                         # 一般會員（非站主）
+    assert cl.get("/api/me").get_json()["user"]["owner"] is False
+    for path in ("/api/scan/force", "/api/test/telegram", "/api/backfill/run", "/api/watchlist"):
+        assert cl.post(path, json={}, headers=H).status_code == 403
+    assert cl.get("/api/settings").status_code == 403
+    assert cl.get("/api/state").status_code != 403
+    assert cl.post("/api/my/watchlist", json={"code": "2330"}, headers=H).status_code == 200
+    sub = "own-" + uuid.uuid4().hex[:6]               # 站主
+    members.upsert_member(sub, "q80854@gmail.com", "站主")
+    cl.set_cookie(members.COOKIE, members.sign({"sub": sub, "exp": int(time.time()) + 3600}))
+    assert cl.get("/api/me").get_json()["user"]["owner"] is True
+    assert cl.get("/api/settings").status_code != 403
