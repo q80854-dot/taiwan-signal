@@ -753,6 +753,22 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 @keyframes shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
 @media(prefers-reduced-motion:reduce){.skel,.pill.live::before{animation:none}}
 </style>
+<style id="skin-member">
+/* 自選股（三竹式報價表）與登入按鈕 */
+.btn[hidden]{display:none}
+.mw-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.mw-tab{border:1px solid var(--line2);background:transparent;color:var(--ink);border-radius:999px;padding:5px 15px;font:inherit;font-size:13px;cursor:pointer}
+.mw-tab small{margin-left:7px;color:var(--t3)}
+.mw-tab.on{background:var(--navy);border-color:var(--navy);color:#fff}.mw-tab.on small{color:#c9d3e3}
+.mw-tab.add{border-style:dashed;color:var(--t2)}
+.mw-add input{width:100%;box-sizing:border-box;border:1px solid var(--line2);border-radius:2px;padding:9px 12px;font:inherit;background:var(--s1);color:var(--ink)}
+.mw-tbl td,.mw-tbl th{white-space:nowrap}.mw-tbl th.r,.mw-tbl td.r{text-align:right}
+.mw-tbl tbody tr:hover{background:var(--wash)}
+.mw-x{color:var(--t3);font-size:17px;padding:0 8px;cursor:pointer}.mw-x:hover{color:var(--up)}
+.mw-tbl .pill{margin-left:4px;padding:1px 8px;font-size:11.5px}
+html[data-theme=dark] .mw-tab.on{background:var(--navy2);border-color:var(--navy2)}
+html[data-theme=dark] .mw-add input{background:var(--s2)}
+</style>
 </head>
 <body>
 <div class="shell">
@@ -771,7 +787,7 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
   <div class="nav"     onclick="go('risk')">風險管理</div>
   <div class="nav"     onclick="go('autopsy')">停損解剖</div>
   <div class="nav"     onclick="go('events')">通知中心 <span class="nbadge" id="ev-count-badge"></span></div>
-  <div class="nav"     onclick="go('watchlist')">觀察清單 <span class="nbadge" id="wl-count-badge">0</span></div>
+  <div class="nav"     onclick="go('watchlist')">自選股 <span class="nbadge" id="wl-count-badge">0</span></div>
   <div class="nav"     onclick="go('history')">交易歷史</div>
   <div class="nav"     onclick="go('perf')">績效分析</div>
   <div class="nav-g">研究</div>
@@ -811,6 +827,7 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
       <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
       <span id="tw-time" style="font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums"></span>
       <div class="bell" onclick="go('events')" title="通知中心">通知<span class="cnt" id="bell-cnt">0</span></div>
+      <button class="btn" id="login-btn" onclick="memberBtn()" hidden>Google 登入</button>
       <button class="btn" id="theme-btn" onclick="toggleTheme()" aria-label="切換深色／淺色模式" title="切換深色／淺色模式"><span id="theme-ic-moon">深色</span><span id="theme-ic-sun">淺色</span></button>
       <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">手機版</button>
       <button class="btn" onclick="fetchState()">刷新</button>
@@ -908,7 +925,7 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
   <!-- Watchlist -->
   <div class="page" id="page-watchlist">
     <div class="pad">
-    <div class="note-box" style="margin-bottom:16px">觀察清單存在伺服器，換瀏覽器、換手機都看得到。在訊號卡上按 ☆ 就會加進來。</div>
+    <div class="note-box" style="margin-bottom:16px">自選股存在伺服器，換瀏覽器、換手機都看得到；登入 Google 後每個人有自己的清單。在訊號卡上按 ☆ 也會加進來。</div>
     <div id="watchlist-container"></div>
     </div>
   </div>
@@ -1272,6 +1289,8 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-10-08</b></p>
+          <p><b>會員與自選股</b><br>・新增 Google 登入（只用 Google 帳號驗證，網站不保存任何密碼；登入功能設定完成後才會出現登入按鈕）。<br>・「觀察清單」升級為「自選股」：登入後每人有自己的多組清單，可用代號或名稱搜尋加入，表格顯示成交價、漲跌、漲跌幅、成交量，並標示目前的訊號與處置／注意、暫停交易等狀態；點欄位標題可排序，每 60 秒自動更新。<br>・上櫃的處置股、注意股、變更交易、暫停交易名單已納入排除與市場總覽表格。</p>
           <p><b>2026-10-07</b></p>
           <p><b>資料更準、更即時</b><br>・盤中改用證交所「官方即時」資料，全市場約每 5 分鐘更新一次，上市、上櫃同一時點；並自動核對昨收價與官方是否吻合。<br>・收盤後保存當日「定案」的開高低收量，16:30 掃描優先採用官方當日 K 棒，不再用推估值。<br>・訊號的假想進場價改為「發出訊號後下一根 K 棒的開盤價」，績效更貼近實際能成交的價格。<br>・修正部分標的（例如 00631L）抓不到資料的問題。<br>・系統升級至 Pro 方案，查詢與掃描更快、更穩。</p>
           <p><b>新增證交所／期交所資料</b><br>・暫停交易、分盤交易（變更交易）的股票自動排除，不再出訊號。<br>・個股頁顯示：停資停券、新上市首五日無漲跌幅、是否為當沖標的、可借券賣出股數。<br>・個股頁顯示融券與借券賣出餘額與 5 日變化（資料自今日起逐日累積）。<br>・市場總覽新增「期交所籌碼」：外資／投信／自營商期貨未平倉（大台等效）、選擇權、Put/Call 比、前十大交易人。以上都只顯示、不改變訊號分數（驗證前不加規則）。<br>・資料量與 API 統計：可在系統檢查查看。</p>
@@ -1406,7 +1425,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'觀察清單',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷'};
+const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷'};
 let _marketOverviewLoaded=false;
 async function fetchCalendar(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
@@ -2155,6 +2174,8 @@ let _wl=[];
 function getWatchlist(){return _wl;}
 function saveWatchlist(list){_wl=list;setEl('wl-count-badge',list.length);}
 async function loadWatchlist(){
+  await loadMe();
+  if(_me.login_enabled){await loadMyStarList();return;}
   try{
     const d=await(await fetch('/api/watchlist',{cache:'no-store'})).json();
     _wl=d.watchlist||[];
@@ -2168,8 +2189,9 @@ async function loadWatchlist(){
     renderLatestSignals(_signals||[]);renderSignals();
   }catch(e){}
 }
-function isInWatchlist(ticker){return getWatchlist().some(w=>w.ticker===ticker);}
+function isInWatchlist(ticker){const c=String(ticker).split('.')[0];return getWatchlist().some(w=>w.ticker===ticker||(_me.login_enabled&&w.code===c));}
 function toggleWatchlistByTicker(ticker){
+  if(_me.login_enabled){toggleMyStar(ticker);return;}
   let list=getWatchlist();
   if(list.some(w=>w.ticker===ticker)){
     list=list.filter(w=>w.ticker!==ticker);
@@ -2190,6 +2212,7 @@ function wlStar(ticker){
 }
 function renderWatchlistPage(){
   const el=document.getElementById('watchlist-container');if(!el)return;
+  if(_me.login_enabled){renderMyWatch();return;}
   const list=getWatchlist();
   if(!list.length){el.innerHTML='<div class="empty"><div class="empty-label">觀察清單</div>目前是空的，在訊號卡上按 ☆ 加入</div>';return;}
   el.innerHTML=list.map(w=>{
@@ -2215,6 +2238,142 @@ function renderWatchlistPage(){
     </div>`;
   }).join('');
 }
+// ═══ 2026-10-08 會員（Google 登入）與每人自己的自選股（三竹式報價表） ═══
+var _me={login_enabled:false,user:null},_meLoaded=false;
+const TS_H={'X-TS':'1','Content-Type':'application/json'};
+async function loadMe(force){
+  if(_meLoaded&&!force)return _me;
+  try{_me=await(await fetch('/api/me',{cache:'no-store'})).json();}catch(e){}
+  _meLoaded=true;
+  const b=document.getElementById('login-btn');
+  if(b){b.hidden=!_me.login_enabled;b.textContent=_me.user?('登出　'+String(_me.user.name||'').slice(0,8)):'Google 登入';}
+  const q=new URLSearchParams(location.search).get('login');
+  if(q){history.replaceState(null,'',location.pathname);
+    toast(q==='ok'?'登入成功':q==='failed'?'登入失敗，請再試一次':'尚未啟用會員登入');}
+  return _me;
+}
+async function memberBtn(){
+  if(!_me.user){location.href='/auth/google';return;}
+  try{await fetch('/auth/logout',{method:'POST',headers:TS_H});}catch(e){}
+  _mw.data=null;_wl=[];setEl('wl-count-badge',0);
+  await loadMe(true);renderLatestSignals(_signals||[]);renderSignals();
+  if(document.getElementById('page-watchlist').classList.contains('on'))renderMyWatch();
+  toast('已登出');
+}
+async function loadMyStarList(){
+  if(!_me.user){_wl=[];setEl('wl-count-badge',0);renderLatestSignals(_signals||[]);renderSignals();return;}
+  try{
+    const r=await fetch('/api/my/watchlist',{cache:'no-store'});
+    if(r.ok){const d=await r.json();_mw.star=d.grp;
+      _wl=(d.items||[]).map(i=>({ticker:i.code+(i.market==='OTC'?'.TWO':'.TW'),code:i.code,name:i.name}));
+      setEl('wl-count-badge',_wl.length);}
+  }catch(e){}
+  renderLatestSignals(_signals||[]);renderSignals();
+}
+async function toggleMyStar(ticker){
+  if(!_me.user){toast('請先用 Google 登入，才能使用自選股');return;}
+  const code=String(ticker).split('.')[0],grp=_mw.star||'自選股';
+  const on=isInWatchlist(ticker);
+  try{
+    const r=await fetch(on?'/api/my/watchlist?code='+encodeURIComponent(code)+'&grp='+encodeURIComponent(grp):'/api/my/watchlist',
+      {method:on?'DELETE':'POST',headers:TS_H,body:on?undefined:JSON.stringify({code,grp})});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.error||'操作失敗');return;}
+  }catch(e){toast('操作失敗');return;}
+  await loadMyStarList();
+  if(document.getElementById('page-watchlist').classList.contains('on'))renderMyWatch();
+}
+const escA=x=>String(x==null?'':x).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+var _mw={grp:null,star:null,data:null,sort:{k:'code',d:1},t:null};
+async function mwFetch(){
+  const q=_mw.grp?'?grp='+encodeURIComponent(_mw.grp):'';
+  const r=await fetch('/api/my/watchlist'+q,{cache:'no-store'});
+  if(r.status===401){_mw.data=null;return false;}
+  if(!r.ok)return false;
+  _mw.data=await r.json();_mw.grp=_mw.data.grp;return true;
+}
+async function renderMyWatch(){
+  const el=document.getElementById('watchlist-container');if(!el)return;
+  if(!_me.user){
+    el.innerHTML='<div class="empty"><div class="empty-label">自選股</div>用 Google 登入後，就能建立自己的自選股清單（多組分類、即時報價、訊號與處置注意提示）。<div style="margin-top:14px"><button class="btn primary" onclick="location.href=\'/auth/google\'">Google 登入</button></div></div>';
+    return;
+  }
+  if(!_mw.data)el.innerHTML='<div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div>';
+  if(!await mwFetch()){el.innerHTML='<div class="empty">自選股載入失敗，請稍後再試</div>';return;}
+  mwDraw();
+  clearInterval(_mw.t);
+  _mw.t=setInterval(async()=>{
+    if(document.hidden||!document.getElementById('page-watchlist').classList.contains('on')){return;}
+    if(await mwFetch())mwDraw(true);
+  },60000);
+}
+function mwDraw(keepInput){
+  const el=document.getElementById('watchlist-container');if(!el||!_mw.data)return;
+  const d=_mw.data,typed=keepInput?(document.getElementById('mw-in')||{}).value||'':'';
+  const k=_mw.sort.k,dir=_mw.sort.d;
+  const rows=[...d.items].sort((a,b)=>{
+    const x=a[k],y=b[k];
+    if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;
+    return (typeof x==='string'?x.localeCompare(y):x-y)*dir;});
+  const arrow=c=>k===c?(dir>0?' ▲':' ▼'):'';
+  const th=(c,l,al)=>`<th class="${al||''}" onclick="mwSort('${c}')" style="cursor:pointer">${l}${arrow(c)}</th>`;
+  const col=n=>n==null?'var(--t3)':n>0?'var(--up)':n<0?'var(--down)':'var(--t2)';
+  const body=rows.map(r=>{
+    const sg=r.signal?`<span class="sig-badge ${esc2(r.signal.direction)}">${r.signal.direction==='buy'?'做多':'做空'} ${esc2(r.signal.score)}</span>`:'<span class="mut">—</span>';
+    const fl=(r.flags||[]).map(f=>`<span class="pill warn">${esc2(f)}</span>`).join('')||'';
+    return `<tr onclick="goToInstrument('${esc2(r.code)}')" style="cursor:pointer">
+      <td class="num"><b>${esc2(r.code)}</b></td><td>${esc2(r.name||'—')}<span class="mut"> ${r.market==='OTC'?'櫃':'市'}</span></td>
+      <td class="num r" style="color:${col(r.change_pct)};font-weight:500">${r.price!=null?_fmtN(r.price,2):'—'}</td>
+      <td class="num r" style="color:${col(r.change)}">${r.change!=null?_sg(r.change,2):'—'}</td>
+      <td class="num r" style="color:${col(r.change_pct)}">${r.change_pct!=null?_sg(r.change_pct,2)+'%':'—'}</td>
+      <td class="num r">${r.volume_lots!=null?_fmtN(r.volume_lots):'—'}</td><td>${sg}</td><td>${fl}</td>
+      <td class="r"><span class="mw-x" title="從清單移除" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">×</span></td></tr>`;}).join('');
+  const live=d.items.some(r=>r.live);
+  el.innerHTML=`<div class="mw-tabs">${d.groups.map(g=>`<button class="mw-tab${g.name===d.grp?' on':''}" data-g="${escA(g.name)}" onclick="mwGroup(this.dataset.g)">${esc2(g.name)}<small>${g.count}</small></button>`).join('')}
+      <button class="mw-tab add" onclick="mwNewGroup()" title="新增清單">＋</button>
+      ${d.groups.length>1?`<button class="mw-tab add" onclick="mwDelGroup()" title="刪除目前清單">刪除此清單</button>`:''}</div>
+    <div class="mw-add"><div class="gs" style="position:relative;max-width:420px"><input id="mw-in" placeholder="輸入代號或名稱，加入「${escA(d.grp)}」" autocomplete="off" spellcheck="false" oninput="mwSearch()" value="${escA(typed)}"><div id="mw-dd" class="gs-dd"></div></div></div>
+    ${rows.length?`<div class="panel card" style="margin-top:12px"><div style="overflow-x:auto"><table class="tbl mw-tbl"><thead><tr>${th('code','代號')}${th('name','名稱')}${th('price','成交價','r')}${th('change','漲跌','r')}${th('change_pct','漲跌幅','r')}${th('volume_lots','成交量（張）','r')}<th>訊號</th><th>狀態</th><th></th></tr></thead><tbody>${body}</tbody></table></div></div>`
+      :'<div class="empty" style="margin-top:12px"><div class="empty-label">這個清單還是空的</div>在上面輸入代號或名稱加入，或在訊號卡按 ☆。</div>'}
+    <div class="mut" style="margin-top:8px">${live?'報價為證交所官方即時快照（約 5 分鐘更新）':'報價為最近一個交易日收盤資料'}；每 60 秒自動更新。清單上限 ${100} 檔。</div>`;
+}
+function mwSort(c){_mw.sort=_mw.sort.k===c?{k:c,d:-_mw.sort.d}:{k:c,d:(c==='code'||c==='name')?1:-1};mwDraw(true);}
+async function mwGroup(n){_mw.grp=n;_mw.data=null;await renderMyWatch();}
+async function mwNewGroup(){
+  const n=(prompt('新清單名稱（最多 12 字）')||'').trim();if(!n)return;
+  const r=await fetch('/api/my/groups',{method:'POST',headers:TS_H,body:JSON.stringify({name:n})});
+  const d=await r.json().catch(()=>({}));if(!r.ok){toast(d.error||'新增失敗');return;}
+  _mw.grp=n.slice(0,12);_mw.data=null;renderMyWatch();
+}
+async function mwDelGroup(){
+  const n=_mw.grp;if(!n||!confirm('刪除清單「'+n+'」及其中所有股票？'))return;
+  const r=await fetch('/api/my/groups?name='+encodeURIComponent(n),{method:'DELETE',headers:TS_H});
+  const d=await r.json().catch(()=>({}));if(!r.ok){toast(d.error||'刪除失敗');return;}
+  _mw.grp=null;_mw.data=null;await loadMyStarList();renderMyWatch();
+}
+async function mwRemove(code){
+  await fetch('/api/my/watchlist?code='+encodeURIComponent(code)+'&grp='+encodeURIComponent(_mw.grp),{method:'DELETE',headers:TS_H});
+  await mwFetch();mwDraw();loadMyStarList();
+}
+var _mwT=null;
+function mwSearch(){
+  clearTimeout(_mwT);const q=(document.getElementById('mw-in').value||'').trim(),dd=document.getElementById('mw-dd');
+  if(!q){dd.classList.remove('on');return;}
+  _mwT=setTimeout(async()=>{
+    try{
+      const d=await(await fetch('/api/screener?limit=8&q='+encodeURIComponent(q))).json();
+      const have=new Set((_mw.data?_mw.data.items:[]).map(i=>i.code));
+      dd.innerHTML=(d.items||[]).length?d.items.map(x=>`<div class="gs-i" onmousedown="mwAdd('${esc2(x.code)}')"><b>${esc2(x.code)}</b><span class="n">${esc2(x.name)}</span><span class="s">${have.has(x.code)?'已在清單':esc2(x.sector||'')}</span></div>`).join(''):'<div class="gs-empty">找不到符合的股票</div>';
+      dd.classList.add('on');
+    }catch(e){dd.classList.remove('on');}
+  },160);
+}
+async function mwAdd(code){
+  const r=await fetch('/api/my/watchlist',{method:'POST',headers:TS_H,body:JSON.stringify({code,grp:_mw.grp})});
+  const d=await r.json().catch(()=>({}));if(!r.ok){toast(d.error||'加入失敗');return;}
+  await mwFetch();mwDraw();loadMyStarList();
+}
+document.addEventListener('click',e=>{if(!e.target.closest('.mw-add'))document.getElementById('mw-dd')?.classList.remove('on');});
+
 loadWatchlist();
 
 // ★ 新增：2026-09-29——首頁定位說明只需要看過一次，記在 localStorage，不用
