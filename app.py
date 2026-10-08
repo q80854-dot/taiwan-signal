@@ -434,6 +434,8 @@ def setup_scheduler():
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     # 2026-10-08：收盤後公布時段每 3 分鐘檢查各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）
     scheduler.add_job(job_freshness_poll, CronTrigger(hour="14-21", minute="*/3", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(lambda: __import__("freshness").log_summary(force=True), "date",
+                      run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=150), id="freshness_boot_log", replace_existing=True)
     scheduler.add_job(job_freshness_poll, CronTrigger(hour="8", minute="5,35", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll_am", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
