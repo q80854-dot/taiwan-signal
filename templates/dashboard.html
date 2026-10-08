@@ -774,10 +774,37 @@ html[data-theme=dark] .mw-add input{background:var(--s2)}
 .mem-k.warn b{color:var(--up)}
 .mem-tbl td,.mem-tbl th{white-space:nowrap}
 </style>
+<style id="skin-mobile2">
+/* ───── 登入後介面：手機版重做（帳號選單、底部分頁列、搜尋、觸控尺寸） ───── */
+.acct,.tabbar,.srch-btn{display:none}
+.acct{position:relative}
+.acct-btn,.srch-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--line2);background:var(--s1);color:var(--ink);font:inherit;font-weight:700;font-size:14px;cursor:pointer;align-items:center;justify-content:center;padding:0}
+.acct-btn{background:var(--navy);color:#fff;border-color:var(--navy)}
+.acct-menu{display:none;position:absolute;right:0;top:44px;min-width:230px;background:var(--s1);border:1px solid var(--line2);border-radius:14px;box-shadow:0 18px 44px rgba(11,31,58,.22);z-index:600;overflow:hidden}
+.acct-menu.on{display:block}
+.acct-h{padding:14px 16px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
+.acct-h b{color:var(--ink);font-size:15px}.acct-h span{color:var(--t3);font-size:12px;word-break:break-all}
+.acct-h em{align-self:flex-start;margin-top:6px;font-style:normal;font-size:11px;font-weight:700;background:var(--navy);color:#fff;border-radius:999px;padding:2px 9px}
+.acct-i{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:13px 16px;font:inherit;font-size:14.5px;color:var(--t1);cursor:pointer;min-height:46px}
+.acct-i:last-child{border-bottom:0}.acct-i:active{background:var(--wash)}
+.acct-i.danger{color:var(--up);font-weight:700}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:90;background:color-mix(in srgb,var(--s1) 94%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--line2);padding:6px 4px calc(6px + env(safe-area-inset-bottom));justify-content:space-around}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-height:48px;justify-content:center;font-size:11.5px;color:var(--t3);cursor:pointer;border:0;background:none;font-family:inherit;-webkit-tap-highlight-color:transparent;position:relative}
+.tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.tab.on{color:var(--ink);font-weight:700}
+.tab.on::before{content:"";position:absolute;top:-7px;width:26px;height:3px;border-radius:0 0 3px 3px;background:var(--navy)}
+.tab .tb{position:absolute;top:2px;left:calc(50% + 6px);background:var(--up);color:#fff;border-radius:9px;font-size:10px;min-width:16px;height:16px;line-height:16px;padding:0 4px;text-align:center;font-weight:700}
+html[data-theme=dark] .tab.on::before,html[data-theme=dark] .acct-btn{background:var(--navy2);border-color:var(--navy2)}
+html,body{height:100%}.shell{height:100vh;height:100dvh}
+@media(max-width:640px){html:not(.force-desktop) .top{height:52px!important;padding:0 10px!important;gap:6px!important}html:not(.force-desktop) .top-r > .btn,html:not(.force-desktop) .top-r #view-toggle-btn{display:none!important}html:not(.force-desktop) .top-r{gap:8px!important;flex-shrink:0}html:not(.force-desktop) .acct{display:block!important}html:not(.force-desktop) .acct-btn,html:not(.force-desktop) .srch-btn{display:inline-flex!important}html:not(.force-desktop) .tabbar{display:flex!important}html:not(.force-desktop) .mkt-pill{padding:3px 9px!important;font-size:12px!important}html:not(.force-desktop) .bell{width:36px!important;height:36px!important;border-radius:50%!important}html:not(.force-desktop) .gs{display:none!important}html:not(.force-desktop) .gs.m-open{display:block!important;position:fixed;top:52px;left:0;right:0;z-index:300;margin:0!important;padding:8px 12px;background:var(--s1);border-bottom:1px solid var(--line2);box-shadow:0 12px 30px rgba(11,31,58,.18)}html:not(.force-desktop) .gs.m-open input{height:42px}html:not(.force-desktop) .gs.m-open .gs-dd{top:56px;left:12px;right:12px;max-height:60vh}html:not(.force-desktop) .content{padding-bottom:calc(84px + env(safe-area-inset-bottom))!important;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}html:not(.force-desktop) .pad{padding:14px 14px 0!important}html:not(.force-desktop) .ticker{scroll-snap-type:x proximity;scrollbar-width:none;-webkit-overflow-scrolling:touch}html:not(.force-desktop) .ticker::-webkit-scrollbar{display:none}html:not(.force-desktop) .ticker-item{flex:0 0 auto!important;min-width:108px!important;padding:10px 14px!important;scroll-snap-align:start}html:not(.force-desktop) .ticker-val{font-size:16px!important}html:not(.force-desktop) .mast{padding:14px!important;gap:12px!important}html:not(.force-desktop) .mast .say{font-size:14.5px!important;line-height:1.7!important}html:not(.force-desktop) .mast .dt b{font-size:26px!important}html:not(.force-desktop) .mast .seal{width:58px!important;height:58px!important}html:not(.force-desktop) .note-box{padding:12px 14px!important;font-size:13px!important}html:not(.force-desktop) input,html:not(.force-desktop) select,html:not(.force-desktop) textarea{font-size:16px!important}html:not(.force-desktop) .btn{min-height:40px}html:not(.force-desktop) .panel-body,html:not(.force-desktop) .panel-head{padding-left:14px!important;padding-right:14px!important}html:not(.force-desktop) .tbl th,html:not(.force-desktop) .tbl td{padding-left:8px!important;padding-right:8px!important}html:not(.force-desktop) .side{width:84vw!important;max-width:320px;padding-bottom:calc(20px + env(safe-area-inset-bottom))}html:not(.force-desktop) .nav{min-height:44px;display:flex;align-items:center;font-size:15px}html:not(.force-desktop) #toast,html:not(.force-desktop) .toast{bottom:calc(88px + env(safe-area-inset-bottom))!important}}
+html.force-mobile .top{height:52px!important;padding:0 10px!important;gap:6px!important}html.force-mobile .top-r > .btn,html.force-mobile .top-r #view-toggle-btn{display:none!important}html.force-mobile .top-r{gap:8px!important;flex-shrink:0}html.force-mobile .acct{display:block!important}html.force-mobile .acct-btn,html.force-mobile .srch-btn{display:inline-flex!important}html.force-mobile .tabbar{display:flex!important}html.force-mobile .mkt-pill{padding:3px 9px!important;font-size:12px!important}html.force-mobile .bell{width:36px!important;height:36px!important;border-radius:50%!important}html.force-mobile .gs{display:none!important}html.force-mobile .gs.m-open{display:block!important;position:fixed;top:52px;left:0;right:0;z-index:300;margin:0!important;padding:8px 12px;background:var(--s1);border-bottom:1px solid var(--line2);box-shadow:0 12px 30px rgba(11,31,58,.18)}html.force-mobile .gs.m-open input{height:42px}html.force-mobile .gs.m-open .gs-dd{top:56px;left:12px;right:12px;max-height:60vh}html.force-mobile .content{padding-bottom:calc(84px + env(safe-area-inset-bottom))!important;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}html.force-mobile .pad{padding:14px 14px 0!important}html.force-mobile .ticker{scroll-snap-type:x proximity;scrollbar-width:none;-webkit-overflow-scrolling:touch}html.force-mobile .ticker::-webkit-scrollbar{display:none}html.force-mobile .ticker-item{flex:0 0 auto!important;min-width:108px!important;padding:10px 14px!important;scroll-snap-align:start}html.force-mobile .ticker-val{font-size:16px!important}html.force-mobile .mast{padding:14px!important;gap:12px!important}html.force-mobile .mast .say{font-size:14.5px!important;line-height:1.7!important}html.force-mobile .mast .dt b{font-size:26px!important}html.force-mobile .mast .seal{width:58px!important;height:58px!important}html.force-mobile .note-box{padding:12px 14px!important;font-size:13px!important}html.force-mobile input,html.force-mobile select,html.force-mobile textarea{font-size:16px!important}html.force-mobile .btn{min-height:40px}html.force-mobile .panel-body,html.force-mobile .panel-head{padding-left:14px!important;padding-right:14px!important}html.force-mobile .tbl th,html.force-mobile .tbl td{padding-left:8px!important;padding-right:8px!important}html.force-mobile .side{width:84vw!important;max-width:320px;padding-bottom:calc(20px + env(safe-area-inset-bottom))}html.force-mobile .nav{min-height:44px;display:flex;align-items:center;font-size:15px}html.force-mobile #toast,html.force-mobile .toast{bottom:calc(88px + env(safe-area-inset-bottom))!important}
+</style>
+<style id="skin-mobile3">@media(max-width:640px){html:not(.force-desktop) .kpi,html:not(.force-desktop) .kpi-strip>.kpi,html:not(.force-desktop) .hero-row>.kpi{padding:16px 14px!important}html:not(.force-desktop) .kpi-val{font-size:24px!important}html:not(.force-desktop) .side:not(.open){box-shadow:none!important;visibility:hidden}html:not(.force-desktop) .side.open{visibility:visible}html:not(.force-desktop) .hamburger{border:0!important;background:none!important;font-size:22px!important;width:36px!important;height:36px!important;padding:0!important}}html.force-mobile .kpi,html.force-mobile .kpi-strip>.kpi,html.force-mobile .hero-row>.kpi{padding:16px 14px!important}html.force-mobile .kpi-val{font-size:24px!important}html.force-mobile .side:not(.open){box-shadow:none!important;visibility:hidden}html.force-mobile .side.open{visibility:visible}html.force-mobile .hamburger{border:0!important;background:none!important;font-size:22px!important;width:36px!important;height:36px!important;padding:0!important}</style>
 </head>
 <body>
 <div class="shell">
 <div class="side-backdrop" id="side-backdrop" onclick="closeSide()"></div>
+<nav class="tabbar" id="tabbar" aria-label="主要分頁"><button class="tab" data-p="overview" onclick="go('overview')" aria-label="總覽"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>總覽</button><button class="tab" data-p="signals" onclick="go('signals')" aria-label="訊號"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l4-5 3 3 5-6"/></svg>訊號</button><button class="tab" data-p="marketoverview" onclick="go('marketoverview')" aria-label="市場"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>市場</button><button class="tab" data-p="watchlist" onclick="go('watchlist')" aria-label="自選股"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.5 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>自選股</button><button class="tab" data-p="more" onclick="toggleSide()" aria-label="更多"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>更多</button></nav>
 <!-- Sidebar -->
 <a class="skip-link" href="#content">跳到主要內容</a>
 <div class="side" id="side" role="navigation" aria-label="主選單">
@@ -832,12 +859,14 @@ html[data-theme=dark] .mw-add input{background:var(--s2)}
       <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
       <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
       <span id="tw-time" style="font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums"></span>
+      <button class="srch-btn" onclick="mSearch()" aria-label="搜尋股票"><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg></button>
       <div class="bell" onclick="go('events')" title="通知中心">通知<span class="cnt" id="bell-cnt">0</span></div>
+      <div class="acct" id="acct" hidden><button class="acct-btn" id="acct-btn" onclick="acctToggle(event)" aria-haspopup="menu" aria-expanded="false" aria-label="帳號選單">我</button><div class="acct-menu" id="acct-menu" role="menu"></div></div>
       <button class="btn" id="login-btn" onclick="memberBtn()" hidden>Google 登入</button>
       <button class="btn" id="theme-btn" onclick="toggleTheme()" aria-label="切換深色／淺色模式" title="切換深色／淺色模式"><span id="theme-ic-moon">深色</span><span id="theme-ic-sun">淺色</span></button>
       <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">手機版</button>
       <button class="btn" onclick="fetchState()">刷新</button>
-      <button class="btn primary arrow" onclick="forceScan()">立即掃描</button>
+      <button class="btn primary arrow own-only" onclick="forceScan()">立即掃描</button>
     </div>
   </div>
   <div class="content" id="content" role="main" tabindex="-1">
@@ -1611,6 +1640,7 @@ function go(id){
   if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
   if(id==='diag')fetchDiag();
   if(id==='members')loadMembersPage();
+  syncTabbar(id);
   closeSide();
 }
 function goToInstrument(ticker){
@@ -2265,7 +2295,7 @@ async function loadMe(force){
   _meLoaded=true;
   const b=document.getElementById('login-btn');
   if(b){b.hidden=!_me.login_enabled;b.textContent=_me.user?('登出　'+String(_me.user.name||'').slice(0,8)):'Google 登入';}
-  loginWall();applyRoleUI();
+  loginWall();applyRoleUI();renderAcct();
   const q=new URLSearchParams(location.search).get('login');
   if(q){history.replaceState(null,'',location.pathname);
     toast(({ok:'登入成功',failed:'登入失敗，請再試一次',busy:'嘗試次數過多，請稍後再試',banned:'此帳號已被停用，如有疑問請聯絡站主'})[q]||'尚未啟用會員登入');}
@@ -2410,6 +2440,7 @@ function applyRoleUI(){
     if(OWN.some(p=>oc.includes("'"+p+"'")))n.style.display=owner?'':'none';});
   document.querySelectorAll('.nav-g').forEach(g=>{if(g.textContent.trim()==='工具')g.style.display=owner?'':'none';});
   window._ownerOnly=owner?[]:OWN;
+  document.querySelectorAll('.own-only').forEach(b=>{b.style.display=owner?'':'none';});
 }
 async function memberBtn(){
   if(!_me.user){location.href='/auth/google';return;}
@@ -2548,6 +2579,38 @@ function dismissPositioningNote(){
 })();
 
 // Mobile sidebar drawer
+function syncTabbar(id){
+  document.querySelectorAll('#tabbar .tab').forEach(t=>t.classList.toggle('on',t.dataset.p===id));
+}
+function acctToggle(e){
+  if(e)e.stopPropagation();
+  const m=document.getElementById('acct-menu'),on=!m.classList.contains('on');
+  m.classList.toggle('on',on);document.getElementById('acct-btn').setAttribute('aria-expanded',on?'true':'false');
+}
+document.addEventListener('click',e=>{
+  const a=document.getElementById('acct');
+  if(a&&!a.contains(e.target)){const m=document.getElementById('acct-menu');if(m)m.classList.remove('on');}
+  const g=document.querySelector('.gs.m-open');
+  if(g&&!g.contains(e.target)&&!e.target.closest('.srch-btn'))g.classList.remove('m-open');
+});
+function mSearch(){
+  const g=document.querySelector('.gs');if(!g)return;
+  const on=!g.classList.contains('m-open');g.classList.toggle('m-open',on);
+  if(on){const i=document.getElementById('gs-in');if(i)setTimeout(()=>i.focus(),50);}
+}
+function renderAcct(){
+  const a=document.getElementById('acct');if(!a)return;
+  const u=_me&&_me.user;
+  if(!u){a.hidden=true;return;}
+  a.hidden=false;
+  const nm=String(u.name||u.email||'會員').trim();
+  document.getElementById('acct-btn').textContent=(nm.charAt(0)||'我').toUpperCase();
+  const it=(f,t,c)=>`<button role="menuitem" class="acct-i${c?' '+c:''}" onclick="document.getElementById('acct-menu').classList.remove('on');${f}">${t}</button>`;
+  document.getElementById('acct-menu').innerHTML=
+    `<div class="acct-h"><b>${esc2(nm)}</b><span>${esc2(u.email||'')}</span>${u.owner?'<em>站主</em>':''}</div>`
+    +it('toggleTheme()','深色／淺色模式')+it('fetchState()','重新整理資料')+(u.owner?it('forceScan()','立即掃描'):'')
+    +it('toggleViewMode()','切換電腦版／手機版')+it('logoutAll()','登出所有裝置')+it('memberBtn()','登出','danger');
+}
 function toggleSide(){
   document.getElementById('side').classList.toggle('open');
   document.getElementById('side-backdrop').classList.toggle('open');
