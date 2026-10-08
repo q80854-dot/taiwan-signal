@@ -51,7 +51,10 @@ def _fetch_ex(url, market):
     if not rows:
         return [], None
     keys = list(rows[0].keys())
-    kd = _pick(keys, "Date", "日期", avoid=("Announce", "公告"))
+    # 優先用明確的「除權息日」欄位；只有找不到時才退回一般 Date（上櫃預告表可能同時有資料日期與除權息日期，
+    # 若誤取資料日期，整張表會全部顯示成同一天）
+    kd = (_pick(keys, "ExRightsExDividendDate", "ExDividendDate", "ExRightDate", "ExRightsDate", "除權息日", "除權除息日", "除息日", "除權日")
+          or _pick(keys, "Date", "日期", avoid=("Announce", "公告", "Data", "資料")))
     kc = _pick(keys, "Code", "代號", "代碼")
     kn = _pick(keys, "Name", "名稱")
     kt = _pick(keys, "Exdividend", "權息", "Type", "除權息")

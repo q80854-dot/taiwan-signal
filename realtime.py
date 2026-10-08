@@ -210,11 +210,14 @@ def get_quote(code: str, market: Optional[str] = None) -> Optional[Dict]:
     return q
 
 
-def compute_breadth(quotes: Dict[str, Dict], today: Optional[str] = None) -> Dict:
-    """由即時報價算盤中市場廣度。只算資料日期是今天的；沒成交價的歸 no_trade，資料日期不是今天的歸 stale。"""
+def compute_breadth(quotes: Dict[str, Dict], today: Optional[str] = None, skip: Optional[set] = None) -> Dict:
+    """由即時報價算盤中市場廣度。只算資料日期是今天的；沒成交價的歸 no_trade，資料日期不是今天的歸 stale。
+    skip：不列入家數的代號（ETF／ETN），讓家數與證交所、櫃買公布的「股票」漲跌家數同一口徑。"""
     today = today or now_tpe().strftime("%Y-%m-%d")
     b = {"up": 0, "down": 0, "flat": 0, "limit_up": 0, "limit_down": 0, "no_trade": 0, "stale": 0}
-    for q in quotes.values():
+    for code, q in quotes.items():
+        if skip and code in skip:
+            continue
         if q.get("date") != today:
             b["stale"] += 1
             continue
@@ -256,7 +259,8 @@ def snapshot(universe: List[Dict]) -> Dict:
     slim = {c: [q["price"], q["prev_close"], q["volume_lots"], q["time"], q["date"],
                 q.get("limit_up"), q.get("limit_down"), q.get("open"), q.get("high"), q.get("low")]
             for c, q in quotes.items()}
-    breadth = compute_breadth(quotes)
+    breadth = compute_breadth(quotes, skip={s["code"] for s in universe if s.get("is_etf")})
+    breadth["scope"] = "股票（不含 ETF）"
     missing = len(pairs) - len(quotes)          # 來源根本沒回（不同於「有回但沒成交」）
     return {"at": time.time(), "n_req": len(pairs), "n_ok": len(quotes), "n_missing": missing,
             "secs": round(time.time() - t0, 1), "quotes": slim, "breadth": breadth,

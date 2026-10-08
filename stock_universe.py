@@ -4,6 +4,7 @@ stock_universe.py — 台股全市場品種管理 v1.1（無 pandas 版）
 """
 import os, time, logging, requests, json
 from typing import List, Dict, Optional
+from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
 from config import SIGNAL_THRESHOLDS as THRESH, SYSTEM
 
 logger = logging.getLogger(__name__)
@@ -747,8 +748,11 @@ def build_live_universe(force_refresh=False) -> List[Dict]:
         s2["live_time"] = q[3]
         if price and prev:
             s2["close"] = price
+            s2["change"] = round(price - prev, 4)
             s2["change_pct"] = round((price / prev - 1) * 100, 2)
             s2["volume_lots"] = vol or 0
+            if len(q) > 6:                      # MIS 給的當日漲跌停價，判斷漲跌停最準
+                s2["limit_up_px"], s2["limit_down_px"] = q[5], q[6]
         else:                                   # 今日尚無成交
             s2["close"] = prev or s2.get("close")
             s2["change_pct"] = None
@@ -973,14 +977,63 @@ def get_sector_count() -> Dict[str, int]:
 # 總覽統計，還有篩選器能查到的股票，其實都只涵蓋成交量>=200張的股票，跟頁面
 # 標題「市場總覽」（應該代表全市場）不符，也不夠準確。全部改用不設門檻的
 # build_full_universe()，涵蓋全部上市＋上櫃股票。
+def _tick(price: float, etf: bool = False) -> Decimal:
+    """證交所／櫃買升降單位。股票：<10 0.01、<50 0.05、<100 0.1、<500 0.5、<1000 1、其餘 5；ETF：<50 0.01、其餘 0.05。"""
+    if etf:
+        return Decimal("0.01") if price < 50 else Decimal("0.05")
+    for lim, t in ((10, "0.01"), (50, "0.05"), (100, "0.1"), (500, "0.5"), (1000, "1")):
+        if price < lim:
+            return Decimal(t)
+    return Decimal("5")
+
+
+def limit_prices(prev: float, etf: bool = False):
+    """依前一日收盤（參考價）算漲停／跌停價：±10% 後依該價位的升降單位，漲停無條件捨去、跌停無條件進位。"""
+    p = Decimal(str(prev))
+    up, dn = p * Decimal("1.1"), p * Decimal("0.9")
+    tu, td = _tick(float(up), etf), _tick(float(dn), etf)
+    return float((up / tu).to_integral_value(ROUND_FLOOR) * tu), float((dn / td).to_integral_value(ROUND_CEILING) * td)
+
+
+def limit_state(s: Dict) -> int:
+    """+1 收在漲停、-1 收在跌停、0 其他。優先用 MIS 給的漲跌停價；官方日行情則由收盤價－漲跌價差還原參考價自行計算。
+    原本用「漲跌幅 ≥ 9.5%」判斷，會把漲 9.6% 但沒鎖漲停的股票也算成漲停。"""
+    c = s.get("close")
+    if not c:
+        return 0
+    lu, ld = s.get("limit_up_px"), s.get("limit_down_px")
+    if not (lu and ld):
+        chg = s.get("change")
+        if chg is None:
+            return 0
+        prev = c - chg
+        if prev <= 0:
+            return 0
+        lu, ld = limit_prices(prev, bool(s.get("is_etf")))
+    if c >= lu - 1e-6:
+        return 1
+    if c <= ld + 1e-6:
+        return -1
+    return 0
+
+
 def get_market_breadth() -> Dict:
-    universe = build_live_universe()
+    """漲跌家數：只算股票（不含 ETF／ETN，與證交所、櫃買「股票」家數同一口徑）。"""
+    universe = [s for s in build_live_universe() if not s.get("is_etf")]
+    try:   # 新上市前五日無漲跌幅限制：不能用 ±10% 判斷漲跌停
+        import market_extras
+        no_limit = set(((market_extras._cache.get("v") or {}).get("no_limit")) or [])   # 只讀快取，不在這裡觸發抓取
+    except Exception:
+        no_limit = set()
+
+    def _ls(s):
+        return 0 if s.get("code") in no_limit else limit_state(s)
     covered = [s for s in universe if s.get("change_pct") is not None]
     up = [s for s in covered if s["change_pct"] > 0]
     down = [s for s in covered if s["change_pct"] < 0]
     flat = [s for s in covered if s["change_pct"] == 0]
-    limit_up = [s for s in up if s["change_pct"] >= 9.5]
-    limit_down = [s for s in down if s["change_pct"] <= -9.5]
+    limit_up = [s for s in up if _ls(s) == 1]
+    limit_down = [s for s in down if _ls(s) == -1]
 
     # ★ 修正：2026-09-29——使用者回報「市場總覽的上漲加速及下跌加速全部加
     # 起來的數字其實都有錯」。根因（詳見 _get_raw_universe() 修正說明）：
@@ -996,8 +1049,8 @@ def get_market_breadth() -> Dict:
         u = [s for s in cov if s["change_pct"] > 0]
         d = [s for s in cov if s["change_pct"] < 0]
         f = [s for s in cov if s["change_pct"] == 0]
-        lu = [s for s in u if s["change_pct"] >= 9.5]
-        ld = [s for s in d if s["change_pct"] <= -9.5]
+        lu = [s for s in u if _ls(s) == 1]
+        ld = [s for s in d if _ls(s) == -1]
         dates = sorted({s["quote_date"] for s in group if s.get("quote_date")})
         return {
             "total": len(group), "covered": len(cov),
@@ -1016,7 +1069,7 @@ def get_market_breadth() -> Dict:
         "total": len(universe), "covered": len(covered),
         "advancers": len(up), "decliners": len(down), "unchanged": len(flat),
         "limit_up": len(limit_up), "limit_down": len(limit_down),
-        "coverage_ok": len(covered) > 0,
+        "coverage_ok": len(covered) > 0, "scope": "股票（不含 ETF）",
         "tse": tse_breadth, "otc": otc_breadth,
         "dates_mismatch": dates_mismatch,
     }
