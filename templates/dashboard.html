@@ -1176,6 +1176,33 @@ html.force-mobile .nav{height:44px;font-size:15px!important}
 @media(max-width:640px){.phd{padding:14px 14px 12px}.phd h1,.phd-crumb,.phd-r{display:none}.phd p{margin:0;font-size:12.5px}}
 html[data-theme=dark] .empty::before{background-color:var(--s2)}
 </style>
+<style id="skin-ios">
+/* 2026-10-09 iPhone Safari 修正（使用者實機截圖）：頁面被撐寬、頂部列被捲走、側邊欄被蓋、點擊殘留高亮、持倉尺標重疊 */
+html,body{max-width:100%;overflow-x:hidden}
+.shell,.body,.content{max-width:100vw}
+.body{min-width:0}
+@media(max-width:640px){
+  html:not(.force-desktop) body{position:fixed;inset:0;overflow:hidden}
+  html:not(.force-desktop) .top{position:sticky;top:0;z-index:120;padding-top:env(safe-area-inset-top)!important;height:calc(52px + env(safe-area-inset-top))!important;min-width:0}
+  html:not(.force-desktop) .top-l{flex:1 1 auto;min-width:0;overflow:hidden}
+  html:not(.force-desktop) #page-title{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;font-size:17px!important}
+  html:not(.force-desktop) .top-r{flex:0 1 auto;min-width:0;gap:6px!important}
+  html:not(.force-desktop) .mkt-pill{padding:3px 8px!important;font-size:11.5px!important;white-space:nowrap}
+  html:not(.force-desktop) .srch-btn,html:not(.force-desktop) .bell,html:not(.force-desktop) .acct-btn{width:34px!important;height:34px!important;flex:none}
+  html:not(.force-desktop) .side{z-index:400!important;padding-top:env(safe-area-inset-top);height:100dvh}
+  html:not(.force-desktop) .side-backdrop{z-index:390!important}
+  html:not(.force-desktop) .sfoot{margin:6px 12px calc(10px + env(safe-area-inset-bottom))!important;padding:9px 12px!important}
+}
+@media(max-width:360px){html:not(.force-desktop) .mkt-pill{display:none!important}}
+@media(hover:none){
+  .nav:hover:not(.on){background:transparent!important;color:var(--side-tx)!important}
+  .tbl tbody tr:hover,.ovd-row:hover,.ovd-heat .hr:hover{background:transparent}
+}
+.ruler{height:52px!important}
+.ruler .pin.lo{top:34px!important}
+.ruler .now{width:13px!important;height:13px!important;top:16px!important}
+.pos-stats b.na{color:var(--t3)!important}
+</style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 </head>
 <body>
@@ -3675,8 +3702,8 @@ function posCard(p,closed){
     ${closed?'':ruler}
     <div class="pos-stats"><div>持有<b>${safe(p.days_held,0)} 個交易日</b></div><div>現價<b>${safeN(p.last,2)}</b></div>
       <div>離停損<b>${p.cushion_pct!==undefined&&p.cushion_pct!==null?safeN(p.cushion_pct,1)+'%':'—'}</b></div>
-      <div>最大浮盈<b style="color:var(--up)">${p.mfe_r!==undefined?rr(p.mfe_r)+'R':'—'}</b></div>
-      <div>最大浮虧<b style="color:var(--down)">${p.mae_r!==undefined?rr(p.mae_r)+'R':'—'}</b></div></div>
+      <div>最大浮盈${p.mfe_r!=null?`<b style="color:var(--up)">${rr(p.mfe_r)}R</b>`:'<b class="na">—</b>'}</div>
+      <div>最大浮虧${p.mae_r!=null?`<b style="color:var(--down)">${rr(p.mae_r)}R</b>`:'<b class="na">—</b>'}</div></div>
     ${p.stop_suggest?`<div class="sugg"><b>停損建議上移至 ${safeN(p.stop_suggest,2)}</b>　${p.stop_suggest_why}</div>`:''}</div>`;
 }
 async function fetchPositions(){
@@ -4209,7 +4236,7 @@ async function pollFreshness(render){
     const sm=window.innerWidth<640,dd=v=>v?(sm?v.slice(5):v):null;
     if(tb)tb.innerHTML=d.items.map(i=>{const st=_FR_ST[i.status]||_FR_ST.unknown;return `<tr><td><b>${safe(i.name)}</b></td><td class="num">${safe(dd(i.date))}</td><td class="num" style="color:var(--t3)">${safe(dd(i.expected))}</td><td style="color:${st[1]};font-weight:600;white-space:nowrap">${st[0]}</td><td class="fr-x" style="color:var(--t3);white-space:normal">${safe(i.source)}</td><td class="num fr-x" style="color:var(--t3)">${safe(i.publish)}</td></tr>`;}).join('');
     const n=document.getElementById('fr-note');
-    if(n)n.innerHTML=`檢查時間：${safe(d.now)}（台北）。「應有日期」＝今天若已過官方公布時間，否則為上一個交易日。<br>收盤後 14:00～22:00 系統每 10 分鐘自動檢查，哪一項還沒更新就只重抓那一項；網頁每分鐘確認一次，有新資料會自動重新載入並提示。<br>「尚未更新」通常是官方還沒公布（各資料公布時間不同），不是資料算錯。`;
+    if(n)n.innerHTML=`檢查時間：${safe(d.now)}（台北）。「應有日期」＝今天若已過官方公布時間，否則為上一個交易日。<br>收盤後 14:00～22:00 系統每 3 分鐘自動檢查（有人開網頁時遇到落後也會立刻補抓），哪一項還沒更新就只重抓那一項；網頁每分鐘確認一次，有新資料會自動重新載入並提示。<br>「尚未更新」通常是官方還沒公布（各資料公布時間不同），不是資料算錯。`;
   }
 }
 /* 2026-10-08 總覽市場儀表板：排行速覽、籌碼速覽、產業熱度；底部狀態列 */
