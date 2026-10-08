@@ -30,7 +30,9 @@ def test_robots_manifest_favicon(client):
 
 
 def test_rate_limit_returns_429(client, monkeypatch):
-    monkeypatch.setattr(app_module, "_RATE_LIMIT", 3)
+    import protect
+    monkeypatch.setattr(protect, "RATE_LIMIT", 3)
+    protect._rate.clear()
     codes = [client.get("/api/market/inst-streak").status_code for _ in range(5)]
     assert 429 in codes[3:]
 

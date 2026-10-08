@@ -242,3 +242,47 @@ def test_premarket_mode_flag(monkeypatch):
     assert seen["m"] == "premarket" and scanner._mode == "close"
     scanner.run_daily_scan(mode="weird")
     assert scanner._mode == "close"
+
+
+# ───────── protect.py：湧入防護 ─────────
+def test_protect_param_checks_and_cache(cl):
+    import protect
+    login(cl)
+    protect._rate.clear(); protect._heavy_rate.clear(); protect.clear_cache()
+    assert cl.get("/api/instruments/..%2Fetc").status_code in (400, 404)
+    assert cl.get("/api/instruments/AB%20CD").status_code == 400
+    assert cl.get("/api/signals?limit=abc").status_code == 400
+    assert cl.get("/api/signals?limit=99999").status_code == 400
+    r1 = cl.get("/api/signals?limit=5")
+    r2 = cl.get("/api/signals?limit=5")
+    assert r1.status_code == 200 and r2.headers.get("X-Cache") == "HIT" and r1.get_data() == r2.get_data()
+    # 個人資料絕不快取
+    cl.get("/api/my/watchlist"); assert cl.get("/api/my/watchlist").headers.get("X-Cache") is None
+
+
+def test_protect_rate_limit_before_login():
+    import protect
+    from app import app
+    c = app.test_client()
+    protect._rate.clear()
+    codes = [c.get("/api/signals").status_code for _ in range(protect.RATE_LIMIT + 5)]
+    assert codes[-1] == 429                           # 未登入、登入牆有沒有開，都會被限流
+    protect._rate.clear()
+
+
+def test_protect_5xx_sanitized():
+    from app import app
+    from flask import jsonify
+    import protect
+    with app.test_request_context("/api/whatever"):
+        r = jsonify({"error": "secret db password xyz"})
+        r.status_code = 500
+        out = protect.after(r)
+        assert out.status_code == 500 and "secret" not in out.get_data(as_text=True)
+
+
+def test_dashboard_style_tags_balanced():
+    import os
+    s = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html"), encoding="utf-8").read()
+    assert s.count("<style") == s.count("</style>")
+    assert 'id="tabbar"' in s and 'id="acct-menu"' in s
