@@ -39,3 +39,17 @@ def test_job_poll_only_refetches_late(monkeypatch):
     monkeypatch.setattr(taifex, "update_hist", lambda store, data: None)
     monkeypatch.setattr(data_fetcher, "collect_inst_daily", lambda d, s: calls.append("inst") or 0)
     assert fr.job_poll()["did"] == ["taifex"] and calls == ["taifex"]
+
+
+def test_kick_background_is_throttled(monkeypatch):
+    import time as _t
+    ran = []
+    monkeypatch.setattr(fr, "job_poll", lambda: ran.append(1))
+    fr._bg.update(running=False, last=0.0)
+    assert fr.kick_background(min_gap=60) is True
+    for _ in range(50):
+        if not fr._bg["running"]:
+            break
+        _t.sleep(0.01)
+    assert fr.kick_background(min_gap=60) is False      # 一分鐘內不重複
+    assert ran == [1]

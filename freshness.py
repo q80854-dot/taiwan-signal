@@ -2,7 +2,8 @@
 
 兩個用途：
 1. /api/freshness 給網頁顯示「資料更新狀態」，並讓網頁偵測到新資料時自動重新載入；
-2. job_poll()：收盤後的公布時段（平日 14:30～22:00）每 10 分鐘檢查一次，哪一種資料還沒更新到
+2. job_poll()：收盤後的公布時段（平日 14:00～22:00）每 3 分鐘檢查一次；另外網頁查詢時若有資料落後，
+   立刻在背景補抓（kick_background，每分鐘最多一次），哪一種資料還沒更新到
    應有的日期就只重抓那一種，抓到就停（不會一直重打官方 API）。
 
 「應有日期」＝今天（若今天是交易日且已過該資料的官方公布時間），否則為上一個交易日。
@@ -196,3 +197,26 @@ def job_poll() -> Dict:
             pass
         logger.info(f"資料新鮮度補抓：{did}")
     return {"did": did}
+
+
+_bg = {"running": False, "last": 0.0}
+_bg_lock = __import__("threading").Lock()
+
+
+def kick_background(min_gap: float = 60.0) -> bool:
+    """非阻塞：背景執行一次 job_poll()。同時間只跑一個，且距上次至少 min_gap 秒。"""
+    import threading
+    with _bg_lock:
+        if _bg["running"] or time.time() - _bg["last"] < min_gap:
+            return False
+        _bg["running"], _bg["last"] = True, time.time()
+
+    def _run():
+        try:
+            job_poll()
+        except Exception as e:
+            logger.warning(f"freshness background: {e}")
+        finally:
+            _bg["running"] = False
+    threading.Thread(target=_run, daemon=True).start()
+    return True

@@ -1098,6 +1098,7 @@ body{font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHe
 .sfoot{margin:8px 12px 12px!important;padding:11px 12px!important;border:1px solid var(--side-line)!important;border-radius:8px;background:rgba(255,255,255,.03);color:#8a98b0;flex-shrink:0}
 .sfoot .sfr{color:#dbe3f0;font-size:12.5px}
 #breadth-row{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:0!important}
+#inst-result .hero-row>.kpi{padding:14px 18px!important}
 #page-freshness .tbl th:first-child,#page-freshness .tbl td:first-child{padding-left:18px!important}
 @media(max-width:640px){#page-freshness .fr-x{display:none}#page-freshness .tbl{width:100%}#page-freshness .tbl td:first-child{white-space:normal!important}#page-freshness .tbl td,#page-freshness .tbl th{padding:10px 8px!important;font-size:13px}}
 #breadth-row>.kpi{padding:16px 20px!important;border-left:1px solid var(--line)!important}
@@ -2241,6 +2242,24 @@ function instExtraHtml(d){
     </div></div>`;
   }else if((d.ticker||'').includes('.TWO')){
     h+=`<div class="sec-label"><div class="bar"></div><div class="tx">三大法人買賣超</div></div><div class="panel card"><div class="panel-body"><div class="empty">上櫃股票的三大法人逐日資料尚未接入（目前只有證交所 T86 上市資料）</div></div></div>`;
+  }
+  const P=d.peers;
+  if(P&&P.rows&&P.rows.length>1){
+    const n2=v=>v==null?'—':_fmtN(v,2);
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">同產業比較（${safe(P.sector)}，共 ${P.n} 檔）</div></div>
+    <div class="panel card"><div class="panel-body">
+      <div style="font-size:12.5px;color:var(--t2);margin-bottom:8px">產業平均漲跌 ${P.avg_change_pct==null?'—':fmtPct(P.avg_change_pct)}${P.rank_by_change?`；本檔今日漲跌排第 <b>${P.rank_by_change}</b> / ${P.n}`:''}</div>
+      <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>股票</th><th style="text-align:right">股價</th><th style="text-align:right">漲跌</th><th style="text-align:right">成交金額(億)</th><th style="text-align:right">本益比</th><th style="text-align:right">殖利率</th><th style="text-align:right">淨值比</th></tr></thead><tbody>
+      ${P.rows.map(x=>`<tr style="${x.self?'background:var(--accent-soft,rgba(37,99,235,.08));font-weight:600':''}"><td><a href="#" onclick="document.getElementById('inst-ticker').value='${escH(x.code)}';fetchInstrument();return false" style="color:inherit">${safe(x.name)} <span style="color:var(--t3)">${safe(x.code)}</span></a></td><td style="text-align:right">${n2(x.close)}</td><td style="text-align:right">${x.change_pct==null?'—':fmtPct(x.change_pct)}</td><td style="text-align:right">${n2(x.value_yi)}</td><td style="text-align:right">${x.pe?n2(x.pe):'—'}</td><td style="text-align:right">${x.yield_pct==null?'—':n2(x.yield_pct)+'%'}</td><td style="text-align:right">${n2(x.pb)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">同產業依成交金額取前 8 名；本益比／殖利率／淨值比來源：證交所 BWIBBU_ALL、櫃買中心本益比分析（每日收盤後更新，虧損公司本益比顯示「—」）</div>
+    </div></div>`;
+  }
+  const X=d.ex_dividend||[];
+  if(X.length){
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">近期除權息（未來 60 天）</div></div>
+    <div class="panel card"><div class="panel-body">${X.map(x=>`<div class="kv"><span>${safe(x.date)}</span><span>${safe(x.type||'除權息')}${x.cash?`　現金股利 ${safe(x.cash)}`:''}</span></div>`).join('')}
+    <div style="font-size:11px;color:var(--t3);margin-top:6px">來源：證交所 TWT48U／櫃買中心除權息預告</div></div></div>`;
   }
   const M=d.margin;
   if(M){

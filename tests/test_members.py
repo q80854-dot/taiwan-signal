@@ -307,3 +307,18 @@ def test_member_cannot_see_capital_fields_but_owner_can(cl, monkeypatch):
     p2 = cl.get("/api/positions").get_json()["open"][0]
     assert p2["risk_twd"] == 35000 and p2["lots"] == 7
     protect.clear_cache()
+
+
+def test_probing_ip_gets_temporarily_banned(cl, monkeypatch):
+    import protect
+    monkeypatch.setattr(protect, "BAN_DENIES", 5)
+    h = {"CF-Connecting-IP": "203.0.113.9"}
+    for _ in range(10):
+        assert cl.get("/api/me", headers=h).status_code == 200      # 正常請求不計
+    for _ in range(6):
+        cl.get("/api/instruments/<script>", headers=h)               # 代號格式錯誤 → 400
+    assert cl.get("/api/me", headers=h).status_code == 429           # 已封鎖
+    assert cl.get("/api/me", headers={"CF-Connecting-IP": "198.51.100.1"}).status_code == 200   # 其他人不受影響
+    for _ in range(20):
+        cl.get("/api/state", headers={"CF-Connecting-IP": "198.51.100.2"})                       # 未登入 401 不會被封
+    assert cl.get("/api/me", headers={"CF-Connecting-IP": "198.51.100.2"}).status_code == 200
