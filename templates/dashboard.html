@@ -768,6 +768,11 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 .mw-tbl .pill{margin-left:4px;padding:1px 8px;font-size:11.5px}
 html[data-theme=dark] .mw-tab.on{background:var(--navy2);border-color:var(--navy2)}
 html[data-theme=dark] .mw-add input{background:var(--s2)}
+.mem-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
+.mem-k{background:var(--s1);border:1px solid var(--line2);border-radius:6px;padding:12px 14px}
+.mem-k b{display:block;font-size:24px;font-variant-numeric:tabular-nums}.mem-k span{font-size:12px;color:var(--t2)}
+.mem-k.warn b{color:var(--up)}
+.mem-tbl td,.mem-tbl th{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -805,6 +810,7 @@ html[data-theme=dark] .mw-add input{background:var(--s2)}
   <div class="nav"     onclick="go('backtest')">回測</div>
   <div class="nav"     onclick="go('health')">系統檢查</div>
   <div class="nav"     onclick="go('diag')">系統診斷</div>
+  <div class="nav"     onclick="go('members')">會員統計</div>
   <div class="nav-g">關於</div>
   <div class="nav"     onclick="go('guide')">使用說明</div>
   <div class="nav"     onclick="go('method')">方法論與風險聲明</div>
@@ -1290,7 +1296,7 @@ html[data-theme=dark] .mw-add input{background:var(--s2)}
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
           <p><b>2026-10-08</b></p>
-          <p><b>會員與自選股</b><br>・新增 Google 登入（只用 Google 帳號驗證，網站不保存任何密碼；登入功能設定完成後才會出現登入按鈕）。<br>・「觀察清單」升級為「自選股」：登入後每人有自己的多組清單，可用代號或名稱搜尋加入，表格顯示成交價、漲跌、漲跌幅、成交量，並標示目前的訊號與處置／注意、暫停交易等狀態；點欄位標題可排序，每 60 秒自動更新。<br>・上櫃的處置股、注意股、變更交易、暫停交易名單已納入排除與市場總覽表格。</p>
+          <p><b>會員與自選股</b><br>・新增 Google 登入（只用 Google 帳號驗證，網站不保存任何密碼；登入功能設定完成後才會出現登入按鈕）。<br>・「觀察清單」升級為「自選股」：登入後每人有自己的多組清單，可用代號或名稱搜尋加入，表格顯示成交價、漲跌、漲跌幅、成交量，並標示目前的訊號與處置／注意、暫停交易等狀態；點欄位標題可排序，每 60 秒自動更新。<br>・上櫃的處置股、注意股、變更交易、暫停交易名單已納入排除與市場總覽表格。<br>・新增「盤前掃描」：平日 08:20 先掃描一次全市場，與 16:30 的盤後掃描互補；盤前只推新訊號與簡短摘要。<br>・未登入首頁改版，公開顯示加權指數走勢；登入後才能使用站內資料。後台頁面（策略學習、系統檢查、資料稽核、系統診斷、回測、會員統計）只有站主看得到。<br>・登入資安加強：登入頻率限制、跨站請求檢查、可「登出所有裝置」、站主可停權會員，並記錄登入成功與失敗（IP 只存雜湊）。</p>
           <p><b>2026-10-07</b></p>
           <p><b>資料更準、更即時</b><br>・盤中改用證交所「官方即時」資料，全市場約每 5 分鐘更新一次，上市、上櫃同一時點；並自動核對昨收價與官方是否吻合。<br>・收盤後保存當日「定案」的開高低收量，16:30 掃描優先採用官方當日 K 棒，不再用推估值。<br>・訊號的假想進場價改為「發出訊號後下一根 K 棒的開盤價」，績效更貼近實際能成交的價格。<br>・修正部分標的（例如 00631L）抓不到資料的問題。<br>・系統升級至 Pro 方案，查詢與掃描更快、更穩。</p>
           <p><b>新增證交所／期交所資料</b><br>・暫停交易、分盤交易（變更交易）的股票自動排除，不再出訊號。<br>・個股頁顯示：停資停券、新上市首五日無漲跌幅、是否為當沖標的、可借券賣出股數。<br>・個股頁顯示融券與借券賣出餘額與 5 日變化（資料自今日起逐日累積）。<br>・市場總覽新增「期交所籌碼」：外資／投信／自營商期貨未平倉（大台等效）、選擇權、Put/Call 比、前十大交易人。以上都只顯示、不改變訊號分數（驗證前不加規則）。<br>・資料量與 API 統計：可在系統檢查查看。</p>
@@ -1306,6 +1312,16 @@ html[data-theme=dark] .mw-add input{background:var(--s2)}
   <div class="page" id="page-diag">
     <div class="pad">
     <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統診斷</span></div><div class="panel-body" id="diag-body"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
+    </div>
+  </div>
+
+  <div class="page" id="page-members">
+    <div class="pad">
+    <div id="mem-kpi" class="mem-kpi"></div>
+    <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">近 30 天登入次數</span></div><div class="panel-body" id="mem-chart"></div></div>
+    <div class="panel card" style="margin-top:14px"><div class="panel-head"><div class="bar"></div><span class="panel-title">會員名單</span></div><div style="overflow-x:auto" id="mem-table"></div></div>
+    <div class="panel card" style="margin-top:14px"><div class="panel-head"><div class="bar" style="background:var(--alert)"></div><span class="panel-title">最近登入紀錄（含失敗）</span></div><div style="overflow-x:auto" id="mem-events"></div></div>
+    <div class="mut" style="margin-top:8px">登入紀錄只保留 90 天；IP 只存單向雜湊的前 8 碼，不保存原始 IP。停權的會員無法再登入，現有登入也會立刻失效。</div>
     </div>
   </div>
 
@@ -1425,7 +1441,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷'};
+const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷',members:'會員統計'};
 let _marketOverviewLoaded=false;
 async function fetchCalendar(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
@@ -1594,6 +1610,7 @@ function go(id){
   if(id==='events')fetchEvents();
   if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
   if(id==='diag')fetchDiag();
+  if(id==='members')loadMembersPage();
   closeSide();
 }
 function goToInstrument(ticker){
@@ -2251,7 +2268,7 @@ async function loadMe(force){
   loginWall();applyRoleUI();
   const q=new URLSearchParams(location.search).get('login');
   if(q){history.replaceState(null,'',location.pathname);
-    toast(q==='ok'?'登入成功':q==='failed'?'登入失敗，請再試一次':'尚未啟用會員登入');}
+    toast(({ok:'登入成功',failed:'登入失敗，請再試一次',busy:'嘗試次數過多，請稍後再試',banned:'此帳號已被停用，如有疑問請聯絡站主'})[q]||'尚未啟用會員登入');}
   return _me;
 }
 function loginWall(){
@@ -2261,44 +2278,94 @@ function loginWall(){
   if(w)return;
   w=document.createElement('div');w.id='login-wall';
   w.setAttribute('role','dialog');w.setAttribute('aria-label','歡迎');
-  w.style.cssText='position:fixed;inset:0;z-index:9999;overflow-y:auto;background:var(--bg,#f4f5f7);color:var(--ink,#0b1f3a)';
+  w.style.cssText='position:fixed;inset:0;z-index:9999;overflow-y:auto;background:var(--bg,#f4f5f7);color:var(--ink,#0b1f3a);scroll-behavior:smooth';
   const go='onclick="location.href=\'/auth/google\'"';
+  const G='<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.3 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.4 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.8-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.8 2.3-8.4 2.3-6.3 0-11.7-4.1-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>';
+  const ic=(p)=>`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
   w.innerHTML=`<style>
-  #login-wall .lw-bar{display:flex;align-items:center;gap:22px;padding:14px max(20px,calc((100% - 1160px)/2));border-bottom:1px solid var(--line2,#e3e6ec);background:var(--s1,#fff)}
-  #login-wall .lw-brand{font-weight:700;font-size:16px;letter-spacing:.02em;margin-right:auto}
-  #login-wall .lw-link{font-size:13.5px;color:var(--t2,#55607a);text-decoration:none}
-  #login-wall .lw-main{max-width:1160px;margin:0 auto;padding:44px 20px 24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:44px;align-items:center}
-  #login-wall h1{font-size:clamp(30px,4.4vw,50px);line-height:1.15;margin:0 0 16px;font-weight:700;letter-spacing:-.01em}
-  #login-wall .lw-sub{font-size:15.5px;line-height:1.75;color:var(--t2,#55607a);margin:0 0 26px;max-width:30em}
-  #login-wall .lw-cta{display:inline-flex;align-items:center;gap:10px;background:var(--navy,#0b1f3a);color:#fff;border:0;border-radius:999px;padding:14px 28px;font:inherit;font-size:15px;font-weight:600;cursor:pointer}
-  #login-wall .lw-cta:hover{filter:brightness(1.15)}
-  #login-wall .lw-fine{font-size:12px;color:var(--t3,#8a93a8);margin-top:14px}
-  #login-wall .lw-card{background:var(--s1,#fff);border:1px solid var(--line2,#e3e6ec);border-radius:18px;padding:18px 20px 12px;box-shadow:0 8px 30px rgba(11,31,58,.06)}
-  #login-wall .lw-k{font-size:13px;color:var(--t2,#55607a)}
-  #login-wall .lw-p{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
-  #login-wall .lw-p small{font-size:14px;font-weight:600;margin-left:8px}
-  #login-wall .lw-feat{max-width:1160px;margin:8px auto 0;padding:28px 20px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
-  #login-wall .lw-f{border-top:2px solid var(--navy,#0b1f3a);padding-top:12px}
-  #login-wall .lw-f b{display:block;font-size:15px;margin-bottom:6px}
-  #login-wall .lw-f span{font-size:13.5px;line-height:1.7;color:var(--t2,#55607a)}
-  #login-wall footer{max-width:1160px;margin:0 auto;padding:18px 20px 40px;font-size:12px;color:var(--t3,#8a93a8);line-height:1.7}
-  @media(max-width:820px){#login-wall .lw-main{grid-template-columns:1fr;gap:26px;padding-top:28px}#login-wall .lw-feat{grid-template-columns:1fr}#login-wall .lw-link{display:none}}
+  #login-wall{--lw-line:var(--line2,#e3e6ec);--lw-mut:var(--t2,#55607a);--lw-soft:var(--t3,#8a93a8);--lw-card:var(--s1,#fff);--lw-ink:var(--navy,#0b1f3a)}
+  #login-wall *{box-sizing:border-box}
+  #login-wall .lw-bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:26px;padding:12px max(20px,calc((100% - 1160px)/2));background:color-mix(in srgb,var(--lw-card) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--lw-line)}
+  #login-wall .lw-brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:16px;margin-right:auto}
+  #login-wall .lw-mark{width:28px;height:28px;border-radius:8px;background:var(--lw-ink);display:grid;place-items:center}
+  #login-wall .lw-link{font-size:13.5px;color:var(--lw-mut);text-decoration:none;cursor:pointer}
+  #login-wall .lw-link:hover{color:var(--lw-ink)}
+  #login-wall .lw-in{border:1px solid var(--lw-line);background:transparent;color:inherit;border-radius:999px;padding:7px 18px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}
+  #login-wall .lw-hero{position:relative;overflow:hidden}
+  #login-wall .lw-hero::before{content:"";position:absolute;inset:-20% -10% auto auto;width:62%;height:120%;background:radial-gradient(closest-side,color-mix(in srgb,var(--up,#d93a3a) 14%,transparent),transparent 70%);pointer-events:none}
+  #login-wall .lw-hero::after{content:"";position:absolute;inset:auto auto -30% -12%;width:50%;height:90%;background:radial-gradient(closest-side,color-mix(in srgb,var(--lw-ink) 12%,transparent),transparent 70%);pointer-events:none}
+  #login-wall .lw-main{position:relative;z-index:1;max-width:1160px;margin:0 auto;padding:64px 20px 56px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.08fr);gap:56px;align-items:center}
+  #login-wall h1{font-size:clamp(32px,4.8vw,56px);line-height:1.12;margin:0 0 18px;font-weight:800;letter-spacing:-.015em}
+  #login-wall .lw-sub{font-size:16px;line-height:1.8;color:var(--lw-mut);margin:0 0 28px;max-width:31em}
+  #login-wall .lw-cta{display:inline-flex;align-items:center;gap:12px;background:var(--lw-ink);color:#fff;border:0;border-radius:999px;padding:8px 26px 8px 8px;font:inherit;font-size:15px;font-weight:600;cursor:pointer;box-shadow:0 8px 24px color-mix(in srgb,var(--lw-ink) 28%,transparent);transition:transform .15s,box-shadow .15s}
+  #login-wall .lw-cta:hover{transform:translateY(-1px);box-shadow:0 12px 28px color-mix(in srgb,var(--lw-ink) 34%,transparent)}
+  #login-wall .lw-cta i{width:38px;height:38px;border-radius:50%;background:#fff;display:grid;place-items:center}
+  #login-wall .lw-ghost{display:inline-block;margin-left:18px;font-size:14px;color:var(--lw-mut);cursor:pointer;text-decoration:underline;text-underline-offset:4px}
+  #login-wall .lw-trust{display:flex;gap:18px;flex-wrap:wrap;margin-top:22px;font-size:12.5px;color:var(--lw-soft)}
+  #login-wall .lw-trust span::before{content:"✓";margin-right:6px;color:var(--lw-ink);font-weight:700}
+  #login-wall .lw-card{background:var(--lw-card);border:1px solid var(--lw-line);border-radius:22px;padding:22px 24px 14px;box-shadow:0 24px 60px rgba(11,31,58,.10)}
+  #login-wall .lw-row{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  #login-wall .lw-k{font-size:13.5px;color:var(--lw-mut);font-weight:600}
+  #login-wall .lw-p{font-size:36px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.01em;margin-top:4px}
+  #login-wall .lw-p small{font-size:15px;font-weight:700;margin-left:10px}
+  #login-wall .lw-draw{stroke-dasharray:1;stroke-dashoffset:1;animation:lwdraw 1.4s ease-out .15s forwards}
+  @keyframes lwdraw{to{stroke-dashoffset:0}}
+  @media(prefers-reduced-motion:reduce){#login-wall .lw-draw{animation:none;stroke-dashoffset:0}#login-wall *{scroll-behavior:auto;transition:none!important}}
+  #login-wall .lw-fine{font-size:12px;color:var(--lw-soft)}
+  #login-wall .lw-sec{max-width:1160px;margin:0 auto;padding:56px 20px 8px}
+  #login-wall h2{font-size:26px;margin:0 0 6px;font-weight:800;letter-spacing:-.01em}
+  #login-wall .lw-lead{color:var(--lw-mut);font-size:14.5px;margin:0 0 26px}
+  #login-wall .lw-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border:1px solid var(--lw-line);border-radius:18px;background:var(--lw-card);overflow:hidden}
+  #login-wall .lw-step{padding:24px 24px 26px;border-right:1px solid var(--lw-line)}
+  #login-wall .lw-step:last-child{border-right:0}
+  #login-wall .lw-step em{font-style:normal;font-size:12px;font-weight:700;color:var(--lw-soft)}
+  #login-wall .lw-step b{display:block;font-size:17px;margin:8px 0 8px}
+  #login-wall .lw-step span{font-size:13.5px;line-height:1.75;color:var(--lw-mut)}
+  #login-wall .lw-feat{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+  #login-wall .lw-f{background:var(--lw-card);border:1px solid var(--lw-line);border-radius:18px;padding:22px}
+  #login-wall .lw-f i{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--lw-ink) 9%,transparent);color:var(--lw-ink);margin-bottom:14px}
+  #login-wall .lw-f b{display:block;font-size:16px;margin-bottom:6px}
+  #login-wall .lw-f span{font-size:13.5px;line-height:1.75;color:var(--lw-mut)}
+  #login-wall details{background:var(--lw-card);border:1px solid var(--lw-line);border-radius:14px;padding:14px 18px;margin-bottom:10px}
+  #login-wall summary{cursor:pointer;font-weight:600;font-size:14.5px}
+  #login-wall details p{margin:10px 0 2px;font-size:13.5px;line-height:1.8;color:var(--lw-mut)}
+  #login-wall .lw-end{max-width:1160px;margin:40px auto 0;padding:0 20px}
+  #login-wall .lw-endbox{background:var(--lw-ink);color:#fff;border-radius:24px;padding:38px 34px;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+  #login-wall .lw-endbox b{font-size:22px;margin-right:auto}
+  #login-wall .lw-endbox button{background:#fff;color:var(--lw-ink);border:0;border-radius:999px;padding:12px 26px;font:inherit;font-weight:700;cursor:pointer}
+  #login-wall footer{max-width:1160px;margin:0 auto;padding:26px 20px 56px;font-size:12px;color:var(--lw-soft);line-height:1.8}
+  @media(max-width:860px){#login-wall .lw-main{grid-template-columns:1fr;gap:34px;padding:34px 20px 36px}#login-wall .lw-steps,#login-wall .lw-feat{grid-template-columns:1fr}#login-wall .lw-step{border-right:0;border-bottom:1px solid var(--lw-line)}#login-wall .lw-step:last-child{border-bottom:0}#login-wall .lw-link{display:none}#login-wall .lw-card{padding:18px 16px 10px}#login-wall .lw-p{font-size:30px}}
   </style>
-  <div class="lw-bar"><span class="lw-brand">台股波段</span><a class="lw-link">市場</a><a class="lw-link">訊號</a><a class="lw-link">自選股</a><button class="btn" ${go}>登入</button></div>
-  <div class="lw-main">
+  <div class="lw-bar"><span class="lw-brand"><span class="lw-mark">${ic('<path d="M3 17l6-7 4 4 8-9" stroke="#fff"/>')}</span>台股波段</span><a class="lw-link" data-t="lw-how">運作方式</a><a class="lw-link" data-t="lw-feat">功能</a><a class="lw-link" data-t="lw-faq">常見問題</a><button class="lw-in" ${go}>登入</button></div>
+  <div class="lw-hero"><div class="lw-main">
     <div><h1>先看清楚市場，<br>再決定要不要出手。</h1>
-      <p class="lw-sub">每天盤後掃描全市場，整理出有條件的波段訊號，並把處置、注意、暫停交易等風險一起標示。搭配即時市場總覽與你自己的自選股。</p>
-      <button class="lw-cta" ${go}>使用 Google 免費登入</button>
-      <div class="lw-fine">不收費，網站不保存密碼，只用 Google 帳號確認身分。</div></div>
-    <div class="lw-card" aria-live="polite"><div class="lw-k" id="lw-name">加權指數</div><div class="lw-p" id="lw-price">—</div><div id="lw-chart" style="height:170px;margin-top:6px"></div><div class="lw-fine" id="lw-note" style="margin:6px 0 4px"></div></div>
+      <p class="lw-sub">每個交易日盤前與盤後各掃描一次全市場，整理出符合條件的波段訊號，並把處置、注意、暫停交易等風險一起標示。再搭配市場總覽與你自己的自選股。</p>
+      <div><button class="lw-cta" ${go}><i>${G}</i>使用 Google 免費登入</button><a class="lw-ghost" data-t="lw-how">先看看怎麼運作</a></div>
+      <div class="lw-trust"><span>完全免費</span><span>不保存密碼</span><span>資料來自證交所、櫃買中心、期交所</span></div></div>
+    <div class="lw-card" aria-live="polite"><div class="lw-row"><span class="lw-k" id="lw-name">加權指數</span></div><div class="lw-p" id="lw-price">—</div><div id="lw-chart" style="height:190px;margin-top:8px"></div><div class="lw-fine" id="lw-note" style="margin:8px 0 6px"></div></div>
+  </div></div>
+  <div class="lw-sec" id="lw-how"><h2>從掃描到提醒，只有三步</h2><p class="lw-lead">所有條件都寫在方法論裡，登入後可以完整查看。</p>
+    <div class="lw-steps">
+      <div class="lw-step"><em>1</em><b>盤前、盤後各掃一次</b><span>平日 08:20 與 16:30 掃描上市上櫃全部股票，納入隔夜消息與最新的處置、暫停交易名單。</span></div>
+      <div class="lw-step"><em>2</em><b>先排除風險，再看訊號</b><span>處置、變更交易與暫停交易的股票直接排除，同產業不重複塞滿，市場偏弱時自動減少訊號數。</span></div>
+      <div class="lw-step"><em>3</em><b>進場、停損、停利一次給</b><span>每個訊號都附上假想進場價、停損與停利，並追蹤實際結果，績效公開檢視。</span></div>
+    </div></div>
+  <div class="lw-sec" id="lw-feat"><h2>登入後可以用到</h2><p class="lw-lead">每個人的自選股與設定彼此獨立。</p>
+    <div class="lw-feat">
+      <div class="lw-f"><i>${ic('<path d="M4 19V5M4 19h16"/><path d="M8 15l4-5 3 3 5-6"/>')}</i><b>每日波段訊號</b><span>多空條件、停損停利與追高風險，並可回頭查看歷史績效。</span></div>
+      <div class="lw-f"><i>${ic('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>')}</i><b>市場總覽</b><span>上市上櫃漲跌家數、產業排行、處置注意股名單與期交所籌碼。</span></div>
+      <div class="lw-f"><i>${ic('<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.5 2.9 1-6.1L3.2 9.5l6.1-.9z"/>')}</i><b>自選股</b><span>多組清單、約 5 分鐘更新的報價，並標示訊號與風險狀態。</span></div>
+    </div></div>
+  <div class="lw-sec" id="lw-faq"><h2>常見問題</h2><p class="lw-lead"></p>
+    <details><summary>要付費嗎？</summary><p>不用。目前所有功能都免費，只需要一個 Google 帳號。</p></details>
+    <details><summary>你們會保存我的哪些資料？</summary><p>只保存 Google 帳號的識別碼、Email 與顯示名稱、你建立的自選股，以及登入時間。不保存密碼；IP 只存單向雜湊，不保存原始位址；資料不販售、不提供給第三方。</p></details>
+    <details><summary>這是投資建議嗎？</summary><p>不是。訊號與數據僅供研究與學習參考，投資一定有風險，請自行評估並自負盈虧。</p></details>
+    <details><summary>報價是即時的嗎？</summary><p>約每 5 分鐘更新一次，來源為證交所公開資料，存在延遲，不適合當作下單依據。</p></details>
   </div>
-  <div class="lw-feat">
-    <div class="lw-f"><b>每日波段訊號</b><span>多空條件、停損與停利一起給，並排除處置與暫停交易的股票。</span></div>
-    <div class="lw-f"><b>市場總覽</b><span>上市上櫃漲跌家數、產業排行、期交所籌碼，一頁看完。</span></div>
-    <div class="lw-f"><b>自選股</b><span>多組清單、即時報價、訊號與風險標示，每個人各自獨立。</span></div>
-  </div>
-  <footer>本站內容僅供研究與學習參考，不構成任何投資建議；投資一定有風險，請自行評估並自負盈虧。指數為延遲資料。</footer>`;
+  <div class="lw-end"><div class="lw-endbox"><b>準備好了嗎？用 Google 登入就能開始。</b><button ${go}>使用 Google 登入</button></div></div>
+  <footer>本站內容僅供研究與學習參考，不構成任何投資建議；投資一定有風險，請自行評估並自負盈虧。指數與報價為延遲資料。</footer>`;
   document.body.appendChild(w);
+  w.querySelectorAll('[data-t]').forEach(a=>a.addEventListener('click',()=>{const t=w.querySelector('#'+a.dataset.t);if(t)t.scrollIntoView({behavior:'smooth',block:'start'});}));
   fetch('/api/public/pulse',{cache:'no-store'}).then(r=>r.json()).then(d=>{
     if(!d||!d.ok||d.price==null){document.getElementById('lw-note').textContent='目前尚無指數資料';return;}
     const up=(d.chg||0)>=0,c=up?'var(--up,#d93a3a)':'var(--down,#1a9e5c)';
@@ -2306,16 +2373,39 @@ function loginWall(){
     const pts=(d.series||[]).map(p=>p[1]).filter(v=>v!=null);
     if(d.prev!=null)pts.unshift(d.prev);
     const el=document.getElementById('lw-chart');
-    if(pts.length>=2){const W=520,H=170,lo=Math.min(...pts),hi=Math.max(...pts),r=(hi-lo||1)*.1,L=lo-r,Hh=hi+r;
+    if(pts.length>=2){const W=560,H=190,lo=Math.min(...pts),hi=Math.max(...pts),r=(hi-lo||1)*.12,L=lo-r,Hh=hi+r;
       const X=i=>(i/(pts.length-1)*W).toFixed(1),Y=v=>((1-(v-L)/(Hh-L))*H).toFixed(1);
       const dd=pts.map((v,i)=>(i?'L':'M')+X(i)+' '+Y(v)).join(' ');
-      el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" role="img" aria-label="加權指數當日走勢"><path d="${dd} L${W} ${H} L0 ${H} Z" fill="${c}" opacity=".12"/><path d="${dd}" fill="none" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;}
-    document.getElementById('lw-note').textContent=(d.date||'')+(d.market_open?' 盤中，約每 5 分鐘更新':' 最近一次資料');
+      const py=Y(d.prev!=null?d.prev:pts[0]);
+      el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" role="img" aria-label="加權指數當日走勢"><defs><linearGradient id="lwg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c}" stop-opacity=".28"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></linearGradient></defs><line x1="0" x2="${W}" y1="${py}" y2="${py}" stroke="currentColor" opacity=".18" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/><path d="${dd} L${W} ${H} L0 ${H} Z" fill="url(#lwg)"/><path class="lw-draw" pathLength="1" d="${dd}" fill="none" stroke="${c}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;}
+    document.getElementById('lw-note').textContent=(d.date||'')+(d.market_open?' 盤中，約每 5 分鐘更新':' 最近一次資料')+'；虛線為昨收';
   }).catch(()=>{});
+}
+async function loadMembersPage(){
+  let d;try{const r=await fetch('/api/admin/members',{cache:'no-store'});if(!r.ok)throw 0;d=await r.json();}
+  catch(e){document.getElementById('mem-kpi').innerHTML='<div class="empty">會員統計載入失敗（需要站主身分登入）</div>';return;}
+  const k=(v,l,w)=>`<div class="mem-k${w?' warn':''}"><b>${v}</b><span>${l}</span></div>`;
+  document.getElementById('mem-kpi').innerHTML=k(d.total,'會員總數')+k(d.new_today,'今日新增')+k(d.new_7d,'近 7 天新增')+k(d.active_today,'今日登入人數')+k(d.active_7d,'7 天內活躍')+k(d.active_30d,'30 天內活躍')+k(d.watch_total,'自選股總檔數')+k(d.fails_24h,'24 小時登入失敗',d.fails_24h>0)+k(d.disabled,'已停權');
+  const S=d.series,mx=Math.max(1,...S.map(x=>x.ok+x.fail)),W=720,H=140,bw=W/S.length;
+  document.getElementById('mem-chart').innerHTML=`<svg viewBox="0 0 ${W} ${H+22}" width="100%" role="img" aria-label="近30天登入次數">${S.map((x,i)=>{const h=x.ok/mx*H,f=x.fail/mx*H;return `<rect x="${(i*bw+2).toFixed(1)}" y="${(H-h).toFixed(1)}" width="${(bw-4).toFixed(1)}" height="${h.toFixed(1)}" fill="var(--navy)" opacity=".85"><title>${x.d}：成功 ${x.ok}、失敗 ${x.fail}</title></rect>`+(f?`<rect x="${(i*bw+2).toFixed(1)}" y="${(H-h-f).toFixed(1)}" width="${(bw-4).toFixed(1)}" height="${f.toFixed(1)}" fill="var(--up)"/>`:'');}).join('')}<text x="0" y="${H+16}" font-size="11" fill="var(--t3)">${S[0].d}</text><text x="${W}" y="${H+16}" font-size="11" fill="var(--t3)" text-anchor="end">${S[S.length-1].d}</text></svg><div class="mut">深色＝成功登入，紅色＝失敗；最高一天 ${mx} 次。</div>`;
+  document.getElementById('mem-table').innerHTML=`<table class="tbl mem-tbl"><thead><tr><th>名稱</th><th>Email</th><th>加入日</th><th>最後登入</th><th class="r">登入次數</th><th class="r">自選股</th><th>狀態</th><th></th></tr></thead><tbody>${d.members.map(m=>`<tr><td>${esc2(m.name||'—')}${m.owner?' <span class="pill">站主</span>':''}</td><td>${esc2(m.email)}</td><td>${esc2(m.created)}</td><td>${esc2(m.last_login)}</td><td class="num r">${m.logins}</td><td class="num r">${m.watch}</td><td>${m.disabled?'<span class="pill warn">已停權</span>':'正常'}</td><td>${m.owner?'':`<button class="btn" data-s="${escA(m.sub)}" data-d="${m.disabled?0:1}" onclick="memberToggle(this)">${m.disabled?'恢復':'停權'}</button>`}</td></tr>`).join('')||'<tr><td colspan="8" class="mut" style="padding:14px">尚無會員</td></tr>'}</tbody></table>`;
+  document.getElementById('mem-events').innerHTML=`<table class="tbl mem-tbl"><thead><tr><th>時間</th><th>結果</th><th>Email</th><th>原因</th><th>來源（雜湊）</th><th>瀏覽器</th></tr></thead><tbody>${d.events.map(e=>`<tr><td>${esc2(new Date(e.at).toLocaleString('zh-TW',{hour12:false}))}</td><td>${e.ok?'成功':'<span class="pill warn">失敗</span>'}</td><td>${esc2(e.email||'—')}</td><td>${esc2(e.reason)}</td><td>${esc2(e.ip)}</td><td>${esc2(e.ua)}</td></tr>`).join('')||'<tr><td colspan="6" class="mut" style="padding:14px">近 30 天沒有登入紀錄</td></tr>'}</tbody></table>`;
+}
+async function memberToggle(b){
+  const dis=b.dataset.d==='1';
+  if(dis&&!confirm('停權後這位會員無法登入，現有登入也會立刻失效。確定嗎？'))return;
+  const r=await fetch('/api/admin/members/status',{method:'POST',headers:TS_H,body:JSON.stringify({sub:b.dataset.s,disabled:dis})});
+  const x=await r.json().catch(()=>({}));if(!r.ok){toast(x.error||'操作失敗');return;}
+  toast(dis?'已停權':'已恢復');loadMembersPage();
+}
+async function logoutAll(){
+  if(!confirm('要登出所有裝置嗎？包含這台，之後都需要重新登入。'))return;
+  try{await fetch('/auth/logout_all',{method:'POST',headers:TS_H});}catch(e){}
+  _mw.data=null;_wl=[];setEl('wl-count-badge',0);await loadMe(true);toast('已登出所有裝置');
 }
 function applyRoleUI(){
   if(!_me.login_enabled)return;
-  const owner=!!(_me.user&&_me.user.owner),OWN=['learning','health','audit','diag','backtest'];
+  const owner=!!(_me.user&&_me.user.owner),OWN=['learning','health','audit','diag','backtest','members'];
   document.querySelectorAll('.nav').forEach(n=>{const oc=n.getAttribute('onclick')||'';
     if(OWN.some(p=>oc.includes("'"+p+"'")))n.style.display=owner?'':'none';});
   document.querySelectorAll('.nav-g').forEach(g=>{if(g.textContent.trim()==='工具')g.style.display=owner?'':'none';});
@@ -2403,7 +2493,7 @@ function mwDraw(keepInput){
     <div class="mw-add"><div class="gs" style="position:relative;max-width:420px"><input id="mw-in" placeholder="輸入代號或名稱，加入「${escA(d.grp)}」" autocomplete="off" spellcheck="false" oninput="mwSearch()" value="${escA(typed)}"><div id="mw-dd" class="gs-dd"></div></div></div>
     ${rows.length?`<div class="panel card" style="margin-top:12px"><div style="overflow-x:auto"><table class="tbl mw-tbl"><thead><tr>${th('code','代號')}${th('name','名稱')}${th('price','成交價','r')}${th('change','漲跌','r')}${th('change_pct','漲跌幅','r')}${th('volume_lots','成交量（張）','r')}<th>訊號</th><th>狀態</th><th></th></tr></thead><tbody>${body}</tbody></table></div></div>`
       :'<div class="empty" style="margin-top:12px"><div class="empty-label">這個清單還是空的</div>在上面輸入代號或名稱加入，或在訊號卡按 ☆。</div>'}
-    <div class="mut" style="margin-top:8px">${live?'報價為證交所官方即時快照（約 5 分鐘更新）':'報價為最近一個交易日收盤資料'}；每 60 秒自動更新。清單上限 ${100} 檔。</div>`;
+    <div class="mut" style="margin-top:8px">${live?'報價為證交所官方即時快照（約 5 分鐘更新）':'報價為最近一個交易日收盤資料'}；每 60 秒自動更新。清單上限 ${100} 檔。　<a href="#" onclick="logoutAll();return false">登出所有裝置</a></div>`;
 }
 function mwSort(c){_mw.sort=_mw.sort.k===c?{k:c,d:-_mw.sort.d}:{k:c,d:(c==='code'||c==='name')?1:-1};mwDraw(true);}
 async function mwGroup(n){_mw.grp=n;_mw.data=null;await renderMyWatch();}
