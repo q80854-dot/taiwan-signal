@@ -215,6 +215,11 @@ def _take_snapshot(save_live=True, save_bars=False):
         logger.warning(f"quality_check: {_e}")
     if save_live and snap["n_ok"] > 0:
         store.set_meta("intraday_snapshot", snap)
+        if any((v or {}).get("price") for v in (snap.get("indices") or {}).values()):
+            try:
+                store.set_meta("index_last", snap["indices"])      # 最後一次成功的指數（供未登入首頁在來源失敗時顯示）
+            except Exception as _e:
+                logger.warning(f"index_last: {_e}")
         try:
             _append_index_series(store, snap)
         except Exception as _e:
@@ -1352,6 +1357,8 @@ def api_public_pulse():
         from state_store import store
         snap = store.get_meta("intraday_snapshot") or {}
         idx = snap.get("indices") or {}
+        if not any((v or {}).get("price") for v in idx.values()):
+            idx = store.get_meta("index_last") or {}            # 即時來源失敗時退回最後一次成功的指數
         name = "TAIEX" if "TAIEX" in idx else next(iter(idx), None)
         v = idx.get(name) or {}
         cur = store.get_meta("index_intraday") or {}
