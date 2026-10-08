@@ -79,6 +79,9 @@ def test_need_newer_only_after_publish_time():
     assert tf._need_newer("2026-10-08", datetime(2026, 10, 8, 16, 0)) is False
     assert tf._need_newer("2026-10-07", datetime(2026, 10, 8, 10, 0)) is False     # 盤中不急著找
     assert tf._need_newer("2026-10-09", datetime(2026, 10, 10, 16, 0)) is False    # 週六
+    # 過了午夜（例如凌晨 1 點）仍要能判斷資料落後，才會去抓已更新的網站 CSV（2026-10-09 修正前這裡會誤判為 False）
+    assert tf._need_newer("2026-10-07", datetime(2026, 10, 9, 1, 0)) is True
+    assert tf._expected_date(datetime(2026, 10, 9, 1, 0)) == "2026-10-08"           # 凌晨 → 應有日期是上一個平日
 
 
 def test_fetch_taifex_uses_web_when_openapi_stale(monkeypatch):

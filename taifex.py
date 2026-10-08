@@ -154,7 +154,7 @@ def parse_futures_csv(text: str) -> Dict:
 
 
 def fetch_futures_web(day: Optional[datetime] = None) -> Dict:
-    d = (day or _tpe_now()).strftime("%Y/%m/%d")
+    d = (day or _expected_dt()).strftime("%Y/%m/%d")
     r = requests.post(WEB, data={"queryStartDate": d, "queryEndDate": d, "commodityId": ""},
                       headers={"User-Agent": HEADERS["User-Agent"]}, timeout=20)
     if r.status_code != 200 or not r.content.strip():
@@ -170,12 +170,27 @@ def fetch_futures_web(day: Optional[datetime] = None) -> Dict:
     return parse_futures_csv(text)
 
 
+def _expected_dt(now: Optional[datetime] = None) -> datetime:
+    """三大法人「現在應該至少有哪一天」的交易日：平日 15:00 後＝今天，否則上一個平日。
+    （不判斷國定假日；假日時官方沒有資料，頂多多查幾次、成本很低。）"""
+    from datetime import timedelta
+    d = now or _tpe_now()
+    if not (d.weekday() <= 4 and d.hour >= 15):
+        d = d - timedelta(days=1)
+        while d.weekday() > 4:
+            d -= timedelta(days=1)
+    return d
+
+
+def _expected_date(now: Optional[datetime] = None) -> str:
+    return _expected_dt(now).strftime("%Y-%m-%d")
+
+
 def _need_newer(date: Optional[str], now: Optional[datetime] = None) -> bool:
-    """平日 15:00 後，資料日期還不是今天 → 需要找更新的來源（期交所日盤約 14:30～15:00 後公布三大法人）。"""
-    now = now or _tpe_now()
-    if now.weekday() > 4 or now.hour < 15:
-        return False
-    return (date or "") < now.strftime("%Y-%m-%d")
+    """資料日期比「應有的最新交易日」舊 → 需要找更新的來源（期交所日盤約 14:30～15:00 後公布三大法人）。
+    （2026-10-09：原本限定『平日 15:00 後』才成立，過了午夜就恆為 False，使收盤後只拿到 OpenAPI 的舊日期、
+    不再改抓已更新的網站 CSV——落後的資料要等到隔天 15:00 才會自我修復。改成直接和應有交易日比較。）"""
+    return (date or "") < _expected_date(now)
 
 
 def fetch_taifex() -> Dict:
@@ -190,15 +205,26 @@ def fetch_taifex() -> Dict:
             logger.warning(f"taifex {key}: {e}")
     fut = out.get("futures") or {}
     if not fut.get("items") or _need_newer(fut.get("date")):
-        try:                                   # OpenAPI 失敗或還停在前一天：改抓期交所網站 CSV
-            web = fetch_futures_web()
-            if web.get("items") and (web.get("date") or "") > (fut.get("date") or ""):
-                out["futures"] = web
-                out["futures_source"] = "期交所網站 CSV"
-                logger.info(f"taifex futures：OpenAPI 無新資料，改用網站 CSV（{web.get('date')}）")
-        except Exception as e:
-            out["errors"].append(f"futures_web: {e}")
-            logger.warning(f"taifex futures_web: {e}")
+        # OpenAPI 失敗或還停在前一天：改抓期交所網站 CSV。查「應有的交易日」而非今天，
+        # 並在該日無資料（例如假日）時往前退一個平日再試一次，避免過了午夜後查到空的今天。
+        from datetime import timedelta
+        day = _expected_dt()
+        for _ in range(2):
+            try:
+                web = fetch_futures_web(day)
+                if web.get("items") and (web.get("date") or "") > (fut.get("date") or ""):
+                    out["futures"] = web
+                    out["futures_source"] = "期交所網站 CSV"
+                    logger.info(f"taifex futures：OpenAPI 無新資料，改用網站 CSV（{web.get('date')}）")
+                    break
+                if web.get("items"):
+                    break                       # 有資料但不比現有新：不用再往前找
+            except Exception as e:
+                out["errors"].append(f"futures_web: {e}")
+                logger.warning(f"taifex futures_web({day:%Y-%m-%d}): {e}")
+            day -= timedelta(days=1)
+            while day.weekday() > 4:
+                day -= timedelta(days=1)
     return out
 
 
