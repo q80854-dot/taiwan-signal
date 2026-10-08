@@ -1118,6 +1118,7 @@ html[data-theme=dark] .gs input{background-color:var(--s2)!important}
 html.force-mobile .side{width:84vw!important;max-width:300px}
 html.force-mobile .nav{height:44px;font-size:15px!important}
 </style>
+<style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 </head>
 <body>
 <div class="shell">
@@ -1152,13 +1153,13 @@ html.force-mobile .nav{height:44px;font-size:15px!important}
   <div class="nav" onclick="go('perf')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M5 16l4-5 4 3 6-8"/></svg><span class="nl">績效分析</span></div>
   <div class="nav-g">研究</div>
   <div class="nav" onclick="go('radar')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></svg><span class="nl">基本面雷達</span></div>
-  <div class="nav" onclick="go('learning')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10l8-5 8 5-8 5z"/><path d="M8 12.5V17c2.5 2 5.5 2 8 0v-4.5"/></svg><span class="nl">策略學習</span></div>
-  <div class="nav" onclick="go('audit')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3 6l1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span class="nl">資料稽核</span></div>
-  <div class="nav-g">工具</div>
-  <div class="nav" onclick="go('backtest')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2l-6-10V3"/></svg><span class="nl">回測</span></div>
-  <div class="nav" onclick="go('health')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span class="nl">系統檢查</span></div>
-  <div class="nav" onclick="go('diag')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0 5 5L21 13l-8 8-3-3 8-8-1.3-1.3a4 4 0 0 0-5-5l3 3-2 2z"/></svg><span class="nl">系統診斷</span></div>
-  <div class="nav" onclick="go('members')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg><span class="nl">會員統計</span></div>
+  <div class="nav own-only" onclick="go('learning')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10l8-5 8 5-8 5z"/><path d="M8 12.5V17c2.5 2 5.5 2 8 0v-4.5"/></svg><span class="nl">策略學習</span></div>
+  <div class="nav own-only" onclick="go('audit')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3 6l1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span class="nl">資料稽核</span></div>
+  <div class="nav-g own-only">工具</div>
+  <div class="nav own-only" onclick="go('backtest')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2l-6-10V3"/></svg><span class="nl">回測</span></div>
+  <div class="nav own-only" onclick="go('health')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span class="nl">系統檢查</span></div>
+  <div class="nav own-only" onclick="go('diag')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0 5 5L21 13l-8 8-3-3 8-8-1.3-1.3a4 4 0 0 0-5-5l3 3-2 2z"/></svg><span class="nl">系統診斷</span></div>
+  <div class="nav own-only" onclick="go('members')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg><span class="nl">會員統計</span></div>
   <div class="nav-g">關於</div>
   <div class="nav" onclick="go('guide')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-6a3 3 0 0 0-3 3"/><path d="M20 4v13.5h-6.5A2.5 2.5 0 0 0 11 20"/></svg><span class="nl">使用說明</span></div>
   <div class="nav" onclick="go('method')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M6 21h12M5 7h14"/><path d="M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg><span class="nl">方法論與風險聲明</span></div>
@@ -1929,6 +1930,8 @@ async function instQuick(){
   if(!el.querySelector('.empty'))return;
   el.innerHTML='<div class="empty" style="padding:28px 0 18px;text-align:left">輸入股票代號，或從下方快速選擇</div>'+g('今日訊號',sig)+g('持倉中',pos)+g('常用',pop);
 }
+const _OWN_PAGES=['learning','health','audit','diag','backtest','members'];
+window._ownerOnly=_OWN_PAGES;   // 角色確認前一律視為一般會員
 function go(id){
   if((window._ownerOnly||[]).includes(id)){if(typeof toast==='function')toast('此頁僅限站主使用');return;}
   try{document.getElementById('content').scrollTop=0;}catch(e){}try{document.body.scrollTop=0;document.documentElement.scrollTop=0;window.scrollTo(0,0);}catch(e){}
@@ -2193,7 +2196,7 @@ function revStatusHtml(st){
   const e=fmtMinguoYM(st.expected_period),t=st.fetched_at?toTaipeiStr(new Date(st.fetched_at*1000).toISOString()):'—';
   const prog=st.n_total?`（全市場 ${st.n_expected}／${st.n_total} 檔已有 ${e}）`:'';
   const msg=st.is_latest?`<span style="color:var(--up)">✓ 已是最新一期（${e}）</span>`:`<span style="color:var(--warn)">尚未取得 ${e} 營收</span>${st.in_window?`：公司須於 ${st.deadline} 公布，系統公告期內每 10 分鐘自動更新${prog}`:''}`;
-  return `<div class="kv"><span>營收新鮮度</span><span>${msg}　<button class="btn" style="padding:2px 8px;font-size:11px" onclick="revRefresh(this)">立即更新營收</button></span></div><div style="font-size:10.5px;color:var(--t3)">來源：證交所／櫃買 OpenAPI，尚未更新時以公開資訊觀測站補上；資料取得時間 ${t}</div>`;
+  return `<div class="kv"><span>營收新鮮度</span><span>${msg}　<button class="btn own-only" style="padding:2px 8px;font-size:11px" onclick="revRefresh(this)">立即更新營收</button></span></div><div style="font-size:10.5px;color:var(--t3)">來源：證交所／櫃買 OpenAPI，尚未更新時以公開資訊觀測站補上；資料取得時間 ${t}</div>`;
 }
 async function revRefresh(btn){
   btn.disabled=true;btn.textContent='更新中…';
@@ -2694,7 +2697,7 @@ var _me={login_enabled:false,user:null},_meLoaded=false;
 const TS_H={'X-TS':'1','Content-Type':'application/json'};
 async function loadMe(force){
   if(_meLoaded&&!force)return _me;
-  try{_me=await(await fetch('/api/me',{cache:'no-store'})).json();}catch(e){}
+  try{_me=await(await fetch('/api/me',{cache:'no-store'})).json();}catch(e){_me={login_enabled:true,user:null,_err:true};}   // 查不到身分時一律當一般會員，不顯示站主功能
   _meLoaded=true;
   const b=document.getElementById('login-btn');
   if(b){b.hidden=!_me.login_enabled;b.textContent=_me.user?('登出　'+String(_me.user.name||'').slice(0,8)):'Google 登入';}
@@ -2836,14 +2839,12 @@ async function logoutAll(){
   try{await fetch('/auth/logout_all',{method:'POST',headers:TS_H});}catch(e){}
   _mw.data=null;_wl=[];setEl('wl-count-badge',0);await loadMe(true);toast('已登出所有裝置');
 }
+/* 2026-10-08：站主專用的頁面與按鈕（含需密碼的後台）預設隱藏，確認是站主後才顯示；一般會員完全看不到 */
 function applyRoleUI(){
-  if(!_me.login_enabled)return;
-  const owner=!!(_me.user&&_me.user.owner),OWN=['learning','health','audit','diag','backtest','members'];
-  document.querySelectorAll('.nav').forEach(n=>{const oc=n.getAttribute('onclick')||'';
-    if(OWN.some(p=>oc.includes("'"+p+"'")))n.style.display=owner?'':'none';});
-  document.querySelectorAll('.nav-g').forEach(g=>{if(g.textContent.trim()==='工具')g.style.display=owner?'':'none';});
-  window._ownerOnly=owner?[]:OWN;
-  document.querySelectorAll('.own-only').forEach(b=>{b.style.display=owner?'':'none';});
+  const owner=!_me.login_enabled||!!(_me.user&&_me.user.owner);
+  document.documentElement.classList.toggle('is-owner',owner);
+  window._ownerOnly=owner?[]:_OWN_PAGES;
+  if(!owner&&_OWN_PAGES.includes(window._curPage))go('overview');
 }
 async function memberBtn(){
   if(!_me.user){location.href='/auth/google';return;}
