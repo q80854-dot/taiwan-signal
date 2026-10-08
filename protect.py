@@ -25,7 +25,7 @@ _TICKER_PATHS = ("/api/instruments/", "/api/quote/", "/api/fundamentals/")
 _CACHE_TTL = {
     "/api/public/pulse": 5,
     "/api/signals": 15, "/api/market": 20, "/api/universe": 60, "/api/quote_status": 15,
-    "/api/intraday": 20, "/api/taifex": 60, "/api/market_extras": 60, "/api/calendar": 300,
+    "/api/intraday": 20, "/api/freshness": 20, "/api/taifex": 60, "/api/market_extras": 60, "/api/calendar": 300,
     "/api/screener": 30, "/api/instruments/": 60, "/api/performance": 60, "/api/positions": 20,
     "/api/events": 20, "/api/news": 120, "/api/material_news": 120, "/api/fundamentals": 300,
     "/api/analysis": 120, "/api/fundamentals_radar": 300, "/api/quote/": 10,

@@ -311,6 +311,14 @@ def job_refresh_universe_if_stale():
         logger.error(f"job_refresh_universe_if_stale: {e}")
 
 
+def job_freshness_poll():
+    try:
+        import freshness
+        freshness.job_poll()
+    except Exception as e:
+        logger.warning(f"job_freshness_poll: {e}")
+
+
 def job_collect_inst():
     """收盤後把當天三大法人買賣超存進資料庫（T86 約 16:00 後陸續公布，晚上再補一次）。"""
     try:
@@ -424,6 +432,9 @@ def setup_scheduler():
     scheduler.add_job(job_market_extras, CronTrigger(hour="8,17,21", minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="market_extras", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
+    # 2026-10-08：收盤後公布時段每 10 分鐘檢查各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）
+    scheduler.add_job(job_freshness_poll, CronTrigger(hour="14-21", minute="*/10", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_freshness_poll, CronTrigger(hour="8", minute="5,35", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll_am", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
@@ -1428,6 +1439,16 @@ def api_intraday_series():
         return jsonify({"ok": True, "date": today, "series": cur.get("series", {}), "prev": cur.get("prev", {})})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/freshness")
+def api_freshness():
+    """各資料目前的日期與應有日期（只讀快取／資料庫）。網頁每分鐘查一次，版本變了就自動重新載入。"""
+    try:
+        import freshness
+        return jsonify(freshness.status())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/taifex")
