@@ -188,6 +188,8 @@ class TWScanEngine:
         # Step 0 的舊訊號結算、Step 5 的（空）推播仍正常執行，並推播一則警示讓機主知道
         # 今天為什麼沒有新訊號，而不是誤以為系統掛了。
         skip_new_signals = False
+        hc_mode = False       # 僅因「持倉滿額」被擋時，允許極高信心例外（見 risk_manager.high_conf_ok）
+        hc_record = {}
         try:
             from risk_manager import check_daily_loss_limit, check_max_positions
             active_signals = store.get_pending_signals()
@@ -200,6 +202,14 @@ class TWScanEngine:
             if max_pos.get("exceeded"):
                 skip_new_signals = True
                 block_msgs.append(max_pos.get("message", "持倉數達上限"))
+            if skip_new_signals and max_pos.get("exceeded") and not daily_loss.get("exceeded"):
+                try:
+                    from risk_manager import high_conf_record
+                    hc_record = high_conf_record(store.get_closed_trades(limit=200))
+                    hc_mode = bool(hc_record.get("perfect"))
+                    logger.info(f"持倉滿額：極高信心例外 {'開啟' if hc_mode else '關閉'}（已平倉 {hc_record.get('n')} 筆、獲利 {hc_record.get('wins')} 筆）")
+                except Exception as e:
+                    logger.warning(f"極高信心例外判斷失敗（視為關閉）: {e}")
             if skip_new_signals:
                 logger.warning(f"風控熔斷觸發，本次掃描跳過產生新訊號：{'；'.join(block_msgs)}")
                 # ★ 修正：2026-09-29——見下面 _push_signals() 「今日已推播過一次
@@ -314,7 +324,13 @@ class TWScanEngine:
         except Exception as e:
             logger.warning(f"影子追蹤記錄失敗（不影響掃描）: {e}")
         if skip_new_signals:
-            all_signals = []
+            if hc_mode:
+                from risk_manager import high_conf_ok
+                all_signals = [x for x in all_signals if high_conf_ok(x, hc_record)]
+                for x in all_signals:
+                    x["over_cap_exception"] = True
+            else:
+                all_signals = []
 
         # 4. 過濾排序
         logger.info("Step 4/5: 過濾與排序...")
@@ -366,6 +382,8 @@ class TWScanEngine:
         from config import MAX_SIMULTANEOUS_POSITIONS
         remaining_slots = max(0, MAX_SIMULTANEOUS_POSITIONS - len(active_positions))
         signal_cap = min(TELEGRAM_CONFIG["max_signals_per_day"], remaining_slots)
+        if hc_mode:
+            signal_cap = 1     # 例外：持倉滿額時每次最多只通知 1 檔
         # ★ 新增：2026-10-05——弱勢市場降載。9/30、10/1 當時市場情緒分數僅 32（偏空）、
         # 外資連續賣超，系統卻在兩天內連推 6 檔做多，且全部同方向、同時進場，等於把
         # 同一個「大盤再下殺」風險重複押了 6 次。情緒 < 40 時單次最多 2 檔，< 50 最多 3
@@ -408,8 +426,8 @@ class TWScanEngine:
             try:
                 store.add_event(
                     "signal",
-                    f"{sig.get('name','')}（{sig.get('code','')}）{'做多' if sig.get('direction')=='buy' else '做空'}訊號 {sig.get('score')} 分",
-                    f"進場 {sig.get('entry_price')}｜停損 {sig.get('stop_loss')}（{sig.get('sl_pct')}%）｜TP1 {sig.get('tp1')}｜追高風險 {({'low':'低','mid':'中','high':'高'}).get(sig.get('chase_level'), '—')}",
+                    f"{sig.get('name','')}（{sig.get('code','')}）{'做多' if sig.get('direction')=='buy' else '做空'}訊號 {sig.get('score')} 分{'（超過持倉上限的例外通知）' if sig.get('over_cap_exception') else ''}",
+                    f"進場 {sig.get('entry_price')}｜停損 {sig.get('stop_loss')}（{sig.get('sl_pct')}%）｜TP1 {sig.get('tp1')}｜追高風險 {({'low':'low','mid':'中','high':'高'}).get(sig.get('chase_level'), '—')}",
                     sig.get("ticker", ""),
                 )
             except Exception as e:

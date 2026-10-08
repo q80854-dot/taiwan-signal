@@ -610,7 +610,8 @@ def api_state():
 import admin_auth
 app.before_request(admin_auth.guard)
 import members
-app.register_blueprint(members.bp)   # Google 登入與每人自選股（沒設 GOOGLE_CLIENT_ID／SECRET 時登入功能自動關閉）
+app.register_blueprint(members.bp)
+app.before_request(members.gate)   # 登入牆：登入功能啟用後，/api/* 需登入（沒設 GOOGLE_CLIENT_ID／SECRET 時整個功能關閉）
 app.after_request(admin_auth.after)
 
 

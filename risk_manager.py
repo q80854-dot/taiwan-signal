@@ -233,3 +233,31 @@ def get_system_status(market_overview: Dict) -> Dict:
     return {"env_score":score,"env_status":st,"env_color":cl,"twii_chg":twii_chg,"vix":vix,
             "can_trade":can_trade,"stop_buy":stop_buy,"category_advice":cat_advice,"daily_loss":daily,
             "foreign_signal":foreign.get("message",""),"data_issues":data_issues}
+
+
+# ═══ 2026-10-08 持倉滿額時的「極高信心例外」 ═══
+# 使用者要求：只有在「百分之百勝率、百分之百信心」時，持倉已超過上限也可以發出通知。
+# 現實上任何訊號都不可能保證 100% 勝率，所以這裡把門檻設成「系統自己已平倉的歷史紀錄
+# 全部獲利，且樣本數至少 HC_MIN_TRADES 筆」，再加上訊號本身分數要求。這個條件在真實市場
+# 幾乎不會成立，所以平常等同於「持倉滿額就不發」；一旦成立也只是多發一則通知，每次掃描最多
+# 1 檔，且標示為「超過持倉上限的例外」，不放寬持倉上限本身，是否進場仍由使用者決定。
+HC_MIN_TRADES = 30
+HC_MIN_SCORE = 90
+
+
+def high_conf_record(closed_trades: List[Dict]) -> Dict:
+    """回傳最近已平倉交易的戰績：{n, wins, perfect}。perfect＝樣本夠多且全部獲利。"""
+    rows = [t for t in (closed_trades or []) if t.get("pnl_pct") is not None]
+    n = len(rows)
+    wins = sum(1 for t in rows if (t.get("pnl_pct") or 0) > 0)
+    return {"n": n, "wins": wins, "perfect": n >= HC_MIN_TRADES and wins == n}
+
+
+def high_conf_ok(sig: Dict, record: Dict) -> bool:
+    """這一檔訊號是否符合「持倉滿額也可通知」的例外條件。"""
+    if not record.get("perfect"):
+        return False
+    try:
+        return float(sig.get("score") or 0) >= HC_MIN_SCORE and sig.get("direction") in ("buy", "sell")
+    except Exception:
+        return False

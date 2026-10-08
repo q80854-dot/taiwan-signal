@@ -229,6 +229,36 @@ def _set_cookie(resp, name, value, ttl):
     resp.set_cookie(name, value, max_age=ttl, httponly=True, secure=True, samesite="Lax", path="/")
 
 
+# ───────── 登入牆（類似 TradingView：登入後才能使用站內功能） ─────────
+_OPEN_PATHS = ("/api/me", "/healthz", "/health", "/auth/")
+
+
+def gate():
+    """before_request：登入功能已啟用時，/api/* 需 Google 登入（或後台管理員已登入）才能存取。
+    登入功能未設定時完全不鎖；環境變數 REQUIRE_LOGIN=0 可暫時關閉登入牆。"""
+    try:
+        if not enabled() or os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
+            return None
+        p = request.path
+        if not p.startswith("/api/") or p.startswith(_OPEN_PATHS):
+            return None
+        if current_member():
+            return None
+        try:
+            import admin_auth
+            if admin_auth.REQUIRED and admin_auth.authed():   # 後台密碼有設定、且已登入後台才放行
+                return None
+        except Exception:
+            pass
+        r = jsonify({"error": "請先使用 Google 登入", "login_required": True})
+        r.status_code = 401
+        r.headers["Cache-Control"] = "no-store"
+        return r
+    except Exception as e:
+        logger.warning(f"gate: {e}")
+        return None
+
+
 # ───────── 路由：登入 ─────────
 @bp.route("/api/me")
 def api_me():
