@@ -196,7 +196,26 @@ def job_poll() -> Dict:
         except Exception:
             pass
         logger.info(f"資料新鮮度補抓：{did}")
+    try:
+        log_summary()
+    except Exception as e:
+        logger.warning(f"freshness summary: {e}")
     return {"did": did}
+
+
+_last_summary = {"v": None}
+
+
+def log_summary(force: bool = False) -> str:
+    """把各資料目前日期寫進伺服器紀錄（狀態有變才寫），方便從 Render log 直接核對資料是否最新。"""
+    st = status()
+    line = "；".join(f"{i.get('name', i.get('key'))} {i.get('date') or '無'}"
+                    f"{'' if i.get('status') == 'ok' else '（應為 ' + str(i.get('expected')) + '）'}" for i in st["items"])
+    if force or line != _last_summary["v"]:
+        _last_summary["v"] = line
+        ok = sum(1 for i in st["items"] if i.get("status") == "ok")
+        logger.info(f"資料新鮮度 {ok}/{len(st['items'])} 最新：{line}")
+    return line
 
 
 _bg = {"running": False, "last": 0.0}

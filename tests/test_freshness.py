@@ -53,3 +53,13 @@ def test_kick_background_is_throttled(monkeypatch):
         _t.sleep(0.01)
     assert fr.kick_background(min_gap=60) is False      # 一分鐘內不重複
     assert ran == [1]
+
+
+def test_log_summary_only_logs_changes(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="freshness")
+    monkeypatch.setattr(fr, "status", lambda now=None, dates=None: {"items": [
+        {"key": "taifex", "name": "期交所", "date": "2026-10-08", "expected": "2026-10-08", "status": "ok"}]})
+    fr._last_summary["v"] = None
+    fr.log_summary(); fr.log_summary()
+    assert sum("資料新鮮度 1/1 最新" in r.message for r in caplog.records) == 1
