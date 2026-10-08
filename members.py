@@ -231,6 +231,25 @@ def _set_cookie(resp, name, value, ttl):
 
 # ───────── 登入牆（類似 TradingView：登入後才能使用站內功能） ─────────
 _OPEN_PATHS = ("/api/me", "/healthz", "/health", "/auth/")
+_OWNER_ONLY_GET = ("/api/health", "/api/settings", "/api/audit", "/api/diagnostics", "/api/admin/",
+                   "/api/backtest", "/api/backfill", "/api/learning")
+DEFAULT_OWNER = "q80854@gmail.com"
+
+
+def owner_emails() -> set:
+    raw = os.environ.get("OWNER_EMAILS", "").strip() or DEFAULT_OWNER
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+
+def is_owner(m) -> bool:
+    return bool(m) and (m.get("email") or "").strip().lower() in owner_emails()
+
+
+def _forbid():
+    r = jsonify({"error": "此功能僅限站主使用", "forbidden": True})
+    r.status_code = 403
+    r.headers["Cache-Control"] = "no-store"
+    return r
 
 
 def gate():
@@ -242,7 +261,17 @@ def gate():
         p = request.path
         if not p.startswith("/api/") or p.startswith(_OPEN_PATHS):
             return None
-        if current_member():
+        m = current_member()
+        if m:
+            if is_owner(m):
+                return None
+            # 一般會員（任何 Google 帳號都能註冊）：只能讀資料與管理自己的自選股，
+            # 不能觸發掃描／回測／回填、不能改共用設定或看後台資料。
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                if not (p.startswith("/api/my/") or p == "/api/me"):
+                    return _forbid()
+            elif p.startswith(_OWNER_ONLY_GET):
+                return _forbid()
             return None
         try:
             import admin_auth
@@ -269,7 +298,7 @@ def api_me():
         m = current_member()
     except Exception as e:
         logger.warning(f"/api/me: {e}")
-    return jsonify({"login_enabled": True, "user": ({"name": m.get("name") or m.get("email"), "email": m.get("email")} if m else None)})
+    return jsonify({"login_enabled": True, "user": ({"name": m.get("name") or m.get("email"), "email": m.get("email"), "owner": is_owner(m)} if m else None)})
 
 
 @bp.route("/auth/google")
