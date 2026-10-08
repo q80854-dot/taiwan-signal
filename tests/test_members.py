@@ -179,3 +179,66 @@ def test_public_pulse_and_headers(cl):
     assert h["Cross-Origin-Opener-Policy"] == "same-origin"
     big = cl.post("/api/my/watchlist", data=b"x" * (300 * 1024), headers=H)
     assert big.status_code in (401, 413)
+
+
+def _owner_login(c):
+    import uuid
+    sub = "own-" + uuid.uuid4().hex[:6]
+    members.upsert_member(sub, "q80855@gmail.com", "站主")
+    c.set_cookie(members.COOKIE, members.sign({"sub": sub, "exp": int(time.time()) + 3600}))
+    return sub
+
+
+def test_admin_member_stats_owner_only(cl):
+    login(cl)
+    assert cl.get("/api/admin/members").status_code == 403           # 一般會員看不到
+    _owner_login(cl)
+    d = cl.get("/api/admin/members").get_json()
+    assert d["total"] >= 2 and len(d["series"]) == 30 and "members" in d and "events" in d
+    assert d["active_today"] >= 1 and d["new_today"] >= 1
+
+
+def test_disable_member_and_logout_all(cl):
+    import uuid
+    sub = "u-" + uuid.uuid4().hex[:8]
+    login(cl, sub)
+    assert cl.get("/api/me").get_json()["user"] is not None
+    # 登出所有裝置：舊 cookie 立刻失效
+    old = members.sign({"sub": sub, "exp": int(time.time()) + 3600})
+    assert cl.post("/auth/logout_all", headers=H).status_code == 200
+    cl.set_cookie(members.COOKIE, old)
+    assert cl.get("/api/me").get_json()["user"] is None
+    # 停權
+    cl.set_cookie(members.COOKIE, members.sign({"sub": sub, "exp": int(time.time()) + 3600, "v": 1}))
+    assert cl.get("/api/me").get_json()["user"] is not None
+    _owner_login(cl)
+    assert cl.post("/api/admin/members/status", json={"sub": sub, "disabled": True}, headers=H).status_code == 200
+    cl.set_cookie(members.COOKIE, members.sign({"sub": sub, "exp": int(time.time()) + 3600, "v": 1}))
+    assert cl.get("/api/me").get_json()["user"] is None
+    owner_sub = _owner_login(cl)
+    assert cl.post("/api/admin/members/status", json={"sub": owner_sub, "disabled": True}, headers=H).status_code == 400
+
+
+def test_cross_origin_post_blocked(cl):
+    login(cl)
+    r = cl.post("/api/my/watchlist", json={"code": "2330"}, headers=dict(H, Origin="https://evil.example"))
+    assert r.status_code == 403
+    r = cl.post("/api/my/watchlist", json={"code": "2330"}, headers=dict(H, Origin="http://localhost"))
+    assert r.status_code == 200
+
+
+def test_auth_rate_limit(cl):
+    members._AUTH_RATE.clear()
+    codes = [cl.get("/auth/google").status_code for _ in range(32)]
+    assert codes[0] == 302 and "login=busy" in cl.get("/auth/google").headers["Location"]
+    members._AUTH_RATE.clear()
+
+
+def test_premarket_mode_flag(monkeypatch):
+    from scanner import scanner
+    seen = {}
+    monkeypatch.setattr(scanner, "_run_daily_scan_impl", lambda: seen.setdefault("m", scanner._mode))
+    scanner.run_daily_scan(mode="premarket")
+    assert seen["m"] == "premarket" and scanner._mode == "close"
+    scanner.run_daily_scan(mode="weird")
+    assert scanner._mode == "close"
