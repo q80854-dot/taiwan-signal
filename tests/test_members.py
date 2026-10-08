@@ -123,3 +123,32 @@ def test_group_name_sanitized(cl):
     cl.post("/api/my/groups", json={"name": "<b>\"短'線\">"}, headers=H)
     names = [g["name"] for g in cl.get("/api/my/watchlist").get_json()["groups"]]
     assert "b短線" in names and not any(c in n for n in names for c in "<>\"'&")
+
+
+def test_login_wall(cl, monkeypatch):
+    r = cl.get("/api/state")
+    assert r.status_code == 401 and r.get_json()["login_required"] is True
+    assert cl.get("/api/me").status_code == 200 and cl.get("/healthz").status_code == 200
+    login(cl)
+    assert cl.get("/api/state").status_code != 401
+    monkeypatch.setenv("REQUIRE_LOGIN", "0")
+    cl.delete_cookie(members.COOKIE)
+    assert cl.get("/api/state").status_code != 401
+
+
+def test_login_wall_off_when_disabled(monkeypatch):
+    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+    assert app_module.app.test_client().get("/api/state").status_code != 401
+
+
+def test_high_conf_exception():
+    import risk_manager as rm
+    win = [{"pnl_pct": 3.0}] * 40
+    assert rm.high_conf_record(win)["perfect"] is True
+    assert rm.high_conf_record(win[:29])["perfect"] is False            # 樣本不足
+    assert rm.high_conf_record(win + [{"pnl_pct": -1.0}])["perfect"] is False   # 有一筆虧損就不成立
+    rec = rm.high_conf_record(win)
+    assert rm.high_conf_ok({"score": 95, "direction": "buy"}, rec)
+    assert not rm.high_conf_ok({"score": 85, "direction": "buy"}, rec)
+    assert not rm.high_conf_ok({"score": 99, "direction": "buy"}, rm.high_conf_record([]))
