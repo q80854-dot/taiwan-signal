@@ -1037,6 +1037,82 @@ html.force-mobile .kpis .kpi-sub{margin-top:3px!important}
 html.force-mobile .kpis .meter{margin-top:8px}
 html.force-mobile .mast .say small{display:none}
 </style>
+<style id="skin-terminal">
+/* ═══ 2026-10-08 交易平台風格（最後載入，統一全站）：無襯線、等寬數字、細框線、小圓角、帶圖示側邊欄 ═══ */
+:root{--serif:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif;--sans:var(--serif);--r:8px;--sh:none;
+  --side-bg:#0a1222;--side-line:rgba(255,255,255,.07);--side-tx:#9aa8bf;--side-hi:#3b82f6}
+html:not([data-theme=dark]){--desk:#f2f4f7;--bg:#f2f4f7;--s1:#fff;--s2:#f6f8fb;--s3:#eef1f6;--line:#e3e8ef;--line2:#d2d9e4;--t1:#0f172a;--ink:#0f172a;--t2:#334155;--t3:#6b7a90;--accent:#1d4ed8}
+html:not([data-theme=dark]) body,html:not([data-theme=dark]) .content,html:not([data-theme=dark]) .body{background:var(--bg)!important}
+body{font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif!important;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum" 1}
+.ic{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;display:block}
+/* 標題與數字：去掉襯線字，改為交易平台常見的無襯線＋等寬數字 */
+.sec-label .tx,.panel-title,.ledger>header h3,.top-l,#page-title,.sig-name,.empty,.kpi-val,.hero-val,.ticker-val,.tv,.pos-r,.mast .dt b,.seal b,.seal i{font-family:var(--serif)!important;letter-spacing:0!important}
+.sec-label .tx{font-weight:600!important;font-size:15px!important}
+.panel-title{font-weight:600!important;font-size:14px!important}
+.kpi-val,.ticker-val,.hero-val,.tv,.pos-r{font-weight:500!important;font-variant-numeric:tabular-nums}
+.kpi-label,.ticker-name,.tn,.ledger dt{letter-spacing:.02em!important;text-transform:none}
+/* 卡片：細框線、小圓角、不用陰影 */
+.panel,.card,.kpis .kpi,.kpi-strip,.hero-row,#live-strip,#ov-live,.ledger,.mbar,.sig-card{border-radius:var(--r)!important;box-shadow:none!important;border:1px solid var(--line)!important}
+/* 頂列 */
+.top{height:56px!important;background:var(--s1)!important;border-bottom:1px solid var(--line)!important;box-shadow:none!important;padding:0 24px!important}
+#page-title{font-size:17px;font-weight:600;color:var(--t1)}
+.top-l{font-weight:600!important}
+.btn{border-radius:6px!important;height:34px;padding:0 14px!important;font-size:13px!important;font-weight:500!important;letter-spacing:0!important;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2)!important;background:var(--s1)!important;color:var(--t1)!important}
+.btn:hover{background:var(--s2)!important}
+.btn.primary{background:var(--accent)!important;border-color:var(--accent)!important;color:#fff!important}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn-ic,#theme-btn{width:34px;padding:0!important;justify-content:center}
+.bell{width:34px!important;height:34px!important;border-radius:6px!important;border:1px solid var(--line2)!important;background:var(--s1)!important;color:var(--t1)!important;font-size:0!important}
+.bell .cnt{font-size:10px!important;top:-6px!important;right:-6px!important}
+.gs input{border-radius:6px!important;height:36px!important;background-color:var(--s2)!important;border:1px solid var(--line)!important}
+.bell .ic{width:17px!important;height:17px!important;flex:none}
+.bell{display:inline-flex!important;align-items:center;justify-content:center}
+.mkt-pill{border-radius:999px!important}
+/* 指數報價帶 */
+.ticker{background:#0b1426!important;border-bottom:1px solid #1b2740!important}
+.ticker-item{border-right:1px solid rgba(255,255,255,.06)!important}
+.ticker-name{color:#8a9bb8!important;font-size:11.5px!important}
+.ticker-val{color:#f1f5fb!important;font-size:18px!important}
+/* ── 側邊欄 ── */
+.side{background:var(--side-bg)!important;width:236px!important;min-width:236px!important;border-right:1px solid var(--side-line)!important;display:flex;flex-direction:column;overflow:hidden!important}
+.side-scroll{flex:1;overflow-y:auto;padding:4px 0 10px;scrollbar-width:thin;scrollbar-color:#1e2a44 transparent}
+.logo{padding:18px 18px 16px!important;border-bottom:1px solid var(--side-line)!important;gap:11px!important;flex-shrink:0}
+.logo-mark{width:34px!important;height:34px!important;border-radius:8px!important;background:linear-gradient(140deg,#2563eb,#1e3a8a)!important;border:0!important;transform:none!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)!important;display:flex;align-items:center;justify-content:center}
+.logo-mark svg{width:20px;height:20px;fill:none;stroke:#fff;stroke-width:1.6;stroke-linecap:round}
+.logo-nm{font-family:var(--serif)!important;color:#f1f5fb!important;font-size:15px!important;font-weight:600!important;letter-spacing:.02em!important;line-height:1.25}
+.logo-nm span{display:block;font-size:11.5px;font-weight:400;color:#7d8ba3;letter-spacing:.04em;margin-top:2px}
+.logo-vr{display:none}
+.nav-g{padding:16px 20px 6px!important;font-size:11px!important;letter-spacing:.08em!important;color:#56657f!important;font-weight:600!important;text-transform:none!important}
+.nav{margin:1px 10px!important;padding:0 10px!important;height:36px;border-radius:6px!important;border-left:0!important;font-size:13.5px!important;color:var(--side-tx)!important;gap:11px!important;font-weight:400!important;background:transparent!important;position:relative}
+.nav svg{width:17px;height:17px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.8}
+.nav .nl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav:hover{background:rgba(255,255,255,.05)!important;color:#e5ebf5!important}
+.nav.on{background:rgba(59,130,246,.15)!important;color:#fff!important;font-weight:500!important}
+.nav.on::before{content:"";position:absolute;left:-10px;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--side-hi)}
+.nav.on svg{color:#60a5fa;opacity:1}
+.nav .nbadge{margin-left:auto;background:rgba(255,255,255,.08)!important;color:#c3cde0!important;border-radius:999px!important;padding:0 7px!important;font-size:11px!important;min-width:20px;text-align:center;line-height:18px}
+.nav .nbadge:empty{display:none}
+.nav.on .nbadge{background:rgba(59,130,246,.3)!important;color:#fff!important}
+.sfoot{margin:8px 12px 12px!important;padding:11px 12px!important;border:1px solid var(--side-line)!important;border-radius:8px;background:rgba(255,255,255,.03);color:#8a98b0;flex-shrink:0}
+.sfoot .sfr{color:#dbe3f0;font-size:12.5px}
+#breadth-row{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:0!important}
+#breadth-row>.kpi{padding:16px 20px!important;border-left:1px solid var(--line)!important}
+#breadth-row>.kpi:first-child{border-left:0!important}
+.content select,.content input[type=text],.content input:not([type]),.content input[type=number]{border-radius:6px!important;border:1px solid var(--line2)!important;background-color:var(--s1)!important;color:var(--t1)!important;min-height:34px}
+/* 深色模式 */
+html[data-theme=dark]{--r:8px}
+html[data-theme=dark] .btn,html[data-theme=dark] .bell{background:var(--s1)!important;color:var(--t1)!important;border-color:var(--line2)!important}
+html[data-theme=dark] .btn.primary{background:#2563eb!important;border-color:#2563eb!important}
+html[data-theme=dark] .gs input{background-color:var(--s2)!important}
+@media(max-width:640px){
+  html:not(.force-desktop) .side{width:84vw!important;max-width:300px}
+  html:not(.force-desktop) .nav{height:44px;font-size:15px!important}
+  html:not(.force-desktop) .top{padding:0 10px!important;height:52px!important}
+  html:not(.force-desktop) .bell{width:36px!important;height:36px!important;border-radius:50%!important}
+}
+html.force-mobile .side{width:84vw!important;max-width:300px}
+html.force-mobile .nav{height:44px;font-size:15px!important}
+</style>
 </head>
 <body>
 <div class="shell">
@@ -1046,38 +1122,41 @@ html.force-mobile .mast .say small{display:none}
 <a class="skip-link" href="#content">跳到主要內容</a>
 <div class="side" id="side" role="navigation" aria-label="主選單">
   <div class="logo">
-    <div class="logo-mark">台</div>
-    <div><div class="logo-nm">台股波段<br>智慧交易系統</div><div class="logo-vr" id="version">v1.0.0</div></div>
+    <div class="logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4v3M6 17v3M12 2v4M12 14v4M18 7v3M18 19v2"/><rect x="4" y="7" width="4" height="10" rx="1"/><rect x="10" y="6" width="4" height="8" rx="1"/><rect x="16" y="10" width="4" height="9" rx="1"/></svg></div>
+    <div><div class="logo-nm">台股波段<span>智慧交易系統</span></div><div class="logo-vr" id="version">v1.0.0</div></div>
   </div>
-  <div class="nav-g">主介面</div>
-  <div class="nav on"  onclick="go('overview')">總覽</div>
-  <div class="nav"     onclick="go('signals')">今日訊號 <span class="nbadge" id="sig-count-badge">0</span></div>
-  <div class="nav"     onclick="go('positions')">持倉追蹤 <span class="nbadge" id="pos-count-badge">0</span></div>
-  <div class="nav"     onclick="go('risk')">風險管理</div>
-  <div class="nav"     onclick="go('autopsy')">停損解剖</div>
-  <div class="nav"     onclick="go('events')">通知中心 <span class="nbadge" id="ev-count-badge"></span></div>
-  <div class="nav"     onclick="go('watchlist')">自選股 <span class="nbadge" id="wl-count-badge">0</span></div>
-  <div class="nav"     onclick="go('history')">交易歷史</div>
-  <div class="nav"     onclick="go('perf')">績效分析</div>
-  <div class="nav-g">研究</div>
-  <div class="nav"     onclick="go('radar')">基本面雷達</div>
-  <div class="nav"     onclick="go('learning')">策略學習</div>
-  <div class="nav"     onclick="go('audit')">資料稽核</div>
-  <div class="nav"     onclick="go('instrument')">個股研究</div>
-  <div class="nav"     onclick="go('marketoverview')">市場總覽</div>
+  <div class="side-scroll">
+  <div class="nav-g">交易</div>
+  <div class="nav on" onclick="go('overview')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg><span class="nl">總覽</span></div>
+  <div class="nav" onclick="go('signals')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg><span class="nl">今日訊號</span> <span class="nbadge" id="sig-count-badge">0</span></div>
+  <div class="nav" onclick="go('positions')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M3 12h18"/></svg><span class="nl">持倉追蹤</span> <span class="nbadge" id="pos-count-badge">0</span></div>
+  <div class="nav" onclick="go('watchlist')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.5 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg><span class="nl">自選股</span> <span class="nbadge" id="wl-count-badge">0</span></div>
+  <div class="nav" onclick="go('events')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="nl">通知中心</span> <span class="nbadge" id="ev-count-badge"></span></div>
   <div class="nav-g">市場</div>
-  <div class="nav"     onclick="go('rank')">排行榜</div>
-  <div class="nav"     onclick="go('market')">市場環境</div>
-  <div class="nav"     onclick="go('report')">盤後報告</div>
-  <div class="nav"     onclick="go('news')">重大訊息公告 <span class="nbadge" id="news-count-badge">0</span></div>
+  <div class="nav" onclick="go('marketoverview')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg><span class="nl">市場總覽</span></div>
+  <div class="nav" onclick="go('rank')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="nl">排行榜</span></div>
+  <div class="nav" onclick="go('market')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/></svg><span class="nl">市場環境</span></div>
+  <div class="nav" onclick="go('instrument')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v4M7 17v4M17 6v3M17 15v4"/><rect x="5" y="7" width="4" height="10" rx="1"/><rect x="15" y="9" width="4" height="6" rx="1"/></svg><span class="nl">個股研究</span></div>
+  <div class="nav" onclick="go('report')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg><span class="nl">盤後報告</span></div>
+  <div class="nav" onclick="go('news')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4h4l6 4V6L7 10z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg><span class="nl">重大訊息公告</span> <span class="nbadge" id="news-count-badge">0</span></div>
+  <div class="nav-g">風控與績效</div>
+  <div class="nav" onclick="go('risk')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg><span class="nl">風險管理</span></div>
+  <div class="nav" onclick="go('autopsy')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M8.5 7.5L20 18M8.5 16.5L20 6"/></svg><span class="nl">停損解剖</span></div>
+  <div class="nav" onclick="go('history')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="nl">交易歷史</span></div>
+  <div class="nav" onclick="go('perf')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M5 16l4-5 4 3 6-8"/></svg><span class="nl">績效分析</span></div>
+  <div class="nav-g">研究</div>
+  <div class="nav" onclick="go('radar')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></svg><span class="nl">基本面雷達</span></div>
+  <div class="nav" onclick="go('learning')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10l8-5 8 5-8 5z"/><path d="M8 12.5V17c2.5 2 5.5 2 8 0v-4.5"/></svg><span class="nl">策略學習</span></div>
+  <div class="nav" onclick="go('audit')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3 6l1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span class="nl">資料稽核</span></div>
   <div class="nav-g">工具</div>
-  <div class="nav"     onclick="go('backtest')">回測</div>
-  <div class="nav"     onclick="go('health')">系統檢查</div>
-  <div class="nav"     onclick="go('diag')">系統診斷</div>
-  <div class="nav"     onclick="go('members')">會員統計</div>
+  <div class="nav" onclick="go('backtest')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2l-6-10V3"/></svg><span class="nl">回測</span></div>
+  <div class="nav" onclick="go('health')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span class="nl">系統檢查</span></div>
+  <div class="nav" onclick="go('diag')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0 5 5L21 13l-8 8-3-3 8-8-1.3-1.3a4 4 0 0 0-5-5l3 3-2 2z"/></svg><span class="nl">系統診斷</span></div>
+  <div class="nav" onclick="go('members')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg><span class="nl">會員統計</span></div>
   <div class="nav-g">關於</div>
-  <div class="nav"     onclick="go('guide')">使用說明</div>
-  <div class="nav"     onclick="go('method')">方法論與風險聲明</div>
+  <div class="nav" onclick="go('guide')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-6a3 3 0 0 0-3 3"/><path d="M20 4v13.5h-6.5A2.5 2.5 0 0 0 11 20"/></svg><span class="nl">使用說明</span></div>
+  <div class="nav" onclick="go('method')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M6 21h12M5 7h14"/><path d="M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg><span class="nl">方法論與風險聲明</span></div>
+  </div>
   <div class="sfoot">
     <div class="sfr"><div class="dot-live"></div><span id="market-session-side">載入中...</span></div>
     <div style="font-size:10.5px" id="scan-dur-side"></div>
@@ -1097,12 +1176,12 @@ html.force-mobile .mast .say small{display:none}
       <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
       <span id="tw-time" style="font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums"></span>
       <button class="srch-btn" onclick="mSearch()" aria-label="搜尋股票"><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg></button>
-      <div class="bell" onclick="go('events')" title="通知中心">通知<span class="cnt" id="bell-cnt">0</span></div>
+      <div class="bell" onclick="go('events')" title="通知中心" role="button" aria-label="通知中心"><svg viewBox="0 0 24 24" class="ic"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="cnt" id="bell-cnt">0</span></div>
       <div class="acct" id="acct" hidden><button class="acct-btn" id="acct-btn" onclick="acctToggle(event)" aria-haspopup="menu" aria-expanded="false" aria-label="帳號選單">我</button><div class="acct-menu" id="acct-menu" role="menu"></div></div>
       <button class="btn" id="login-btn" onclick="memberBtn()" hidden>Google 登入</button>
-      <button class="btn" id="theme-btn" onclick="toggleTheme()" aria-label="切換深色／淺色模式" title="切換深色／淺色模式"><span id="theme-ic-moon">深色</span><span id="theme-ic-sun">淺色</span></button>
+      <button class="btn" id="theme-btn" onclick="toggleTheme()" aria-label="切換深色／淺色模式" title="切換深色／淺色模式"><span id="theme-ic-moon"><svg viewBox="0 0 24 24" class="ic"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></span><span id="theme-ic-sun"><svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span></button>
       <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">手機版</button>
-      <button class="btn" onclick="fetchState()">刷新</button>
+      <button class="btn btn-ic" onclick="fetchState()" aria-label="重新整理" title="重新整理"><svg viewBox="0 0 24 24" class="ic"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
       <button class="btn primary arrow own-only" onclick="forceScan()">立即掃描</button>
     </div>
   </div>
@@ -1589,7 +1668,10 @@ html.force-mobile .mast .say small{display:none}
 <div id="qc-modal" class="qc-modal" onclick="if(event.target===this)qcClose()"><div class="qc-box" id="qc-box"></div></div>
 <script>
 let _state=null,_signals=[],_eqChart=null;
-const safe=(v,fb='—')=>(v===null||v===undefined||v===''||v!==v)?fb:v;
+// 2026-10-08 安全性：safe() 會被插進 innerHTML，外部資料（公告標題、股名、來源說明）一律做 HTML 跳脫，避免 XSS
+const escH=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const _unescH=v=>String(v).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&');
+const safe=(v,fb='—')=>(v===null||v===undefined||v===''||v!==v)?fb:(typeof v==='string'?escH(v):v);
 const safeN=(v,d=2,fb='—')=>{const n=parseFloat(v);return isNaN(n)?fb:n.toFixed(d);};
 const chgStr=(c,u='%')=>{const n=parseFloat(c);if(isNaN(n))return '—';return(n>=0?'+':'')+n.toFixed(2)+u;};
 // ★ 修正：2026-09-29——參考凱基證券官網大盤ticker的配色慣例重新核對：台股
@@ -1599,7 +1681,7 @@ const chgStr=(c,u='%')=>{const n=parseFloat(c);if(isNaN(n))return '—';return(n
 // 用的 --ok（綠，跟價格漲跌完全脫鉤）分開，避免同一個綠色在畫面上同時代表
 // 「上漲」跟「系統正常」兩種不同意思。
 const clr=(v)=>v>0?'var(--up)':v<0?'var(--down)':'var(--t3)';
-const setEl=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+const setEl=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=typeof v==='string'?_unescH(v):v;};
 const setHtml=(id,v)=>{const e=document.getElementById(id);if(e)e.innerHTML=v;};
 const setColor=(id,c)=>{const e=document.getElementById(id);if(e)e.style.color=c;};
 
@@ -3182,7 +3264,7 @@ async function fetchNewsWatch(){
   try{
     const d=await(await fetch('/api/news/watch',{cache:'no-store'})).json();
     if(!d.codes||!d.codes.length){el.innerHTML='<div class="empty">還沒有追蹤中的標的。有有效訊號或加入觀察清單後，這裡會顯示它們的最新公告。</div>';return;}
-    el.innerHTML=d.news.length?d.news.map(n=>`<div class="kv"><span style="color:var(--t3);min-width:112px;flex:none">${n.date} ${n.time||''}</span><span style="text-align:left;flex:1;font-weight:500;${n.negative?'color:var(--alert)':''}">${n.negative?'⚠ ':''}${n.name}（${n.code}）${n.subject}</span></div>`).join(''):`<div class="empty">追蹤的 ${d.codes.length} 檔標的今天都沒有新公告。</div>`;
+    el.innerHTML=d.news.length?d.news.map(n=>`<div class="kv"><span style="color:var(--t3);min-width:112px;flex:none">${n.date} ${n.time||''}</span><span style="text-align:left;flex:1;font-weight:500;${n.negative?'color:var(--alert)':''}">${n.negative?'⚠ ':''}${escH(n.name||'')}（${escH(n.code||'')}）${escH(n.subject||'')}</span></div>`).join(''):`<div class="empty">追蹤的 ${d.codes.length} 檔標的今天都沒有新公告。</div>`;
   }catch(e){el.innerHTML='<div class="empty">載入失敗</div>';}
 }
 // ===== 今日戰報 =====
@@ -3270,7 +3352,7 @@ async function fetchEvents(){
   await loadEvents();
   const seen=evLastSeen();
   const el=document.getElementById('events-body');
-  el.innerHTML=_events.length?_events.map(e=>`<div class="ev ${e.ts>seen?'new':''}"><div class="tt">${e.title}</div>${e.body?`<div class="bd">${String(e.body).replace(/追高風險 (low|mid|high)/g,(m,k)=>'追高風險 '+({low:'低',mid:'中',high:'高'})[k])}</div>`:''}<div class="tm">${toTaipeiStr(e.ts)||''}${e.ticker?`　<a href="#" onclick="goToInstrument('${e.ticker}');return false" style="color:var(--accent)">看個股</a>`:''}</div></div>`).join(''):'<div class="empty"><div class="empty-label">通知</div>還沒有通知，下次掃描出訊號後會出現在這裡</div>';
+  el.innerHTML=_events.length?_events.map(e=>`<div class="ev ${e.ts>seen?'new':''}"><div class="tt">${escH(e.title||'')}</div>${e.body?`<div class="bd">${escH(e.body).replace(/追高風險 (low|mid|high)/g,(m,k)=>'追高風險 '+({low:'低',mid:'中',high:'高'})[k])}</div>`:''}<div class="tm">${toTaipeiStr(e.ts)||''}${e.ticker?`　<a href="#" onclick="goToInstrument('${e.ticker}');return false" style="color:var(--accent)">看個股</a>`:''}</div></div>`).join(''):'<div class="empty"><div class="empty-label">通知</div>還沒有通知，下次掃描出訊號後會出現在這裡</div>';
 }
 function markEventsRead(){
   const t=_events.length?_events[0].ts:new Date().toISOString();
