@@ -164,7 +164,18 @@ def test_member_roles(cl):
     assert cl.get("/api/state").status_code != 403
     assert cl.post("/api/my/watchlist", json={"code": "2330"}, headers=H).status_code == 200
     sub = "own-" + uuid.uuid4().hex[:6]               # 站主
-    members.upsert_member(sub, "q80854@gmail.com", "站主")
+    members.upsert_member(sub, "q80855@gmail.com", "站主")
     cl.set_cookie(members.COOKIE, members.sign({"sub": sub, "exp": int(time.time()) + 3600}))
     assert cl.get("/api/me").get_json()["user"]["owner"] is True
     assert cl.get("/api/settings").status_code != 403
+
+
+def test_public_pulse_and_headers(cl):
+    r = cl.get("/api/public/pulse")
+    assert r.status_code == 200 and "ok" in r.get_json()          # 未登入也能看（只有加權指數）
+    assert cl.get("/api/state").status_code == 401                 # 其他仍要登入
+    h = cl.get("/api/me").headers
+    assert h["Cache-Control"] == "no-store" and "includeSubDomains" in h["Strict-Transport-Security"]
+    assert h["Cross-Origin-Opener-Policy"] == "same-origin"
+    big = cl.post("/api/my/watchlist", data=b"x" * (300 * 1024), headers=H)
+    assert big.status_code in (401, 413)
