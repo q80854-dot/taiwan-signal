@@ -1564,6 +1564,7 @@ async function instQuick(){
   el.innerHTML='<div class="empty" style="padding:28px 0 18px;text-align:left">輸入股票代號，或從下方快速選擇</div>'+g('今日訊號',sig)+g('持倉中',pos)+g('常用',pop);
 }
 function go(id){
+  if((window._ownerOnly||[]).includes(id)){if(typeof toast==='function')toast('此頁僅限站主使用');return;}
   try{document.getElementById('content').scrollTop=0;}catch(e){}try{document.body.scrollTop=0;document.documentElement.scrollTop=0;window.scrollTo(0,0);}catch(e){}
   {const P=['learning','health','audit','diag'],prev=window._curPage;
    if(typeof adAuthed!=='undefined'&&adAuthed&&(!P.includes(id)||(id==='learning'&&prev!=='learning')))adLogoutQuiet();
@@ -2247,7 +2248,7 @@ async function loadMe(force){
   _meLoaded=true;
   const b=document.getElementById('login-btn');
   if(b){b.hidden=!_me.login_enabled;b.textContent=_me.user?('登出　'+String(_me.user.name||'').slice(0,8)):'Google 登入';}
-  loginWall();
+  loginWall();applyRoleUI();
   const q=new URLSearchParams(location.search).get('login');
   if(q){history.replaceState(null,'',location.pathname);
     toast(q==='ok'?'登入成功':q==='failed'?'登入失敗，請再試一次':'尚未啟用會員登入');}
@@ -2259,10 +2260,66 @@ function loginWall(){
   if(!need){if(w)w.remove();return;}
   if(w)return;
   w=document.createElement('div');w.id='login-wall';
-  w.setAttribute('role','dialog');w.setAttribute('aria-label','請登入');
-  w.style.cssText='position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--bg,#f4f5f7);padding:24px';
-  w.innerHTML='<div class="panel" style="max-width:380px;width:100%;padding:32px 28px;text-align:center"><div style="font-size:19px;font-weight:600;margin-bottom:10px">台股波段智慧交易系統</div><div style="color:var(--t2);font-size:13.5px;line-height:1.7;margin-bottom:22px">登入後即可使用訊號、市場總覽、個股研究與自選股。<br>只用 Google 帳號驗證，不收費，網站不保存密碼。</div><button class="btn primary" style="width:100%;padding:11px" onclick="location.href=\'/auth/google\'">使用 Google 登入</button><div style="color:var(--t3);font-size:11.5px;margin-top:16px">本站內容僅供研究參考，不構成投資建議。</div></div>';
+  w.setAttribute('role','dialog');w.setAttribute('aria-label','歡迎');
+  w.style.cssText='position:fixed;inset:0;z-index:9999;overflow-y:auto;background:var(--bg,#f4f5f7);color:var(--ink,#0b1f3a)';
+  const go='onclick="location.href=\'/auth/google\'"';
+  w.innerHTML=`<style>
+  #login-wall .lw-bar{display:flex;align-items:center;gap:22px;padding:14px max(20px,calc((100% - 1160px)/2));border-bottom:1px solid var(--line2,#e3e6ec);background:var(--s1,#fff)}
+  #login-wall .lw-brand{font-weight:700;font-size:16px;letter-spacing:.02em;margin-right:auto}
+  #login-wall .lw-link{font-size:13.5px;color:var(--t2,#55607a);text-decoration:none}
+  #login-wall .lw-main{max-width:1160px;margin:0 auto;padding:44px 20px 24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:44px;align-items:center}
+  #login-wall h1{font-size:clamp(30px,4.4vw,50px);line-height:1.15;margin:0 0 16px;font-weight:700;letter-spacing:-.01em}
+  #login-wall .lw-sub{font-size:15.5px;line-height:1.75;color:var(--t2,#55607a);margin:0 0 26px;max-width:30em}
+  #login-wall .lw-cta{display:inline-flex;align-items:center;gap:10px;background:var(--navy,#0b1f3a);color:#fff;border:0;border-radius:999px;padding:14px 28px;font:inherit;font-size:15px;font-weight:600;cursor:pointer}
+  #login-wall .lw-cta:hover{filter:brightness(1.15)}
+  #login-wall .lw-fine{font-size:12px;color:var(--t3,#8a93a8);margin-top:14px}
+  #login-wall .lw-card{background:var(--s1,#fff);border:1px solid var(--line2,#e3e6ec);border-radius:18px;padding:18px 20px 12px;box-shadow:0 8px 30px rgba(11,31,58,.06)}
+  #login-wall .lw-k{font-size:13px;color:var(--t2,#55607a)}
+  #login-wall .lw-p{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+  #login-wall .lw-p small{font-size:14px;font-weight:600;margin-left:8px}
+  #login-wall .lw-feat{max-width:1160px;margin:8px auto 0;padding:28px 20px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+  #login-wall .lw-f{border-top:2px solid var(--navy,#0b1f3a);padding-top:12px}
+  #login-wall .lw-f b{display:block;font-size:15px;margin-bottom:6px}
+  #login-wall .lw-f span{font-size:13.5px;line-height:1.7;color:var(--t2,#55607a)}
+  #login-wall footer{max-width:1160px;margin:0 auto;padding:18px 20px 40px;font-size:12px;color:var(--t3,#8a93a8);line-height:1.7}
+  @media(max-width:820px){#login-wall .lw-main{grid-template-columns:1fr;gap:26px;padding-top:28px}#login-wall .lw-feat{grid-template-columns:1fr}#login-wall .lw-link{display:none}}
+  </style>
+  <div class="lw-bar"><span class="lw-brand">台股波段</span><a class="lw-link">市場</a><a class="lw-link">訊號</a><a class="lw-link">自選股</a><button class="btn" ${go}>登入</button></div>
+  <div class="lw-main">
+    <div><h1>先看清楚市場，<br>再決定要不要出手。</h1>
+      <p class="lw-sub">每天盤後掃描全市場，整理出有條件的波段訊號，並把處置、注意、暫停交易等風險一起標示。搭配即時市場總覽與你自己的自選股。</p>
+      <button class="lw-cta" ${go}>使用 Google 免費登入</button>
+      <div class="lw-fine">不收費，網站不保存密碼，只用 Google 帳號確認身分。</div></div>
+    <div class="lw-card" aria-live="polite"><div class="lw-k" id="lw-name">加權指數</div><div class="lw-p" id="lw-price">—</div><div id="lw-chart" style="height:170px;margin-top:6px"></div><div class="lw-fine" id="lw-note" style="margin:6px 0 4px"></div></div>
+  </div>
+  <div class="lw-feat">
+    <div class="lw-f"><b>每日波段訊號</b><span>多空條件、停損與停利一起給，並排除處置與暫停交易的股票。</span></div>
+    <div class="lw-f"><b>市場總覽</b><span>上市上櫃漲跌家數、產業排行、期交所籌碼，一頁看完。</span></div>
+    <div class="lw-f"><b>自選股</b><span>多組清單、即時報價、訊號與風險標示，每個人各自獨立。</span></div>
+  </div>
+  <footer>本站內容僅供研究與學習參考，不構成任何投資建議；投資一定有風險，請自行評估並自負盈虧。指數為延遲資料。</footer>`;
   document.body.appendChild(w);
+  fetch('/api/public/pulse',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+    if(!d||!d.ok||d.price==null){document.getElementById('lw-note').textContent='目前尚無指數資料';return;}
+    const up=(d.chg||0)>=0,c=up?'var(--up,#d93a3a)':'var(--down,#1a9e5c)';
+    document.getElementById('lw-price').innerHTML=Number(d.price).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+(d.chg!=null?`<small style="color:${c}">${up?'▲':'▼'} ${Math.abs(d.chg).toFixed(2)}（${up?'+':''}${d.pct}%）</small>`:'');
+    const pts=(d.series||[]).map(p=>p[1]).filter(v=>v!=null);
+    if(d.prev!=null)pts.unshift(d.prev);
+    const el=document.getElementById('lw-chart');
+    if(pts.length>=2){const W=520,H=170,lo=Math.min(...pts),hi=Math.max(...pts),r=(hi-lo||1)*.1,L=lo-r,Hh=hi+r;
+      const X=i=>(i/(pts.length-1)*W).toFixed(1),Y=v=>((1-(v-L)/(Hh-L))*H).toFixed(1);
+      const dd=pts.map((v,i)=>(i?'L':'M')+X(i)+' '+Y(v)).join(' ');
+      el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" role="img" aria-label="加權指數當日走勢"><path d="${dd} L${W} ${H} L0 ${H} Z" fill="${c}" opacity=".12"/><path d="${dd}" fill="none" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;}
+    document.getElementById('lw-note').textContent=(d.date||'')+(d.market_open?' 盤中，約每 5 分鐘更新':' 最近一次資料');
+  }).catch(()=>{});
+}
+function applyRoleUI(){
+  if(!_me.login_enabled)return;
+  const owner=!!(_me.user&&_me.user.owner),OWN=['learning','health','audit','diag','backtest'];
+  document.querySelectorAll('.nav').forEach(n=>{const oc=n.getAttribute('onclick')||'';
+    if(OWN.some(p=>oc.includes("'"+p+"'")))n.style.display=owner?'':'none';});
+  document.querySelectorAll('.nav-g').forEach(g=>{if(g.textContent.trim()==='工具')g.style.display=owner?'':'none';});
+  window._ownerOnly=owner?[]:OWN;
 }
 async function memberBtn(){
   if(!_me.user){location.href='/auth/google';return;}
