@@ -2278,6 +2278,9 @@ def api_backtest_ablation_result():
 # ── Telegram Webhook ──
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
+    # 2026-10-08 攻擊模擬發現：沒設 TELEGRAM_BOT_TOKEN 時這條路由會變成「/webhook/」，任何人都能送假指令進來
+    if not TELEGRAM_BOT_TOKEN:
+        return jsonify({"error": "not found"}), 404
     try:
         from telegram_bot import handle_update, send_message
         update  = request.get_json()
