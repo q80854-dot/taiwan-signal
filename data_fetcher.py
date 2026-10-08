@@ -886,6 +886,11 @@ def inst_status() -> Dict:
     return dict(_inst_meta)
 
 
+def _lots(shares: int) -> int:
+    """股數換算成張（四捨五入，正負對稱）。"""
+    return int((abs(shares) + 500) // 1000) * (1 if shares >= 0 else -1)
+
+
 def _inst_try(date_str: str):
     """抓某一天的 T86（三大法人買賣超日報）。selectType=ALLBUT0999 排除權證／牛熊證，
     資料量從約 2 萬列降到約 1 千多列（2026-10-05 實測：用 ALL 時回應巨大，Render 上 15 秒讀取逾時，
@@ -909,9 +914,10 @@ def _inst_try(date_str: str):
                     # T86 欄位：[4]外陸資買賣超 [10]投信買賣超 [18]三大法人買賣超（2026-08-31 校正過）
                     # ★ 2026-10-06 單位修正：T86 回傳的是「股」，下游門檻（>200、>500）與顯示都是「張」，
                     # 原本沒換算，等於外資只要買超 201 股就加分（訊號上看到「外資買超 +21,838,869張」即此錯誤）。
-                    fn = int(pi(row[4]) / 1000) if len(row) > 4 else 0
-                    tn = int(pi(row[10]) / 1000) if len(row) > 10 else 0
-                    tt = int(pi(row[18]) / 1000) if len(row) > 18 else 0
+                    # 四捨五入成張（原本 int() 直接截斷，例如 -1,999 股顯示 -1 張）
+                    fn = _lots(pi(row[4])) if len(row) > 4 else 0
+                    tn = _lots(pi(row[10])) if len(row) > 10 else 0
+                    tt = _lots(pi(row[18])) if len(row) > 18 else 0
                     result[code] = {"name": name, "foreign_net": fn, "trust_net": tn, "total_net": tt,
                                     "signal": "strong_buy" if fn > 500 and tn > 0 else "buy" if fn > 100 else "strong_sell" if fn < -500 else "sell" if fn < -100 else "neutral"}
                 except Exception:
@@ -923,12 +929,24 @@ def _inst_try(date_str: str):
     return {}, "error"
 
 
+def _inst_ttl(cache_k: str) -> int:
+    """當日 T86 還沒公布、先拿前一個交易日頂替時，只快取 15 分鐘（原本一律 6 小時，
+    下午 3 點抓到昨天的資料會一直用到晚上 9 點，排行與個股頁都停在前一天）。"""
+    if cache_k != "inst_today":
+        return 6 * 3600
+    today = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y%m%d")
+    return 6 * 3600 if _inst_used.get(cache_k) == today else 900
+
+
+_inst_used: Dict[str, str] = {}
+
+
 def fetch_institutional_flow(date_str=None) -> Dict:
     cache_k = f"inst_{date_str or 'today'}"
-    if c := _cache_get(cache_k, 6 * 3600): return c
+    if c := _cache_get(cache_k, _inst_ttl(cache_k)): return c
     if time.time() < _inst_fail_until.get(cache_k, 0): return {}      # 剛失敗過，短時間內不再重打（避免每檔股票各等一次逾時）
     with _inst_lock:                                                   # 單一航班：同時多檔只有一個人真的去抓
-        if c := _cache_get(cache_k, 6 * 3600): return c
+        if c := _cache_get(cache_k, _inst_ttl(cache_k)): return c
         if time.time() < _inst_fail_until.get(cache_k, 0): return {}
         t0 = time.time()
         if date_str is None:
@@ -949,6 +967,7 @@ def fetch_institutional_flow(date_str=None) -> Dict:
         _inst_meta.update({"secs": round(time.time() - t0, 1), "at": time.time(), "date": used, "n": len(result),
                            "ok": bool(result), "err": None if result else (_inst_meta.get("err") or "查無資料")})
         if result:
+            _inst_used[cache_k] = used
             logger.info(f"三大法人：{len(result)} 檔（{used}，{_inst_meta['secs']}s）")
             return _cache_set(cache_k, result)
         _inst_fail_until[cache_k] = time.time() + 180

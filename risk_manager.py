@@ -193,19 +193,27 @@ def run_all_checks(ticker, stock_info, tf_data, market_overview, active_signals=
     return {"status":"blocked" if blockers else "warning" if warnings else "clear",
             "warnings":warnings,"blockers":blockers,"checks":checks,"score_adj":score_adj,"can_signal":len(blockers)==0}
 
+def _twii_ok(market_overview: Dict) -> bool:
+    t=(market_overview.get("index") or {}).get("twii") or {}
+    return bool(t) and t.get("source")!="error"
+
 def get_system_status(market_overview: Dict) -> Dict:
     market_cb=check_market_circuit_breaker(market_overview)
     foreign=check_foreign_flow(market_overview)
     twii_chg=market_cb.get("twii_chg",0); vix=market_cb.get("vix",20); score=100
     if market_cb.get("level")=="extreme":   score-=50; st="大盤重挫"; cl="red"
     elif market_cb.get("level")=="high":    score-=25; st="大盤偏弱"; cl="orange"
-    elif market_cb.get("level")=="unknown": st="大盤資料異常"; cl="orange"
+    elif market_cb.get("level")=="unknown": st="大盤資料異常" if not _twii_ok(market_overview) else "VIX 資料缺漏"; cl="orange"
     elif twii_chg>1.0:                      score+=10; st="大盤強勢"; cl="green"
     else:                                   st="正常";  cl="green"
     if foreign.get("level")=="extreme":    score-=20
     elif foreign.get("level")=="warning":  score-=10
     elif foreign.get("level")=="positive": score+=10
     daily=check_daily_loss_limit(); score=max(0,min(100,score))
+    # 2026-10-08：大盤資料抓不到時原本仍以 100 分起算，畫面出現「100／大盤資料異常」且可交易＝是。
+    # 沒有資料就不給分數（None，前端顯示「—」），也不判定可交易。
+    market_unknown = market_cb.get("level")=="unknown" and not _twii_ok(market_overview)
+    if market_unknown: score=None
     # ★ 修正：2026-09-29——使用者回報這頁同一畫面「外資賣超632億，暫停多單」
     # 跟「可交易：是」「每個產業✅適合交易」同時出現，互相矛盾。根因：
     # can_trade 跟 cat_advice 原本純粹看 score 門檻（>=50 / >=70），但 score
@@ -218,10 +226,12 @@ def get_system_status(market_overview: Dict) -> Dict:
     # 這裡讓 can_trade／cat_advice 直接看 market_cb/foreign 的 action 是否為
     # "stop_buy"，是就無條件顯示暫停，不再讓分數門檻蓋過這個訊號。
     stop_buy = market_cb.get("action")=="stop_buy" or foreign.get("action")=="stop_buy"
-    can_trade = (not stop_buy) and score>=50
+    can_trade = (not stop_buy) and (not market_unknown) and score>=50
     cat_advice={}
     for cat in ["ETF","半導體業","電子零組件業","金融保險","航運業","生技醫療業"]:
-        if stop_buy:
+        if market_unknown:
+            cat_advice[cat]="⚠️ 大盤資料異常，暫不判斷"
+        elif stop_buy:
             cat_advice[cat]="🔴 暫停多單（大盤/外資熔斷中，僅供研究參考）"
         else:
             cat_advice[cat]="✅ 適合交易" if score>=70 else "⚠️ 謹慎" if score>=40 else "🔴 觀望"

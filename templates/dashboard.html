@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html{-webkit-text-size-adjust:100%;text-size-adjust:100%}</style>
 <title>台股波段智慧交易系統</title>
 <meta name="description" content="台股波段訊號研究平台：多週期技術面、籌碼、基本面共振，每筆訊號全程追蹤，績效與資料來源完整公開。">
 <meta property="og:title" content="台股波段智慧交易系統"><meta property="og:description" content="多因子波段訊號、透明績效、資料來源公開（研究用途，非投資建議）">
@@ -734,7 +735,12 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 .breadth .bl{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--t2);margin-bottom:7px}
 .breadth .bb{display:flex;height:6px;gap:2px}.breadth .bb i{display:block;min-width:2px}
 .ledger dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:0;border-top:1px solid var(--line)}
-.ledger dl>div{padding:11px 16px 11px 0;border-bottom:1px solid var(--line)}
+.ledger{padding:0 20px}
+.ledger>header .mut{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px}
+.ledger dl>div{padding:11px 16px 11px 0;border-bottom:1px solid var(--line);min-width:0}
+.ledger dd.opt{display:flex;flex-wrap:wrap;column-gap:14px;row-gap:2px;font-size:17px}
+.ledger dd.opt span{white-space:nowrap}
+.ledger dd.opt small{margin:0 4px 0 0}
 .ledger dt{font-size:12px;color:var(--t3);letter-spacing:.03em}
 .ledger dd{margin:2px 0 0;font-size:20px;font-weight:300;color:var(--ink)}
 .ledger dd small{font-size:12px;color:var(--t3);margin-left:3px}
@@ -744,7 +750,12 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 @media(max-width:640px){
   .tile{border-right:0;margin-right:0;border-bottom:1px solid var(--line);grid-template-columns:1fr 44%}
   .tile:last-child{border-bottom:0}
+  .ledger{padding:0 14px}
+  .ledger>header{padding:12px 0 8px}
+  .ledger dl{grid-template-columns:1fr 1fr}
+  .ledger dl>div{padding:10px 10px 10px 0}
   .ledger dd{font-size:17px}
+  .ledger dd.opt{font-size:15px}
 }
 /* 骨架載入：取代「載入中…」文字，避免版面跳動 */
 .skel-wrap{display:grid;gap:10px;padding:14px 0}
@@ -933,6 +944,7 @@ html .ticker,html.force-desktop .ticker,html.force-mobile .ticker{overflow-x:aut
 .mbar,.ledger{border-top:1px solid var(--line)!important;border-radius:var(--r);overflow:hidden}
 #ov-live,#live-strip{padding:14px 20px 16px;background:var(--s1);border:1px solid var(--line)!important;box-shadow:var(--sh)}
 #ov-live[hidden],#live-strip[hidden]{display:none}
+#breadth-row>div[style*="grid-column"]{padding-left:18px;padding-right:18px;padding-bottom:12px}
 .top{border-bottom:1px solid var(--line)!important;box-shadow:none!important}
 .tl{border-left:2px solid var(--line2)!important}
 .tl .ev::before{border-color:var(--accent)!important}
@@ -972,6 +984,14 @@ html.force-mobile .top{height:52px!important;padding:0 10px!important;gap:6px!im
 <style id="skin-mobile4">@media(max-width:640px){html:not(.force-desktop) .mast{grid-template-columns:1fr!important;gap:8px!important;padding:14px 16px!important}html:not(.force-desktop) .mast .dt{border:0!important;padding:0!important;display:flex!important;align-items:baseline;gap:10px;grid-column:auto!important}html:not(.force-desktop) .mast .dt b{font-size:24px!important}html:not(.force-desktop) .mast .seal{display:flex!important;flex-direction:row!important;align-items:baseline!important;justify-content:flex-start!important;width:auto!important;height:auto!important;transform:none!important;border:0!important;box-shadow:none!important;background:none!important;padding:8px 0 0!important;gap:8px;animation:none!important;border-top:1px dashed var(--line2)!important}html:not(.force-desktop) .mast .seal b{font-size:34px!important;line-height:1!important}html:not(.force-desktop) .mast .seal i{border:0!important;padding:0!important;margin:0!important;writing-mode:horizontal-tb!important;font-size:13px!important;letter-spacing:1px!important;white-space:nowrap!important;color:var(--t2)!important;position:static!important;transform:none!important;width:auto!important}html:not(.force-desktop) #positioning-note{display:none!important}html:not(.force-desktop) .sec-label{margin-top:18px!important}}html.force-mobile .mast{grid-template-columns:1fr!important;gap:8px!important;padding:14px 16px!important}html.force-mobile .mast .dt{border:0!important;padding:0!important;display:flex!important;align-items:baseline;gap:10px;grid-column:auto!important}html.force-mobile .mast .dt b{font-size:24px!important}html.force-mobile .mast .seal{display:flex!important;flex-direction:row!important;align-items:baseline!important;justify-content:flex-start!important;width:auto!important;height:auto!important;transform:none!important;border:0!important;box-shadow:none!important;background:none!important;padding:8px 0 0!important;gap:8px;animation:none!important;border-top:1px dashed var(--line2)!important}html.force-mobile .mast .seal b{font-size:34px!important;line-height:1!important}html.force-mobile .mast .seal i{border:0!important;padding:0!important;margin:0!important;writing-mode:horizontal-tb!important;font-size:13px!important;letter-spacing:1px!important;white-space:nowrap!important;color:var(--t2)!important;position:static!important;transform:none!important;width:auto!important}html.force-mobile #positioning-note{display:none!important}html.force-mobile .sec-label{margin-top:18px!important}</style>
 <style id="skin-mobile5">@media(max-width:640px){html:not(.force-desktop) .mw-add .gs{display:block!important;max-width:none!important;flex:none!important;margin:0!important;width:100%}html:not(.force-desktop) .mw-add input{height:44px!important}html:not(.force-desktop) .mut a{color:var(--t2)!important}}html.force-mobile .mw-add .gs{display:block!important;max-width:none!important;flex:none!important;margin:0!important;width:100%}html.force-mobile .mw-add input{height:44px!important}html.force-mobile .mut a{color:var(--t2)!important}</style>
 <style id="skin-mobile6">@media(max-width:640px){
+html:not(.force-desktop) #breadth-row{grid-template-columns:repeat(5,minmax(0,1fr))!important}
+html:not(.force-desktop) #breadth-row>.kpi{padding:12px 4px!important;text-align:center;border-left:1px solid var(--line)!important}
+html:not(.force-desktop) #breadth-row>.kpi:first-child{border-left:0!important}
+html:not(.force-desktop) #breadth-row .kpi-label{font-size:11.5px!important}
+html:not(.force-desktop) #breadth-row .kpi-val{font-size:20px!important}
+html:not(.force-desktop) #breadth-row .kpi-sub{text-align:left}
+html:not(.force-desktop) #breadth-row{gap:0!important}
+html:not(.force-desktop) #breadth-row>div[style*="grid-column"]{padding:10px 14px 12px!important;margin-top:0!important}
 html:not(.force-desktop) .pad{padding:6px 14px 18px!important}
 html:not(.force-desktop) .mast{display:block!important;padding:14px 2px 2px!important}
 html:not(.force-desktop) .mast .dt{margin-bottom:6px}
@@ -2242,7 +2262,7 @@ function renderMoSourceNote(ds){
   // 避免使用者把 TWSE/TPEX 官方尚未更新（非今日）誤會成張數算錯。
   const tdate=qs.quote_trading_date;
   const lv=ds.intraday||(ds.quote_and_sector||{}).intraday;
-  const tdateHtml=(lv&&lv.active)?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">${lv.final?'📌 今日收盤最終資料':'⚡ 盤中即時資料'}（證交所 MIS，${lv.final?'定案於':'更新於'} ${new Date(lv.snapshot_at*1000).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false})}${lv.final?'；官方日行情公布後會自動換成官方數字':'，約 5 分鐘更新一次'}；${lv.n_ok} 檔，完整度 ${lv.completeness!=null?(lv.completeness*100).toFixed(1)+'%':'—'}）。上市／上櫃皆為同一時點。</div>`:tdate?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">📅 以下統計為 <span style="color:var(--down)">${tdate}</span> 收盤後資料${tdate!==todayISO()?'（非今日，TWSE/TPEX 官方尚未公布更新的收盤資料，屬正常現象，不是張數算錯）':'（今日收盤後最新資料）'}</div>`:'<div style="color:var(--warn)">⚠ 無法判斷這份資料實際交易日期，請自行核對是否為最新收盤資料</div>';
+  const tdateHtml=(lv&&lv.active)?`<div style="font-size:12px;line-height:1.6;color:var(--t2);font-weight:400;margin-bottom:4px"><b style="color:var(--t1);font-weight:600">${lv.final?'今日收盤最終資料':'盤中即時資料'}</b>（證交所 MIS，${lv.final?'定案於':'更新於'} ${new Date(lv.snapshot_at*1000).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false})}${lv.final?'；官方日行情公布後會自動換成官方數字':'，約 5 分鐘更新一次'}；${lv.n_ok} 檔，完整度 ${lv.completeness!=null?(lv.completeness*100).toFixed(1)+'%':'—'}）。上市／上櫃皆為同一時點。</div>`:tdate?`<div style="font-size:12px;color:var(--t1);font-weight:600;margin-bottom:4px">📅 以下統計為 <span style="color:var(--down)">${tdate}</span> 收盤後資料${tdate!==todayISO()?'（非今日，TWSE/TPEX 官方尚未公布更新的收盤資料，屬正常現象，不是張數算錯）':'（今日收盤後最新資料）'}</div>`:'<div style="color:var(--warn)">⚠ 無法判斷這份資料實際交易日期，請自行核對是否為最新收盤資料</div>';
   // ★ 新增：2026-09-29——使用者回報「市場總覽的上漲/下跌加起來的數字都有
   // 錯」，根因是 TWSE(上市)／TPEX(上櫃) 兩邊官方資料常常不是同一交易日
   // （見 stock_universe.get_market_breadth() 修正說明），把兩邊混在一起
@@ -2261,7 +2281,7 @@ function _mins(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'');return m?(+m[1])*60+(
 function sparkSvg(pts,prev,up){
   const W=240,H=56,x0=540,x1=810,pad=4;
   const P=(pts||[]).map(p=>[_mins(p[0]),p[1]]).filter(p=>p[0]!=null&&p[0]>=x0-5&&p[0]<=x1+5);
-  if(prev==null&&!P.length)return '';
+  if(P.length<2)return '';
   const vals=P.map(p=>p[1]).concat(prev!=null?[prev]:[]);
   let lo=Math.min(...vals),hi=Math.max(...vals);if(hi-lo<1e-9){hi+=1;lo-=1;}
   const r=(hi-lo)*.12;lo-=r;hi+=r;
@@ -2282,17 +2302,17 @@ async function fetchTaifexStrip(){
     if(d.error||!d.date||!d.items){el.hidden=true;return;}
     const o=(d.options||{})['外資及陸資']||{};
     const p=d.pcr,l=d.large;
-    const cell=(lab,who,sub)=>{const x=d.items[who];return x?`<div><dt>${lab}</dt><dd class="num" style="color:${_col(x.equiv_net_oi)}">${_sg(x.equiv_net_oi)}<small>口</small></dd>${sub?`<em>${sub}</em>`:''}</div>`:'';};
+    const cell=(lab,who,sub)=>{const x=d.items[who];if(!x)return '';const tx=(x.tx_net_oi!=null&&x.tx_net_oi!==x.equiv_net_oi)?`臺股期貨 ${_sg(x.tx_net_oi)}`:'';const ss=[tx,sub].filter(Boolean).join('　');return `<div><dt>${lab}</dt><dd class="num" style="color:${_col(x.equiv_net_oi)}">${_sg(x.equiv_net_oi)}<small>口</small></dd>${ss?`<em>${ss}</em>`:''}</div>`;};
     const stale=(d.stale||[]).length?`<span class="pill warn" title="期交所這次沒回資料，先沿用上一次成功取得的數字">沿用前次資料</span>`:'';
     el.hidden=false;
-    el.innerHTML=`<header><h3>期交所籌碼</h3><span class="mut">${d.date}　大台等效淨未平倉${stale}</span></header>
+    el.innerHTML=`<header><h3>期交所籌碼</h3><span class="mut"><span>${d.date}</span><span>期貨：大台等效淨未平倉</span>${stale}</span></header>
     <dl>
       ${cell('外資','外資及陸資',d.foreign_chg_5d!==undefined?'5 日 '+_sg(d.foreign_chg_5d):'')}${cell('投信','投信')}${cell('自營商','自營商')}
-      ${o.call_net_oi!==undefined?`<div><dt>外資臺指選擇權</dt><dd class="num">Call ${_sg(o.call_net_oi)}<small> ／ </small>Put ${_sg(o.put_net_oi||0)}</dd></div>`:''}
+      ${o.call_net_oi!==undefined?`<div><dt>外資臺指選擇權淨未平倉</dt><dd class="num opt"><span><small>Call</small><b style="font-weight:inherit;color:${_col(o.call_net_oi)}">${_sg(o.call_net_oi)}</b></span><span><small>Put</small><b style="font-weight:inherit;color:${_col(o.put_net_oi||0)}">${_sg(o.put_net_oi||0)}</b></span></dd><em>單位：口</em></div>`:''}
       ${p?`<div><dt>Put/Call 未平倉比</dt><dd class="num">${p.oi_ratio}<small>%</small></dd>${d.pcr_chg_5d!==undefined?`<em>5 日 ${d.pcr_chg_5d>0?'+':''}${d.pcr_chg_5d}</em>`:''}</div>`:''}
       ${l?`<div><dt>前十大交易人淨部位</dt><dd class="num" style="color:${_col(l.top10_net)}">${_sg(l.top10_net)}<small>口</small></dd><em>占市場 ${l.top10_net_pct}%</em></div>`:''}
     </dl>
-    <p class="mut">${d.foreign_note?d.foreign_note+'（僅描述部位，不影響訊號分數）。':''}來源：期交所 OpenAPI。</p>`;
+    <p class="mut">${d.foreign_note?d.foreign_note+'（僅描述部位，不影響訊號分數）。':''}大台等效＝臺股期貨＋小型臺指÷4＋微型臺指÷20。來源：期交所 OpenAPI。</p>`;
   }catch(e){el.hidden=true;}
 }
 async function fetchLiveStrip(){
@@ -2317,7 +2337,7 @@ async function fetchLiveStrip(){
     const b=d.breadth||{};let br='';
     if(b.up!=null){
       const tot=(b.up+b.down+(b.flat||0))||1;
-      br=`<div class="breadth"><div class="bl"><span>市場廣度</span><span class="num"><b style="color:var(--up)">上漲 ${b.up}</b>　<b style="color:var(--down)">下跌 ${b.down}</b>　平盤 ${b.flat}　漲停 <b style="color:var(--up)">${b.limit_up}</b>　跌停 <b style="color:var(--down)">${b.limit_down}</b></span></div>
+      br=`<div class="breadth"><div class="bl"><span>市場廣度${b.scope?`<small style="color:var(--t3)">（${safe(b.scope)}）</small>`:''}</span><span class="num"><b style="color:var(--up)">上漲 ${b.up}</b>　<b style="color:var(--down)">下跌 ${b.down}</b>　平盤 ${b.flat}　漲停 <b style="color:var(--up)">${b.limit_up}</b>　跌停 <b style="color:var(--down)">${b.limit_down}</b></span></div>
         <div class="bb" role="img" aria-label="上漲${b.up}檔、平盤${b.flat}檔、下跌${b.down}檔"><i style="width:${b.up/tot*100}%;background:var(--up)"></i><i style="width:${(b.flat||0)/tot*100}%;background:var(--line2)"></i><i style="width:${b.down/tot*100}%;background:var(--down)"></i></div></div>`;
     }
     const ql=d.quality;
@@ -2362,6 +2382,7 @@ async function fetchMarketBreadth(){
       <div class="kpi"><div class="kpi-label">平盤家數</div><div class="kpi-val">${d.unchanged}</div></div>
       <div class="kpi"><div class="kpi-label">漲停家數</div><div class="kpi-val" style="color:var(--up)">${d.limit_up}</div></div>
       <div class="kpi"><div class="kpi-label">跌停家數</div><div class="kpi-val" style="color:var(--down)">${d.limit_down}</div>${warn}</div>
+      ${d.scope?`<div style="grid-column:1/-1;font-size:11px;color:var(--t3);padding-top:6px">統計範圍：上市＋上櫃${safe(d.scope)}；漲停／跌停以收盤價是否等於當日漲跌停價判定。</div>`:''}
       ${breakdownHtml}
       ${poolHtml}
     `;
@@ -3464,7 +3485,7 @@ function renderIndex(idx){
   [['twii','twii-val','twii-chg'],['tpex','tpex-val','tpex-chg'],['vix','vix-val','vix-chg'],['sp500','sp500-val','sp500-chg'],['dxy','dxy-val','dxy-chg'],['gold','gold-val','gold-chg'],['btc','btc-val','btc-chg']].forEach(([key,valId,chgId])=>{
     const d=idx[key]||{};const p=d.price;
     setEl(valId,p?parseFloat(p).toLocaleString('zh-TW',{maximumFractionDigits:2}):'—');
-    if(chgId){const el=document.getElementById(chgId);if(el&&d.chg!==undefined){el.textContent=chgStr(d.chg);el.style.color=clr(d.chg);}}
+    if(chgId){const el=document.getElementById(chgId);if(el&&!p){el.textContent='—';el.style.color='var(--t3)';}else if(el&&d.chg!==undefined&&d.chg!==null){el.textContent=chgStr(d.chg);el.style.color=clr(d.chg);}}
     // ★ 新增：2026-09-19——每個指數實際上有多個資料來源（富果/TWSE官方/yfinance
     // 各期間 fallback，見 data_fetcher.py），來源字串本身早就存在後端回傳的
     // json裡（d.source），但前端從來沒有顯示過，使用者完全看不出眼前這個數字
@@ -3482,18 +3503,21 @@ function renderIndex(idx){
       }else if(srcEl){srcEl.remove();}
     }
   });
-  const fn=_state?.market_overview?.foreign?.net_buy_twd||0;
-  setEl('foreign-val',(fn>=0?'買超':'賣超')+Math.abs(fn/1e8).toFixed(0)+'億');
-  setColor('foreign-val',fn>=0?'var(--up)':'var(--down)');
+  // 外資資料抓不到時不再顯示「買超0億」（看起來像真的是 0）
+  const fnRaw=_state?.market_overview?.foreign?.net_buy_twd;const fnOk=typeof fnRaw==='number'&&isFinite(fnRaw);const fn=fnOk?fnRaw:0;
+  setEl('foreign-val',fnOk?(fn>=0?'買超':'賣超')+Math.abs(fn/1e8).toFixed(fn!==0&&Math.abs(fn)<1e9?1:0)+'億':'—');
+  setColor('foreign-val',!fnOk?'var(--t3)':fn>=0?'var(--up)':'var(--down)');
   const fd=String(_state?.market_overview?.foreign?.date||'');
   setEl('foreign-date',fd.length===8?fd.slice(4,6)+'/'+fd.slice(6)+' 外資及陸資':'資料日期未知');
 }
 
 function renderKPIs(d){
-  const sys=d.system_status||{};const wr=d.win_rate||{};const env=sys.env_score??d.sentiment_score??50;
-  setEl('env-score',safeN(env,0));setEl('env-status',safe(sys.env_status||'—'));
-  setColor('env-score',env>=70?'var(--up)':env>=40?'var(--warn)':'var(--alert)');
-  {const eb=document.getElementById('env-bar');if(eb){eb.style.width=Math.max(0,Math.min(100,Number(env)||0))+'%';eb.style.background=env>=70?'var(--up)':env>=40?'var(--warn)':'var(--alert)';}}
+  const sys=d.system_status||{};const wr=d.win_rate||{};
+  // 大盤資料異常時後端回 env_score=null：顯示「—」，不再拿情緒分數或 50 頂替
+  const envNA=('env_score' in sys)&&sys.env_score==null;const env=envNA?null:(sys.env_score??d.sentiment_score??50);
+  setEl('env-score',envNA?'—':safeN(env,0));setEl('env-status',safe(sys.env_status||'—'));
+  setColor('env-score',envNA?'var(--t3)':env>=70?'var(--up)':env>=40?'var(--warn)':'var(--alert)');
+  {const eb=document.getElementById('env-bar');if(eb){eb.style.width=envNA?'0%':Math.max(0,Math.min(100,Number(env)||0))+'%';eb.style.background=envNA?'var(--t3)':env>=70?'var(--up)':env>=40?'var(--warn)':'var(--alert)';}}
   setEl('sentiment-score',safeN(d.sentiment_score,0));setEl('sentiment-zh',safe(d.sentiment_zh));
   setEl('signal-count',safe(d.signal_count,0));setEl('sig-count-badge',safe(d.signal_count,0));
   // ★ 修正：2026-09-29——使用者回報「已經0勝4負，勝率卻顯示—%」。根因：
@@ -3618,7 +3642,7 @@ function renderMarket(d){
   const sys=d.system_status||{};
   document.getElementById('market-env-body').innerHTML=`
     <div>
-      <div class="kv"><span>環境評分</span><span style="color:${sys.env_score>=70?'var(--up)':sys.env_score>=40?'var(--warn)':'var(--alert)'}">${sys.env_score||'—'}/100</span></div>
+      <div class="kv"><span>環境評分</span><span style="color:${sys.env_score==null?'var(--t3)':sys.env_score>=70?'var(--up)':sys.env_score>=40?'var(--warn)':'var(--alert)'}">${sys.env_score==null?'—':sys.env_score}/100</span></div>
       <div class="kv"><span>大盤狀態</span><span>${safe(sys.env_status)}</span></div>
       <div class="kv"><span>可交易</span><span style="color:${sys.can_trade?'var(--ok)':'var(--alert)'}">${sys.can_trade?'是':'否'}</span></div>
       <div class="kv"><span>外資訊號</span><span>${safe(sys.foreign_signal)}</span></div>
