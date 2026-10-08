@@ -633,6 +633,8 @@ import members
 app.register_blueprint(members.bp)
 app.before_request(members.gate)   # 登入牆：登入功能啟用後，/api/* 需登入（沒設 GOOGLE_CLIENT_ID／SECRET 時整個功能關閉）
 app.after_request(admin_auth.after)
+import protect
+protect.install(app)   # 流量湧入防護：全域限流、參數檢查、短時間快取、重端點並行上限、5xx 不外洩內容
 
 
 # ════════════════════════════════════════════════

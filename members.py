@@ -142,6 +142,7 @@ def upsert_member(sub: str, email: str, name: str):
                      (sub, DEFAULT_GROUP))
         conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count) VALUES (?, 0, 0, 1) "
                      "ON CONFLICT (sub) DO UPDATE SET login_count=member_status.login_count+1", (sub,))
+    invalidate_member(sub)
 
 
 def get_member(sub: str):
@@ -225,13 +226,36 @@ def current_member():
     p = unsign(request.cookies.get(COOKIE, ""))
     if not p or not p.get("sub"):
         return None
-    m = get_member(p["sub"])
+    m, st = _member_cached(p["sub"])
     if not m:
         return None
-    st = status_of(p["sub"])
     if st.get("disabled") or int(p.get("v", 0)) != int(st.get("sess_ver") or 0):
         return None
     return m
+
+
+_MCACHE: dict = {}      # sub -> (到期時間, 會員, 狀態)；單一 worker，所以停權／登出全部裝置時直接清掉即可立刻生效
+
+
+def _member_cached(sub: str):
+    """每個請求都要驗身分，原本每次連兩次資料庫；湧入時會被拖慢，改成記憶體短暫快取（15 秒）。"""
+    now = time.time()
+    ent = _MCACHE.get(sub)
+    if ent and ent[0] > now:
+        return ent[1], ent[2]
+    m = get_member(sub)
+    st = status_of(sub) if m else {}
+    if len(_MCACHE) > 3000:
+        _MCACHE.clear()
+    _MCACHE[sub] = (now + 15, m, st)
+    return m, st
+
+
+def invalidate_member(sub: str = ""):
+    if sub:
+        _MCACHE.pop(sub, None)
+    else:
+        _MCACHE.clear()
 
 
 # ───────── 登入稽核與頻率限制 ─────────
@@ -465,6 +489,7 @@ def auth_logout_all():
         with _store()._conn() as conn:
             conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count) VALUES (?, 0, 1, 0) "
                          "ON CONFLICT (sub) DO UPDATE SET sess_ver=member_status.sess_ver+1", (m["sub"],))
+        invalidate_member(m["sub"])
     resp = jsonify({"ok": True})
     resp.delete_cookie(COOKIE, path="/")
     return resp
@@ -542,6 +567,7 @@ def admin_member_status():
     with _store()._conn() as conn:
         conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count) VALUES (?, ?, 0, 0) "
                      "ON CONFLICT (sub) DO UPDATE SET disabled=EXCLUDED.disabled", (sub, dis))
+    invalidate_member(sub)
     return jsonify({"ok": True, "disabled": bool(dis)})
 
 

@@ -3,7 +3,9 @@
 # 改成 1 個 worker + 4 個執行緒：排程器只會啟動一份，同時卻能處理多個請求。
 worker_class = "gthread"
 workers = 1
-threads = 4
+threads = 12
 timeout = 120
 graceful_timeout = 30
 keepalive = 5
+backlog = 512          # 瞬間湧入時，先排隊而不是直接拒絕連線
+max_requests = 0
