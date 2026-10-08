@@ -644,6 +644,8 @@ import admin_auth
 app.before_request(admin_auth.guard)
 import members
 app.register_blueprint(members.bp)
+import feedback
+app.register_blueprint(feedback.bp)   # 問題回報（會員送出、站主管理）
 app.before_request(members.gate)   # 登入牆：登入功能啟用後，/api/* 需登入（沒設 GOOGLE_CLIENT_ID／SECRET 時整個功能關閉）
 app.after_request(admin_auth.after)
 import protect

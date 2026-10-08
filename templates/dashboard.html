@@ -1203,6 +1203,39 @@ html,body{max-width:100%;overflow-x:hidden}
 .ruler .now{width:13px!important;height:13px!important;top:16px!important}
 .pos-stats b.na{color:var(--t3)!important}
 </style>
+<style id="skin-feedback">
+/* 2026-10-09 問題回報 */
+.fb-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start}
+.fb-cats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.fb-cats label{position:relative;display:flex;flex-direction:column;gap:2px;border:1px solid var(--line2);border-radius:8px;padding:11px 12px 11px 36px;cursor:pointer;background:var(--s1)}
+.fb-cats input{position:absolute;left:12px;top:14px;accent-color:var(--accent)}
+.fb-cats span{font-weight:600;color:var(--t1);font-size:14px}
+.fb-cats small{font-size:12px;color:var(--t3)}
+.fb-cats label:has(input:checked){border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--s1))}
+.fb-lab{display:block;font-weight:600;font-size:13.5px;color:var(--t1);margin-bottom:6px}
+#fb-msg{width:100%;box-sizing:border-box;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;font:inherit;font-size:14px;line-height:1.7;background:var(--s1);color:var(--t1);resize:vertical;min-height:130px}
+#fb-msg:focus{outline:2px solid color-mix(in srgb,var(--accent) 40%,transparent);border-color:var(--accent)}
+.fb-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:6px 0 14px}
+.fb-act{display:flex;align-items:center;gap:12px}
+.fb-item{padding:14px 18px;border-bottom:1px solid var(--line)}
+.fb-item:last-child{border-bottom:0}
+.fb-item .h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--t3);margin-bottom:6px}
+.fb-item .m{font-size:14px;line-height:1.7;color:var(--t1);white-space:pre-wrap;word-break:break-word}
+.fb-item .n{margin-top:8px;font-size:13px;color:var(--t2);background:var(--s2);border-radius:6px;padding:8px 10px}
+.fb-st{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600}
+.fb-st.open{background:color-mix(in srgb,var(--warn,#d97706) 15%,transparent);color:var(--warn,#d97706)}
+.fb-st.doing{background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent)}
+.fb-st.done{background:color-mix(in srgb,#16a34a 15%,transparent);color:#16a34a}
+.fb-st.wontfix{background:var(--s2);color:var(--t3)}
+.fb-cat{border:1px solid var(--line2);border-radius:4px;padding:0 6px;color:var(--t2)}
+.fb-adm-act{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+.fb-adm-act input{flex:1;min-width:160px}
+.fb-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.fb-tabs button{border:1px solid var(--line2);background:var(--s1);color:var(--t2);border-radius:999px;padding:5px 14px;font:inherit;font-size:13px;cursor:pointer}
+.fb-tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+@media(max-width:900px){.fb-grid{grid-template-columns:1fr}}
+@media(max-width:480px){.fb-cats{grid-template-columns:1fr}}
+</style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 </head>
 <body>
@@ -1244,9 +1277,11 @@ html,body{max-width:100%;overflow-x:hidden}
   <div class="nav own-only" onclick="go('backtest')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2l-6-10V3"/></svg><span class="nl">回測</span></div>
   <div class="nav own-only" onclick="go('health')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span class="nl">系統檢查</span></div>
   <div class="nav own-only" onclick="go('diag')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0 5 5L21 13l-8 8-3-3 8-8-1.3-1.3a4 4 0 0 0-5-5l3 3-2 2z"/></svg><span class="nl">系統診斷</span></div>
+  <div class="nav own-only" onclick="go('fbadmin')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/><path d="M8.5 10.5l2 2 4-4"/></svg><span class="nl">回報管理</span> <span class="nbadge" id="fb-open-badge"></span></div>
   <div class="nav own-only" onclick="go('members')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg><span class="nl">會員統計</span></div>
   <div class="nav-g">關於</div>
   <div class="nav" onclick="go('guide')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-6a3 3 0 0 0-3 3"/><path d="M20 4v13.5h-6.5A2.5 2.5 0 0 0 11 20"/></svg><span class="nl">使用說明</span></div>
+  <div class="nav" onclick="go('feedback')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/><path d="M12 8v3M12 13.5v.01"/></svg><span class="nl">問題回報</span></div>
   <div class="nav" onclick="go('method')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M6 21h12M5 7h14"/><path d="M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg><span class="nl">方法論與風險聲明</span></div>
   </div>
   <div class="sfoot">
@@ -1424,6 +1459,29 @@ html,body{max-width:100%;overflow-x:hidden}
   </div>
 
   <!-- Material News -->
+  <div class="page" id="page-feedback"><div class="pad">
+    <div class="fb-grid">
+      <div class="panel card"><div class="panel-head"><span class="panel-title">回報問題或建議</span></div><div class="panel-body">
+        <form id="fb-form" onsubmit="fbSubmit(event)">
+          <div class="fb-cats" role="radiogroup" aria-label="回報類別">
+            <label><input type="radio" name="fbcat" value="bug" checked><span>錯誤回報</span><small>畫面壞掉、按鈕沒反應</small></label>
+            <label><input type="radio" name="fbcat" value="data"><span>資料不正確</span><small>數字、日期和官方不一致</small></label>
+            <label><input type="radio" name="fbcat" value="idea"><span>功能建議</span><small>希望新增或改善的地方</small></label>
+            <label><input type="radio" name="fbcat" value="other"><span>其他</span><small>任何想告訴我們的事</small></label>
+          </div>
+          <label class="fb-lab" for="fb-msg">詳細說明</label>
+          <textarea id="fb-msg" maxlength="2000" rows="6" placeholder="例如：在「持倉追蹤」頁，千興（2025）的進場價顯示 13.90，但訊號通知是 13.80。&#10;如果是資料問題，請附上股票代號與日期。"></textarea>
+          <div class="fb-foot"><span class="mut" id="fb-cnt">0 / 2000</span><span class="mut">送出時會一併附上：目前頁面、瀏覽器、螢幕尺寸（不含其他個人資料）</span></div>
+          <div class="fb-act"><button class="btn primary" type="submit" id="fb-btn">送出回報</button><span id="fb-msg-st" class="mut"></span></div>
+        </form>
+      </div></div>
+      <div class="panel card"><div class="panel-head"><span class="panel-title">我的回報</span></div><div class="panel-body" id="fb-mine" style="padding:0"><div class="empty">載入中…</div></div></div>
+    </div>
+  </div></div>
+  <div class="page" id="page-fbadmin"><div class="pad">
+    <div class="fb-tabs" id="fb-adm-tabs"></div>
+    <div class="panel card"><div class="panel-body" id="fb-adm" style="padding:0"><div class="empty">載入中…</div></div></div>
+  </div></div>
   <div class="page" id="page-freshness"><div class="pad">
     <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">各項資料目前的日期</div></div>
     <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料</th><th>目前日期</th><th>應有日期</th><th>狀態</th><th class="fr-x">來源</th><th class="fr-x">官方約</th></tr></thead><tbody id="fr-tbody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--t3)">載入中…</td></tr></tbody></table></div></div>
@@ -1888,8 +1946,8 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const PAGE_META={"signals": ["交易", "每日盤後掃描產生的多空訊號，附進場、停損、停利與追高風險"], "positions": ["交易", "追蹤中的訊號部位：R 倍數、離停損距離、持有天數與移動停損建議"], "watchlist": ["交易", "你的自選股清單與報價，訊號與風險狀態一併標示"], "events": ["交易", "訊號、風險事件與系統通知"], "marketoverview": ["市場", "大盤指數、市場廣度、期交所籌碼、漲跌家數與產業排行"], "rank": ["市場", "漲跌幅、成交金額、三大法人買賣超排行與產業熱度"], "market": ["市場", "大盤環境評分、各類股建議與掃描股票池概況"], "instrument": ["市場", "個股 K 線、技術指標、籌碼、基本面與同產業比較"], "report": ["市場", "每日盤後重點整理"], "news": ["市場", "上市公司重大訊息公告，命中風險關鍵字者特別標示"], "freshness": ["市場", "每一項資料目前的日期、應有日期與來源"], "risk": ["風控與績效", "持倉風險、產業集中度與總風險金額"], "autopsy": ["風控與績效", "逐筆檢討停損出場的原因，找出可改善的條件"], "history": ["風控與績效", "所有已發出訊號的完整紀錄與結果"], "perf": ["風控與績效", "勝率、損益、最大回撤與資金曲線"], "radar": ["研究", "用月營收與估值找出基本面轉強的公司"], "learning": ["研究", "策略參數學習與影子追蹤（站主）"], "audit": ["研究", "資料來源稽核與品質檢查（站主）"], "backtest": ["工具", "單檔與全市場歷史回測（站主）"], "health": ["工具", "系統健康狀態與設定（站主）"], "diag": ["工具", "系統診斷資訊（站主）"], "members": ["工具", "會員數、登入紀錄與帳號管理（站主）"], "guide": ["關於", "系統功能與操作說明"], "method": ["關於", "訊號方法論、資料來源與風險聲明"]};
-const TITLES={freshness:'資料更新狀態',learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷',members:'會員統計'};
+const PAGE_META={"feedback":["關於","回報錯誤、資料問題或功能建議，處理進度會顯示在這裡"],"fbadmin":["工具","會員回報的問題與處理狀態（站主）"],"signals": ["交易", "每日盤後掃描產生的多空訊號，附進場、停損、停利與追高風險"], "positions": ["交易", "追蹤中的訊號部位：R 倍數、離停損距離、持有天數與移動停損建議"], "watchlist": ["交易", "你的自選股清單與報價，訊號與風險狀態一併標示"], "events": ["交易", "訊號、風險事件與系統通知"], "marketoverview": ["市場", "大盤指數、市場廣度、期交所籌碼、漲跌家數與產業排行"], "rank": ["市場", "漲跌幅、成交金額、三大法人買賣超排行與產業熱度"], "market": ["市場", "大盤環境評分、各類股建議與掃描股票池概況"], "instrument": ["市場", "個股 K 線、技術指標、籌碼、基本面與同產業比較"], "report": ["市場", "每日盤後重點整理"], "news": ["市場", "上市公司重大訊息公告，命中風險關鍵字者特別標示"], "freshness": ["市場", "每一項資料目前的日期、應有日期與來源"], "risk": ["風控與績效", "持倉風險、產業集中度與總風險金額"], "autopsy": ["風控與績效", "逐筆檢討停損出場的原因，找出可改善的條件"], "history": ["風控與績效", "所有已發出訊號的完整紀錄與結果"], "perf": ["風控與績效", "勝率、損益、最大回撤與資金曲線"], "radar": ["研究", "用月營收與估值找出基本面轉強的公司"], "learning": ["研究", "策略參數學習與影子追蹤（站主）"], "audit": ["研究", "資料來源稽核與品質檢查（站主）"], "backtest": ["工具", "單檔與全市場歷史回測（站主）"], "health": ["工具", "系統健康狀態與設定（站主）"], "diag": ["工具", "系統診斷資訊（站主）"], "members": ["工具", "會員數、登入紀錄與帳號管理（站主）"], "guide": ["關於", "系統功能與操作說明"], "method": ["關於", "訊號方法論、資料來源與風險聲明"]};
+const TITLES={feedback:'問題回報',fbadmin:'回報管理',freshness:'資料更新狀態',learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷',members:'會員統計'};
 let _marketOverviewLoaded=false;
 async function fetchCalendar(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
@@ -2027,9 +2085,10 @@ async function instQuick(){
   if(!el.querySelector('.empty'))return;
   el.innerHTML='<div class="empty" style="padding:28px 0 18px;text-align:left">輸入股票代號，或從下方快速選擇</div>'+g('今日訊號',sig)+g('持倉中',pos)+g('常用',pop);
 }
-const _OWN_PAGES=['learning','health','audit','diag','backtest','members'];
+const _OWN_PAGES=['learning','health','audit','diag','backtest','members','fbadmin'];
 window._ownerOnly=_OWN_PAGES;   // 角色確認前一律視為一般會員
 function go(id){
+  if(id==='feedback'&&window._curPage&&window._curPage!=='feedback')window._fbFrom=window._curPage;
   if((window._ownerOnly||[]).includes(id)){if(typeof toast==='function')toast('此頁僅限站主使用');return;}
   try{document.getElementById('content').scrollTop=0;}catch(e){}try{document.body.scrollTop=0;document.documentElement.scrollTop=0;window.scrollTo(0,0);}catch(e){}
   {const P=['learning','health','audit','diag'],prev=window._curPage;
@@ -2063,6 +2122,8 @@ function go(id){
   if(id==='marketoverview'&&!window._moTimer){window._moTimer=setInterval(()=>{if(document.hidden||window._curPage!=='marketoverview')return;fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();},300000);}
   if(id==='diag')fetchDiag();
   if(id==='freshness')pollFreshness(true);
+  if(id==='feedback')fbLoadMine();
+  if(id==='fbadmin')fbLoadAdmin();
   if(id==='members')loadMembersPage();
   syncTabbar(id);
   closeSide();
@@ -3150,6 +3211,7 @@ function applyRoleUI(){
   document.documentElement.classList.toggle('is-owner',owner);
   window._ownerOnly=owner?[]:_OWN_PAGES;
   if(!owner&&_OWN_PAGES.includes(window._curPage))go('overview');
+  if(owner&&_me.login_enabled)fetch('/api/admin/feedback?status=open',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(d=>{if(d&&d.counts)setEl('fb-open-badge',d.counts.open?String(d.counts.open):'');}).catch(()=>{});
 }
 async function memberBtn(){
   if(!_me.user){location.href='/auth/google';return;}
@@ -3372,7 +3434,7 @@ function renderAcct(){
   document.getElementById('acct-menu').innerHTML=
     `<div class="acct-h"><b>${esc2(nm)}</b><span>${esc2(u.email||'')}</span>${u.owner?'<em>站主</em>':''}</div>`
     +it('toggleTheme()','深色／淺色模式')+it('fetchState()','重新整理資料')+(u.owner?it('forceScan()','立即掃描'):'')
-    +it('toggleViewMode()','切換電腦版／手機版')+it('logoutAll()','登出所有裝置')+it('memberBtn()','登出','danger');
+    +it("go('feedback')",'問題回報')+it('toggleViewMode()','切換電腦版／手機版')+it('logoutAll()','登出所有裝置')+it('memberBtn()','登出','danger');
 }
 function toggleSide(){
   document.getElementById('side').classList.toggle('open');
@@ -4280,6 +4342,51 @@ function updateStatusBar(){
   const dot=document.getElementById('sb-dot');if(dot)dot.classList.toggle('open',open&&!holiday);
   if(typeof _frLast!=='undefined'&&_frLast&&_frLast.items){const ok=_frLast.items.filter(i=>i.status==='ok').length;setEl('sb-fresh',`${ok}/${_frLast.items.length} 項最新`);}
   if(_state&&_state.last_scan_time){setEl('sb-scan',toTaipeiStr(_state.last_scan_time)||'—');}
+}
+/* 2026-10-09 問題回報 */
+const _fbTime=t=>{try{return toTaipeiStr(t)||t;}catch(e){return t;}};
+function fbItemHtml(x,admin){
+  return `<div class="fb-item"><div class="h"><span class="fb-st ${escH(x.status)}">${safe(x.status_zh)}</span><span class="fb-cat">${safe(x.category_zh)}</span><span>${safe(_fbTime(x.at))}</span>${x.page?`<span>頁面：${safe(TITLES[x.page]||x.page)}</span>`:''}${admin?`<span>${safe(x.name)}（${safe(x.email)}）</span>`:''}</div>
+    <div class="m">${escH(x.message)}</div>${x.note?`<div class="n">站主回覆：${escH(x.note)}</div>`:''}
+    ${admin?`<div class="mut" style="margin-top:6px">${safe((x.ctx||{}).ua)}　${(x.ctx||{}).vw||'?'}×${(x.ctx||{}).vh||'?'}　${safe((x.ctx||{}).theme)}</div>
+    <div class="fb-adm-act"><select data-id="${escH(x.id)}" class="fb-sel">${Object.entries(window._fbStatuses||{}).map(([k,v])=>`<option value="${k}"${k===x.status?' selected':''}>${v}</option>`).join('')}</select><input class="fb-note" data-id="${escH(x.id)}" maxlength="500" placeholder="回覆會員（選填）" value="${escH(x.note||'')}"><button class="btn" onclick="fbSave('${escH(x.id)}')">儲存</button></div>`:''}</div>`;
+}
+async function fbLoadMine(){
+  const el=document.getElementById('fb-mine');if(!el)return;
+  try{const r=await fetch('/api/my/feedback',{cache:'no-store'});if(r.status===401){el.innerHTML='<div class="empty"><div class="empty-label">需要登入</div>登入後才能送出與查看回報</div>';return;}
+    const d=await r.json();
+    el.innerHTML=(d.items||[]).length?d.items.map(x=>fbItemHtml(x,false)).join(''):'<div class="empty"><div class="empty-label">還沒有回報</div>送出後會在這裡看到處理進度</div>';
+  }catch(e){el.innerHTML='<div class="empty">載入失敗，請稍後再試</div>';}
+}
+(function(){document.addEventListener('input',e=>{if(e.target&&e.target.id==='fb-msg')setEl('fb-cnt',e.target.value.length+' / 2000');});})();
+async function fbSubmit(ev){
+  ev.preventDefault();
+  const msg=document.getElementById('fb-msg').value.trim(),cat=(document.querySelector('input[name=fbcat]:checked')||{}).value;
+  if(msg.length<5){toast('請至少描述 5 個字');return;}
+  const btn=document.getElementById('fb-btn');btn.disabled=true;btn.textContent='送出中…';
+  try{
+    const r=await fetch('/api/my/feedback',{method:'POST',headers:TS_H,body:JSON.stringify({category:cat,message:msg,page:window._fbFrom||'',
+      ctx:{ua:navigator.userAgent,vw:window.innerWidth,vh:window.innerHeight,theme:document.documentElement.getAttribute('data-theme')||'',mode:document.documentElement.classList.contains('force-mobile')?'mobile':''}})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){toast(j.error||'送出失敗');return;}
+    document.getElementById('fb-msg').value='';setEl('fb-cnt','0 / 2000');setEl('fb-msg-st','已送出，感謝你的回報！');toast('已送出回報');fbLoadMine();
+  }catch(e){toast('送出失敗，請稍後再試');}
+  finally{btn.disabled=false;btn.textContent='送出回報';}
+}
+let _fbFilter='';
+async function fbLoadAdmin(){
+  const el=document.getElementById('fb-adm');if(!el)return;
+  try{const r=await fetch('/api/admin/feedback'+(_fbFilter?'?status='+_fbFilter:''),{cache:'no-store'});if(!r.ok)throw 0;const d=await r.json();
+    window._fbStatuses=d.statuses||{};
+    const c=d.counts||{};setEl('fb-open-badge',c.open?String(c.open):'');
+    setHtml('fb-adm-tabs',[['','全部'],...Object.entries(d.statuses||{})].map(([k,v])=>`<button class="${k===_fbFilter?'on':''}" onclick="_fbFilter='${k}';fbLoadAdmin()">${v}${k&&c[k]!=null?' '+c[k]:''}</button>`).join(''));
+    el.innerHTML=(d.items||[]).length?d.items.map(x=>fbItemHtml(x,true)).join(''):'<div class="empty"><div class="empty-label">沒有回報</div>目前沒有符合條件的回報</div>';
+  }catch(e){el.innerHTML='<div class="empty">載入失敗（需要站主身分）</div>';}
+}
+async function fbSave(id){
+  const sel=document.querySelector(`.fb-sel[data-id="${id}"]`),note=document.querySelector(`.fb-note[data-id="${id}"]`);
+  const r=await fetch('/api/admin/feedback/status',{method:'POST',headers:TS_H,body:JSON.stringify({id,status:sel.value,note:note.value})});
+  const j=await r.json().catch(()=>({}));toast(r.ok?'已更新':(j.error||'更新失敗'));if(r.ok)fbLoadAdmin();
 }
 function toast(msg){
   const t=document.createElement('div');t.className='toast';t.setAttribute('role','status');t.setAttribute('aria-live','polite');t.textContent=msg;
