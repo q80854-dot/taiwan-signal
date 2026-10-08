@@ -284,7 +284,8 @@ class TWScanEngine:
         _SCAN_CONCURRENCY = 8
         try:
             import shadow
-            shadow.begin_run("熔斷中僅影子追蹤" if skip_new_signals else "")
+            if self._mode != "premarket":   # 盤前掃描不寫學習資料，避免同一資料日被重複抽樣、污染策略學習的樣本
+                shadow.begin_run("熔斷中僅影子追蹤" if skip_new_signals else "")
         except Exception as e:
             logger.warning(f"影子追蹤初始化失敗（不影響掃描）: {e}")
         with self._pre_lock:
@@ -324,9 +325,10 @@ class TWScanEngine:
         # 影子追蹤：記錄所有候選與對照組（學習資料），再決定是否真的往下產生實際訊號
         try:
             import shadow
-            shadow.capture_candidates(all_signals, market_overview)
-            shadow.flush_controls(list(self._ctrl))
-            shadow.flush_rejects()
+            if self._mode != "premarket":
+                shadow.capture_candidates(all_signals, market_overview)
+                shadow.flush_controls(list(self._ctrl))
+                shadow.flush_rejects()
         except Exception as e:
             logger.warning(f"影子追蹤記錄失敗（不影響掃描）: {e}")
         if skip_new_signals:
@@ -479,9 +481,10 @@ class TWScanEngine:
 
         try:
             import shadow
-            shadow.resolve_pending()
-            _p = dict(self._pre)
-            shadow.finish_run(universe=total_tickers, pre_skipped=_p.get("skipped"), pre_passed=_p.get("passed"))
+            if self._mode != "premarket":
+                shadow.resolve_pending()
+                _p = dict(self._pre)
+                shadow.finish_run(universe=total_tickers, pre_skipped=_p.get("skipped"), pre_passed=_p.get("passed"))
         except Exception as e:
             logger.warning(f"影子追蹤結算失敗（不影響掃描）: {e}")
 
