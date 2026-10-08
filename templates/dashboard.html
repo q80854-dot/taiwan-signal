@@ -2247,10 +2247,22 @@ async function loadMe(force){
   _meLoaded=true;
   const b=document.getElementById('login-btn');
   if(b){b.hidden=!_me.login_enabled;b.textContent=_me.user?('登出　'+String(_me.user.name||'').slice(0,8)):'Google 登入';}
+  loginWall();
   const q=new URLSearchParams(location.search).get('login');
   if(q){history.replaceState(null,'',location.pathname);
     toast(q==='ok'?'登入成功':q==='failed'?'登入失敗，請再試一次':'尚未啟用會員登入');}
   return _me;
+}
+function loginWall(){
+  let w=document.getElementById('login-wall');
+  const need=_me.login_enabled&&!_me.user;
+  if(!need){if(w)w.remove();return;}
+  if(w)return;
+  w=document.createElement('div');w.id='login-wall';
+  w.setAttribute('role','dialog');w.setAttribute('aria-label','請登入');
+  w.style.cssText='position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--bg,#f4f5f7);padding:24px';
+  w.innerHTML='<div class="panel" style="max-width:380px;width:100%;padding:32px 28px;text-align:center"><div style="font-size:19px;font-weight:600;margin-bottom:10px">台股波段智慧交易系統</div><div style="color:var(--t2);font-size:13.5px;line-height:1.7;margin-bottom:22px">登入後即可使用訊號、市場總覽、個股研究與自選股。<br>只用 Google 帳號驗證，不收費，網站不保存密碼。</div><button class="btn primary" style="width:100%;padding:11px" onclick="location.href=\'/auth/google\'">使用 Google 登入</button><div style="color:var(--t3);font-size:11.5px;margin-top:16px">本站內容僅供研究參考，不構成投資建議。</div></div>';
+  document.body.appendChild(w);
 }
 async function memberBtn(){
   if(!_me.user){location.href='/auth/google';return;}
@@ -2258,7 +2270,7 @@ async function memberBtn(){
   _mw.data=null;_wl=[];setEl('wl-count-badge',0);
   await loadMe(true);renderLatestSignals(_signals||[]);renderSignals();
   if(document.getElementById('page-watchlist').classList.contains('on'))renderMyWatch();
-  toast('已登出');
+  toast('已登出');loginWall();
 }
 async function loadMyStarList(){
   if(!_me.user){_wl=[];setEl('wl-count-badge',0);renderLatestSignals(_signals||[]);renderSignals();return;}
