@@ -154,6 +154,19 @@ def job_daily_scan():
             pass
     except Exception as e: logger.error(f"job_daily_scan: {e}", exc_info=True)
 
+def job_premarket_scan():
+    """盤前全市場掃描（平日 08:20）：與盤後 16:30 掃描互補——納入隔夜資訊與最新處置／暫停名單，並補抓前一晚失敗的標的。"""
+    from data_fetcher import get_market_session
+    if get_market_session().get("session") == "holiday":
+        logger.info("⏰ 盤前掃描：今天是國定假日休市，跳過")
+        return
+    logger.info("⏰ 盤前全市場掃描")
+    try:
+        from scanner import scanner
+        scanner.run_daily_scan(mode="premarket")
+    except Exception as e:
+        logger.error(f"job_premarket_scan: {e}", exc_info=True)
+
 def job_intraday_check():
     # ★ 新增：2026-09-16——使用者質疑「盤中完全沒有掃描」，稽核後認為「盤中不找
     # 新訊號」本身沒錯（波段策略本來就該用收盤後定案的日K找新進場點，盤中日K還
@@ -394,6 +407,7 @@ def setup_scheduler():
     # 說明。排在 08:00，早於 08:45 的早盤摘要與 09:00 開盤，晚於前一天收盤資料在
     # yfinance 定案的時間。
     scheduler.add_job(job_premarket_cache_refresh, CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="premarket_cache_refresh", replace_existing=True)
+    scheduler.add_job(job_premarket_scan,   CronTrigger(hour=8,  minute=20, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="premarket_scan",   replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_morning_brief,    CronTrigger(hour=8,  minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="morning_brief",    replace_existing=True)
     # ★ 新增：2026-09-16——盤中安全網，查已追蹤訊號是否到價，見 job_intraday_check() 說明。
     # ★ 調整：2026-09-19——使用者反映盤中只查4次（10/11/12/13點整）太少、涵蓋不到

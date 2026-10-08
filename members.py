@@ -20,7 +20,7 @@ import re
 import secrets
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import requests
@@ -115,6 +115,12 @@ def ensure_tables():
         CREATE TABLE IF NOT EXISTS member_watch (
             sub TEXT, grp TEXT, code TEXT, name TEXT, market TEXT, added_at TEXT, PRIMARY KEY (sub, grp, code)
         );
+        CREATE TABLE IF NOT EXISTS member_status (
+            sub TEXT PRIMARY KEY, disabled INTEGER DEFAULT 0, sess_ver INTEGER DEFAULT 0, login_count INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS login_events (
+            id TEXT PRIMARY KEY, at TEXT, sub TEXT, email TEXT, ok INTEGER, reason TEXT, ip_hash TEXT, ua TEXT
+        );
     """
     with _store()._conn() as conn:
         conn.executescript(ddl)
@@ -134,6 +140,8 @@ def upsert_member(sub: str, email: str, name: str):
             (sub, email, name, _now(), _now()))
         conn.execute("INSERT INTO member_groups (sub, grp, sort_no) VALUES (?, ?, 0) ON CONFLICT (sub, grp) DO NOTHING",
                      (sub, DEFAULT_GROUP))
+        conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count) VALUES (?, 0, 0, 1) "
+                     "ON CONFLICT (sub) DO UPDATE SET login_count=member_status.login_count+1", (sub,))
 
 
 def get_member(sub: str):
@@ -205,9 +213,68 @@ def remove_group(sub: str, name: str) -> str:
 
 
 # ───────── 登入狀態 ─────────
+def status_of(sub: str) -> dict:
+    ensure_tables()
+    with _store()._conn() as conn:
+        r = conn.execute("SELECT disabled, sess_ver, login_count FROM member_status WHERE sub=?", (sub,)).fetchone()
+    return dict(r) if r else {"disabled": 0, "sess_ver": 0, "login_count": 0}
+
+
 def current_member():
+    """登入中的會員；cookie 簽名不對、已過期、被停權、或已被「登出全部裝置」作廢，都視為未登入。"""
     p = unsign(request.cookies.get(COOKIE, ""))
-    return get_member(p["sub"]) if p and p.get("sub") else None
+    if not p or not p.get("sub"):
+        return None
+    m = get_member(p["sub"])
+    if not m:
+        return None
+    st = status_of(p["sub"])
+    if st.get("disabled") or int(p.get("v", 0)) != int(st.get("sess_ver") or 0):
+        return None
+    return m
+
+
+# ───────── 登入稽核與頻率限制 ─────────
+_AUTH_RATE: dict = {}
+
+
+def _ip() -> str:
+    return (request.headers.get("CF-Connecting-IP") or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            or request.remote_addr or "?")
+
+
+def _ip_hash() -> str:
+    """只存雜湊後的前 16 碼，不保存原始 IP（隱私）；同一個 IP 仍能辨識是否反覆嘗試。"""
+    return hmac.new(_key(), _ip().encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def auth_rate_ok(limit: int = 30, window: int = 600) -> bool:
+    """登入入口與回呼的每 IP 頻率限制（預設 10 分鐘 30 次），避免被拿來灌請求或暴力嘗試。"""
+    now = time.time()
+    k = _ip()
+    q = [t for t in _AUTH_RATE.get(k, []) if now - t < window]
+    if len(_AUTH_RATE) > 5000:
+        _AUTH_RATE.clear()
+    if len(q) >= limit:
+        _AUTH_RATE[k] = q
+        return False
+    q.append(now)
+    _AUTH_RATE[k] = q
+    return True
+
+
+def record_login(sub: str, email: str, ok: bool, reason: str = ""):
+    try:
+        ensure_tables()
+        with _store()._conn() as conn:
+            conn.execute("INSERT INTO login_events (id, at, sub, email, ok, reason, ip_hash, ua) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                         (secrets.token_hex(8), _now(), sub or "", email or "", 1 if ok else 0, reason[:40],
+                          _ip_hash(), (request.headers.get("User-Agent") or "")[:120]))
+            if secrets.randbelow(50) == 0:      # 偶爾清掉 90 天前的紀錄
+                cut = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+                conn.execute("DELETE FROM login_events WHERE at < ?", (cut,))
+    except Exception as e:
+        logger.warning(f"record_login: {e}")
 
 
 def login_required(f):
@@ -256,9 +323,16 @@ def gate():
     """before_request：登入功能已啟用時，/api/* 需 Google 登入（或後台管理員已登入）才能存取。
     登入功能未設定時完全不鎖；環境變數 REQUIRE_LOGIN=0 可暫時關閉登入牆。"""
     try:
-        if not enabled() or os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
+        if not enabled():
             return None
         p = request.path
+        # CSRF 第二道防線：會改變資料的請求若帶有 Origin，必須與本站相同（SameSite=Lax 之外再擋一層）
+        if request.method not in ("GET", "HEAD", "OPTIONS") and (p.startswith("/api/") or p.startswith("/auth/")):
+            og = request.headers.get("Origin")
+            if og and urllib.parse.urlparse(og).netloc != request.host:
+                return _forbid()
+        if os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
+            return None
         if not p.startswith("/api/") or p.startswith(_OPEN_PATHS):
             return None
         m = current_member()
@@ -305,6 +379,8 @@ def api_me():
 def auth_google():
     if not enabled():
         return redirect("/?login=disabled")
+    if not auth_rate_ok():
+        return redirect("/?login=busy")
     state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
     q = urllib.parse.urlencode({
         "client_id": client_id(), "redirect_uri": _redirect_uri(), "response_type": "code",
@@ -336,9 +412,12 @@ def verify_id_token(idt: str, nonce: str, now=None):
 def auth_callback():
     if not enabled():
         return redirect("/?login=disabled")
+    if not auth_rate_ok():
+        return redirect("/?login=busy")
     ck = unsign(request.cookies.get(OAUTH_COOKIE, ""))
     state, code = request.args.get("state", ""), request.args.get("code", "")
     if request.args.get("error") or not ck or not code or not hmac.compare_digest(str(ck.get("s", "")), state):
+        record_login("", "", False, "state_or_error")
         return redirect("/?login=failed")
     try:
         r = requests.post(GOOGLE_TOKEN, data={
@@ -346,17 +425,23 @@ def auth_callback():
             "redirect_uri": _redirect_uri(), "grant_type": "authorization_code"}, timeout=15)
         if r.status_code != 200:
             logger.warning(f"Google token HTTP {r.status_code}: {r.text[:200]}")
+            record_login("", "", False, f"token_http_{r.status_code}")
             return redirect("/?login=failed")
         claims = verify_id_token(r.json().get("id_token", ""), ck.get("n"))
         if not claims:
+            record_login("", "", False, "bad_id_token")
             return redirect("/?login=failed")
         sub = str(claims["sub"])
+        if status_of(sub).get("disabled"):
+            record_login(sub, claims.get("email", ""), False, "disabled")
+            return redirect("/?login=banned")
         upsert_member(sub, claims.get("email", ""), (claims.get("name") or "")[:40])
+        record_login(sub, claims.get("email", ""), True, "ok")
     except Exception as e:
         logger.warning(f"auth_callback: {e}")
         return redirect("/?login=failed")
     resp = redirect("/?login=ok")
-    _set_cookie(resp, COOKIE, sign({"sub": sub, "exp": int(time.time()) + SESSION_TTL}), SESSION_TTL)
+    _set_cookie(resp, COOKIE, sign({"sub": sub, "exp": int(time.time()) + SESSION_TTL, "v": int(status_of(sub).get("sess_ver") or 0)}), SESSION_TTL)
     resp.delete_cookie(OAUTH_COOKIE, path="/")
     return resp
 
@@ -368,6 +453,96 @@ def auth_logout():
     resp = jsonify({"ok": True})
     resp.delete_cookie(COOKIE, path="/")
     return resp
+
+
+@bp.route("/auth/logout_all", methods=["POST"])
+def auth_logout_all():
+    """登出所有裝置：把會員的工作階段版本 +1，之前發出的所有登入 cookie 立刻失效。"""
+    if request.headers.get("X-TS") != "1":
+        return jsonify({"error": "請求來源不正確"}), 403
+    m = current_member()
+    if m:
+        with _store()._conn() as conn:
+            conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count) VALUES (?, 0, 1, 0) "
+                         "ON CONFLICT (sub) DO UPDATE SET sess_ver=member_status.sess_ver+1", (m["sub"],))
+    resp = jsonify({"ok": True})
+    resp.delete_cookie(COOKIE, path="/")
+    return resp
+
+
+# ───────── 路由：站主後台（會員統計） ─────────
+def _tw_date(iso: str) -> str:
+    try:
+        return (datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=8)))).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
+def member_stats() -> dict:
+    ensure_tables()
+    now = datetime.now(timezone(timedelta(hours=8)))
+    today = now.strftime("%Y-%m-%d")
+    days = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(29, -1, -1)]
+    with _store()._conn() as conn:
+        ms = [dict(r) for r in conn.execute("SELECT sub, email, name, created_at, last_login FROM members").fetchall()]
+        st = {r["sub"]: dict(r) for r in conn.execute("SELECT sub, disabled, login_count FROM member_status").fetchall()}
+        wc = {r["sub"]: r["n"] for r in conn.execute("SELECT sub, COUNT(*) AS n FROM member_watch GROUP BY sub").fetchall()}
+        cut = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        ev = [dict(r) for r in conn.execute("SELECT at, sub, email, ok, reason, ip_hash, ua FROM login_events WHERE at >= ? ORDER BY at DESC", (cut,)).fetchall()]
+    for m in ms:
+        m["created_day"], m["last_day"] = _tw_date(m.get("created_at") or ""), _tw_date(m.get("last_login") or "")
+    def cnt(key, since):
+        return sum(1 for m in ms if m[key] and m[key] >= since)
+    d7, d30 = days[-7], days[0]
+    ok_by_day, fail_by_day = {d: 0 for d in days}, {d: 0 for d in days}
+    for e in ev:
+        d = _tw_date(e["at"])
+        if d in ok_by_day:
+            (ok_by_day if e["ok"] else fail_by_day)[d] += 1
+    fails24 = sum(1 for e in ev if not e["ok"] and e["at"] >= (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
+    rows = [{"name": m.get("name") or "", "email": m.get("email") or "", "created": m["created_day"], "last_login": m["last_day"],
+             "logins": (st.get(m["sub"]) or {}).get("login_count", 0), "watch": wc.get(m["sub"], 0),
+             "disabled": bool((st.get(m["sub"]) or {}).get("disabled")), "sub": m["sub"], "owner": is_owner(m)}
+            for m in sorted(ms, key=lambda x: x.get("last_login") or "", reverse=True)]
+    return {
+        "total": len(ms), "disabled": sum(1 for r in rows if r["disabled"]),
+        "new_today": sum(1 for m in ms if m["created_day"] == today), "new_7d": sum(1 for m in ms if m["created_day"] >= d7),
+        "new_30d": sum(1 for m in ms if m["created_day"] >= d30),
+        "active_today": sum(1 for m in ms if m["last_day"] == today), "active_7d": sum(1 for m in ms if m["last_day"] >= d7),
+        "active_30d": sum(1 for m in ms if m["last_day"] >= d30),
+        "watch_total": sum(wc.values()), "fails_24h": fails24,
+        "series": [{"d": d, "ok": ok_by_day[d], "fail": fail_by_day[d]} for d in days],
+        "members": rows,
+        "events": [{"at": e["at"], "email": e["email"], "ok": bool(e["ok"]), "reason": e["reason"], "ip": e["ip_hash"][:8], "ua": e["ua"][:60]} for e in ev[:60]],
+    }
+
+
+@bp.route("/api/admin/members", methods=["GET"])
+def admin_members():
+    m = current_member()
+    if not is_owner(m):
+        return _forbid()
+    return jsonify(member_stats())
+
+
+@bp.route("/api/admin/members/status", methods=["POST"])
+def admin_member_status():
+    m = current_member()
+    if not is_owner(m):
+        return _forbid()
+    if request.headers.get("X-TS") != "1":
+        return jsonify({"error": "請求來源不正確"}), 403
+    d = request.get_json(silent=True) or {}
+    sub, dis = str(d.get("sub") or ""), 1 if d.get("disabled") else 0
+    target = get_member(sub)
+    if not target:
+        return jsonify({"error": "找不到會員"}), 404
+    if is_owner(target):
+        return jsonify({"error": "不能停權站主帳號"}), 400
+    with _store()._conn() as conn:
+        conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count) VALUES (?, ?, 0, 0) "
+                     "ON CONFLICT (sub) DO UPDATE SET disabled=EXCLUDED.disabled", (sub, dis))
+    return jsonify({"ok": True, "disabled": bool(dis)})
 
 
 # ───────── 路由：自選股 ─────────

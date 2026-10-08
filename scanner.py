@@ -137,13 +137,19 @@ class TWScanEngine:
     def is_scanning(self) -> bool:
         return self._scan_lock.locked()
 
-    def run_daily_scan(self) -> Optional[Dict]:
+    # 掃描模式："close"＝盤後 16:30 正式掃描；"premarket"＝盤前 08:20 掃描（用昨日收盤日 K＋隔夜資訊與最新處置／暫停名單）。
+    # 盤前模式不寫 last_scan_at（避免掩蓋 17:00 看門狗對盤後掃描的檢查）、不佔用「今日盤後報告已送出」旗標，只推新訊號與簡短摘要。
+    _mode = "close"
+
+    def run_daily_scan(self, mode: str = "close") -> Optional[Dict]:
         if not self._scan_lock.acquire(blocking=False):
             logger.warning("run_daily_scan: 已有掃描正在進行中，本次觸發跳過")
             return None
         try:
+            self._mode = mode if mode in ("close", "premarket") else "close"
             return self._run_daily_scan_impl()
         finally:
+            self._mode = "close"
             self._scan_lock.release()
 
     def _run_daily_scan_impl(self) -> Dict:
@@ -221,7 +227,7 @@ class TWScanEngine:
                 # 出現兩次的根因。用同一個 daily_report_sent_date 旗標判斷「今天
                 # 是否已經跑過一次完整報告」，是的話這則警示也一併跳過，不需要
                 # 額外開一個旗標。
-                already_reported_today = False
+                already_reported_today = (self._mode == "premarket")   # 盤前掃描不重複發熔斷警示
                 try:
                     from state_store import store as _store
                     _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -411,14 +417,22 @@ class TWScanEngine:
             logger.warning(f"shadow.mark_sent: {e}")
         self.signals_today = final_signals
         self.scan_count   += 1
-        self.last_scan_at  = datetime.now(timezone.utc).isoformat()
+        _now_iso = datetime.now(timezone.utc).isoformat()
+        if self._mode == "premarket":
+            try:
+                store.set_meta("last_premarket_scan_at", _now_iso)
+            except Exception as e:
+                logger.warning(f"寫回 last_premarket_scan_at 失敗: {e}")
+        else:
+            self.last_scan_at = _now_iso
         # ★ 修正：2026-09-18——同步寫回 DB meta 表，見 __init__() 說明，讓
         # job_scan_watchdog() 在 process 重啟後也能讀到「真正」的上次掃描
         # 時間，不會誤報「從未執行過」。
-        try:
-            store.set_meta("last_scan_at", self.last_scan_at)
-        except Exception as e:
-            logger.warning(f"寫回 last_scan_at 失敗（不影響本次掃描結果）: {e}")
+        if self._mode != "premarket":
+            try:
+                store.set_meta("last_scan_at", self.last_scan_at)
+            except Exception as e:
+                logger.warning(f"寫回 last_scan_at 失敗（不影響本次掃描結果）: {e}")
 
         for sig in final_signals:
             store.save_signal(sig)
@@ -458,7 +472,10 @@ class TWScanEngine:
 
         # 5. 推播
         logger.info("Step 5/5: 推播訊號...")
-        self._push_signals(final_signals, market_overview, stats)
+        if self._mode == "premarket":
+            self._push_premarket(final_signals, stats)
+        else:
+            self._push_signals(final_signals, market_overview, stats)
 
         try:
             import shadow
@@ -1262,6 +1279,28 @@ class TWScanEngine:
             )
         logger.info(f"_filter_and_rank: 最終輸出 {len(final)} 檔")
         return final
+
+    def _push_premarket(self, signals: List[Dict], stats: Dict):
+        """盤前掃描的推播：一則簡短摘要＋逐檔新訊號；同一天只推一次（跨重啟也記得）。"""
+        try:
+            from state_store import store
+            from telegram_bot import push_signal, send_alert
+            today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+            if store.get_meta("premarket_sent_date", "") == today:
+                logger.warning("_push_premarket: 今天已推播過盤前掃描，本次跳過")
+                return
+            store.set_meta("premarket_sent_date", today)
+            names = "、".join(f"{x.get('name') or x.get('code')}" for x in signals[:8])
+            send_alert(f"🌅 盤前掃描完成（掃 {stats.get('scanned')} 檔，耗時 {stats.get('duration_min')} 分）\n"
+                       + (f"新訊號 {len(signals)} 檔：{names}" if signals else "沒有新的符合條件訊號；正式盤後掃描 16:30 仍會照常執行。"), "info")
+            for sig in signals:
+                try:
+                    push_signal(sig)
+                except Exception as e:
+                    logger.error(f"_push_premarket: 訊號推播失敗 {sig.get('ticker')}: {e}")
+                time.sleep(0.5)
+        except Exception as e:
+            logger.error(f"_push_premarket: {e}", exc_info=True)
 
     def _push_signals(self, signals: List[Dict], market_overview: Dict, stats: Dict):
         # ★ 修正：2026-09-16——這是這次「訊號沒有及時傳到 TG」問題稽核出的最關鍵 bug：
