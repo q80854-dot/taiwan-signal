@@ -286,3 +286,24 @@ def test_dashboard_style_tags_balanced():
     s = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html"), encoding="utf-8").read()
     assert s.count("<style") == s.count("</style>")
     assert 'id="tabbar"' in s and 'id="acct-menu"' in s
+
+
+def test_member_cannot_see_capital_fields_but_owner_can(cl, monkeypatch):
+    import protect
+    from state_store import store
+    rows = [{"id": 1, "ticker": "2330.TW", "code": "2330", "name": "台積電", "direction": "buy", "result": "pending",
+             "status": "active", "entry_price": 100, "stop_loss": 95, "suggested_lots": 7, "risk_twd": 35000,
+             "risk_pct": 1.0, "pnl_twd": 1234, "generated_at": "2026-10-08T08:30:00"}]
+    monkeypatch.setattr(store, "get_recent_signals", lambda limit=60, days_back=30: rows)
+    monkeypatch.setattr(app_module, "_bars_since", lambda t, g: ({}, []))
+    login(cl)
+    j = cl.get("/api/positions").get_json()
+    p = j["open"][0]
+    assert "risk_twd" not in p and "lots" not in p and "pnl_twd" not in p and p["risk_pct"] == 1.0
+    # 站主（同一路徑剛被會員版快取過）仍拿到完整欄位：快取依身分分開
+    monkeypatch.setenv("OWNER_EMAILS", "boss@example.com")
+    members.upsert_member("boss", "boss@example.com", "站主")
+    cl.set_cookie(members.COOKIE, members.sign({"sub": "boss", "exp": int(time.time()) + 3600}))
+    p2 = cl.get("/api/positions").get_json()["open"][0]
+    assert p2["risk_twd"] == 35000 and p2["lots"] == 7
+    protect.clear_cache()

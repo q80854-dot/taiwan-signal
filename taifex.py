@@ -48,7 +48,10 @@ def _get(path: str, tries: int = 3):
                 raise RuntimeError(f"HTTP {r.status_code}")
             if not r.content.strip():
                 raise RuntimeError(f"空回應（HTTP 200, {len(r.content)} bytes）")
-            return r.json()
+            try:
+                return r.json()
+            except ValueError:
+                raise RuntimeError(f"非 JSON 回應（{r.headers.get('Content-Type', '?')}，開頭：{r.text[:60]!r}）")
         except Exception as e:
             last = e
             if i < tries - 1:
@@ -111,6 +114,70 @@ def parse_large(rows: List[Dict]) -> Optional[Dict]:
     return None
 
 
+WEB = "https://www.taifex.com.tw/cht/3/futContractsDateDown"
+
+
+def _tpe_now() -> datetime:
+    from datetime import timedelta, timezone
+    return datetime.now(timezone.utc) + timedelta(hours=8)
+
+
+def parse_futures_csv(text: str) -> Dict:
+    """期交所網站「三大法人－區分各期貨契約」CSV 下載（OpenAPI 失效或還沒更新時的備援）。
+    欄位依標題文字對應：日期、商品名稱、身份別、多方未平倉口數、空方未平倉口數、多空未平倉口數淨額。"""
+    import csv, io
+    rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+    if not rows:
+        return {"date": None, "items": {}}
+    head = [h.strip() for h in rows[0]]
+
+    def col(*keys):
+        for i, h in enumerate(head):
+            if all(k in h for k in keys):
+                return i
+        return None
+    i_d, i_c, i_w = col("日期"), col("商品"), col("身份")
+    i_lo, i_sh, i_net = col("多方未平倉口數"), col("空方未平倉口數"), col("未平倉口數淨額")
+    if None in (i_d, i_c, i_w, i_net):
+        raise RuntimeError(f"CSV 欄位無法辨識：{head[:8]}")
+    conv = []
+    for r in rows[1:]:
+        if len(r) <= max(i_d, i_c, i_w, i_net):
+            continue
+        who = r[i_w].strip()
+        who = "外資及陸資" if "外資" in who else who
+        d = r[i_d].strip().replace("/", "")
+        conv.append({"Date": d, "ContractCode": r[i_c].strip(), "Item": who,
+                     "OpenInterest(Net)": r[i_net], "OpenInterest(Long)": r[i_lo] if i_lo is not None else None,
+                     "OpenInterest(Short)": r[i_sh] if i_sh is not None else None})
+    return parse_futures(conv)
+
+
+def fetch_futures_web(day: Optional[datetime] = None) -> Dict:
+    d = (day or _tpe_now()).strftime("%Y/%m/%d")
+    r = requests.post(WEB, data={"queryStartDate": d, "queryEndDate": d, "commodityId": ""},
+                      headers={"User-Agent": HEADERS["User-Agent"]}, timeout=20)
+    if r.status_code != 200 or not r.content.strip():
+        raise RuntimeError(f"期交所網站 HTTP {r.status_code}")
+    for enc in ("utf-8-sig", "cp950", "big5"):
+        try:
+            text = r.content.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise RuntimeError("期交所網站 CSV 無法解碼")
+    return parse_futures_csv(text)
+
+
+def _need_newer(date: Optional[str], now: Optional[datetime] = None) -> bool:
+    """平日 15:00 後，資料日期還不是今天 → 需要找更新的來源（期交所日盤約 14:30～15:00 後公布三大法人）。"""
+    now = now or _tpe_now()
+    if now.weekday() > 4 or now.hour < 15:
+        return False
+    return (date or "") < now.strftime("%Y-%m-%d")
+
+
 def fetch_taifex() -> Dict:
     out = {"at": time.time(), "errors": []}
     for key, path, fn in (("futures", "/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate", parse_futures),
@@ -121,12 +188,24 @@ def fetch_taifex() -> Dict:
         except Exception as e:
             out["errors"].append(f"{key}: {e}")
             logger.warning(f"taifex {key}: {e}")
+    fut = out.get("futures") or {}
+    if not fut.get("items") or _need_newer(fut.get("date")):
+        try:                                   # OpenAPI 失敗或還停在前一天：改抓期交所網站 CSV
+            web = fetch_futures_web()
+            if web.get("items") and (web.get("date") or "") > (fut.get("date") or ""):
+                out["futures"] = web
+                out["futures_source"] = "期交所網站 CSV"
+                logger.info(f"taifex futures：OpenAPI 無新資料，改用網站 CSV（{web.get('date')}）")
+        except Exception as e:
+            out["errors"].append(f"futures_web: {e}")
+            logger.warning(f"taifex futures_web: {e}")
     return out
 
 
 def get_taifex(force: bool = False) -> Dict:
     with _lock:
-        if not force and _cache["v"] and time.time() - _cache["ts"] < _TTL:
+        ttl = 600 if _cache["v"] and _need_newer(((_cache["v"].get("futures") or {}).get("date"))) else _TTL
+        if not force and _cache["v"] and time.time() - _cache["ts"] < ttl:
             return _cache["v"]
     v = merge_keep_last(fetch_taifex(), _cache["v"])
     with _lock:

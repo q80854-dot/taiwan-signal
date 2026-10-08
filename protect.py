@@ -112,7 +112,13 @@ def first_guard():
 
 
 def _cache_key() -> str:
-    return request.path + "?" + "&".join(f"{k}={v}" for k, v in sorted(request.args.items(multi=True)))
+    # 站主與一般會員看到的內容不同（會員版移除本金相關欄位），快取必須分開存
+    try:
+        import members
+        role = "o" if members.viewer_is_owner() else "m"
+    except Exception:
+        role = "m"
+    return role + "|" + request.path + "?" + "&".join(f"{k}={v}" for k, v in sorted(request.args.items(multi=True)))
 
 
 def after_auth_guard():

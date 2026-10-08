@@ -58,3 +58,34 @@ def test_merge_keep_last_uses_old_when_source_fails():
 def test_merge_keep_last_without_old():
     m = tf.merge_keep_last({"errors": []}, None)
     assert m["stale"] == []
+
+
+def test_parse_futures_csv_fallback():
+    csv_text = ("日期,商品名稱,身份別,多方交易口數,多方交易契約金額(千元),空方交易口數,空方交易契約金額(千元),多空交易口數淨額,多空交易契約金額淨額(千元),"
+                "多方未平倉口數,多方未平倉契約金額(千元),空方未平倉口數,空方未平倉契約金額(千元),多空未平倉口數淨額,多空未平倉契約金額淨額(千元)\n"
+                "2026/10/08,臺股期貨,自營商,1,1,1,1,0,0,5000,1,6000,1,-1000,1\n"
+                "2026/10/08,臺股期貨,投信,1,1,1,1,0,0,80000,1,3000,1,77000,1\n"
+                "2026/10/08,臺股期貨,外資,1,1,1,1,0,0,12000,1,90000,1,\"-78,000\",1\n"
+                "2026/10/08,小型臺指期貨,外資,1,1,1,1,0,0,1,1,1,1,4000,1\n")
+    r = tf.parse_futures_csv(csv_text)
+    assert r["date"] == "2026-10-08"
+    assert r["items"]["外資及陸資"]["tx_net_oi"] == -78000 and r["items"]["外資及陸資"]["equiv_net_oi"] == -77000
+    assert r["items"]["投信"]["equiv_net_oi"] == 77000 and r["items"]["投信"]["tx_long"] == 80000
+
+
+def test_need_newer_only_after_publish_time():
+    from datetime import datetime
+    assert tf._need_newer("2026-10-07", datetime(2026, 10, 8, 16, 0)) is True
+    assert tf._need_newer("2026-10-08", datetime(2026, 10, 8, 16, 0)) is False
+    assert tf._need_newer("2026-10-07", datetime(2026, 10, 8, 10, 0)) is False     # 盤中不急著找
+    assert tf._need_newer("2026-10-09", datetime(2026, 10, 10, 16, 0)) is False    # 週六
+
+
+def test_fetch_taifex_uses_web_when_openapi_stale(monkeypatch):
+    from datetime import datetime
+    old = [{"Date": "20261007", "ContractCode": "臺股期貨", "Item": "投信", "OpenInterest(Net)": "1"}]
+    monkeypatch.setattr(tf, "_get", lambda path: old if "Futures" in path else [])
+    monkeypatch.setattr(tf, "_tpe_now", lambda: datetime(2026, 10, 8, 18, 0))
+    monkeypatch.setattr(tf, "fetch_futures_web", lambda day=None: {"date": "2026-10-08", "items": {"投信": {"equiv_net_oi": 2}}})
+    out = tf.fetch_taifex()
+    assert out["futures"]["date"] == "2026-10-08" and out["futures_source"] == "期交所網站 CSV"

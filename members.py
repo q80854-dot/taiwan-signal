@@ -324,7 +324,7 @@ def _set_cookie(resp, name, value, ttl):
 _OPEN_PATHS = ("/api/me", "/healthz", "/health", "/auth/", "/api/public/")
 _OWNER_ONLY_GET = ("/api/health", "/api/settings", "/api/audit", "/api/diagnostics", "/api/admin/",
                    "/api/backtest", "/api/backfill", "/api/learning")
-DEFAULT_OWNER = "q80855@gmail.com"
+DEFAULT_OWNER = "q80854@gmail.com,q80855@gmail.com"   # 2026-10-08：加入帳號擁有者 q80854；Render 若設了 OWNER_EMAILS 以其為準
 
 
 def owner_emails() -> set:
@@ -384,6 +384,44 @@ def gate():
     except Exception as e:
         logger.warning(f"gate: {e}")
         return None
+
+
+def viewer_is_owner() -> bool:
+    """目前這個請求是不是站主（登入功能沒開＝單人使用，視為站主）。"""
+    try:
+        if not enabled() or os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
+            return True
+        return is_owner(current_member())
+    except Exception:
+        return False
+
+
+# 一般會員（外部測試者）看不到會透露站主本金的欄位：建議張數／股數、風險金額、損益金額
+_PRIVATE_KEYS = {"suggested_lots", "suggested_shares", "risk_twd", "pnl_twd", "total_risk_twd", "loss_twd",
+                 "lots", "shares", "account_balance"}
+_PRIVATE_PATHS = ("/api/state", "/api/signals", "/api/positions", "/api/autopsy", "/api/performance",
+                  "/api/instruments/", "/api/events", "/api/signal_check/")
+
+
+def _strip(o):
+    if isinstance(o, dict):
+        return {k: _strip(v) for k, v in o.items() if k not in _PRIVATE_KEYS}
+    if isinstance(o, list):
+        return [_strip(v) for v in o]
+    return o
+
+
+def scrub_private(resp):
+    """after_request：非站主的回應移除本金相關欄位。須在 protect.install 之後註冊（先於快取寫入執行）。"""
+    try:
+        if (request.path.startswith(_PRIVATE_PATHS) and resp.status_code == 200
+                and (resp.content_type or "").startswith("application/json") and not viewer_is_owner()):
+            data = json.loads(resp.get_data(as_text=True))
+            resp.set_data(json.dumps(_strip(data), ensure_ascii=False))
+            resp.headers["Content-Length"] = str(len(resp.get_data()))
+    except Exception as e:
+        logger.warning(f"scrub_private: {e}")
+    return resp
 
 
 # ───────── 路由：登入 ─────────
