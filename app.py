@@ -432,11 +432,15 @@ def setup_scheduler():
     scheduler.add_job(job_market_extras, CronTrigger(hour="8,17,21", minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="market_extras", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
-    # 2026-10-08：收盤後公布時段每 3 分鐘檢查各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）
-    scheduler.add_job(job_freshness_poll, CronTrigger(hour="14-21", minute="*/3", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll", replace_existing=True, max_instances=1, coalesce=True)
+    # 2026-10-08：各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）。
+    # 原本只跑 14:00–22:00，過 22:00 就停到隔天早上——證交所 STOCK_DAY_ALL（上市日行情）與期交所三大法人
+    # 這兩個官方端點常比別人晚公布（甚至拖到深夜／長假前後），落在這個空窗就要等隔天或靠有人開頁面才補。
+    # 改為平日「全天候持續追」：公布／收盤時段（14:00–23:59）每 5 分鐘；其餘時段（含盤中與清晨）每 20 分鐘。
+    # job_poll 只有在某項真的落後時才會打官方 API，沒落後時只讀快取／資料庫，成本極低，所以放寬排程很安全。
+    scheduler.add_job(job_freshness_poll, CronTrigger(hour="14-23", minute="*/5", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_freshness_poll, CronTrigger(hour="0-13", minute="*/20", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll_offhours", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(lambda: __import__("freshness").log_summary(force=True), "date",
                       run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=150), id="freshness_boot_log", replace_existing=True)
-    scheduler.add_job(job_freshness_poll, CronTrigger(hour="8", minute="5,35", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll_am", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
