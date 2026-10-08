@@ -92,7 +92,7 @@ def get_ex_dividend(days=21):
         if errs and not items:
             out["error"] = "；".join(errs)
         return out
-    return _cached("ex", 3600, _do)
+    return _cached(f"ex{days}", 3600, _do)
 
 
 def get_listed_watch():

@@ -25,7 +25,7 @@ _TICKER_PATHS = ("/api/instruments/", "/api/quote/", "/api/fundamentals/")
 _CACHE_TTL = {
     "/api/public/pulse": 5,
     "/api/signals": 15, "/api/market": 20, "/api/universe": 60, "/api/quote_status": 15,
-    "/api/intraday": 20, "/api/taifex": 60, "/api/market_extras": 60, "/api/calendar": 300,
+    "/api/intraday": 20, "/api/freshness": 20, "/api/taifex": 60, "/api/market_extras": 60, "/api/calendar": 300,
     "/api/screener": 30, "/api/instruments/": 60, "/api/performance": 60, "/api/positions": 20,
     "/api/events": 20, "/api/news": 120, "/api/material_news": 120, "/api/fundamentals": 300,
     "/api/analysis": 120, "/api/fundamentals_radar": 300, "/api/quote/": 10,
@@ -39,10 +39,15 @@ HEAVY_CONCURRENCY = 6     # 同時間最多幾個重運算
 CACHE_MAX = 300
 
 _rate, _heavy_rate = {}, {}
+# 2026-10-08：探測防護——同一 IP 5 分鐘內被拒絕（403/404/405/400，不含未登入的 401）超過 BAN_DENIES 次，封鎖 BAN_SECS 秒
+BAN_DENIES = 40
+BAN_WINDOW = 300
+BAN_SECS = 900
+_denies, _banned = {}, {}
 _cache: "OrderedDict[str, tuple]" = OrderedDict()
 _cache_lock = threading.Lock()
 _sem = threading.BoundedSemaphore(HEAVY_CONCURRENCY)
-STATS = {"cache_hit": 0, "cache_miss": 0, "limited": 0, "busy": 0, "bad_param": 0}
+STATS = {"cache_hit": 0, "cache_miss": 0, "limited": 0, "busy": 0, "bad_param": 0, "banned": 0}
 
 
 def _ip() -> str:
@@ -92,6 +97,12 @@ def first_guard():
     if not (p.startswith("/api/") or p.startswith("/auth/")):
         return None
     ip = _ip()
+    until = _banned.get(ip)
+    if until:
+        if time.time() < until:
+            STATS["banned"] += 1
+            return _reject(429, "此來源暫時被限制存取，請稍後再試", int(until - time.time()) + 1)
+        _banned.pop(ip, None)
     if not _hit(_rate, ip, RATE_LIMIT):
         STATS["limited"] += 1
         return _reject(429, "請求過於頻繁，請稍後再試", 30)
@@ -148,8 +159,25 @@ def after_auth_guard():
     return None
 
 
+def _note_denied(status: int):
+    """被拒絕的請求計數；短時間大量被拒（試探權限、掃描網址）就暫時封鎖該 IP。"""
+    if status not in (400, 403, 404, 405):      # 401（未登入）是登入牆的正常狀態，不計
+        return
+    p = request.path
+    if not (p.startswith("/api/") or p.startswith("/auth/") or p.startswith("/webhook")):
+        return
+    ip = _ip()
+    if not _hit(_denies, ip, BAN_DENIES, BAN_WINDOW):
+        if len(_banned) > 5000:
+            _banned.clear()
+        _banned[ip] = time.time() + BAN_SECS
+        _denies.pop(ip, None)
+        logger.warning(f"protect: 來源 {ip[:7]}… {BAN_WINDOW // 60} 分鐘內被拒絕超過 {BAN_DENIES} 次，封鎖 {BAN_SECS // 60} 分鐘")
+
+
 def after(resp):
     try:
+        _note_denied(resp.status_code)
         key = getattr(g, "_pc_key", None)
         if key and resp.status_code == 200 and not resp.direct_passthrough and len(resp.get_data()) < 600_000:
             with _cache_lock:

@@ -311,6 +311,14 @@ def job_refresh_universe_if_stale():
         logger.error(f"job_refresh_universe_if_stale: {e}")
 
 
+def job_freshness_poll():
+    try:
+        import freshness
+        freshness.job_poll()
+    except Exception as e:
+        logger.warning(f"job_freshness_poll: {e}")
+
+
 def job_collect_inst():
     """收盤後把當天三大法人買賣超存進資料庫（T86 約 16:00 後陸續公布，晚上再補一次）。"""
     try:
@@ -424,6 +432,9 @@ def setup_scheduler():
     scheduler.add_job(job_market_extras, CronTrigger(hour="8,17,21", minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="market_extras", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
+    # 2026-10-08：收盤後公布時段每 3 分鐘檢查各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）
+    scheduler.add_job(job_freshness_poll, CronTrigger(hour="14-21", minute="*/3", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_freshness_poll, CronTrigger(hour="8", minute="5,35", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll_am", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
     scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
@@ -1430,6 +1441,19 @@ def api_intraday_series():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/freshness")
+def api_freshness():
+    """各資料目前的日期與應有日期（只讀快取／資料庫）。網頁每分鐘查一次，版本變了就自動重新載入。"""
+    try:
+        import freshness
+        st = freshness.status()
+        if st.get("late"):
+            freshness.kick_background()      # 有人在看、且有資料落後：立刻在背景補抓（每分鐘最多一次）
+        return jsonify(st)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/taifex")
 def api_taifex():
     """期交所籌碼：外資／投信／自營商期貨未平倉（大台等效）、臺指選擇權、Put/Call 比、大額交易人。"""
@@ -1759,6 +1783,36 @@ def api_instrument(ticker: str):
                            "source": "證交所 T86 三大法人買賣超日報（僅上市；單位：張）"}
     except Exception as e:
         out["inst_error"] = str(e)
+    try:   # 同產業比較：同產業成交金額前 8 名（含本檔），附本益比／殖利率
+        _inf = out.get("info") or {}
+        sec = _inf.get("sector")
+        if sec and sec not in ("其他", "未分類"):
+            from stock_universe import build_live_universe
+            from fundamentals import fetch_valuation_map
+            vm = fetch_valuation_map()
+            same = [x for x in build_live_universe() if x.get("sector") == sec and not x.get("is_etf") and x.get("close")]
+            same.sort(key=lambda x: -(x.get("close") or 0) * (x.get("volume_lots") or 0))
+            top = same[:8]
+            if code not in [x.get("code") for x in top]:
+                top += [x for x in same if x.get("code") == code]
+            chg = [x["change_pct"] for x in same if x.get("change_pct") is not None]
+            rank = sorted(chg, reverse=True).index(_inf["change_pct"]) + 1 if _inf.get("change_pct") in chg else None
+            out["peers"] = {"sector": sec, "n": len(same), "avg_change_pct": round(sum(chg) / len(chg), 2) if chg else None,
+                            "rank_by_change": rank,
+                            "rows": [{"code": x.get("code"), "name": x.get("name"), "market": x.get("market"),
+                                      "close": x.get("close"), "change_pct": x.get("change_pct"),
+                                      "value_yi": round((x.get("close") or 0) * (x.get("volume_lots") or 0) * 1000 / 1e8, 2),
+                                      "pe": (vm.get(x.get("code")) or {}).get("pe"),
+                                      "yield_pct": (vm.get(x.get("code")) or {}).get("yield_pct"),
+                                      "pb": (vm.get(x.get("code")) or {}).get("pb"), "self": x.get("code") == code}
+                                     for x in top]}
+    except Exception as e:
+        out["peers_error"] = str(e)
+    try:   # 近期除權息（未來 60 天）
+        from calendar_events import get_ex_dividend
+        out["ex_dividend"] = [x for x in (get_ex_dividend(days=60).get("items") or []) if x.get("code") == code]
+    except Exception as e:
+        out["ex_dividend_error"] = str(e)
     try:
         from fundamentals import fetch_margin_short_map
         out["margin"] = fetch_margin_short_map().get(code)

@@ -14,7 +14,7 @@ def _reset_protect():
     """每個測試前清掉防護層的快取與限流計數，避免互相污染。"""
     try:
         import protect
-        protect.clear_cache(); protect._rate.clear(); protect._heavy_rate.clear()
+        protect.clear_cache(); protect._rate.clear(); protect._heavy_rate.clear(); protect._denies.clear(); protect._banned.clear()
     except Exception:
         pass
     yield

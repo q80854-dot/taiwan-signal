@@ -204,7 +204,7 @@ def fetch_taifex() -> Dict:
 
 def get_taifex(force: bool = False) -> Dict:
     with _lock:
-        ttl = 600 if _cache["v"] and _need_newer(((_cache["v"].get("futures") or {}).get("date"))) else _TTL
+        ttl = 180 if _cache["v"] and _need_newer(((_cache["v"].get("futures") or {}).get("date"))) else _TTL
         if not force and _cache["v"] and time.time() - _cache["ts"] < ttl:
             return _cache["v"]
     v = merge_keep_last(fetch_taifex(), _cache["v"])

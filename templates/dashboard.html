@@ -1098,6 +1098,9 @@ body{font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHe
 .sfoot{margin:8px 12px 12px!important;padding:11px 12px!important;border:1px solid var(--side-line)!important;border-radius:8px;background:rgba(255,255,255,.03);color:#8a98b0;flex-shrink:0}
 .sfoot .sfr{color:#dbe3f0;font-size:12.5px}
 #breadth-row{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:0!important}
+#inst-result .hero-row>.kpi{padding:14px 18px!important}
+#page-freshness .tbl th:first-child,#page-freshness .tbl td:first-child{padding-left:18px!important}
+@media(max-width:640px){#page-freshness .fr-x{display:none}#page-freshness .tbl{width:100%}#page-freshness .tbl td:first-child{white-space:normal!important}#page-freshness .tbl td,#page-freshness .tbl th{padding:10px 8px!important;font-size:13px}}
 #breadth-row>.kpi{padding:16px 20px!important;border-left:1px solid var(--line)!important}
 #breadth-row>.kpi:first-child{border-left:0!important}
 .content select,.content input[type=text],.content input:not([type]),.content input[type=number]{border-radius:6px!important;border:1px solid var(--line2)!important;background-color:var(--s1)!important;color:var(--t1)!important;min-height:34px}
@@ -1141,6 +1144,7 @@ html.force-mobile .nav{height:44px;font-size:15px!important}
   <div class="nav" onclick="go('instrument')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v4M7 17v4M17 6v3M17 15v4"/><rect x="5" y="7" width="4" height="10" rx="1"/><rect x="15" y="9" width="4" height="6" rx="1"/></svg><span class="nl">個股研究</span></div>
   <div class="nav" onclick="go('report')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg><span class="nl">盤後報告</span></div>
   <div class="nav" onclick="go('news')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4h4l6 4V6L7 10z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg><span class="nl">重大訊息公告</span> <span class="nbadge" id="news-count-badge">0</span></div>
+  <div class="nav" onclick="go('freshness')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg><span class="nl">資料更新狀態</span> <span class="nbadge" id="fr-late-badge"></span></div>
   <div class="nav-g">風控與績效</div>
   <div class="nav" onclick="go('risk')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg><span class="nl">風險管理</span></div>
   <div class="nav" onclick="go('autopsy')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M8.5 7.5L20 18M8.5 16.5L20 6"/></svg><span class="nl">停損解剖</span></div>
@@ -1174,7 +1178,7 @@ html.force-mobile .nav{height:44px;font-size:15px!important}
     </div>
     <div class="gs"><input id="gs-in" placeholder="搜尋代號或名稱　Ctrl+K" autocomplete="off" spellcheck="false" oninput="gsQuery()" onkeydown="gsKey(event)" onfocus="gsQuery()"><div id="gs-dd" class="gs-dd"></div></div>
     <div class="top-r">
-      <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
+      <span class="fresh-badge" id="fresh-badge" title="資料來源最後成功更新的時間（點擊查看各項資料更新狀態）" style="cursor:pointer" onclick="go('freshness')"><span class="fresh-dot" id="fresh-dot"></span><span id="fresh-text">資料載入中…</span></span>
       <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
       <span id="tw-time" style="font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums"></span>
       <button class="srch-btn" onclick="mSearch()" aria-label="搜尋股票"><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg></button>
@@ -1323,6 +1327,11 @@ html.force-mobile .nav{height:44px;font-size:15px!important}
   </div>
 
   <!-- Material News -->
+  <div class="page" id="page-freshness"><div class="pad">
+    <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">各項資料目前的日期</div></div>
+    <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料</th><th>目前日期</th><th>應有日期</th><th>狀態</th><th class="fr-x">來源</th><th class="fr-x">官方約</th></tr></thead><tbody id="fr-tbody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--t3)">載入中…</td></tr></tbody></table></div></div>
+    <div id="fr-note" style="font-size:12px;color:var(--t3);margin-top:10px;line-height:1.7"></div>
+  </div></div>
   <div class="page" id="page-news">
     <div class="pad">
     <div class="note-box" style="border-left-color:var(--alert);margin-bottom:16px" id="news-source-note">資料來源：TWSE OpenAPI（上市公司重大訊息公告）· 載入中…</div>
@@ -1782,7 +1791,7 @@ function updateClock(){
 setInterval(updateClock,1000);updateClock();
 
 // Nav
-const TITLES={learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷',members:'會員統計'};
+const TITLES={freshness:'資料更新狀態',learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷',members:'會員統計'};
 let _marketOverviewLoaded=false;
 async function fetchCalendar(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
@@ -1952,6 +1961,7 @@ function go(id){
   if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
   if(id==='marketoverview'&&!window._moTimer){window._moTimer=setInterval(()=>{if(document.hidden||window._curPage!=='marketoverview')return;fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();},300000);}
   if(id==='diag')fetchDiag();
+  if(id==='freshness')pollFreshness(true);
   if(id==='members')loadMembersPage();
   syncTabbar(id);
   closeSide();
@@ -2232,6 +2242,24 @@ function instExtraHtml(d){
     </div></div>`;
   }else if((d.ticker||'').includes('.TWO')){
     h+=`<div class="sec-label"><div class="bar"></div><div class="tx">三大法人買賣超</div></div><div class="panel card"><div class="panel-body"><div class="empty">上櫃股票的三大法人逐日資料尚未接入（目前只有證交所 T86 上市資料）</div></div></div>`;
+  }
+  const P=d.peers;
+  if(P&&P.rows&&P.rows.length>1){
+    const n2=v=>v==null?'—':_fmtN(v,2);
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">同產業比較（${safe(P.sector)}，共 ${P.n} 檔）</div></div>
+    <div class="panel card"><div class="panel-body">
+      <div style="font-size:12.5px;color:var(--t2);margin-bottom:8px">產業平均漲跌 ${P.avg_change_pct==null?'—':fmtPct(P.avg_change_pct)}${P.rank_by_change?`；本檔今日漲跌排第 <b>${P.rank_by_change}</b> / ${P.n}`:''}</div>
+      <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>股票</th><th style="text-align:right">股價</th><th style="text-align:right">漲跌</th><th style="text-align:right">成交金額(億)</th><th style="text-align:right">本益比</th><th style="text-align:right">殖利率</th><th style="text-align:right">淨值比</th></tr></thead><tbody>
+      ${P.rows.map(x=>`<tr style="${x.self?'background:var(--accent-soft,rgba(37,99,235,.08));font-weight:600':''}"><td><a href="#" onclick="document.getElementById('inst-ticker').value='${escH(x.code)}';fetchInstrument();return false" style="color:inherit">${safe(x.name)} <span style="color:var(--t3)">${safe(x.code)}</span></a></td><td style="text-align:right">${n2(x.close)}</td><td style="text-align:right">${x.change_pct==null?'—':fmtPct(x.change_pct)}</td><td style="text-align:right">${n2(x.value_yi)}</td><td style="text-align:right">${x.pe?n2(x.pe):'—'}</td><td style="text-align:right">${x.yield_pct==null?'—':n2(x.yield_pct)+'%'}</td><td style="text-align:right">${n2(x.pb)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">同產業依成交金額取前 8 名；本益比／殖利率／淨值比來源：證交所 BWIBBU_ALL、櫃買中心本益比分析（每日收盤後更新，虧損公司本益比顯示「—」）</div>
+    </div></div>`;
+  }
+  const X=d.ex_dividend||[];
+  if(X.length){
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">近期除權息（未來 60 天）</div></div>
+    <div class="panel card"><div class="panel-body">${X.map(x=>`<div class="kv"><span>${safe(x.date)}</span><span>${safe(x.type||'除權息')}${x.cash?`　現金股利 ${safe(x.cash)}`:''}</span></div>`).join('')}
+    <div style="font-size:11px;color:var(--t3);margin-top:6px">來源：證交所 TWT48U／櫃買中心除權息預告</div></div></div>`;
   }
   const M=d.margin;
   if(M){
@@ -3879,6 +3907,32 @@ function renderSidebar(d){
   setEl('last-scan-side',scanStr?'掃描：'+scanStr+'（'+ageLabel(ageMinutes(d.last_scan_time))+'）':'尚未掃描');
 }
 
+/* 2026-10-08 資料新鮮度：每分鐘查 /api/freshness，任一資料日期變新就自動重新載入相關畫面 */
+let _frLast=null;
+const _FR_ST={ok:['最新','var(--ok,#16a34a)'],late:['尚未更新','var(--warn,#d97706)'],unknown:['無資料','var(--t3)']};
+async function pollFreshness(render){
+  let d;try{d=await(await fetch('/api/freshness',{cache:'no-store'})).json();}catch(e){return;}
+  if(!d||!d.items)return;
+  const late=(d.late||[]).length;const b=document.getElementById('fr-late-badge');if(b)b.textContent=late?String(late):'';
+  if(_frLast&&d.version!==_frLast.version){
+    const prev={};(_frLast.items||[]).forEach(i=>prev[i.key]=i.date);
+    const changed=d.items.filter(i=>i.date&&i.date!==prev[i.key]);
+    if(changed.length){
+      try{fetchState();}catch(e){}
+      if(typeof _marketOverviewLoaded!=='undefined'&&_marketOverviewLoaded){try{fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();}catch(e){}}
+      if(window._curPage==='instrument'){try{const c=(document.getElementById('inst-ticker')||{}).value;if(c&&document.getElementById('inst-result')&&document.getElementById('inst-result').innerHTML)fetchInstrument();}catch(e){}}
+      if(typeof toast==='function')toast('已更新最新資料：'+changed.map(i=>i.name+' '+i.date.slice(5)).join('、'));
+    }
+  }
+  _frLast=d;
+  if(render||window._curPage==='freshness'){
+    const tb=document.getElementById('fr-tbody');
+    const sm=window.innerWidth<640,dd=v=>v?(sm?v.slice(5):v):null;
+    if(tb)tb.innerHTML=d.items.map(i=>{const st=_FR_ST[i.status]||_FR_ST.unknown;return `<tr><td><b>${safe(i.name)}</b></td><td class="num">${safe(dd(i.date))}</td><td class="num" style="color:var(--t3)">${safe(dd(i.expected))}</td><td style="color:${st[1]};font-weight:600;white-space:nowrap">${st[0]}</td><td class="fr-x" style="color:var(--t3);white-space:normal">${safe(i.source)}</td><td class="num fr-x" style="color:var(--t3)">${safe(i.publish)}</td></tr>`;}).join('');
+    const n=document.getElementById('fr-note');
+    if(n)n.innerHTML=`檢查時間：${safe(d.now)}（台北）。「應有日期」＝今天若已過官方公布時間，否則為上一個交易日。<br>收盤後 14:00～22:00 系統每 10 分鐘自動檢查，哪一項還沒更新就只重抓那一項；網頁每分鐘確認一次，有新資料會自動重新載入並提示。<br>「尚未更新」通常是官方還沒公布（各資料公布時間不同），不是資料算錯。`;
+  }
+}
 function toast(msg){
   const t=document.createElement('div');t.className='toast';t.setAttribute('role','status');t.setAttribute('aria-live','polite');t.textContent=msg;
   document.body.appendChild(t);setTimeout(()=>t.remove(),3000);
@@ -3886,6 +3940,8 @@ function toast(msg){
 
 document.addEventListener('DOMContentLoaded',()=>{
   fetchState();setInterval(fetchState,30000);
+  pollFreshness();setInterval(()=>{if(!document.hidden)pollFreshness();},60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)pollFreshness();});
   fetchMaterialNews();setInterval(fetchMaterialNews,600000);
 });
 </script>
