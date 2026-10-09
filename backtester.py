@@ -266,6 +266,72 @@ def calc_tw_pnl(entry, close, direction, shares, days_held=0):
     borrow   = sell_leg * shares * SHORT_BORROW_ANNUAL * max(days_held, 0) / 365 if direction == "sell" else 0
     return round(gross - buy_fee - sell_fee - sell_tax - borrow, 0)
 
+def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date):
+    """忠實模擬推播給使用者的操作計畫：TP1/TP2/TP3 各出 1/3；TP1 觸及後停損移至成本、
+    TP2 觸及後移至 TP1；同一根 K 棒停損優先於停利（保守）；跳空穿越停損以開盤價成交；
+    末段未出場者到最後一根以收盤價結算（expired）。
+
+    bars：訊號日之後、時間升冪的日K清單，每筆含 bar_date/open/high/low/close。
+    回傳 {result, exit_price, pnl, pnl_pct, legs, exit_date}；result 取「觸及的最高停利」
+    以相容既有勝率定義（tp*/sl/expired），pnl 則為各段加總的真實損益（已含滑價/費稅/借券）。
+    """
+    buy = direction == "buy"
+    s1 = shares // 3; s2 = shares // 3; s3 = shares - s1 - s2
+    leg_sh = {"tp1": s1, "tp2": s2, "tp3": s3}
+    tgt = {"tp1": tp1, "tp2": tp2, "tp3": tp3}
+    done = {"tp1": False, "tp2": False, "tp3": False}
+    remaining = shares; current_sl = sl; legs = []; exit_date = None
+
+    def _days(bd):
+        try:
+            return max(0, (datetime.strptime(bd[:10], "%Y-%m-%d") - datetime.strptime(gen_date[:10], "%Y-%m-%d")).days)
+        except Exception:
+            return 0
+
+    for b in bars:
+        if remaining <= 0:
+            break
+        op, hi, lo, bd = b.get("open"), b["high"], b["low"], b["bar_date"]
+        hit_stop = (lo <= current_sl) if buy else (hi >= current_sl)
+        if hit_stop:
+            px = current_sl
+            if op and ((buy and op < current_sl) or (not buy and op > current_sl)):
+                px = op                      # 跳空穿越停損：以較差的開盤價成交
+            legs.append({"stage": "stop", "price": px, "shares": remaining,
+                         "pnl": calc_tw_pnl(entry, px, direction, remaining, days_held=_days(bd))})
+            exit_date = bd[:10]; remaining = 0
+            break
+        for stage in ("tp1", "tp2", "tp3"):
+            if done[stage] or leg_sh[stage] <= 0:
+                continue
+            t = tgt[stage]
+            if not t:
+                continue
+            hit = (hi >= t) if buy else (lo <= t)
+            if not hit:
+                break                        # 較近的目標沒碰到，當天更遠的目標不可能碰到
+            legs.append({"stage": stage, "price": t, "shares": leg_sh[stage],
+                         "pnl": calc_tw_pnl(entry, t, direction, leg_sh[stage], days_held=_days(bd))})
+            done[stage] = True; remaining -= leg_sh[stage]; exit_date = bd[:10]
+            if stage == "tp1":   current_sl = entry        # 移至保本
+            elif stage == "tp2": current_sl = tp1          # 移至 TP1 鎖利
+    if remaining > 0 and bars:
+        last = bars[-1]
+        legs.append({"stage": "expired", "price": last["close"], "shares": remaining,
+                     "pnl": calc_tw_pnl(entry, last["close"], direction, remaining, days_held=_days(last["bar_date"]))})
+        exit_date = last["bar_date"][:10]; remaining = 0
+    if not legs:
+        return None
+    total_pnl = round(sum(l["pnl"] for l in legs), 0)
+    tp_hits = [l["stage"] for l in legs if l["stage"] in ("tp1", "tp2", "tp3")]
+    result = tp_hits[-1] if tp_hits else ("sl" if any(l["stage"] == "stop" for l in legs) else "expired")
+    sh = sum(l["shares"] for l in legs)
+    exit_price = round(sum(l["price"] * l["shares"] for l in legs) / sh, 2) if sh else entry
+    pnl_pct = round(total_pnl / (entry * shares) * 100, 2) if entry and shares else 0
+    return {"result": result, "exit_price": exit_price, "pnl": total_pnl, "pnl_pct": pnl_pct,
+            "legs": legs, "exit_date": exit_date}
+
+
 def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True,
                         daily_override=None, weekly_override=None, date_start=None) -> Dict:
     """
