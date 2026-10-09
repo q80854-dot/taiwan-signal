@@ -120,6 +120,12 @@ def calc_stop_loss_tw(direction, price, atr, indicators, size_cat="中型股", l
         sl = price - min_dist
     elif direction != "buy" and (sl - price) < min_dist:
         sl = price + min_dist
+    # ★ 修正：2026-10-09——最前面已把停損夾在「最多 8%」，但上面的結構支撐（low_5d／high_5d）
+    # 與 1.5×ATR 下限可能把停損再放寬，對高波動股（ATR>股價 5.3%）會「突破 8% 上限」，
+    # 讓單筆風險比設定值大。這裡在所有調整後再套一次 1.5%～8% 的硬界限，確保 8% 風險上限
+    # 真的成立（極高波動股因此會被夾在 8%，由部位大小換算自動縮小張數，維持 2% 帳戶風險）。
+    dist = min(max(abs(price - sl), price * 0.015), price * 0.08)
+    sl = price - dist if direction == "buy" else price + dist
     return round(sl, 2)
 
 def calc_take_profits_tw(direction, price, stop_loss, size_cat="中型股"):

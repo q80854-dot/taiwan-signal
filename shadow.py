@@ -266,8 +266,17 @@ def snapshot(daily, ind=None, mtf=None, mkt=None, atr_val=None):
             if isinstance(val, (int, float)) and not isinstance(val, bool) and val == val and "mkt_" + k not in f:
                 f["mkt_" + k] = val
                 i += 1
-    now = datetime.now(TPE)
-    f["dow"], f["month"] = now.weekday(), now.month
+    # ★ 修正：2026-10-09——星期／月份改用「這根 K 棒的日期」而非 now()，否則掃描日≠資料日
+    # （隔日補掃、資料落後）時會標錯，污染 learning 的「星期／月份」維度分析。
+    bdt = None
+    try:
+        ds = (daily or {}).get("dates") or []
+        if ds:
+            bdt = datetime.strptime(str(ds[-1])[:10], "%Y-%m-%d")
+    except Exception:
+        bdt = None
+    bdt = bdt or datetime.now(TPE)
+    f["dow"], f["month"] = bdt.weekday(), bdt.month
     return {k: val for k, val in f.items() if val is not None}
 
 
@@ -583,10 +592,10 @@ def _simulate(row, bars, expire_days):
     """回傳 dict：result/exit_price/exit_date/bars_held/mfe/mae/gap/r5/r10（皆以 R 為單位）。
     規則與實盤 scanner._resolve_pending_signals 相同：只看訊號日之後的K棒；同日先判停損；
     跳空穿越停損以開盤價成交；逾期（日曆天 ≥ expire_days）以最新收盤價結算為 expired。"""
-    entry, stop = row["entry"], row["stop"]
+    planned_entry, stop = row["entry"], row["stop"]
     buy = row["direction"] == "buy"
-    risk = abs(entry - stop)
-    if not entry or not risk:
+    risk = abs(planned_entry - stop)          # 1R 以「訊號當下規劃的風險」為單位（進場價—停損），跨筆可比
+    if not planned_entry or not risk:
         return None
     sgn = 1 if buy else -1
     after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
@@ -594,7 +603,13 @@ def _simulate(row, bars, expire_days):
            "mfe": None, "mae": None, "gap": None, "r5": None, "r10": None}
     if not after:
         return out
-    out["gap"] = round((after[0]["open"] / entry - 1) * 100, 2) if after[0].get("open") else None
+    # ★ 修正：2026-10-09——實際進場價改用「訊號日後第一根 K 棒的開盤價」，與實盤 scanner.
+    # _resolve_pending_signals 一致（訊號收盤後才產生，最早只能隔天開盤成交）。原本沿用訊號日
+    # 收盤價當進場，等於假設能用收盤成交，影子 R 會系統性偏樂觀——正是實盤早已修掉的偏差。
+    # 停損/停利價維持原規劃值不變；R 的分母仍是規劃風險，分子改以實際開盤進場計算。
+    entry = after[0].get("open") or planned_entry
+    out["entry_fill"] = entry
+    out["gap"] = round((after[0]["open"] / planned_entry - 1) * 100, 2) if after[0].get("open") else None
     if len(after) >= 5:
         out["r5"] = round(sgn * (after[4]["close"] - entry) / risk, 3)
     if len(after) >= 10:
@@ -708,8 +723,9 @@ def resolve_pending(max_rows=8000):
             fields, vals = [f"{k}=?" for k in new], list(new.values())
             if newly_closed:
                 risk = abs(r2["entry"] - r2["stop"]); sgn = 1 if row["direction"] == "buy" else -1
+                fill = sim.get("entry_fill") or r2["entry"]      # 以實際開盤進場價計 R，與 _simulate 的 mfe/mae/r5/r10 同基準
                 fields += ["status='closed'", "result=?", "exit_price=?", "exit_date=?", "r_multiple=?"]
-                vals += [sim["result"], sim["exit_price"], sim["exit_date"], round(sgn * (sim["exit_price"] - r2["entry"]) / risk, 3)]
+                vals += [sim["result"], sim["exit_price"], sim["exit_date"], round(sgn * (sim["exit_price"] - fill) / risk, 3)]
                 closed += 1
             updates.append((f"UPDATE shadow_signals SET {', '.join(fields)} WHERE id=?", vals + [row["id"]]))
         if updates:

@@ -109,12 +109,36 @@ def check_account_requirement(ticker: str, stock_info: Dict) -> Dict:
 
 _daily_loss = {"date":"","loss_twd":0.0,"signal_count":0}
 
+# ★ 修正：2026-10-09——每日虧損熔斷原本只存在記憶體（_daily_loss），Render 一重新部署／
+# 休眠喚醒就歸零，等於 6% 單日停損保護在重啟後形同虛設。改成同時寫入資料庫（meta
+# risk_daily_loss），讀取時以資料庫為準、記憶體為備援，確保跨重啟仍能累計當日虧損。
+def _load_daily() -> Dict:
+    try:
+        from state_store import store
+        d = store.get_meta("risk_daily_loss")
+        if isinstance(d, dict) and d.get("date"):
+            return {"date": d.get("date",""), "loss_twd": float(d.get("loss_twd") or 0),
+                    "signal_count": int(d.get("signal_count") or 0)}
+    except Exception:
+        pass
+    return dict(_daily_loss)
+
+def _save_daily(d: Dict):
+    _daily_loss.update(d)
+    try:
+        from state_store import store
+        store.set_meta("risk_daily_loss", d)
+    except Exception:
+        pass
+
 def record_signal_loss(loss_twd: float):
     today=datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
-    if _daily_loss["date"]!=today:
-        _daily_loss["date"]=today; _daily_loss["loss_twd"]=0.0; _daily_loss["signal_count"]=0
-    if loss_twd<0: _daily_loss["loss_twd"]+=abs(loss_twd)
-    _daily_loss["signal_count"]+=1
+    cur=_load_daily()
+    if cur.get("date")!=today:
+        cur={"date":today,"loss_twd":0.0,"signal_count":0}
+    if loss_twd<0: cur["loss_twd"]+=abs(loss_twd)
+    cur["signal_count"]+=1
+    _save_daily(cur)
 
 def check_daily_loss_limit() -> Dict:
     # ★ 修正：2026-09-26（稽核 finding #4）——原本這裡寫死字面常數 0.06，
@@ -125,9 +149,10 @@ def check_daily_loss_limit() -> Dict:
     # config 讀，兩處數字保證永遠一致。
     max_daily=ACCOUNT_BALANCE_TWD*MAX_DAILY_RISK
     today=datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
-    if _daily_loss["date"]!=today:
+    cur=_load_daily()
+    if cur.get("date")!=today:
         return {"exceeded":False,"today_loss":0,"max_loss":round(max_daily,0),"remaining":round(max_daily,0)}
-    loss=_daily_loss["loss_twd"]
+    loss=cur["loss_twd"]
     if loss>=max_daily:
         return {"exceeded":True,"today_loss":round(loss,0),"max_loss":round(max_daily,0),
                 "message":f"🔴 今日虧損 TWD {loss:,.0f}（上限 {max_daily:,.0f}），今日停止"}
