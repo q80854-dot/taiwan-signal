@@ -678,10 +678,13 @@ def send_intraday_digest(pending: List[Dict], prices: Dict[str, float]):
             f"     {price_str}｜SL {sl:.2f}｜TP1 {tp1:.2f}" if sl and tp1 else
             f"  ▪ {s.get('name','')}（{s.get('code','')}）{icon} {price_str}"
         )
+    # ★ 修正：2026-10-09——標頭原寫死「（12:00）」但實際於 09/10/11/12/13:00 與 13:30 皆會發送；
+    # 來源標註原寫「yfinance」，實際現價來自證交所 MIS 官方即時。改為顯示真實時間與來源。
+    _now_tpe = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%H:%M")
     msg = (
-        "📍 <b>盤中持倉現況</b>（12:00）\n"
+        f"📍 <b>盤中持倉現況</b>（{_now_tpe}）\n"
         + "\n".join(lines) + "\n"
-        "<i>現價來源：yfinance，可能有延遲，僅供參考</i>"
+        "<i>現價來源：證交所 MIS 官方即時，約每 5 分鐘更新，僅供參考</i>"
     )
     subs = _load_subscribers()
     for admin_id in subs.get("admin", []):

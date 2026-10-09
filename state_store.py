@@ -490,13 +490,20 @@ class StateStore:
             total=row["total"] or 0; wins=row["wins"] or 0; losses=row["losses"] or 0
             closed=wins+losses
             excluded_etf_shorts = excluded_row["n"] or 0
+            # ★ 修正：2026-10-09——原本 "pending": total-closed 會把「已結案但逾期(expired)」
+            # 的筆數當成『追蹤中』回傳（total 只數 status='closed'，closed 只數 tp/sl），造成
+            # /api/performance 的進行中筆數錯誤。改為分別取真正進行中(status='active')與逾期筆數。
+            with self._conn() as c2:
+                active_row = c2.execute("SELECT COUNT(*) AS n FROM signals WHERE status='active'").fetchone()
+            active_n = int((dict(active_row) if active_row else {}).get("n") or 0)
+            expired_n = max(0, total - closed)
             recent = self.get_closed_trades(100)
             for t in recent:
                 t["research_only"] = (t.get("direction")=="sell" and str(t.get("code","")).startswith("00"))
             curve, max_dd, sharpe = self._equity_stats(recent)
             return {
                 "equity_curve": curve, "max_drawdown": max_dd, "sharpe": sharpe,
-                "total":      total, "closed": closed, "pending": total-closed,
+                "total":      total, "closed": closed, "pending": active_n, "expired": expired_n,
                 "wins":       wins,  "losses": losses,
                 "win_rate":   round(wins/max(closed,1)*100,1),
                 "total_pnl":  round(row["total_pnl"] or 0,0),
@@ -531,13 +538,17 @@ class StateStore:
     def get_winrate_by_weekly_bias(self) -> Dict:
         try:
             with self._conn() as conn:
+                # ★ 修正：2026-10-09——與 get_performance_summary 的勝率定義對齊：分母只算
+                # 觸及停損/停利的「決定性」結果（排除 expired），且排除多數券商無法放空的 ETF
+                # 空單（code LIKE '00%' 的 sell），避免同一批交易在不同頁面出現不同勝率。
                 rows = conn.execute("""
                     SELECT weekly_bias,
-                           COUNT(*) as closed,
+                           SUM(CASE WHEN result IN ('tp1','tp2','tp3','sl') THEN 1 ELSE 0 END) as closed,
                            SUM(CASE WHEN result IN ('tp1','tp2','tp3') THEN 1 ELSE 0 END) as wins
                     FROM signals WHERE status='closed' AND weekly_bias IS NOT NULL AND weekly_bias != ''
+                          AND NOT (direction='sell' AND code LIKE ?)
                     GROUP BY weekly_bias
-                """).fetchall()
+                """, ("00%",)).fetchall()
             out = {}
             for r in rows:
                 r = dict(r)

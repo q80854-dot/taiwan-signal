@@ -180,7 +180,7 @@ def _fetch_twii() -> Optional[Dict]:
 
     # 方法一：TWSE 大盤指數歷史
     try:
-        today = datetime.now().strftime("%Y%m%d")
+        today = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y%m%d")  # 台北日期（主機為 UTC）
         url   = f"https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?response=json&date={today}"
         r = requests.get(url, headers=HEADERS, timeout=10)
         if r.status_code == 200:
@@ -345,7 +345,7 @@ def _fetch_tpex() -> Optional[Dict]:
         "Referer": "https://www.tpex.org.tw/web/stock/aftertrading/index_summary/summary.php",
         "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
     }
-    today = datetime.now().strftime("%Y%m%d")
+    today = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y%m%d")  # 台北日期（主機為 UTC）
     date_param = f"{today[:4]}/{today[4:6]}/{today[6:]}"
     json_url = f"https://www.tpex.org.tw/web/stock/aftertrading/index_summary/summary.php?l=zh-tw&d={date_param}&o=json"
 
@@ -697,7 +697,7 @@ def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
     need_full = last_date is None
     if not need_full:
         try:
-            gap_days = (datetime.now() - datetime.strptime(last_date_only, "%Y-%m-%d")).days
+            gap_days = ((datetime.now(timezone.utc) + timedelta(hours=8)) - datetime.strptime(last_date_only, "%Y-%m-%d")).days
             if gap_days > _OHLCV_MAX_GAP_DAYS.get(tf_key, 30):
                 need_full = True
         except Exception:
@@ -1171,7 +1171,7 @@ def backfill_margin_history(days_back: int = 400, progress_cb=None) -> Dict:
     優雅跳過、不中斷整個回填流程；已經回填過的日期會自動跳過，可安全重跑。"""
     from state_store import store
     covered = set(store.get_margin_chg_dates_covered())
-    today = datetime.now()
+    today = datetime.now(timezone.utc) + timedelta(hours=8)  # 台北日期（主機為 UTC）
     dates = []
     d = today - timedelta(days=1)  # 從昨天開始往回抓，今天盤中的餘額可能還沒定案
     while len(dates) < days_back:
