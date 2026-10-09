@@ -112,7 +112,10 @@ def test_verify_id_token(cl):
 def test_cookie_tamper_and_callback_state(cl):
     tok = members.sign({"sub": "x", "exp": int(time.time()) + 10})
     assert members.unsign(tok)["sub"] == "x"
-    assert members.unsign(tok[:-2] + "00") is None
+    # 竄改簽章最後一碼：原本用固定補 "00"，當真實簽章剛好以 "00" 結尾時（約 1/256）會與原 token
+    # 相同而造成偽陽性 CI 失敗。改成翻成「保證不同」的字元，使竄改一定改變簽章。
+    tampered = tok[:-1] + ("1" if tok[-1] != "1" else "2")
+    assert members.unsign(tampered) is None
     assert members.unsign(members.sign({"sub": "x", "exp": 1})) is None
     r = cl.get("/auth/google/callback?code=abc&state=bad")
     assert r.headers["Location"].endswith("login=failed")
