@@ -517,7 +517,7 @@ class TWScanEngine:
         """
         from state_store import store
         from data_fetcher import fetch_ohlcv
-        from backtester   import calc_tw_pnl
+        from backtester   import simulate_staged_exit
 
         pending = store.get_pending_signals()
         if not pending:
@@ -538,109 +538,58 @@ class TWScanEngine:
                     continue
                 if not data:
                     continue
-                dates, highs, lows = data.get("dates", []), data.get("highs", []), data.get("lows", [])
-                hit_this_signal = False
-                # 2026-10-07：訊號是收盤後才產生，實際最早只能隔天買進。損益改以「訊號日後第一根 K 棒的開盤價」為進場價
-                # （原本用訊號日收盤價，等於假設能用收盤價成交，績效偏樂觀）。找不到開盤價才退回訊號價。
-                sim_entry = None
-                try:
-                    _opens = data.get("opens") or []
-                    for _i, _d in enumerate(dates):
-                        if _d and _d > gen_date:
-                            sim_entry = _opens[_i] if _i < len(_opens) and _opens[_i] else None
-                            break
-                except Exception:
-                    sim_entry = None
+                dates = data.get("dates", []); highs = data.get("highs", []); lows = data.get("lows", [])
+                opens = data.get("opens") or []; closes = data.get("closes") or []
+                # 2026-10-07：訊號收盤後才產生，最早只能隔天開盤進場，進場價用「訊號日後第一根開盤」。
+                # 2026-10-09：結算改為忠實模擬推播的操作計畫（TP1/TP2/TP3 各出 1/3、TP1 後停損移至成本），
+                # 不再「碰到第一個目標就全部出場」，讓績效代表使用者實際照做的策略（見 backtester.simulate_staged_exit）。
+                bars = []
                 for i, d in enumerate(dates):
                     if not d or d <= gen_date:
-                        continue  # 只看訊號產生「之後」的K棒，當天本身不算平倉
-                    hi, lo = highs[i], lows[i]
-                    hit_sl  = (direction == "buy" and lo <= sl) or (direction == "sell" and hi >= sl)
-                    hit_tp3 = bool(tp3) and ((direction == "buy" and hi >= tp3) or (direction == "sell" and lo <= tp3))
-                    hit_tp2 = bool(tp2) and ((direction == "buy" and hi >= tp2) or (direction == "sell" and lo <= tp2))
-                    hit_tp1 = bool(tp1) and ((direction == "buy" and hi >= tp1) or (direction == "sell" and lo <= tp1))
-                    if not (hit_sl or hit_tp3 or hit_tp2 or hit_tp1):
                         continue
-                    if hit_sl:
-                        result, close_price = "sl", sl
-                        # 跳空穿越停損：實際只能以開盤價成交（較差者），不再樂觀地填在停損價
-                        try:
-                            op = (data.get("opens") or [None] * len(dates))[i]
-                            if op:
-                                if direction == "buy" and op < sl: close_price = op
-                                elif direction == "sell" and op > sl: close_price = op
-                        except Exception:
-                            pass
-                    elif hit_tp3: result, close_price = "tp3", tp3
-                    elif hit_tp2: result, close_price = "tp2", tp2
-                    else:         result, close_price = "tp1", tp1
-                    entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or close_price
-                    shares = sig.get("suggested_lots") or 1  # 欄位名稱歷史遺留，實際存的是股數
-                    try:
-                        _dh = (datetime.strptime(d, "%Y-%m-%d") - datetime.strptime(gen_date, "%Y-%m-%d")).days
-                    except Exception:
-                        _dh = 0
-                    pnl     = calc_tw_pnl(entry, close_price, direction, shares, days_held=_dh)
-                    pnl_pct = round(pnl / (entry * shares) * 100, 2) if entry and shares else 0
-                    store.update_signal_result(sig["id"], result, close_price, pnl, pnl_pct)
-                    if pnl < 0:
-                        from risk_manager import record_signal_loss
-                        record_signal_loss(pnl)
-                    resolved += 1
-                    hit_this_signal = True
-                    try:
-                        _rz = {"sl": "停損", "tp1": "停利一", "tp2": "停利二", "tp3": "停利三"}.get(result, result)
-                        store.add_event("result", f"{sig.get('name','')}（{sig.get('code','')}）{_rz}",
-                                        f"成交 {close_price:.2f}｜損益 {pnl:+,.0f} 元（{pnl_pct:+.1f}%）", ticker)
-                    except Exception:
-                        pass
-                    try:
-                        from telegram_bot import send_alert
-                        result_zh = {"sl": "🔴 停損", "tp1": "✅ 停利一", "tp2": "✅ 停利二", "tp3": "🎯 停利三"}.get(result, result)
-                        send_alert(
-                            f"{sig.get('name','')}（{sig.get('code','')}）{result_zh}\n"
-                            f"成交價 {close_price:.2f}｜損益 {pnl:+,.0f} 元（{pnl_pct:+.1f}%）",
-                            "warning" if result == "sl" else "info",
-                        )
-                    except Exception as e:
-                        logger.warning(f"_resolve_pending_signals 通知失敗 {sig.get('id')}: {e}")
-                    break
-                # ★ 新增：2026-09-16——CIRCUIT_BREAKER.signal_expire_days（預設3天）先前
-                # 只是 config 裡定義的一個數字，從來沒有任何程式碼真的檢查它，導致沒觸及
-                # 停損停利的舊訊號會永遠留在 pending 清單裡，state_store.get_pending_signals()
-                # 隨時間無限增長，每次掃描前的結算階段耗時也跟著線性變慢（這是 Agent 稽核
-                # 抓出的高優先度問題）。這裡補上真正的逾期判斷：訊號產生已超過 expire_days
-                # 天、期間內都沒有觸及停損/任何停利，就強制以「最新收盤價」平倉結算，
-                # 標記 result='expired'（不計入勝率的贏/輸，backtester/get_performance_summary
-                # 的勝率算式只認 tp*/sl，expired 不會被誤記成任何一種），確保 pending 清單
-                # 跟今日虧損上限的計算都反映真實現況，而不是被早就過期的舊訊號撐大。
-                if not hit_this_signal and gen_date:
-                    try:
-                        gen_dt = datetime.strptime(gen_date, "%Y-%m-%d")
-                    except ValueError:
-                        gen_dt = None
-                    expire_days = CB.get("signal_expire_days", 3)
-                    if gen_dt and (datetime.now(timezone.utc).replace(tzinfo=None) - gen_dt).days >= expire_days:
-                        closes = data.get("closes", [])
-                        last_close = closes[-1] if closes else (sig.get("entry_price") or sig.get("current_price") or 0)
-                        entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or last_close
-                        shares = sig.get("suggested_lots") or 1
-                        try:
-                            _last_d = (dates[-1] if dates else gen_date)
-                            _dh = (datetime.strptime(_last_d, "%Y-%m-%d") - datetime.strptime(gen_date, "%Y-%m-%d")).days
-                        except Exception:
-                            _dh = 0
-                        pnl     = calc_tw_pnl(entry, last_close, direction, shares, days_held=_dh) if entry else 0
-                        pnl_pct = round(pnl / (entry * shares) * 100, 2) if entry and shares else 0
-                        store.update_signal_result(sig["id"], "expired", last_close, pnl, pnl_pct)
-                        if pnl < 0:
-                            from risk_manager import record_signal_loss
-                            record_signal_loss(pnl)
-                        resolved += 1
-                        logger.info(
-                            f"_resolve_pending_signals: {sig.get('name','')}（{ticker}）"
-                            f"超過 {expire_days} 天未觸及停損/停利，強制以現價 {last_close:.2f} 平倉（expired）"
-                        )
+                    bars.append({"bar_date": d, "open": opens[i] if i < len(opens) else None,
+                                 "high": highs[i], "low": lows[i],
+                                 "close": closes[i] if i < len(closes) else lows[i]})
+                sim_entry = next((b["open"] for b in bars if b.get("open")), None)
+                entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or 0
+                shares = sig.get("suggested_lots") or 1  # 欄位名稱歷史遺留，實際存的是股數
+                if not bars or not entry:
+                    continue
+                sim = simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date)
+                if not sim:
+                    continue
+                has_open_leg = any(l["stage"] == "expired" for l in sim["legs"])   # 仍有未出場的 1/3
+                try:
+                    gen_dt = datetime.strptime(gen_date, "%Y-%m-%d")
+                except ValueError:
+                    gen_dt = None
+                expire_days = CB.get("signal_expire_days", 15)
+                aged_out = bool(gen_dt) and (datetime.now(timezone.utc).replace(tzinfo=None) - gen_dt).days >= expire_days
+                # 尚有未出場部位且還沒到期：留在 pending，下次掃描有新 K 棒再結算（避免提早以現價結清）
+                if has_open_leg and not aged_out:
+                    continue
+                result, close_price, pnl, pnl_pct = sim["result"], sim["exit_price"], sim["pnl"], sim["pnl_pct"]
+                store.update_signal_result(sig["id"], result, close_price, pnl, pnl_pct)
+                if pnl < 0:
+                    from risk_manager import record_signal_loss
+                    record_signal_loss(pnl)
+                resolved += 1
+                _legs_zh = "＋".join({"tp1": "停利一", "tp2": "停利二", "tp3": "停利三", "stop": "停損", "expired": "逾期"}.get(l["stage"], l["stage"]) for l in sim["legs"])
+                try:
+                    store.add_event("result", f"{sig.get('name','')}（{sig.get('code','')}）{_legs_zh}",
+                                    f"均價 {close_price:.2f}｜分批損益合計 {pnl:+,.0f} 元（{pnl_pct:+.1f}%）", ticker)
+                except Exception:
+                    pass
+                try:
+                    from telegram_bot import send_alert
+                    _icon = "🔴" if result == "sl" else ("🎯" if result == "tp3" else "✅")
+                    send_alert(
+                        f"{sig.get('name','')}（{sig.get('code','')}）{_icon} 分批出場：{_legs_zh}\n"
+                        f"均價 {close_price:.2f}｜損益合計 {pnl:+,.0f} 元（{pnl_pct:+.1f}%）",
+                        "warning" if result == "sl" else "info",
+                    )
+                except Exception as e:
+                    logger.warning(f"_resolve_pending_signals 通知失敗 {sig.get('id')}: {e}")
             except Exception as e:
                 logger.warning(f"_resolve_pending_signals {sig.get('id')}: {e}")
         if resolved:
