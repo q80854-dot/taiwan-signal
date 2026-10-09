@@ -446,16 +446,18 @@ def flush_rejects():
         for x in r["rejects"]:
             by.setdefault(x["features"].get("reject"), []).append(x)
         keep = []
+        # ★ 2026-10-09：改為「每個原因隨機抽樣」取代原本「依分數取最高分前 N」。原作法讓被擋下的樣本
+        # 系統性偏向最高分的單，與候選基準的分數分布不一致，會放大「這條規則擋掉了賺錢單」的結論偏誤。
         for lst in by.values():
-            lst.sort(key=lambda z: -(z.get("score") or 0))
+            random.shuffle(lst)
             keep += lst[:REJ_PER_REASON]
-        keep.sort(key=lambda z: -(z.get("score") or 0))
+        random.shuffle(keep)
         keep = keep[:REJ_TOTAL]
         for x in keep:
             x["features"].update(_fund_features(x["code"], r["fund"]))
         n = _insert(keep)
         logger.info(f"shadow: 被規則擋下的樣本已記錄 {n}/{len(keep)} 筆（本次共遇到 {r['stats']['rej_seen']} 筆，"
-                    f"依原因分數取前 {REJ_PER_REASON}）")
+                    f"每原因隨機取最多 {REJ_PER_REASON}）")
         r["stats"]["rej_saved"] += n
         return n
     except Exception as e:
@@ -467,13 +469,23 @@ def flush_rejects():
 
 
 def maybe_control(ticker, stock_info, daily, pre, market_overview, sink, lock):
-    """被預判跳過的股票，隨機抽樣建立「假設做多」的對照單（同一套停損停利機制）。"""
+    """被預判跳過的股票，建立「假設做多」的對照單（同一套停損停利機制）。
+    ★ 2026-10-09：改用水庫抽樣（與 control_from_engine 一致），取代原本『先到先收前 N 檔』——
+    掃描順序固定，先到先收會偏向代號小的股票；水庫抽樣讓每一檔被選進對照組的機率完全相同。"""
     try:
-        if random.random() >= CONTROL_RATE:
+        r = _run
+        if r is None:
             return
         with lock:
-            if len(sink) >= CONTROL_CAP:
-                return
+            r["ctrl_pre_seen"] = r.get("ctrl_pre_seen", 0) + 1
+            seen = r["ctrl_pre_seen"]
+            if len(sink) < CONTROL_CAP:
+                slot = len(sink)
+            else:
+                j = random.randrange(seen)
+                if j >= CONTROL_CAP:
+                    return
+                slot = j
         from indicators import calc_atr
         from signal_engine import calc_stop_loss_tw, calc_take_profits_tw
         closes, highs, lows = daily["closes"], daily["highs"], daily["lows"]
@@ -493,7 +505,10 @@ def maybe_control(ticker, stock_info, daily, pre, market_overview, sink, lock):
                "tp1": tp["tp1"], "tp2": tp["tp2"], "tp3": tp["tp3"], "size_cat": size, "sector": stock_info.get("sector"),
                "created_at": datetime.now(timezone.utc).isoformat(), "features": snap}
         with lock:
-            sink.append(row)
+            if slot < len(sink):
+                sink[slot] = row
+            else:
+                sink.append(row)
     except Exception as e:
         logger.debug(f"shadow control {ticker}: {e}")
 

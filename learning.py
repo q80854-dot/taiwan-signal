@@ -5,19 +5,25 @@
 - 勝＝觸及任一停利（tp1/tp2/tp3）；敗＝停損；expired（逾期未到價）另計，但仍計入平均 R。
 - 主要看「平均 R（期望值）」，勝率只是輔助——因為停損與停利的距離不同，勝率高不代表賺錢。
 - 樣本 < 30 的分組只顯示、不下結論。
+- 顯著性以「交易日為叢集的拔靴（bootstrap）」計算平均 R 的差異與 95% 信賴區間——
+  因為同一天的多檔訊號高度相關，把每筆當成獨立會低估變異、灌大統計量。
 - 多重比較防護：同時檢驗幾十個分組，純靠運氣也會有幾個「達標」。所以
     * 累積不到 10 個交易日，一律不列結論；
-    * z ≥ 1.96 只標示「初步（需新樣本再驗證）」；z ≥ 3.2（約等於對 70 個比較做 Bonferroni 校正）且前後兩段時間方向一致，才標示「較可靠」。
+    * 單組拔靴 p < 0.05 只標示「初步（需新樣本再驗證）」；
+    * 全部分組一起用 Benjamini-Hochberg 控制偽發現率（q=0.10）且前後兩段時間方向一致，才標示「較可靠」。
 - 對照組（沒有訊號、隨機抽樣、同一套停損停利機制）回答「訊號有沒有比隨便買好」。
 - 被規則擋下的假想單（kind=rejected）回答「這條規則是幫了我、還是擋掉了賺錢的單」。
 """
-import json, math
+import json, math, random
 from datetime import datetime, timezone, timedelta
 
 MIN_N = 30
 MIN_DAYS = 10
 Z_TENT, Z_STRONG = 1.96, 3.2
 WIN = ("tp1", "tp2", "tp3")
+N_BOOT = 1000       # 拔靴重抽次數
+FDR_Q = 0.10        # Benjamini-Hochberg 偽發現率門檻（標示「較可靠」）
+BOOT_SEED = 20261009  # 固定種子，使同一批資料的報告結果可重現、不會每次刷新就跳動
 
 
 def _rows():
@@ -82,6 +88,81 @@ def _zr(a, b):
     mb, sb = _mean_sd(b)
     se = math.sqrt(sa ** 2 / len(a) + sb ** 2 / len(b)) or 1e-9
     return (ma - mb) / se
+
+
+def _by_day(rows):
+    """{bar_date: [r_multiple,...]}，只收已結算且有 R 的列。同一天多筆高度相關，拔靴以『日』為重抽單位。"""
+    d = {}
+    for r in rows:
+        if r.get("r_multiple") is None:
+            continue
+        d.setdefault(r["bar_date"], []).append(r["r_multiple"])
+    return d
+
+
+def _boot_ci(rows, n_boot=N_BOOT, seed=BOOT_SEED):
+    """以交易日為叢集對平均 R 做拔靴，回傳 (mean, lo95, hi95)。日數不足時回 (mean, None, None)。"""
+    day = _by_day(rows); days = list(day)
+    allv = [v for vs in day.values() for v in vs]
+    if not allv:
+        return (None, None, None)
+    m = sum(allv) / len(allv)
+    if len(days) < 2 or len(allv) < 2:
+        return (round(m, 3), None, None)
+    rng = random.Random(seed); means = []
+    for _ in range(n_boot):
+        pool = []
+        for _ in range(len(days)):
+            pool.extend(day[days[rng.randrange(len(days))]])
+        if pool:
+            means.append(sum(pool) / len(pool))
+    means.sort()
+    lo = means[int(0.025 * len(means))]
+    hi = means[min(len(means) - 1, int(0.975 * len(means)))]
+    return (round(m, 3), round(lo, 3), round(hi, 3))
+
+
+def _boot_diff(a_rows, b_rows, n_boot=N_BOOT, seed=BOOT_SEED):
+    """bucket(a) vs rest(b) 的平均 R 差，以交易日為叢集做兩樣本拔靴（同一天同時貢獻兩組，保留當日共同波動）。
+    回傳 (diff, p_two_sided, pseudo_z)。樣本不足回 (None, 1.0, 0.0)。"""
+    ad = _by_day(a_rows); bd = _by_day(b_rows)
+    days = sorted(set(ad) | set(bd))
+    ao = [v for vs in ad.values() for v in vs]; bo = [v for vs in bd.values() for v in vs]
+    if len(ao) < 2 or len(bo) < 2 or len(days) < 2:
+        return (None, 1.0, 0.0)
+    obs = sum(ao) / len(ao) - sum(bo) / len(bo)
+    rng = random.Random(seed); diffs = []
+    for _ in range(n_boot):
+        pa = []; pb = []
+        for _ in range(len(days)):
+            dd = days[rng.randrange(len(days))]
+            pa.extend(ad.get(dd, [])); pb.extend(bd.get(dd, []))
+        if pa and pb:
+            diffs.append(sum(pa) / len(pa) - sum(pb) / len(pb))
+    if len(diffs) < 2:
+        return (round(obs, 3), 1.0, 0.0)
+    frac_le = sum(1 for d in diffs if d <= 0) / len(diffs)
+    frac_ge = sum(1 for d in diffs if d >= 0) / len(diffs)
+    p = min(1.0, 2 * min(frac_le, frac_ge))
+    md = sum(diffs) / len(diffs)
+    sd = math.sqrt(sum((d - md) ** 2 for d in diffs) / (len(diffs) - 1)) or 1e-9
+    z = max(-99.0, min(99.0, obs / sd))      # 夾住：拔靴變異趨近 0 時避免 z 爆成天文數字
+    return (round(obs, 3), round(p, 4), round(z, 2))
+
+
+def _bh_reject(pvals, q=FDR_Q):
+    """Benjamini-Hochberg：回傳一組布林，標示哪些 p 值在控制偽發現率 q 下為顯著。
+    修正同時檢驗數十個分組時『純靠運氣也會有幾個達標』的多重比較問題。"""
+    m = len(pvals)
+    if not m:
+        return []
+    order = sorted(range(m), key=lambda i: pvals[i])
+    thresh_k = -1
+    for rank, i in enumerate(order, 1):
+        if pvals[i] <= rank / m * q:
+            thresh_k = rank
+    keep = set(order[:thresh_k]) if thresh_k > 0 else set()
+    return [i in keep for i in range(m)]
 
 
 def _band(v, edges, labels):
@@ -187,11 +268,15 @@ def build_report():
     }
     reliable = closed_days >= MIN_DAYS
     out["reliable"] = reliable
-    base_w, base_n = sum(1 for r in cc if r["result"] in WIN), len(cc)
-    base_r = _rl(cc)
-    # 時間穩定性：把已結算樣本依日期對半切，一個真的有效的條件在前後兩段都應該同方向
+    # 主要指標固定為「平均 R」，以交易日為叢集做兩樣本拔靴（修正同日訊號偽獨立使 z 值灌水），
+    # 全部分組的 p 值再用 Benjamini-Hochberg 控制偽發現率（修正多重比較）。勝率只作輔助顯示。
     cds = sorted({r["bar_date"] for r in cc})
     mid = cds[len(cds) // 2] if len(cds) >= 4 else None
+    # 各主要群組的平均 R 以拔靴附上 95% 信賴區間
+    for gname, grows in (("候選（全部，含沒發出的）", cc), ("實際發出", sent), ("對照組（隨機做多）", kc), ("被規則擋下（假想）", rc)):
+        m, lo, hi = _boot_ci(grows)
+        out["groups"][gname].update(avg_r_lo=lo, avg_r_hi=hi)
+    pending_tests = []   # (dim_name, item_dict, xs, rest) 蒐集所有『樣本足夠』的分組，之後統一做 FDR
     for name, fn in _dims():
         buckets = {}
         for r in cc:
@@ -205,46 +290,51 @@ def build_report():
             st = _stats(xs)
             ids = {id(x) for x in xs}
             rest = [r for r in cc if id(r) not in ids]
-            rest_w, rest_n = base_w - st["win"], base_n - st["n"]
-            enough = st["n"] >= MIN_N and rest_n >= MIN_N
-            zw = _z(st["win"], st["n"], rest_w, rest_n) if enough else 0.0
-            zrr = _zr(_rl(xs), _rl(rest)) if enough else 0.0
-            z = zw if abs(zw) >= abs(zrr) else zrr
-            level = "strong" if abs(z) >= Z_STRONG else "tent" if abs(z) >= Z_TENT else ""
-            halves, consistent = None, None
-            if enough and mid and level:
-                zs = []
-                for part in (lambda r: r["bar_date"] < mid, lambda r: r["bar_date"] >= mid):
-                    a_ = [r for r in xs if part(r)]
-                    b_ = [r for r in rest if part(r)]
-                    zs.append(round(_zr(_rl(a_), _rl(b_)), 2) if len(a_) >= 10 and len(b_) >= 10 else None)
-                halves = zs
-                consistent = all(v is not None and v * z > 0 and abs(v) >= 1.0 for v in zs)
-                if level == "strong" and not consistent:
-                    level = "tent"          # 前後兩段不一致，不給「較可靠」
-            st.update(halves=halves, consistent=consistent, label=k, z=round(z, 2), z_win=round(zw, 2), z_r=round(zrr, 2), enough=st["n"] >= MIN_N,
-                      level=level if (enough and reliable) else "")
+            enough = st["n"] >= MIN_N and len(rest) >= MIN_N
+            diff, p, z = (_boot_diff(xs, rest) if enough else (None, 1.0, 0.0))
+            m_lo = _boot_ci(xs)
+            st.update(label=k, z=z, diff_r=diff, p=p, avg_r_lo=m_lo[1], avg_r_hi=m_lo[2],
+                      enough=st["n"] >= MIN_N, level="", halves=None, consistent=None)
             items.append(st)
-            if enough and reliable and level:
-                out["findings"].append({
-                    "dim": name, "label": k, "n": st["n"], "win_rate": st["win_rate"], "avg_r": st["avg_r"],
-                    "z": round(z, 2), "level": level, "halves": halves, "consistent": consistent,
-                    "text": f"【{name}】{k}：勝率 {st['win_rate']}%、平均 R {st['avg_r']}（n={st['n']}），"
-                            f"{'明顯優於' if z > 0 else '明顯劣於'}其餘樣本"})
+            if enough and reliable and p is not None:
+                pending_tests.append((name, st, xs, rest))
         items.sort(key=lambda z: z["label"])
         out["dimensions"].append({"name": name, "items": items})
+    # Benjamini-Hochberg FDR 跨所有分組
+    if pending_tests:
+        flags = _bh_reject([it["p"] for (_, it, _, _) in pending_tests], FDR_Q)
+        for (name, st, xs, rest), sig in zip(pending_tests, flags):
+            z = st["z"]
+            # 時間穩定性：已結算樣本依日期對半切，前後兩段方向一致才升級為「較可靠」
+            halves, consistent = None, None
+            if mid:
+                hs = []
+                for part in (lambda r: r["bar_date"] < mid, lambda r: r["bar_date"] >= mid):
+                    a_ = [r for r in xs if part(r)]; b_ = [r for r in rest if part(r)]
+                    d_, p_, _z_ = _boot_diff(a_, b_) if (len(a_) >= 10 and len(b_) >= 10) else (None, 1.0, 0.0)
+                    hs.append(d_)
+                halves = hs
+                consistent = all(v is not None and v * z > 0 for v in hs) if z else False
+            level = "strong" if (sig and consistent) else ("tent" if st["p"] < 0.05 else "")
+            st.update(level=level, halves=halves, consistent=consistent)
+            if level:
+                out["findings"].append({
+                    "dim": name, "label": st["label"], "n": st["n"], "win_rate": st["win_rate"], "avg_r": st["avg_r"],
+                    "avg_r_lo": st["avg_r_lo"], "avg_r_hi": st["avg_r_hi"], "p": st["p"], "z": z,
+                    "level": level, "halves": halves, "consistent": consistent,
+                    "text": f"【{name}】{st['label']}：平均 R {st['avg_r']}（95% CI {st['avg_r_lo']}~{st['avg_r_hi']}）、"
+                            f"勝率 {st['win_rate']}%（n={st['n']}，p={st['p']}），{'明顯優於' if z > 0 else '明顯劣於'}其餘樣本"})
     a, b = out["groups"]["候選（全部，含沒發出的）"], out["groups"]["對照組（隨機做多）"]
     if a.get("n", 0) >= MIN_N and b.get("n", 0) >= MIN_N:
-        z = _z(a["win"], a["n"], b["win"], b["n"])
-        zr_ = _zr(_rl(cc), _rl(kc))
-        sig = abs(z) >= Z_TENT or abs(zr_) >= Z_TENT
-        out["edge"] = {"z": round(z, 2), "z_r": round(zr_, 2), "significant": sig,
-                       "text": ("訊號" + ("顯著優於" if (z >= Z_TENT or zr_ >= Z_TENT) else "顯著劣於" if (z <= -Z_TENT or zr_ <= -Z_TENT) else "與")
+        diff, p, z = _boot_diff(cc, kc)
+        sig = p is not None and p < 0.05
+        out["edge"] = {"z": z, "p": p, "diff_r": diff, "significant": sig,
+                       "text": ("訊號平均 R " + ("顯著優於" if (sig and diff > 0) else "顯著劣於" if (sig and diff < 0) else "與")
                                 + "隨機對照組" + ("" if sig else "沒有顯著差異")
-                                + f"（勝率 {a['win_rate']}% vs {b['win_rate']}%；平均 R {a['avg_r']} vs {b['avg_r']}）")}
+                                + f"（{a['avg_r']} vs {b['avg_r']}；差 {diff}，p={p}；勝率 {a['win_rate']}% vs {b['win_rate']}%）")}
     else:
         out["edge"] = {"text": f"樣本不足（候選 {a.get('n', 0)}、對照 {b.get('n', 0)}，各需 ≥ {MIN_N} 筆已結算）才能判斷訊號有沒有比隨機好。"}
-    out["findings"].sort(key=lambda f: (f["level"] != "strong", -abs(f["z"])))
+    out["findings"].sort(key=lambda f: (f["level"] != "strong", -abs(f["z"] or 0)))
     out["note"] = (f"目前已結算的資料涵蓋 {closed_days} 個交易日；需至少 {MIN_DAYS} 日才列出結論。"
                    if not reliable else "")
     return out
