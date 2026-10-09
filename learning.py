@@ -179,6 +179,7 @@ def build_report():
                      "closed_candidates": len(cc), "closed_controls": len(kc), "closed_rejected": len(rc),
                      "closed_days": closed_days,
                      "pending": sum(1 for r in rows if r["status"] == "pending"),
+                     "unresolved": sum(1 for r in rows if r["status"] == "unresolved"),   # 退市／停牌無法結算，已排除在勝率與平均 R 之外
                      "min_n": MIN_N, "min_days": MIN_DAYS},
         "groups": {"候選（全部，含沒發出的）": _stats(cc), "實際發出": _stats(sent), "對照組（隨機做多）": _stats(kc),
                    "被規則擋下（假想）": _stats(rc)},

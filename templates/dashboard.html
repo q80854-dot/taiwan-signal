@@ -3711,7 +3711,7 @@ function adRender(d,o){
   const p=d.progress,f=(v,u='')=>v===null||v===undefined?'—':v+u;
   setEl('ad-stamp','資料更新 '+d.generated_at+'（台北）');
   setHtml('ad-alerts',(o.alerts||[]).map(a=>`<div class="note-box" style="margin-bottom:8px;border-left-color:var(--alert)">⚠ ${safe(a)}</div>`).join(''));
-  const kp=[['累積資料日',p.days,p.first?`${p.first} 起`:'尚未開始'],['候選',p.candidates,`已結算 ${p.closed_candidates}`],['被擋下',p.rejected,`已結算 ${p.closed_rejected}`],['對照組',p.controls,`已結算 ${p.closed_controls}`],['追蹤中',p.pending,'尚未到價'],['資料量',o.meta&&o.meta.total?o.meta.total:0,o.meta&&o.meta.feat_bytes?Math.round(o.meta.feat_bytes/1024)+' KB 特徵':'']];
+  const kp=[['累積資料日',p.days,p.first?`${p.first} 起`:'尚未開始'],['候選',p.candidates,`已結算 ${p.closed_candidates}`],['被擋下',p.rejected,`已結算 ${p.closed_rejected}`],['對照組',p.controls,`已結算 ${p.closed_controls}`],['追蹤中',p.pending,'尚未到價'],['無法結算',p.unresolved||0,'退市／停牌，已排除'],['資料量',o.meta&&o.meta.total?o.meta.total:0,o.meta&&o.meta.feat_bytes?Math.round(o.meta.feat_bytes/1024)+' KB 特徵':'']];
   setHtml('lr-progress',kp.map(([a,b,c])=>`<div class="kpi" style="border-left:none"><div class="kpi-label">${a}</div><div class="kpi-val">${b}</div><div class="kpi-sub">${c}</div></div>`).join(''));
   setHtml('ad-runs',(o.runs||[]).length?o.runs.map(r=>{let er='';try{er=r.errors?JSON.parse(r.errors).join('；'):'';}catch(e){er=r.errors||'';}
     return `<tr><td>${adAgo(r.run_at)}</td><td>${safe(r.bar_date||'—')}</td><td>${r.cand_saved}/${r.cand_found}</td><td>${r.rej_saved}／遇到 ${r.rej_seen}</td><td>${r.ctrl_saved}</td><td>${r.res_closed}（更新 ${r.res_updated}）</td><td>${f(r.secs_total,'s')}</td><td style="white-space:normal;min-width:120px;color:${er?'var(--alert)':'var(--t3)'}">${er?safe(er):'無'}</td></tr>`;}).join(''):'<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--t3)">尚無收集紀錄（本次部署後的第一次掃描完成才會出現）</td></tr>');
@@ -4159,6 +4159,7 @@ function renderSignals(){
         <div class="sig-item"><label style="color:var(--up)">TP1</label><span style="color:var(--up)">${safeN(s.tp1,2)}(+${safeN(s.tp1_pct,1)}%)</span></div>
         <div class="sig-item"><label style="color:var(--up)">TP2</label><span style="color:var(--up)">${safeN(s.tp2,2)}(+${safeN(s.tp2_pct,1)}%)</span></div>
       </div>
+      <div style="font-size:11px;color:var(--t3);margin:-6px 0 10px;line-height:1.5">※ 以上價位以<b>當日收盤</b>為參考基準；訊號收盤後才產生，實際最早只能<b>下一個交易日開盤</b>成交，開盤跳空時實際風報比會與此略有出入。</div>
       ${chaseHtml(s)}${fundChip(s)}
       <div class="note-box" style="margin:10px 0">
         建議 <b style="color:var(--t1)">${safe(s.suggested_lots,1)} 張</b>
