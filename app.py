@@ -1404,8 +1404,11 @@ def api_public_pulse():
         price = v.get("price")
         chg = round(price - prev, 2) if price is not None and prev else None
         pct = round(chg / prev * 100, 2) if chg is not None and prev else None
+        from data_fetcher import get_market_session
+        sess = get_market_session()
         return jsonify({"ok": bool(v), "name": name, "price": price, "prev": prev, "chg": chg, "pct": pct,
-                        "date": v.get("date"), "series": series[-80:], "market_open": realtime.market_open()})
+                        "date": v.get("date"), "series": series[-80:], "market_open": realtime.market_open(),
+                        "session": sess.get("session"), "session_zh": sess.get("session_zh")})
     except Exception:
         return jsonify({"ok": False})
 

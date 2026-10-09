@@ -49,6 +49,8 @@ def test_market_open_hours():
     assert not realtime.market_open(TZ.localize(datetime(2026, 10, 7, 8, 59)))
     assert not realtime.market_open(TZ.localize(datetime(2026, 10, 7, 14, 0)))
     assert not realtime.market_open(TZ.localize(datetime(2026, 10, 10, 11, 0)))  # 週六
+    # 國定假日（平日）即使在交易時段也不是盤中——2026-10-09 國慶日補假（config.TW_MARKET_HOLIDAYS）
+    assert not realtime.market_open(TZ.localize(datetime(2026, 10, 9, 11, 0)))
 
 
 def test_expected_latest_date():
