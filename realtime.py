@@ -41,12 +41,22 @@ def now_tpe() -> datetime:
 
 
 def market_open(dt: Optional[datetime] = None) -> bool:
-    """平日 09:00–13:35（含收盤後五分鐘，等最後一盤）。不判斷國定假日，假日時 MIS 的 d 欄位日期不是今天，會被標成非即時。"""
+    """平日 09:00–13:35（含收盤後五分鐘，等最後一盤），且當天不是國定假日。
+    （2026-10-09：原本不判斷國定假日，導致連假日仍顯示「盤中」；改為一併排除休市日。
+     官方假日清單查不到時退回『只看是否週末』，與 _is_tw_market_holiday 的保守行為一致。）"""
     dt = dt or now_tpe()
     if dt.weekday() > 4:
         return False
     m = dt.hour * 60 + dt.minute
-    return 9 * 60 <= m <= 13 * 60 + 35
+    if not (9 * 60 <= m <= 13 * 60 + 35):
+        return False
+    try:
+        from data_fetcher import _is_tw_market_holiday
+        if _is_tw_market_holiday(dt):
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def _num(x) -> Optional[float]:
