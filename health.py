@@ -133,7 +133,10 @@ def check_strategy():
     out = []
     from state_store import store
     rows = store.get_recent_signals(limit=200, days_back=60)
-    closed = [r for r in rows if r.get("result") not in ("pending", None)]
+    # ★ 修正：2026-10-09——與 get_performance_summary 的勝率定義對齊：只算觸及停損/停利的
+    # 決定性結果（排除 expired），並排除 ETF 空單，避免各頁停損率不一致。
+    closed = [r for r in rows if r.get("result") in ("tp1", "tp2", "tp3", "sl")
+              and not (r.get("direction") == "sell" and str(r.get("code", "")).startswith("00"))]
     sl = [r for r in closed if r.get("result") == "sl"]
     openp = [r for r in rows if r.get("result") == "pending" and r.get("status") == "active"]
     out.append(_c("持倉數", "warn" if len(openp) >= 5 else "ok", f"{len(openp)} 檔進行中" + ("（已達 5 檔上限，不再發新訊號）" if len(openp) >= 5 else "")))

@@ -105,6 +105,9 @@ def get_listed_watch():
                 r = requests.get(url, headers=HEADERS, timeout=15)
                 j = r.json()
                 if j.get("stat") != "OK":
+                    # ★ 修正：2026-10-09——原本非 OK 直接 continue、不留紀錄，前端會把「抓取失敗」
+                    # 誤顯示成「目前無處置/注意股」。改成記進 errors 讓狀態可見（fail-surface）。
+                    res["errors"].append(f"{key}: 來源回應非 OK（stat={str(j.get('stat'))[:60]}）")
                     continue
                 f = j.get("fields", [])
                 for row in j.get("data", []):
