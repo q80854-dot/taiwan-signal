@@ -1543,7 +1543,7 @@ html,body{max-width:100%;overflow-x:hidden}
       <div id="lr-note"></div>
       <div class="panel card"><div class="panel-body" id="lr-edge"></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>組別</th><th>已結算</th><th>勝率</th><th>停損率</th><th>逾期</th><th>平均 R</th><th>10 日後平均 R</th><th>平均最大浮盈 R</th></tr></thead><tbody id="lr-groups"></tbody></table></div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">規則檢驗：被擋下的單後來怎麼了？</div></div>
-      <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>被擋下的原因</th><th>方向</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>結論</th></tr></thead><tbody id="lr-rules"></tbody></table></div><div style="font-size:11px;color:var(--t3);padding:8px 14px">假想成交，未計滑價、手續費與借券成本；放空另有借券與軋空風險，實際結果只會更差。</div></div>
+      <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>被擋下的原因</th><th>方向</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>結論</th></tr></thead><tbody id="lr-rules"></tbody></table></div><div style="font-size:11px;color:var(--t3);padding:8px 14px">假想成交，已估列滑價、來回手續費＋證交稅與放空借券費（皆為估計值）；放空另有軋空與券源風險，實際結果可能更差。</div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">統計上站得住腳的發現</div></div>
       <div class="panel card"><div class="panel-body" id="lr-find"></div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">各條件分組表現（已結算候選）</div></div>
@@ -1714,7 +1714,7 @@ html,body{max-width:100%;overflow-x:hidden}
       </div></div>
       <div class="sec-label" style="margin-top:20px"><div class="bar"></div><div class="tx">績效如何計算</div></div>
       <div class="panel"><div class="panel-body">
-        <p>每筆訊號自發出當日起持續追蹤，以 <b>R</b>（進場價到停損價的距離）為單位；+1R 代表賺一個風險單位。結果為「假想成交」，<b>未計手續費、證交稅、滑價</b>，與實際帳戶會有差異。</p>
+        <p>每筆訊號自發出當日起持續追蹤，以 <b>R</b>（進場價到停損價的距離）為單位；+1R 代表賺一個風險單位。結果為「假想成交」，已估列<b>滑價、手續費、證交稅與放空借券費</b>（估計值，實際成交仍會有落差）。</p>
         <p>另設「影子追蹤」：把被規則擋下的候選與隨機對照組一併追蹤，用來檢驗規則是否真的有效，並作為日後調整的依據，而非事後挑選好看的結果。</p>
       </div></div>
       <div class="sec-label" style="margin-top:20px"><div class="bar"></div><div class="tx">資料來源與更新頻率</div></div>
@@ -1785,7 +1785,7 @@ html,body{max-width:100%;overflow-x:hidden}
         <div class="panel"><div class="panel-body">
           <details><summary><b>為什麼今天沒有訊號？</b></summary><p>系統只在條件同時成立時才發出訊號，市場偏空或整體量能不足時，沒有訊號是正常結果，不會為了湊數而放寬標準。</p></details>
           <details><summary><b>訊號什麼時候更新？</b></summary><p>每個交易日 16:30 收盤後掃描一次。盤中（09:00–13:30）每 30 分鐘只檢查已追蹤訊號是否到價，不會產生新訊號。</p></details>
-          <details><summary><b>勝率與報酬怎麼算？</b></summary><p>每筆訊號從發出日起全程追蹤，以停損、停利或到期結算。結果是「假想成交」，未計手續費、證交稅與滑價，實際績效會略低。細節見「方法論與風險聲明」。</p></details>
+          <details><summary><b>勝率與報酬怎麼算？</b></summary><p>每筆訊號從發出日起全程追蹤，以停損、停利或到期結算。結果是「假想成交」，已估列手續費、證交稅、滑價與放空借券費（估計值）；實際成交仍可能有落差。細節見「方法論與風險聲明」。</p></details>
           <details><summary><b>數字和券商 App 不一樣？</b></summary><p>可能是資料延遲或來源不同。日線用還原價，除權息日的漲跌幅可能與官方參考價有差；成交量已改用官方數字。「資料稽核」頁會列出差異。</p></details>
           <details><summary><b>可以照著訊號直接下單嗎？</b></summary><p>不建議。訊號僅供研究參考，不構成投資建議。請搭配自己的資金規劃，每筆風險建議不超過資金的 2%。</p></details>
           <details><summary><b>做空訊號算績效嗎？</b></summary><p>不算。做空訊號僅供研究，不計入實際績效。</p></details>

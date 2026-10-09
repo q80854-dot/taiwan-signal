@@ -692,7 +692,7 @@ def resolve_pending(max_rows=8000):
     try:
         ensure_table()
         from state_store import store
-        from config import CIRCUIT_BREAKER, COMMISSION_RATE, TAX_RATE_SELL
+        from config import CIRCUIT_BREAKER, COMMISSION_RATE, TAX_RATE_SELL, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL
         expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
         cutoff = (datetime.now(TPE) - timedelta(days=30)).strftime("%Y-%m-%d")
         # 退市／長期無資料的訊號若一直留在 pending，壞結果（下市、停牌）會從統計中消失（存活者偏誤）。
@@ -735,15 +735,23 @@ def resolve_pending(max_rows=8000):
                 continue
             fields, vals = [f"{k}=?" for k in new], list(new.values())
             if newly_closed:
-                risk = abs(r2["entry"] - r2["stop"]); sgn = 1 if row["direction"] == "buy" else -1
+                risk = abs(r2["entry"] - r2["stop"]); buy = row["direction"] == "buy"
                 fill = sim.get("entry_fill") or r2["entry"]      # 以實際開盤進場價計 R，與 _simulate 的 mfe/mae/r5/r10 同基準
                 exitp = sim["exit_price"]
-                gross_r = sgn * (exitp - fill) / risk
-                # ★ 2026-10-09：扣來回交易成本（手續費＋賣方證交稅），與實盤 calc_tw_pnl 的淨損益同口徑，
-                # 否則影子的毛 R 會比實盤淨績效樂觀。以每股價格換算成 R 單位（張數在 R 裡會相消）。
-                sell_leg = exitp if row["direction"] == "buy" else fill
-                cost_ps = fill * COMMISSION_RATE + exitp * COMMISSION_RATE + sell_leg * TAX_RATE_SELL
-                net_r = gross_r - cost_ps / risk
+                # ★ 2026-10-09：以「真實交易」為目標，淨 R 納入滑價、來回手續費＋證交稅、放空借券費，
+                # 與實盤 calc_tw_pnl 同一套口徑（唯張數相消、不套用每筆 20 元最低手續費）。
+                eff_fill = fill * (1 + SLIPPAGE_RATE) if buy else fill * (1 - SLIPPAGE_RATE)
+                eff_exit = exitp * (1 - SLIPPAGE_RATE) if buy else exitp * (1 + SLIPPAGE_RATE)
+                gross_r = (eff_exit - eff_fill) / risk if buy else (eff_fill - eff_exit) / risk
+                sell_leg = eff_exit if buy else eff_fill
+                cost_ps = eff_fill * COMMISSION_RATE + eff_exit * COMMISSION_RATE + sell_leg * TAX_RATE_SELL
+                try:
+                    days_held = max(0, (datetime.strptime(sim["exit_date"], "%Y-%m-%d")
+                                        - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days)
+                except Exception:
+                    days_held = 0
+                borrow_ps = sell_leg * SHORT_BORROW_ANNUAL * days_held / 365 if not buy else 0
+                net_r = gross_r - (cost_ps + borrow_ps) / risk
                 fields += ["status='closed'", "result=?", "exit_price=?", "exit_date=?", "r_multiple=?"]
                 vals += [sim["result"], exitp, sim["exit_date"], round(net_r, 3)]
                 closed += 1

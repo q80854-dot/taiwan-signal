@@ -576,7 +576,11 @@ class TWScanEngine:
                     else:         result, close_price = "tp1", tp1
                     entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or close_price
                     shares = sig.get("suggested_lots") or 1  # 欄位名稱歷史遺留，實際存的是股數
-                    pnl     = calc_tw_pnl(entry, close_price, direction, shares)
+                    try:
+                        _dh = (datetime.strptime(d, "%Y-%m-%d") - datetime.strptime(gen_date, "%Y-%m-%d")).days
+                    except Exception:
+                        _dh = 0
+                    pnl     = calc_tw_pnl(entry, close_price, direction, shares, days_held=_dh)
                     pnl_pct = round(pnl / (entry * shares) * 100, 2) if entry and shares else 0
                     store.update_signal_result(sig["id"], result, close_price, pnl, pnl_pct)
                     if pnl < 0:
@@ -621,7 +625,12 @@ class TWScanEngine:
                         last_close = closes[-1] if closes else (sig.get("entry_price") or sig.get("current_price") or 0)
                         entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or last_close
                         shares = sig.get("suggested_lots") or 1
-                        pnl     = calc_tw_pnl(entry, last_close, direction, shares) if entry else 0
+                        try:
+                            _last_d = (dates[-1] if dates else gen_date)
+                            _dh = (datetime.strptime(_last_d, "%Y-%m-%d") - datetime.strptime(gen_date, "%Y-%m-%d")).days
+                        except Exception:
+                            _dh = 0
+                        pnl     = calc_tw_pnl(entry, last_close, direction, shares, days_held=_dh) if entry else 0
                         pnl_pct = round(pnl / (entry * shares) * 100, 2) if entry and shares else 0
                         store.update_signal_result(sig["id"], "expired", last_close, pnl, pnl_pct)
                         if pnl < 0:
