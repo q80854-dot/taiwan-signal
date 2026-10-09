@@ -41,6 +41,50 @@ def test_shadow_simulate_enters_at_next_open():
     sim = shadow._simulate(row, bars, expire_days=15)
     assert sim["entry_fill"] == 105
     assert sim["result"] == "tp1" and sim["exit_price"] == 110.0
-    # R 以規劃風險 |100-95|=5 為單位，分子用實際開盤進場 105：(110-105)/5 = 1.0
+    # R 以規劃風險 |100-95|=5 為單位，分子用實際開盤進場 105：(110-105)/5 = 1.0（毛 R）
     risk = abs(row["entry"] - row["stop"])
     assert abs((sim["exit_price"] - sim["entry_fill"]) / risk - 1.0) < 1e-6
+
+
+def test_shadow_r_multiple_is_net_of_costs(monkeypatch, tmp_path):
+    """resolve_pending 寫回的 r_multiple 應扣掉來回手續費＋證交稅（與實盤淨損益同口徑），略低於毛 R。"""
+    import shadow
+    from config import COMMISSION_RATE, TAX_RATE_SELL
+    rows = [{"id": "x1", "ticker": "9999.TW", "direction": "buy", "bar_date": "2026-10-08",
+             "entry": 100.0, "stop": 95.0, "tp1": 110.0, "tp2": 115.0, "tp3": 125.0,
+             "status": "pending", "r10": None, "r_multiple": None}]
+    bars = {"9999.TW": [
+        {"bar_date": "2026-10-08", "open": 99, "high": 101, "low": 98, "close": 100},
+        {"bar_date": "2026-10-09", "open": 105, "high": 112, "low": 104, "close": 111}]}
+    saved = {}
+
+    class _Store:
+        def _conn(self): return self
+
+        def __enter__(self): return self
+
+        def __exit__(self, *a): return False
+
+        def executescript(self, q): return self
+
+        def execute(self, q, p=()):
+            if q.strip().startswith("SELECT"):
+                self._rows = [dict(r) for r in rows]; return self
+            if q.strip().startswith("UPDATE"):
+                # 攔截 r_multiple 寫入值（倒數第二個參數為 r_multiple，最後是 id）
+                saved["vals"] = p
+            return self
+
+        def fetchall(self): return getattr(self, "_rows", [])
+    import state_store
+    monkeypatch.setattr(state_store, "store", _Store())
+    monkeypatch.setattr(shadow, "ensure_table", lambda: None)
+    monkeypatch.setattr(shadow, "_load_bars", lambda tickers, since: bars)
+    monkeypatch.setattr(shadow, "_rescale", lambda row, bars: (dict(row), 1.0))
+    res = shadow.resolve_pending()
+    assert res["closed"] == 1
+    # 毛 R = (110-105)/5 = 1.0；扣成本後必須 < 1.0 但仍為正
+    net_r = saved["vals"][-2]
+    gross = 1.0
+    cost_r = (105 * COMMISSION_RATE + 110 * COMMISSION_RATE + 110 * TAX_RATE_SELL) / 5.0
+    assert abs(net_r - (gross - cost_r)) < 1e-3 and 0 < net_r < 1.0

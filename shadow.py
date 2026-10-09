@@ -692,9 +692,15 @@ def resolve_pending(max_rows=8000):
     try:
         ensure_table()
         from state_store import store
-        from config import CIRCUIT_BREAKER
+        from config import CIRCUIT_BREAKER, COMMISSION_RATE, TAX_RATE_SELL
         expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
         cutoff = (datetime.now(TPE) - timedelta(days=30)).strftime("%Y-%m-%d")
+        # 退市／長期無資料的訊號若一直留在 pending，壞結果（下市、停牌）會從統計中消失（存活者偏誤）。
+        # 超過 expire_days + 寬限天數仍抓不到任何 K 棒，標記為 unresolved（不計入勝率與平均 R），
+        # 離開 pending 佇列並在報告揭露數量，讓「有多少訊號無法驗證」被看見而非被無聲略過。
+        NODATA_GRACE = 7
+        _today = datetime.now(TPE).replace(tzinfo=None)
+        unresolved = []
         with store._conn() as conn:
             rows = [dict(x) for x in conn.execute(
                 "SELECT * FROM shadow_signals WHERE status='pending' OR (r10 IS NULL AND bar_date>=?) "
@@ -708,6 +714,13 @@ def resolve_pending(max_rows=8000):
         for row in rows:
             bars = bars_by.get(row["ticker"])
             if not bars:
+                # 無任何 K 棒：超過到期＋寬限仍抓不到就標記 unresolved，否則留著下次再試
+                try:
+                    age = (_today - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days
+                except Exception:
+                    age = 0
+                if row["status"] == "pending" and age >= expire_days + NODATA_GRACE:
+                    unresolved.append(row["id"])
                 continue
             r2, scale = _rescale(row, bars)
             rescaled += scale != 1.0
@@ -724,15 +737,28 @@ def resolve_pending(max_rows=8000):
             if newly_closed:
                 risk = abs(r2["entry"] - r2["stop"]); sgn = 1 if row["direction"] == "buy" else -1
                 fill = sim.get("entry_fill") or r2["entry"]      # 以實際開盤進場價計 R，與 _simulate 的 mfe/mae/r5/r10 同基準
+                exitp = sim["exit_price"]
+                gross_r = sgn * (exitp - fill) / risk
+                # ★ 2026-10-09：扣來回交易成本（手續費＋賣方證交稅），與實盤 calc_tw_pnl 的淨損益同口徑，
+                # 否則影子的毛 R 會比實盤淨績效樂觀。以每股價格換算成 R 單位（張數在 R 裡會相消）。
+                sell_leg = exitp if row["direction"] == "buy" else fill
+                cost_ps = fill * COMMISSION_RATE + exitp * COMMISSION_RATE + sell_leg * TAX_RATE_SELL
+                net_r = gross_r - cost_ps / risk
                 fields += ["status='closed'", "result=?", "exit_price=?", "exit_date=?", "r_multiple=?"]
-                vals += [sim["result"], sim["exit_price"], sim["exit_date"], round(sgn * (sim["exit_price"] - fill) / risk, 3)]
+                vals += [sim["result"], exitp, sim["exit_date"], round(net_r, 3)]
                 closed += 1
             updates.append((f"UPDATE shadow_signals SET {', '.join(fields)} WHERE id=?", vals + [row["id"]]))
         if updates:
             with store._conn() as conn:
                 for q, v in updates:
                     conn.execute(q, v)
-        res = {"updated": len(updates), "closed": closed, "rows": len(rows), "rescaled": int(rescaled)}
+        if unresolved:
+            with store._conn() as conn:
+                for _id in unresolved:
+                    conn.execute("UPDATE shadow_signals SET status='unresolved', result='nodata' WHERE id=?", (_id,))
+            logger.info(f"shadow: {len(unresolved)} 筆訊號逾期仍無 K 棒（疑似退市／停牌），標記 unresolved")
+        res = {"updated": len(updates), "closed": closed, "rows": len(rows),
+               "rescaled": int(rescaled), "unresolved": len(unresolved)}
         logger.info(f"shadow: 結算完成，檢查 {len(rows)} 筆、更新 {len(updates)} 筆、新結案 {closed} 筆"
                     f"（除權息還原調整 {int(rescaled)} 筆），耗時 {time.time() - t0:.1f}s")
         if r is not None:
