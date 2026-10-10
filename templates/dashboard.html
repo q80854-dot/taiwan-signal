@@ -1236,6 +1236,53 @@ html,body{max-width:100%;overflow-x:hidden}
 @media(max-width:900px){.fb-grid{grid-template-columns:1fr}}
 @media(max-width:480px){.fb-cats{grid-template-columns:1fr}}
 </style>
+<style id="skin-broker">
+/* 2026-10-10 沉穩專業券商風 ＋ 修正電腦版／手機版格式跑走（固定欄數不重排、水平溢出被切）。
+   此區為最後載入，統一凌駕前面各 skin 疊層累積出的不一致。 */
+
+/* ── 設計基準：收斂色票、間距、圓角、陰影，讓整體像一套系統而非拼湊 ── */
+:root{
+  --card-sh:0 1px 2px rgba(11,31,58,.05), 0 1px 3px rgba(11,31,58,.04);
+  --card-sh-h:0 4px 14px rgba(11,31,58,.09);
+  --r:9px;
+}
+.num,.kpi-val,.ticker-val,.sig-item span,.tbl td,.tbl th,.pos-stats b{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+/* 卡片與面板統一圓角＋細線＋柔和陰影，取代深淺不一的邊框/無陰影混用 */
+.panel,.card,.kpi,.box{border-radius:var(--r)}
+.panel{box-shadow:var(--card-sh)}
+
+/* ── 手機（含強制手機）：所有固定多欄改為會重排，杜絕水平溢出與被切 ── */
+@media(max-width:640px){
+  html:not(.force-desktop) #breadth-row{grid-template-columns:repeat(2,1fr)!important;gap:0!important}
+  html:not(.force-desktop) #breadth-row>.kpi{padding:14px 14px!important;text-align:left!important;border-left:1px solid var(--line)!important;border-top:1px solid var(--line)!important}
+  html:not(.force-desktop) #breadth-row>.kpi:nth-child(-n+2){border-top:0!important}
+  html:not(.force-desktop) #breadth-row>.kpi:nth-child(odd){border-left:0!important}
+  html:not(.force-desktop) #breadth-row .kpi-sub{text-align:left!important;white-space:normal!important}
+  html:not(.force-desktop) .pos-stats{grid-template-columns:repeat(2,1fr)!important;gap:10px 14px!important}
+  html:not(.force-desktop) .hero-row,html:not(.force-desktop) .kpi-strip{grid-template-columns:repeat(2,1fr)!important}
+}
+html.force-mobile #breadth-row{grid-template-columns:repeat(2,1fr)!important;gap:0!important}
+html.force-mobile #breadth-row>.kpi{padding:14px 14px!important;text-align:left!important;border-left:1px solid var(--line)!important;border-top:1px solid var(--line)!important}
+html.force-mobile #breadth-row>.kpi:nth-child(-n+2){border-top:0!important}
+html.force-mobile #breadth-row>.kpi:nth-child(odd){border-left:0!important}
+html.force-mobile #breadth-row .kpi-sub{text-align:left!important;white-space:normal!important}
+html.force-mobile .pos-stats{grid-template-columns:repeat(2,1fr)!important;gap:10px 14px!important}
+html.force-mobile .hero-row,html.force-mobile .kpi-strip{grid-template-columns:repeat(2,1fr)!important}
+
+/* ── 指數 ticker：維持券商跑馬燈式水平排列，但加右側漸層與吸附，讓「可滑動」一看就懂、不再像被硬切 ── */
+.ticker{scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;scrollbar-width:none;position:relative;-webkit-mask-image:linear-gradient(90deg,#000 92%,transparent);mask-image:linear-gradient(90deg,#000 92%,transparent)}
+.ticker::-webkit-scrollbar{display:none}
+.ticker-item{scroll-snap-align:start}
+@media(max-width:640px){
+  html:not(.force-desktop) .ticker{overflow-x:auto!important;-webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);mask-image:linear-gradient(90deg,#000 88%,transparent)}
+  html:not(.force-desktop) .ticker-item{min-width:132px!important;flex:0 0 auto!important}
+}
+
+/* ── 防止任何頁面出現整頁水平捲動（格式跑走的總防線）── */
+body{overflow-x:hidden}
+.main,.content,.wrap{max-width:100%}
+.tbl-wrap,.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+</style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 </head>
 <body>
