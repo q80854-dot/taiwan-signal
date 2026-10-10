@@ -9,7 +9,7 @@
 <meta property="og:title" content="台股波段智慧交易系統"><meta property="og:description" content="多因子波段訊號、透明績效、資料來源公開（研究用途，非投資建議）">
 <meta property="og:type" content="website"><meta name="theme-color" content="#0b1f3a">
 <link rel="manifest" href="/manifest.webmanifest">
-<script>(function(){try{var t=localStorage.getItem('dashTheme');if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light';document.documentElement.setAttribute('data-theme',t);if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.content='#070d17'}}catch(e){document.documentElement.setAttribute('data-theme','light')}})();</script>
+<script>(function(){try{var t=localStorage.getItem('dashTheme');if(t!=='dark'&&t!=='light')t='dark';/* 2026-10-10：終端機風為預設look，未設定過一律深色 */document.documentElement.setAttribute('data-theme',t);if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.content='#0a0b0d'}}catch(e){document.documentElement.setAttribute('data-theme','dark')}})();</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1f3a'/%3E%3Cpath d='M6 22l6-8 5 5 9-12' stroke='%23e5484d' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
@@ -1282,6 +1282,48 @@ html.force-mobile .hero-row,html.force-mobile .kpi-strip{grid-template-columns:r
 body{overflow-x:hidden}
 .main,.content,.wrap{max-width:100%}
 .tbl-wrap,.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+</style>
+<style id="skin-term">
+/* 2026-10-10 終端機風（使用者選定 Bloomberg 終端質感）。最後載入，凌駕前面所有 skin。
+   以既有的 data-theme=dark 為基礎重新調色為近黑＋琥珀＋等寬數字＋髮絲線，並設為預設 look。 */
+:root{--mono:ui-monospace,"SF Mono","JetBrains Mono","Menlo","Consolas","DejaVu Sans Mono",monospace}
+html[data-theme=dark]{
+  --desk:#0a0b0d;--paper:#121318;--paper2:#16181e;--bg:#0a0b0d;--s1:#121318;--s2:#16181e;--s3:#1d2026;--wash:#16181e;
+  --line:#23262d;--line2:#30343c;--rule:#23262d;
+  --ink:#e6e4da;--t1:#e6e4da;--t2:#9ba0a0;--t3:#696d6c;
+  --navy:#07080a;--navy2:#20242c;--brass:#e0a63c;--brass-lt:#f0bd5a;
+  --accent:#e0a63c;--accent-soft:#2a2210;
+  --up:#ff5a46;--up-soft:#2a1411;--up-line:#5a241d;
+  --down:#33d17a;--down-soft:#0f2418;--down-line:#1d5a3b;
+  --ok:#33d17a;--warn:#e0a63c;--alert:#ff5a46;--r:2px;--sh:none;--card-sh:none;--card-sh-h:none;
+}
+html[data-theme=dark] body,html[data-theme=dark] .content,html[data-theme=dark] .body{background:#0a0b0d!important}
+/* 等寬數字：行情、評分、表格、KPI 一律對齊的終端數字感 */
+html[data-theme=dark] .num,html[data-theme=dark] .kpi-val,html[data-theme=dark] .ticker-val,html[data-theme=dark] .ticker-chg,
+html[data-theme=dark] .sig-item span,html[data-theme=dark] .tbl td,html[data-theme=dark] .tbl th,html[data-theme=dark] .pos-stats b,
+html[data-theme=dark] .mono,html[data-theme=dark] table td,html[data-theme=dark] table th{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+/* 卡片／面板：去陰影、髮絲線、小圓角，走終端面板感 */
+html[data-theme=dark] .panel,html[data-theme=dark] .card,html[data-theme=dark] .kpi,html[data-theme=dark] .box,html[data-theme=dark] .sig-card,html[data-theme=dark] .pos,html[data-theme=dark] .ovd{box-shadow:none!important;border-radius:2px!important;border-color:var(--line)!important}
+html[data-theme=dark] .panel,html[data-theme=dark] .ovd,html[data-theme=dark] .kpi{background:var(--s1)!important}
+/* 表格：髮絲橫線、表頭琥珀小標 */
+html[data-theme=dark] .tbl th,html[data-theme=dark] table th{color:var(--t3)!important;text-transform:none;letter-spacing:.04em;font-weight:600;border-bottom:1px solid var(--line2)!important}
+html[data-theme=dark] .tbl td,html[data-theme=dark] .tbl th{border-bottom:1px solid var(--line)!important}
+html[data-theme=dark] .tbl tr:hover td{background:var(--s2)!important}
+/* 主要按鈕：琥珀（覆蓋前面 dark 的藍色強制值）＋區塊標題用琥珀細標 */
+html[data-theme=dark] .btn.primary{background:var(--brass)!important;border-color:var(--brass)!important;color:#141000!important;font-weight:700}
+html[data-theme=dark] .btn.primary:hover{background:var(--brass-lt)!important}
+html[data-theme=dark] .sec-label .tx,html[data-theme=dark] .phd .eyebrow,html[data-theme=dark] .panel-title{letter-spacing:.02em}
+html[data-theme=dark] .sec-label .bar{background:var(--brass)!important}
+/* 頂部行情 ticker：純黑跑馬燈、琥珀名稱、等寬數字 */
+html[data-theme=dark] .ticker{background:#07080a!important;border-bottom:1px solid var(--line)!important;--up:#ff5a46;--down:#33d17a}
+html[data-theme=dark] .ticker-name{color:var(--t3)!important;letter-spacing:.06em}
+html[data-theme=dark] .ticker-val{font-family:var(--mono);font-weight:600!important}
+/* 左側導覽：純黑、選中列用琥珀左緣 */
+html[data-theme=dark] .side,html[data-theme=dark] .sidebar{background:#07080a!important;border-right:1px solid var(--line)!important}
+html[data-theme=dark] .nav.active,html[data-theme=dark] .nav.on{background:var(--s2)!important;box-shadow:inset 3px 0 0 var(--brass)!important;color:var(--ink)!important}
+html[data-theme=dark] .statusbar{background:#07080a!important;border-top:1px solid var(--line)!important}
+/* 連結／強調色一致用琥珀 */
+html[data-theme=dark] .lnk,html[data-theme=dark] .mut a,html[data-theme=dark] a.lw-link{color:var(--brass)!important}
 </style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 </head>
