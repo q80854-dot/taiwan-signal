@@ -1325,6 +1325,114 @@ html[data-theme=dark] .statusbar{background:#07080a!important;border-top:1px sol
 /* 連結／強調色一致用琥珀 */
 html[data-theme=dark] .lnk,html[data-theme=dark] .mut a,html[data-theme=dark] a.lw-link{color:var(--brass)!important}
 </style>
+<style id="skin-term2">
+/* 2026-10-10 終端機風「元件重構」層：這一層重做的是元件的「形」與操作感，
+   而非顏色——按鈕＝機能鍵、區塊標題＝標籤＋延伸髮絲線、頂列＝終端狀態軌、
+   表頭與徽章＝等寬終端標記。僅作用於 data-theme=dark（終端＝預設 look）。
+   載於所有 skin 之後，凌駕 skin-term 的純調色。 */
+html[data-theme=dark]{--term-glow:rgba(224,166,60,.16)}
+
+/* ── 頂列：終端狀態軌（漸層底＋底部琥珀細光 + 等寬提示字頁名） ── */
+html[data-theme=dark] .top{
+  height:52px;background:linear-gradient(180deg,#0e0f13,#0a0b0d);
+  border-bottom:1px solid var(--line);
+  box-shadow:inset 0 -1px 0 rgba(224,166,60,.12);
+}
+html[data-theme=dark] #page-title{
+  font-family:var(--mono);font-size:12.5px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.14em;color:var(--ink);
+  display:inline-flex;align-items:center;gap:9px;
+}
+html[data-theme=dark] #page-title::before{
+  content:"";width:7px;height:13px;background:var(--brass);
+  box-shadow:0 0 6px var(--term-glow);animation:termcur 1.2s steps(1) infinite;
+}
+@keyframes termcur{50%{opacity:.25}}
+html[data-theme=dark] #tw-time{font-family:var(--mono);letter-spacing:.04em}
+html[data-theme=dark] .gs input{font-family:var(--mono);letter-spacing:.02em}
+
+/* ── 按鈕：機能鍵（等寬大寫、方形、hover 以琥珀描邊＋微光） ── */
+html[data-theme=dark] .btn{
+  font-family:var(--mono);text-transform:uppercase;font-size:10.5px;
+  font-weight:600;letter-spacing:.1em;padding:7px 13px;border-radius:2px;
+  border:1px solid var(--line2);background:#15171c;color:var(--t2);
+  transition:border-color .12s,color .12s,background .12s,box-shadow .12s,transform .06s;
+}
+html[data-theme=dark] .btn:hover{
+  border-color:var(--brass);color:var(--brass);background:#1b1d23;
+  box-shadow:0 0 0 1px rgba(224,166,60,.22),0 0 10px var(--term-glow);
+}
+html[data-theme=dark] .btn:active{transform:translateY(1px)}
+html[data-theme=dark] .btn.btn-ic,html[data-theme=dark] .srch-btn{padding:7px 9px}
+/* 主要機能鍵：實心琥珀＋前綴執行箭號（取代原本的箭尾，避免重複） */
+html[data-theme=dark] .btn.primary{
+  background:var(--brass);border-color:var(--brass);color:#141000;font-weight:700;
+}
+html[data-theme=dark] .btn.primary::before{content:"\25B8";margin-right:7px}
+html[data-theme=dark] .btn.primary:hover{
+  background:var(--brass-lt);border-color:var(--brass-lt);
+  box-shadow:0 0 14px rgba(224,166,60,.4);
+}
+html[data-theme=dark] .btn.arrow::after{content:""}
+
+/* ── 區塊標題：琥珀標籤 ▸ + 延伸到右緣的髮絲線（終端章節分隔手法）
+   前面的 skin-pro / skin-terminal 以 !important 把 .bar 藏掉、把 .tx 改回 serif、
+   把 .lnk 釘在右側，因此這一層必須用同等的 !important 收回元件語言。 ── */
+html[data-theme=dark] .sec-label{gap:12px!important;margin:30px 0 13px;align-items:center}
+html[data-theme=dark] .sec-label .bar{display:inline-flex!important;order:1;width:auto!important;height:auto!important;background:none!important;line-height:1}
+html[data-theme=dark] .sec-label .bar::before{content:"\25B8";color:var(--brass);font-size:11px}
+html[data-theme=dark] .sec-label .tx{
+  order:2;font-family:var(--mono)!important;font-size:11px!important;font-weight:700!important;
+  letter-spacing:.16em!important;color:var(--brass)!important;text-transform:uppercase!important;
+}
+html[data-theme=dark] .sec-label::after{
+  content:""!important;display:block!important;order:3;flex:1 1 auto!important;height:1px!important;align-self:center;
+  background:linear-gradient(90deg,var(--line2),transparent)!important;
+}
+html[data-theme=dark] .sec-label .lnk{
+  order:4!important;margin-left:0!important;flex:0 0 auto!important;font-family:var(--mono)!important;
+  text-transform:uppercase!important;font-size:9.5px!important;font-weight:600!important;
+  letter-spacing:.1em!important;color:var(--t3)!important;border:0!important;
+}
+html[data-theme=dark] .sec-label .lnk::before{content:"[";margin-right:3px;color:var(--line2)}
+html[data-theme=dark] .sec-label .lnk::after{content:"]";margin-left:3px;color:var(--line2)}
+html[data-theme=dark] .sec-label .lnk:hover{color:var(--brass)!important}
+/* 市場儀表板那列有一個空的日期 span（會以 order:0 跑到最前面），壓掉它的 margin 避免空隙 */
+html[data-theme=dark] .sec-label .mut:empty{display:none!important}
+
+/* ── 面板表頭：同樣改為標籤 ▸ + 延伸髮絲線 ── */
+html[data-theme=dark] .panel-head{padding:12px 18px!important;background:#0e0f13;gap:10px;display:flex;align-items:center}
+html[data-theme=dark] .panel-head .bar{display:inline-flex!important;order:1;width:auto!important;height:auto!important;background:none!important;line-height:1}
+html[data-theme=dark] .panel-head .bar::before{content:"\25B8";color:var(--brass);font-size:10px}
+html[data-theme=dark] .panel-title{order:2;font-family:var(--mono)!important;color:var(--brass)!important;letter-spacing:.14em!important;font-size:10px!important;font-weight:700!important;text-transform:uppercase!important}
+html[data-theme=dark] .panel-head::after{content:""!important;display:block!important;order:3;flex:1 1 auto!important;height:1px!important;align-self:center;background:linear-gradient(90deg,var(--line2),transparent)!important}
+html[data-theme=dark] .panel-link{order:4;margin-left:0!important;flex:0 0 auto;font-family:var(--mono);text-transform:uppercase;font-size:9px;letter-spacing:.1em}
+
+/* ── 數字排版：英雄數字、KPI、評分一律等寬對齊；標籤等寬寬字距 ── */
+html[data-theme=dark] .hero-val,html[data-theme=dark] .sig-score{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+html[data-theme=dark] .hero-label,html[data-theme=dark] .kpi-label{font-family:var(--mono);letter-spacing:.12em}
+html[data-theme=dark] .hero{border-left-width:2px}
+
+/* ── 表格：等寬琥珀表頭、hover 列加左側琥珀標記 ── */
+html[data-theme=dark] .tbl th,html[data-theme=dark] table th{
+  font-family:var(--mono);color:var(--brass)!important;text-transform:uppercase;
+  letter-spacing:.1em;font-size:9px;font-weight:600;border-bottom:1px solid var(--line2)!important;
+}
+html[data-theme=dark] .tbl tbody tr:hover td{background:#15171c!important;box-shadow:inset 2px 0 0 var(--brass)}
+
+/* ── 徽章／標記：等寬＋方形；輕量標記改為描邊方括號感 ── */
+html[data-theme=dark] .sig-badge{font-family:var(--mono);border-radius:2px;letter-spacing:.08em}
+html[data-theme=dark] .tag{
+  font-family:var(--mono);border-radius:2px;letter-spacing:.06em;
+  background:transparent!important;border:1px solid currentColor;padding:1px 6px;
+}
+html[data-theme=dark] .tag.green{color:var(--up)}
+html[data-theme=dark] .tag.red{color:var(--down)}
+html[data-theme=dark] .tag.blue{color:var(--t2)}
+
+/* ── 狀態小物：資料新鮮度、盤別 pill 改方形等寬 ── */
+html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:var(--mono);border-radius:2px;letter-spacing:.04em}
+</style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 </head>
 <body>
