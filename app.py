@@ -1887,6 +1887,11 @@ def api_instrument(ticker: str):
         out["fin_series"] = _fs
     except Exception as e:
         out["fin_series"] = None; out["fin_series_error"] = str(e)
+    try:   # 個股新聞（FinMind，選用）
+        import finmind
+        out["news_items"] = finmind.news(code)
+    except Exception as e:
+        out["news_items"] = None; out["news_items_error"] = str(e)
     try:
         from indicators import interpret
         out["indicator_reading"] = interpret(out.get("indicators"))

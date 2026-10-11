@@ -38,6 +38,9 @@ _ALIAS = {
     "assets":    (["TotalAssets", "資產總額", "資產總計"], []),
     "cur_assets":(["CurrentAssets", "流動資產"], ["非流動"]),
     "cur_liab":  (["CurrentLiabilities", "流動負債"], ["非流動"]),
+    # 現金流量表（同為損益式累計數，需還原單季）
+    "ocf":       (["CashProvidedByOperatingActivities", "CashFlowsFromOperatingActivities", "NetCashProvidedByOperating", "營業活動之淨現金"], ["投資", "籌資", "Investing", "Financing"]),
+    "capex":     (["AcquisitionOfPropertyPlantAndEquipment", "PaymentsToAcquirePropertyPlantAndEquipment", "取得不動產、廠房及設備", "購置不動產"], ["處分", "出售", "Proceeds", "Disposal"]),
 }
 
 
@@ -140,13 +143,15 @@ def financial_indicators(code: str) -> Optional[dict]:
     start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 5 * 365 * 86400))
     inc = _pivot(_fetch("TaiwanStockFinancialStatements", code, start))
     bs = _pivot(_fetch("TaiwanStockBalanceSheet", code, start))
-    data = _build(inc, bs)
+    cf = _pivot(_fetch("TaiwanStockCashFlowsStatement", code, start))
+    data = _build(inc, bs, cf)
     with _lock:
         _cache[code] = {"at": time.time(), "data": data}
     return data
 
 
-def _build(inc: Dict[str, Dict[str, float]], bs: Dict[str, Dict[str, float]]) -> Optional[dict]:
+def _build(inc: Dict[str, Dict[str, float]], bs: Dict[str, Dict[str, float]],
+           cf: Optional[Dict[str, Dict[str, float]]] = None) -> Optional[dict]:
     # 單季損益
     rev_q = _decumulate(inc, "revenue")
     gross_q = _decumulate(inc, "gross")
@@ -192,4 +197,42 @@ def _build(inc: Dict[str, Dict[str, float]], bs: Dict[str, Dict[str, float]]) ->
         out["current_ratio"] = series(ratio(ca, cl))
     if equity and assets:
         out["equity_ratio"] = series(ratio(equity, assets))
+    # 自由現金流（單季）＝營業活動現金流 − 資本支出（取絕對值，避免 capex 正負號在不同來源不一致）
+    if cf:
+        ocf_q = _decumulate(cf, "ocf")
+        capex_q = _decumulate(cf, "capex")
+        if ocf_q:
+            fcf = {}
+            for d, ocf in ocf_q.items():
+                cx = capex_q.get(d)
+                fcf[d] = ocf - abs(cx) if cx is not None else ocf
+            out["fcf"] = series(fcf)
     return out or None
+
+
+def news(code: str, days: int = 14, limit: int = 10) -> Optional[list]:
+    """個股近期新聞（FinMind TaiwanStockNews：date/title/source/link/description）。
+    未啟用回 None；取最近 days 天、最新 limit 則。"""
+    if not enabled():
+        return None
+    code = str(code).strip()
+    ck = f"news:{code}"
+    with _lock:
+        ent = _cache.get(ck)
+        if ent and time.time() - ent["at"] < 3600:
+            return ent["data"]
+    start = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    rows = _fetch("TaiwanStockNews", code, start)
+    out = []
+    for r in rows:
+        t = str(r.get("title") or "").strip()
+        if not t:
+            continue
+        out.append({"date": str(r.get("date") or "")[:16], "title": t[:120],
+                    "source": str(r.get("source") or "").strip()[:30],
+                    "link": str(r.get("link") or "").strip()})
+    out.sort(key=lambda x: x["date"], reverse=True)
+    out = out[:limit]
+    with _lock:
+        _cache[ck] = {"at": time.time(), "data": out}
+    return out
