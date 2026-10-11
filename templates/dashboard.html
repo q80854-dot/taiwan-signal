@@ -3316,6 +3316,63 @@ function loginWall(){
     #login-wall footer .lw-cols{grid-template-columns:1fr}
     #login-wall .lw-cta,#login-wall .lw-ghost{width:100%;justify-content:center}
   }
+  /* ───────── 2026-10-11 未登入頁終端機風改版（覆蓋上面的藍/白配色，與站內一致） ───────── */
+  #login-wall{--n0:#050608;--n1:#0a0b0d;--n2:#121318;--ac:#e0a63c;--ac2:#f0bd5a;--ink:#e6e4da;--mut:#9ba0a0;--soft:#6c7070;--line:#23262d;--bg:#0a0b0d;--up:#ff5a46;--dn:#33d17a;
+    font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif}
+  #login-wall .lw-mono,#login-wall h1,#login-wall .lw-st b,#login-wall .lw-q .lw-p,#login-wall .lw-mkt b,#login-wall .lw-eyebrow,#login-wall .lw-pill{font-family:ui-monospace,"SF Mono","JetBrains Mono","Menlo","Consolas","DejaVu Sans Mono",monospace;font-variant-numeric:tabular-nums}
+  /* 導覽／品牌 */
+  #login-wall .lw-nav{background:rgba(5,6,8,.92);border-bottom:1px solid var(--line)}
+  #login-wall .lw-brand i{background:var(--ac);color:#141000;border-radius:2px;box-shadow:0 0 10px rgba(224,166,60,.3)}
+  #login-wall .lw-brand small{color:var(--mut);letter-spacing:.14em}
+  #login-wall .lw-nbtn{border:1px solid var(--line2,#30343c);border-radius:2px;font-family:ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em;font-size:12px}
+  #login-wall .lw-nbtn:hover{border-color:var(--ac);color:var(--ac);background:rgba(224,166,60,.08)}
+  /* 主視覺：改近黑＋琥珀網格 */
+  #login-wall .lw-hero{background:radial-gradient(1200px 600px at 78% -10%,rgba(224,166,60,.12),transparent 60%),linear-gradient(180deg,#050608,#0a0b0d 70%,#0e1014)}
+  #login-wall .lw-hero::before{background-image:linear-gradient(rgba(224,166,60,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(224,166,60,.05) 1px,transparent 1px)}
+  #login-wall .lw-pill{color:var(--ac2);border:1px solid rgba(224,166,60,.4);background:rgba(224,166,60,.1);border-radius:2px}
+  #login-wall .lw-pill b{background:var(--ac);color:#141000;border-radius:2px}
+  #login-wall h1 em{background:linear-gradient(90deg,#f0bd5a,#e0a63c 55%,#f0bd5a);-webkit-background-clip:text;background-clip:text;color:transparent}
+  /* 主要 CTA：實心琥珀＋前綴 ▸ */
+  #login-wall .lw-cta{background:var(--ac);color:#141000;border-radius:2px;box-shadow:0 0 18px rgba(224,166,60,.28)}
+  #login-wall .lw-cta:hover{background:var(--ac2);box-shadow:0 0 26px rgba(224,166,60,.45)}
+  #login-wall .lw-ghost{border:1px solid var(--line2,#30343c);border-radius:2px;color:var(--mut)}
+  #login-wall .lw-ghost:hover{border-color:var(--ac);color:var(--ac);background:rgba(224,166,60,.06)}
+  #login-wall .lw-trust svg,#login-wall .lw-sl b svg{color:var(--dn)}
+  /* 產品預覽視窗 */
+  #login-wall .lw-win{background:linear-gradient(180deg,#0e1014,#0a0b0d);border:1px solid var(--line);border-radius:3px;box-shadow:0 40px 90px rgba(0,0,0,.6),0 0 0 1px rgba(224,166,60,.08)}
+  #login-wall .lw-wside b.lw-on{background:rgba(224,166,60,.5)}
+  #login-wall .lw-q .lw-p{color:var(--ink)}
+  /* 數據帶：改深色 */
+  #login-wall .lw-stats{background:#0e1014;border-bottom:1px solid var(--line)}
+  #login-wall .lw-st{border-left:1px solid var(--line)}
+  #login-wall .lw-st b{color:var(--ac)}
+  #login-wall .lw-mkt{background:#050608;border-bottom:1px solid var(--line);color:var(--mut)}
+  #login-wall .lw-mkt b{color:var(--ink)}
+  /* 區塊標題：琥珀 eyebrow */
+  #login-wall .lw-eyebrow{color:var(--ac);letter-spacing:.14em;text-transform:uppercase}
+  /* 功能卡／來源卡／FAQ：改深色面板＋髮絲線 */
+  #login-wall .lw-f,#login-wall .lw-sb,#login-wall details,#login-wall .lw-show,#login-wall .lw-mock,#login-wall .lw-kpis div{background:#121318;border:1px solid var(--line);border-radius:3px}
+  #login-wall .lw-f:hover{border-color:rgba(224,166,60,.4);box-shadow:0 0 18px rgba(224,166,60,.1)}
+  #login-wall .lw-f i{background:rgba(224,166,60,.12);color:var(--ac);border-radius:2px}
+  #login-wall .lw-sb i{background:#1b1d23;color:var(--ac);border-radius:2px}
+  #login-wall .lw-s em{background:var(--ac);color:#141000;box-shadow:0 0 0 6px var(--bg)}
+  #login-wall .lw-steps::before{background:linear-gradient(90deg,rgba(224,166,60,.5),rgba(224,166,60,.15))}
+  #login-wall details[open]{border-color:rgba(224,166,60,.4)}
+  /* 安全區／結尾 CTA：深底琥珀 */
+  #login-wall .lw-secu{background:linear-gradient(135deg,#0e1014,#121318);border:1px solid var(--line);border-radius:3px}
+  #login-wall .lw-sl div{border:1px solid var(--line);background:rgba(255,255,255,.02);border-radius:2px}
+  #login-wall .lw-end{background:radial-gradient(700px 300px at 85% 0%,rgba(224,166,60,.22),transparent 60%),linear-gradient(135deg,#1a1405,#2a2210);border:1px solid rgba(224,166,60,.3);border-radius:3px}
+  #login-wall .lw-end p{color:#e8dcc0}
+  /* 展示 tabs：深色 */
+  #login-wall .lw-tabs{background:#0e0f13;border-bottom:1px solid var(--line)}
+  #login-wall .lw-tabs button{color:var(--mut);border-radius:2px;font-family:ui-monospace,monospace;text-transform:uppercase;letter-spacing:.06em;font-size:12px}
+  #login-wall .lw-tabs button.lw-on{background:#121318;color:var(--ac);box-shadow:inset 0 -2px 0 var(--ac)}
+  #login-wall .lw-bar2{background:#23262d}
+  #login-wall .lw-row2{border-bottom:1px solid #1b1d23}
+  #login-wall .lw-up{background:rgba(255,90,70,.18)}#login-wall .lw-dn{background:rgba(51,209,122,.18)}
+  #login-wall .lw-pane li svg{color:var(--ac)}
+  #login-wall footer{background:#050608;border-top:1px solid var(--line)}
+  #login-wall footer b{color:var(--ink)}
   </style>
   <header class="lw-nav"><div class="lw-w">
     <a class="lw-brand" data-t="lw-top"><i>${LOGO}</i><span>台股波段<small>SWING SIGNAL TERMINAL</small></span></a>
@@ -4016,8 +4073,20 @@ function renderMast(d){
   const tone=sc<40?'偏弱':sc<60?'中性':'偏強';
   const hot=sigs.filter(s=>s.chase_level==='high').length;
   let line=`大盤情緒 <em>${sc}</em>（${tone}）。`;
+  // ② 2026-10-11 資訊量加強：一句話同時帶出「環境分＋可否操作」與「外資現貨買賣超」，
+  // 皆取自 /api/state 既有欄位，不額外抓資料。
+  const sys=d.system_status||{};
+  if(sys.env_score!=null){
+    const canTxt=sys.can_trade===false?'環境保守、暫緩進場':(sys.env_status||'可操作');
+    line+=`環境分 <em>${safeN(sys.env_score,0)}</em>（${safe(canTxt)}）。`;
+  }
+  const fn=((d.market_overview||{}).foreign||{}).net_buy_twd;
+  if(typeof fn==='number'&&isFinite(fn)){
+    const yi=Math.abs(fn/1e8);
+    line+=`外資現貨${fn>=0?'買超':'賣超'} <em>${yi>=1?yi.toFixed(0):yi.toFixed(1)}</em> 億。`;
+  }
   line+=sigs.length?`最新一批有 <em>${sigs.length}</em> 檔訊號${buys?`，其中 ${buys} 檔做多`:''}${hot?`，<em>${hot}</em> 檔屬追高位置`:''}。`:'目前沒有新訊號。';
-  const sub=sc<40&&sigs.length?'大盤偏弱時系統會自動限縮訊號數量，寧可少做。':'訊號每個交易日 16:30 盤後掃描。';
+  const sub=sc<40&&sigs.length?'大盤偏弱時系統會自動限縮訊號數量，寧可少做。':'訊號每個交易日 16:30 盤後掃描；此處綜合大盤情緒、環境分與外資籌碼。';
   const cls=sc<40?'sell':'';
   el.innerHTML=`<div class="dt"><b>${now.getMonth()+1}月${now.getDate()}日</b><span>民國${roc}年 週${wk}</span></div>
     <div class="say">${line}<small>${sub}</small></div>`;
