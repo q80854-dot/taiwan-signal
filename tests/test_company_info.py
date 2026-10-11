@@ -36,14 +36,26 @@ def test_profile_parsing(monkeypatch):
 
 
 def test_foreign_holding_parsing(monkeypatch):
+    # TWSE 報表格式：fields 表頭 + data 列陣列（與正式站一致）
+    report = {
+        "stat": "OK", "date": "20261010",
+        "fields": ["證券代號", "證券名稱", "發行股數", "外資及陸資尚可投資股數",
+                   "全體外資及陸資持有股數", "外資及陸資尚可投資比率",
+                   "全體外資及陸資持股比率", "法令投資上限比率"],
+        "data": [["2330", "台積電", "25930380458", "7000000000",
+                  "18800000000", "27.00", "72.51", "100.00"]],
+    }
+
     def fake(url, *a, **k):
         if "MI_QFIIS" in url:
-            return FakeResp([{"證券代號": "2330", "全體外資及陸資持股比率": "72.51",
-                              "外資及陸資投資上限比率": "100"}])
-        return FakeResp([])
+            return FakeResp(report)
+        return FakeResp({"stat": "", "data": []})
     _patch(monkeypatch, fake)
     f = C.get_foreign_holding("2330")
     assert f and f["ratio"] == 72.51 and f["ceiling"] == 100.0
+    assert f["date"] == "20261010"
+    # 確認挑到的是「持股比率」而非「尚可投資比率」(27.00)
+    assert f["ratio"] != 27.00
 
 
 def test_dispersion_big_small(monkeypatch):

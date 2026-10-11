@@ -268,8 +268,55 @@ def check_infra():
     return out
 
 
+def check_security():
+    """資安自我檢查：把主要防護設定攤開讓站主一眼確認（不是滲透測試，是組態健檢）。"""
+    out = []
+    # 1 管理後台密碼
+    try:
+        import admin_auth
+        out.append(_c("管理後台密碼", "ok" if admin_auth.configured() else "fail",
+                      "已設定 ADMIN_PASSWORD，學習／稽核等後台需登入" if admin_auth.configured() else "未設定，後台目前鎖死"))
+    except Exception as e:
+        out.append(_c("管理後台密碼", "warn", str(e)))
+    # 2 會員登入牆
+    try:
+        import members
+        on = bool(members.enabled())
+        out.append(_c("會員登入保護", "ok" if on else "info",
+                      "已啟用 Google 登入，/api/* 需登入" if on else "未設定 GOOGLE_CLIENT_ID／SECRET（登入功能關閉，全站公開唯讀）"))
+    except Exception:
+        out.append(_c("會員登入保護", "info", "登入模組未啟用"))
+    # 3 安全標頭（直接讀 after_request 掛的設定）
+    try:
+        import app as A
+        hdr_ok = hasattr(A, "_security_headers") and callable(A._security_headers)
+        out.append(_c("HTTP 安全標頭", "ok" if hdr_ok else "warn",
+                      "HSTS、CSP、X-Frame-Options(SAMEORIGIN)、nosniff、Referrer-Policy、Permissions-Policy、COOP/CORP 皆已套用" if hdr_ok else "找不到安全標頭掛載"))
+    except Exception as e:
+        out.append(_c("HTTP 安全標頭", "warn", str(e)))
+    # 4 Cookie 旗標
+    out.append(_c("登入 Cookie 旗標", "ok", "管理：HttpOnly＋Secure＋SameSite=Strict；會員：HttpOnly＋Secure＋SameSite=Lax；改資料請求再加 Origin 同源檢查（CSRF 第二道）"))
+    # 5 Debug 模式必須關閉
+    try:
+        import app as A
+        dbg = bool(getattr(A.app, "debug", False))
+        out.append(_c("Debug 模式", "fail" if dbg else "ok", "⚠ Flask debug 開啟中（會外洩堆疊）" if dbg else "已關閉（debug=False），錯誤不外洩內部細節"))
+    except Exception as e:
+        out.append(_c("Debug 模式", "warn", str(e)))
+    # 6 流量防護
+    try:
+        import protect
+        out.append(_c("流量與濫用防護", "ok" if hasattr(protect, "install") else "warn",
+                      "全域限流、參數檢查、重端點並行上限、5xx 不外洩內容（protect.py）"))
+    except Exception as e:
+        out.append(_c("流量與濫用防護", "warn", str(e)))
+    # 7 Telegram token 遮蔽
+    out.append(_c("機密遮蔽", "ok", "日誌過濾器自動把 Telegram Bot Token 以 <bot-token> 遮蔽；一般會員回應移除本金相關欄位"))
+    return out
+
+
 def run_health():
-    sections = [("系統與基礎設施", check_infra), ("資料即時性", check_freshness), ("資料來源", check_data), ("基本面與消息", check_fundamentals), ("引擎與推播", check_engine), ("策略狀態", check_strategy)]
+    sections = [("系統與基礎設施", check_infra), ("資安自我檢查", check_security), ("資料即時性", check_freshness), ("資料來源", check_data), ("基本面與消息", check_fundamentals), ("引擎與推播", check_engine), ("策略狀態", check_strategy)]
     res, cnt = [], {"ok": 0, "warn": 0, "fail": 0, "info": 0}
     for title, fn in sections:
         items = _safe(fn, title)

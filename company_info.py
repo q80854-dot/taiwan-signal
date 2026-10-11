@@ -135,31 +135,59 @@ def get_profile(code: str) -> Optional[dict]:
 
 
 # ──────────────────── 外資及陸資持股比率（機構持比） ────────────────────
-def _build_foreign_holding_map() -> Dict[str, dict]:
-    out: Dict[str, dict] = {}
-    r = requests.get(TWSE_QFIIS_URL, headers=HEADERS, timeout=20)
-    if not r.ok:
-        return out
-    rows = r.json()
-    if not isinstance(rows, list) or not rows:
-        return out
-    sample = rows[0]
-    k_code = _find_key(sample, "證券代號", "Code", "代號")
-    k_ratio = _find_key(sample, "全體外資及陸資持股比率", "持股比率", "shares held", "Percentage of shares")
-    k_ceil = _find_key(sample, "投資上限比率", "上限", "available investment", "ceiling")
-    k_held = _find_key(sample, "全體外資及陸資持有股數", "持有股數", "shares held", "number of shares")
-    if not k_code or not k_ratio:
-        return out
-    for row in rows:
-        code = str(row.get(k_code, "")).strip()
-        if not code or not code.isdigit():
-            continue
-        out[code] = {
-            "ratio": _num(row.get(k_ratio)),
-            "ceiling": _num(row.get(k_ceil)) if k_ceil else None,
-            "held_shares": _num(row.get(k_held)) if k_held else None,
-        }
-    return out
+# 修正（2026-10-11）：原本打 openapi.twse.com.tw/v1/fund/MI_QFIIS（dict 陣列）在
+# 正式站取不到資料。逐檔外資持股比率的正式來源是 TWSE「報表」端點
+# www.twse.com.tw/fund/MI_QFIIS?response=json&selectType=ALL，回應為
+# {stat, date, fields:[欄名...], data:[[值...], ...]} 的「表頭＋列陣列」格式
+# （與 T86／MI_MARGN 同一家族，程式他處已證實可從 Render 取得）。改用 fields
+# 動態定位欄位（不寫死索引），比較不怕官方調整欄序。
+def _col_idx(fields, *subs, exclude=()):
+    for i, f in enumerate(fields):
+        fs = str(f)
+        if any(s in fs for s in subs) and not any(x in fs for x in exclude):
+            return i
+    return None
+
+
+def _build_foreign_holding_map() -> dict:
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(hours=8)
+    for back in range(0, 8):                       # 今天往前試幾個交易日（假日／尚未公布時往回找）
+        d = now - __import__("datetime").timedelta(days=back)
+        ds = d.strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/fund/MI_QFIIS?response=json&selectType=ALL&date={ds}"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=(5, 30))
+            if not r.ok:
+                continue
+            j = r.json()
+            if j.get("stat") != "OK" or not j.get("data"):
+                continue
+            fields = j.get("fields") or []
+            ci = _col_idx(fields, "證券代號", "代號", "Code")
+            ri = _col_idx(fields, "持股比率", "Percentage of shares", exclude=("可投資", "尚可", "available"))
+            cei = _col_idx(fields, "上限", "available investment")
+            hi = _col_idx(fields, "持有股數", "number of shares", exclude=("可投資", "尚可", "available"))
+            if ci is None or ri is None:
+                ci = 0 if ci is None else ci   # 退而求其次：代號多半在第 0 欄
+                if ri is None:
+                    continue
+            m = {}
+            for row in j["data"]:
+                try:
+                    code = str(row[ci]).strip()
+                    if not code or not code.isdigit():
+                        continue
+                    m[code] = {"ratio": _num(row[ri]),
+                               "ceiling": _num(row[cei]) if cei is not None and cei < len(row) else None,
+                               "held_shares": _num(row[hi]) if hi is not None and hi < len(row) else None,
+                               "date": j.get("date") or ds}
+                except Exception:
+                    continue
+            if m:
+                return m
+        except Exception as e:
+            logger.warning(f"foreign_holding {ds}: {e}")
+    return {}
 
 
 def get_foreign_holding(code: str) -> Optional[dict]:

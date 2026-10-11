@@ -2426,19 +2426,50 @@ function klKd(o,n=9){
   }
   return {K,D};
 }
+// 2026-10-11 新增技術指標：布林通道、乖離率、威廉指標、DMI/ADX
+function klBB(c,p=20,mult=2){
+  const mid=klSma(c,p),up=c.map(()=>null),lo=c.map(()=>null);
+  for(let i=p-1;i<c.length;i++){let s=0;for(let j=i-p+1;j<=i;j++)s+=(c[j]-mid[i])**2;const sd=Math.sqrt(s/p);up[i]=mid[i]+mult*sd;lo[i]=mid[i]-mult*sd;}
+  return {mid,up,lo};
+}
+function klBias(c,p=20){const ma=klSma(c,p);return c.map((v,i)=>ma[i]==null?null:(v-ma[i])/ma[i]*100);}
+function klWr(o,p=14){
+  const out=o.closes.map(()=>null);
+  for(let i=p-1;i<o.closes.length;i++){let hh=-1e9,ll=1e9;for(let j=i-p+1;j<=i;j++){hh=Math.max(hh,o.highs[j]);ll=Math.min(ll,o.lows[j]);}out[i]=hh===ll?-50:(hh-o.closes[i])/(hh-ll)*-100;}
+  return out;
+}
+function klAdx(o,p=14){
+  const n=o.closes.length,pdi=Array(n).fill(null),ndi=Array(n).fill(null),adx=Array(n).fill(null);
+  if(n<p*2)return {pdi,ndi,adx};
+  let tr14=0,pdm14=0,ndm14=0;const dx=[];
+  for(let i=1;i<n;i++){
+    const up=o.highs[i]-o.highs[i-1],dn=o.lows[i-1]-o.lows[i];
+    const pdm=(up>dn&&up>0)?up:0,ndm=(dn>up&&dn>0)?dn:0;
+    const tr=Math.max(o.highs[i]-o.lows[i],Math.abs(o.highs[i]-o.closes[i-1]),Math.abs(o.lows[i]-o.closes[i-1]));
+    if(i<=p){tr14+=tr;pdm14+=pdm;ndm14+=ndm;if(i===p){const pd=tr14?100*pdm14/tr14:0,nd=tr14?100*ndm14/tr14:0;pdi[i]=pd;ndi[i]=nd;dx.push(pd+nd?100*Math.abs(pd-nd)/(pd+nd):0);}continue;}
+    tr14=tr14-tr14/p+tr;pdm14=pdm14-pdm14/p+pdm;ndm14=ndm14-ndm14/p+ndm;
+    const pd=tr14?100*pdm14/tr14:0,nd=tr14?100*ndm14/tr14:0;pdi[i]=pd;ndi[i]=nd;
+    const d=pd+nd?100*Math.abs(pd-nd)/(pd+nd):0;dx.push(d);
+    if(dx.length===p){adx[i]=dx.slice(-p).reduce((a,b)=>a+b,0)/p;}
+    else if(dx.length>p){adx[i]=(adx[i-1]*(p-1)+d)/p;}
+  }
+  return {pdi,ndi,adx};
+}
 function klBuild(tf){
   const K=_kl,o=klAgg(K.src,tf),c=o.closes;
   const e12=klEma(c,12),e26=klEma(c,26),dif=c.map((_,i)=>e12[i]-e26[i]),dea=klEma(dif,9);
   K.tf=tf;K.o=o;K.n=c.length;
   K.ma=KL_MA[tf].map(k=>klSma(c,k));K.vma=[klSma(o.volumes,5),klSma(o.volumes,20)];
   K.macd={dif,dea,hist:dif.map((v,i)=>(v-dea[i])*2)};K.rsi=klRsi(c);K.kd=klKd(o);
+  K.bb=klBB(c,20,2);K.bias=klBias(c,20);K.wr=klWr(o,14);K.adx=klAdx(o,14);
 }
 function klineHtml(d){
   const src=(d.ohlcv_long&&d.ohlcv_long.closes&&d.ohlcv&&d.ohlcv_long.closes.length>=d.ohlcv.closes.length)?d.ohlcv_long:d.ohlcv;
   if(!src||!src.closes||src.closes.length<20)return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖</div></div><div class="panel card"><div class="panel-body"><div class="empty">日 K 資料不足，無法繪圖</div></div></div>`;
   return `<div class="sec-label"><div class="bar"></div><div class="tx">K 線圖（還原價）</div></div>
   <div class="panel card kl"><div class="kl-title" style="padding:10px 12px 0;font-size:17px;font-weight:700">${(d.code||'').replace(/[<>&]/g,'')} <span style="margin-left:6px">${((d.info&&d.info.name)||'').replace(/[<>&]/g,'')}</span><span style="font-size:12px;font-weight:400;color:var(--muted,#888);margin-left:8px">${((d.info&&d.info.market)||'').replace(/[<>&]/g,'')}</span></div><div class="kl-bar"><div class="tabs" id="kl-tf"><button onclick="klTf('D',this)" class="on">日K</button><button onclick="klTf('W',this)">週K</button><button onclick="klTf('M',this)">月K</button></div><div class="tabs" id="kl-range"></div>
-  <div class="tabs" id="kl-ind"><button onclick="klInd('macd',this)" class="on">MACD</button><button onclick="klInd('rsi',this)">RSI</button><button onclick="klInd('kd',this)">KD</button><button onclick="klInd('none',this)">隱藏</button></div></div>
+  <div class="tabs" id="kl-ov"><button onclick="klBBtoggle(this)">布林通道</button></div>
+  <div class="tabs" id="kl-ind"><button onclick="klInd('macd',this)" class="on">MACD</button><button onclick="klInd('rsi',this)">RSI</button><button onclick="klInd('kd',this)">KD</button><button onclick="klInd('wr',this)">威廉</button><button onclick="klInd('dmi',this)">DMI</button><button onclick="klInd('bias',this)">乖離</button><button onclick="klInd('none',this)">隱藏</button></div></div>
   <div class="kl-leg" style="padding:6px 12px 0" id="kl-leg"></div>
   <div class="kl-info" id="kl-info">移動游標或手指查看每日開高低收</div>
   <div class="kl-wrap"><canvas id="kl-cv"></canvas></div>
@@ -2471,6 +2502,7 @@ function klTf(tf,btn){
   klBuild(tf);_kl.range=tf==='D'?60:tf==='W'?52:36;_kl.hover=-1;klRangeBtns();klLegend();klStats();klDraw();
 }
 function klInd(m,btn){if(!_kl)return;_kl.ind=m;document.querySelectorAll('#kl-ind button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');klDraw();}
+function klBBtoggle(btn){if(!_kl)return;_kl.bbOn=!_kl.bbOn;btn.classList.toggle('on',_kl.bbOn);klDraw();}
 function klSet(r,btn){if(!_kl)return;_kl.range=r;_kl.hover=-1;document.querySelectorAll('#kl-range button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');klStats();klDraw();}
 function klHover(fx){if(!_kl)return;const cnt=Math.min(_kl.range,_kl.n);const i=Math.max(0,Math.min(cnt-1,Math.floor(fx*cnt)));_kl.hover=_kl.n-cnt+i;klDraw();}
 function klStats(){
@@ -2500,6 +2532,7 @@ function klDraw(){
   let hi=-1e9,lo=1e9,vmax=0;
   for(let i=st;i<K.n;i++){hi=Math.max(hi,o.highs[i]);lo=Math.min(lo,o.lows[i]);vmax=Math.max(vmax,o.volumes[i]||0);
     for(const m of K.ma){if(m[i]!=null){hi=Math.max(hi,m[i]);lo=Math.min(lo,m[i]);}}}
+  if(K.bbOn&&K.bb)for(let i=st;i<K.n;i++){if(K.bb.up[i]!=null){hi=Math.max(hi,K.bb.up[i]);lo=Math.min(lo,K.bb.lo[i]);}}
   const lvOn=K.tf==='D'&&cnt<=130;
   if(lvOn)for(const l of K.lv){hi=Math.max(hi,l[1]);lo=Math.min(lo,l[1]);}
   const hi0=hi,lo0=lo;const pad=(hi-lo)*.06||1;hi+=pad;lo-=pad;
@@ -2518,6 +2551,7 @@ function klDraw(){
   }
   const line=(arr,col,fy,w)=>{c.strokeStyle=col;c.lineWidth=w||1.3;c.beginPath();let on=false;for(let i=st;i<K.n;i++){if(arr[i]==null)continue;const x=X(i),y=fy(arr[i]);on?c.lineTo(x,y):c.moveTo(x,y);on=true;}c.stroke();};
   K.ma.forEach((m,i)=>line(m,cols[i],Y));
+  if(K.bbOn&&K.bb){line(K.bb.up,'rgba(130,130,180,.95)',Y,1);line(K.bb.mid,'rgba(150,150,150,.7)',Y,1);line(K.bb.lo,'rgba(130,130,180,.95)',Y,1);c.fillStyle=TX;c.textAlign='left';c.fillText('BB(20,2)',padL+2,top+8);}
   line(K.vma[1],'#2f6fb5',v=>vBase-v/(vmax||1)*volH,1);
   c.fillStyle=TX;c.textAlign='left';c.fillText('量(張) 高 '+Math.round(vmax).toLocaleString(),padL+2,vTop+4);
   // 區間最高／最低標註
@@ -2531,20 +2565,29 @@ function klDraw(){
     c.strokeStyle=GR;c.strokeRect(padL,iTop,W-padL-padR,indH);c.fillStyle=TX;c.textAlign='left';
     let a,b;
     if(K.ind==='macd'){a=1e9;b=-1e9;for(let i=st;i<K.n;i++)for(const v of [K.macd.dif[i],K.macd.dea[i],K.macd.hist[i]]){if(v==null)continue;a=Math.min(a,v);b=Math.max(b,v);}}
+    else if(K.ind==='wr'){a=-100;b=0;}
+    else if(K.ind==='bias'){a=1e9;b=-1e9;for(let i=st;i<K.n;i++){const v=K.bias[i];if(v==null)continue;a=Math.min(a,v);b=Math.max(b,v);}a=Math.min(a,0);b=Math.max(b,0);}
+    else if(K.ind==='dmi'){a=0;b=-1e9;for(let i=st;i<K.n;i++)for(const v of [K.adx.pdi[i],K.adx.ndi[i],K.adx.adx[i]]){if(v==null)continue;b=Math.max(b,v);}if(b<=0)b=50;}
     else{a=0;b=100;}
     if(a===b){a-=1;b+=1;}
     const YI=v=>iTop+(b-v)/(b-a)*indH;
+    const gl=vals=>{for(const lv of vals){const y=YI(lv);c.strokeStyle='rgba(120,110,90,.3)';c.setLineDash([3,3]);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.setLineDash([]);c.fillStyle=TX;c.textAlign='left';c.fillText(lv,W-padR+4,y);}};
     if(K.ind==='macd'){
       const z=YI(0);c.strokeStyle='rgba(120,110,90,.35)';c.beginPath();c.moveTo(padL,z);c.lineTo(W-padR,z);c.stroke();
       for(let i=st;i<K.n;i++){const v=K.macd.hist[i];c.fillStyle=v>=0?UP:DN;c.globalAlpha=.6;const y=YI(v);c.fillRect(X(i)-bw/2,Math.min(y,z),bw,Math.abs(y-z)||1);c.globalAlpha=1;}
       line(K.macd.dif,'#d9822b',YI,1.2);line(K.macd.dea,'#2f6fb5',YI,1.2);
       c.fillStyle=TX;c.textAlign='left';c.fillText('MACD(12,26,9)　橘＝DIF　藍＝DEA　柱＝OSC',padL+4,iTop+8);
     }else if(K.ind==='rsi'){
-      for(const lv of [30,50,70]){const y=YI(lv);c.strokeStyle='rgba(120,110,90,.3)';c.setLineDash([3,3]);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.setLineDash([]);c.fillStyle=TX;c.textAlign='left';c.fillText(lv,W-padR+4,y);}
-      line(K.rsi,'#7a4fa0',YI,1.3);c.fillStyle=TX;c.textAlign='left';c.fillText('RSI(14)　70 超買／30 超賣',padL+4,iTop+8);
-    }else{
-      for(const lv of [20,50,80]){const y=YI(lv);c.strokeStyle='rgba(120,110,90,.3)';c.setLineDash([3,3]);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.setLineDash([]);c.fillStyle=TX;c.textAlign='left';c.fillText(lv,W-padR+4,y);}
-      line(K.kd.K,'#d9822b',YI,1.2);line(K.kd.D,'#2f6fb5',YI,1.2);c.fillStyle=TX;c.textAlign='left';c.fillText('KD(9,3,3)　橘＝K　藍＝D',padL+4,iTop+8);
+      gl([30,50,70]);line(K.rsi,'#7a4fa0',YI,1.3);c.fillStyle=TX;c.textAlign='left';c.fillText('RSI(14)　70 超買／30 超賣',padL+4,iTop+8);
+    }else if(K.ind==='kd'){
+      gl([20,50,80]);line(K.kd.K,'#d9822b',YI,1.2);line(K.kd.D,'#2f6fb5',YI,1.2);c.fillStyle=TX;c.textAlign='left';c.fillText('KD(9,3,3)　橘＝K　藍＝D',padL+4,iTop+8);
+    }else if(K.ind==='wr'){
+      gl([-20,-50,-80]);line(K.wr,'#7a4fa0',YI,1.3);c.fillStyle=TX;c.textAlign='left';c.fillText('威廉 %R(14)　-20 超買／-80 超賣',padL+4,iTop+8);
+    }else if(K.ind==='bias'){
+      const z=YI(0);c.strokeStyle='rgba(120,110,90,.35)';c.beginPath();c.moveTo(padL,z);c.lineTo(W-padR,z);c.stroke();
+      line(K.bias,'#d9822b',YI,1.3);c.fillStyle=TX;c.textAlign='left';c.fillText('乖離率 BIAS(20)　偏離 20 日均線 %',padL+4,iTop+8);
+    }else if(K.ind==='dmi'){
+      gl([20,40]);line(K.adx.pdi,'#c23b22',YI,1.2);line(K.adx.ndi,'#2f6fb5',YI,1.2);line(K.adx.adx,'#d9822b',YI,1.5);c.fillStyle=TX;c.textAlign='left';c.fillText('DMI(14)　紅＝+DI　藍＝−DI　橘＝ADX',padL+4,iTop+8);
     }
   }
   c.fillStyle=TX;c.textAlign='left';
@@ -2558,6 +2601,10 @@ function klDraw(){
   if(K.ind==='macd')indTxt=`　DIF ${f(K.macd.dif[h])}　DEA ${f(K.macd.dea[h])}　OSC ${f(K.macd.hist[h])}`;
   else if(K.ind==='rsi')indTxt=`　RSI ${f(K.rsi[h])}`;
   else if(K.ind==='kd')indTxt=`　K ${f(K.kd.K[h])}　D ${f(K.kd.D[h])}`;
+  else if(K.ind==='wr')indTxt=`　%R ${f(K.wr[h])}`;
+  else if(K.ind==='bias')indTxt=`　BIAS ${f(K.bias[h])}%`;
+  else if(K.ind==='dmi')indTxt=`　+DI ${f(K.adx.pdi[h])}　−DI ${f(K.adx.ndi[h])}　ADX ${f(K.adx.adx[h])}`;
+  if(K.bbOn&&K.bb)indTxt+=`　BB上 ${f(K.bb.up[h])}　中 ${f(K.bb.mid[h])}　下 ${f(K.bb.lo[h])}`;
   document.getElementById('kl-info').innerHTML=`<b>${(o.dates[h]||'').slice(0,10)}</b>（${KL_TFN[K.tf]}K）　開 ${f(o.opens[h])}　高 ${f(o.highs[h])}　低 ${f(o.lows[h])}　收 <b>${f(o.closes[h])}</b>　<span style="color:${chv>=0?UP:DN}">${sg}${chv.toFixed(2)}（${sg}${ch.toFixed(2)}%）</span>　振幅 ${amp}%　量 ${Math.round(vv).toLocaleString()}張${vm?`（均量20 的 ${(vv/vm).toFixed(2)} 倍）`:''}<br>${K.ma.map((m,i)=>`<span style="color:${cols[i]}">MA${KL_MA[K.tf][i]} ${f(m[h])}</span>`).join('　')}${indTxt}`;
 }
 window.addEventListener('resize',()=>{if(document.getElementById('kl-cv'))klDraw();});
