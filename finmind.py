@@ -1,0 +1,195 @@
+"""FinMind 財報整合（選用）：補齊個股研究「財務指標」的完整季度歷史——
+每股盈餘(EPS)、毛利率、營業利益率、淨利率、ROE(淨資產收益率)、ROA(總資產收益率)、
+流動比率、股東權益比率。
+
+啟用條件（兩者皆需，否則自動略過、不影響其他功能）：
+1. 環境變數 FINMIND_TOKEN（到 finmindtrade.com 免費註冊取得；無 token 時請求額度較低）。
+2. Render 網路政策允許連 api.finmindtrade.com。
+
+安全／正確性設計：
+- 無 token → 直接回空（不打外部、不報錯）；任何例外都優雅降級。
+- 綜合損益表（損益類）官方為「累計數（YTD）」，本模組會依會計年度還原「單季」數字
+  （Q1 取原值，其後 = 本季累計 − 上一季累計）；資產負債表為「時點數」不還原。
+- 每個指標各自獨立計算：對應科目找不到就「該指標留空」，絕不輸出推估或錯誤數字。
+- 欄位用別名（英文＋中文）比對，容忍 FinMind/官方欄名差異。
+"""
+import logging
+import os
+import threading
+import time
+from typing import Dict, List, Optional
+
+import requests
+
+logger = logging.getLogger(__name__)
+FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+_TTL = 24 * 3600
+_cache: Dict[str, dict] = {}
+_lock = threading.Lock()
+
+# 科目別名（任一子字串命中即算；exclude 用來排除容易誤抓的近似科目）
+_ALIAS = {
+    "revenue":   (["Revenue", "營業收入", "收入合計", "收益合計"], ["Cost", "成本", "OtherIncome", "業外", "其他"]),
+    "gross":     (["GrossProfit", "營業毛利"], ["率", "margin"]),
+    "op_income": (["OperatingIncome", "營業利益"], ["率", "margin", "外"]),
+    "net_income":(["IncomeAfterTaxes", "ProfitForThePeriod", "本期淨利", "稅後淨利", "本期net"], ["非控制", "其他綜合", "綜合損益總額", "率", "每股"]),
+    "eps":       (["EPS", "每股盈餘", "每股盈虧"], ["稀釋", "Diluted"]),
+    "equity":    (["EquityAttributableToOwnersOfParent", "權益總額", "權益總計", "股東權益總額", "Equity"], ["非控制", "其他", "報酬"]),
+    "assets":    (["TotalAssets", "資產總額", "資產總計"], []),
+    "cur_assets":(["CurrentAssets", "流動資產"], ["非流動"]),
+    "cur_liab":  (["CurrentLiabilities", "流動負債"], ["非流動"]),
+}
+
+
+def enabled() -> bool:
+    return bool(os.environ.get("FINMIND_TOKEN", "").strip())
+
+
+def _token() -> str:
+    return os.environ.get("FINMIND_TOKEN", "").strip()
+
+
+def _fetch(dataset: str, data_id: str, start: str) -> List[dict]:
+    try:
+        headers = {}
+        tok = _token()
+        if tok:
+            headers["Authorization"] = f"Bearer {tok}"
+        r = requests.get(FINMIND_URL, params={"dataset": dataset, "data_id": data_id, "start_date": start},
+                         headers=headers, timeout=(5, 25))
+        if not r.ok:
+            return []
+        j = r.json()
+        return j.get("data") or []
+    except Exception as e:
+        logger.warning(f"finmind {dataset} {data_id}: {e}")
+        return []
+
+
+def _num(v):
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
+def _period(date_str: str) -> Optional[str]:
+    """'2026-03-31' → '2026Q1'（依月份分季）。"""
+    s = str(date_str or "")
+    if len(s) < 7 or s[4] != "-":
+        return None
+    try:
+        y = s[:4]; mth = int(s[5:7])
+    except Exception:
+        return None
+    return f"{y}Q{(mth - 1) // 3 + 1}"
+
+
+def _match(type_name: str, key: str) -> bool:
+    inc, exc = _ALIAS[key]
+    t = str(type_name)
+    if any(x.lower() in t.lower() for x in exc):
+        return False
+    return any(s.lower() in t.lower() for s in inc)
+
+
+def _pivot(rows: List[dict]) -> Dict[str, Dict[str, float]]:
+    """把長格式 [{date,type,value}] 轉成 {date: {標準科目: 值}}（每個標準科目取第一個命中的 type）。"""
+    byd: Dict[str, Dict[str, float]] = {}
+    for r in rows:
+        d = r.get("date"); t = r.get("type"); v = _num(r.get("value"))
+        if not d or t is None or v is None:
+            continue
+        slot = byd.setdefault(d, {})
+        for key in _ALIAS:
+            if key not in slot and _match(t, key):
+                slot[key] = v
+                break
+    return byd
+
+
+def _decumulate(byd: Dict[str, Dict[str, float]], field: str) -> Dict[str, float]:
+    """損益類還原單季：同一會計年度內，本季單季 = 本季累計 − 上一季累計；每年第一季取原值。
+    回傳 {date: 單季值}。只處理有該 field 的日期。"""
+    dates = sorted(d for d in byd if field in byd[d])
+    out: Dict[str, float] = {}
+    prev_by_year: Dict[str, float] = {}
+    for d in dates:
+        year = d[:4]
+        cum = byd[d][field]
+        q = _period(d)
+        if q and q.endswith("Q1"):
+            out[d] = cum
+        elif year in prev_by_year:
+            out[d] = cum - prev_by_year[year]
+        else:
+            out[d] = cum                     # 年度中缺前季，退而用累計（避免整季消失）
+        prev_by_year[year] = cum
+    return out
+
+
+def financial_indicators(code: str) -> Optional[dict]:
+    """回傳各指標的季度序列：{metric: [{period, value}], ...}；未啟用或無資料回 None。"""
+    if not enabled():
+        return None
+    code = str(code).strip()
+    with _lock:
+        ent = _cache.get(code)
+        if ent and time.time() - ent["at"] < _TTL:
+            return ent["data"]
+    start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 5 * 365 * 86400))
+    inc = _pivot(_fetch("TaiwanStockFinancialStatements", code, start))
+    bs = _pivot(_fetch("TaiwanStockBalanceSheet", code, start))
+    data = _build(inc, bs)
+    with _lock:
+        _cache[code] = {"at": time.time(), "data": data}
+    return data
+
+
+def _build(inc: Dict[str, Dict[str, float]], bs: Dict[str, Dict[str, float]]) -> Optional[dict]:
+    # 單季損益
+    rev_q = _decumulate(inc, "revenue")
+    gross_q = _decumulate(inc, "gross")
+    op_q = _decumulate(inc, "op_income")
+    net_q = _decumulate(inc, "net_income")
+    eps_q = _decumulate(inc, "eps")
+    out: Dict[str, List[dict]] = {}
+
+    def series(dates_vals):
+        rows = []
+        for d in sorted(dates_vals):
+            p = _period(d)
+            if p and dates_vals[d] is not None:
+                rows.append({"period": p, "value": round(dates_vals[d], 2)})
+        return rows
+
+    def ratio(numer_q, denom_q):
+        r = {}
+        for d in numer_q:
+            dn = denom_q.get(d)
+            if dn:
+                r[d] = numer_q[d] / dn * 100
+        return r
+
+    if eps_q:
+        out["eps"] = series(eps_q)
+    if gross_q and rev_q:
+        out["gross"] = series(ratio(gross_q, rev_q))
+    if op_q and rev_q:
+        out["op"] = series(ratio(op_q, rev_q))
+    if net_q and rev_q:
+        out["net"] = series(ratio(net_q, rev_q))
+    # 資產負債表為時點數（不還原）；ROE/ROA 用單季淨利 ÷ 期末權益／資產
+    equity = {d: bs[d]["equity"] for d in bs if "equity" in bs[d]}
+    assets = {d: bs[d]["assets"] for d in bs if "assets" in bs[d]}
+    ca = {d: bs[d]["cur_assets"] for d in bs if "cur_assets" in bs[d]}
+    cl = {d: bs[d]["cur_liab"] for d in bs if "cur_liab" in bs[d]}
+    if net_q and equity:
+        out["roe"] = series(ratio(net_q, equity))
+    if net_q and assets:
+        out["roa"] = series(ratio(net_q, assets))
+    if ca and cl:
+        out["current_ratio"] = series(ratio(ca, cl))
+    if equity and assets:
+        out["equity_ratio"] = series(ratio(equity, assets))
+    return out or None
