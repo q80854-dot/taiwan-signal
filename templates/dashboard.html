@@ -2575,8 +2575,71 @@ async function revRefresh(btn){
   btn.disabled=false;btn.textContent='立即更新營收';
 }
 /* 2026-10-08 個股研究補強：區間績效、三大法人近 20 日、融資融券 */
+// 2026-10-11：個股研究延伸區塊——公司概況、技術指標解讀、籌碼結構（外資持股／集保大戶）、
+// 賣空分析、未提供資料的誠實說明。全部優雅降級：對應資料缺就整塊不顯示。
+function _ciToneC(t){return t==='up'?'var(--up)':t==='down'?'var(--down)':t==='warn'?'var(--warn,#e0a63c)':'var(--t2)';}
+function _companyProfileHtml(d){
+  const CP=d.company_profile;if(!CP)return '';
+  const cap=CP.capital?(CP.capital>=1e8?(CP.capital/1e8).toFixed(1)+' 億元':_fmtN(CP.capital,0)+' 元'):'';
+  const kv=(l,v)=>v?`<div class="kv"><span>${l}</span><span>${safe(v)}</span></div>`:'';
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">公司概況</div></div>
+  <div class="panel card"><div class="panel-body">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 26px">
+      ${kv('董事長',CP.chairman)}${kv('總經理',CP.ceo)}${kv('發言人',CP.spokesman)}
+      ${kv('成立日期',CP.established)}${kv('上市／上櫃日',CP.listed)}${kv('實收資本額',cap)}
+    </div>
+    ${CP.business?`<div style="font-size:12px;color:var(--t2);margin-top:8px;line-height:1.6"><b style="color:var(--t3)">主要業務</b>　${safe(CP.business)}</div>`:''}
+    ${CP.website?`<div style="font-size:11px;margin-top:6px"><a class="lnk" href="${escH(CP.website)}" target="_blank" rel="noopener">公司官網 →</a></div>`:''}
+    <div style="font-size:11px;color:var(--t3);margin-top:6px">來源：TWSE／TPEx 上市櫃公司基本資料（t187ap03，每日更新）</div>
+  </div></div>`;
+}
+function _indicatorReadingHtml(d){
+  const IR=d.indicator_reading;if(!IR||!IR.items||!IR.items.length)return '';
+  const dot=t=>`<span style="color:${_ciToneC(t)}">${t==='up'?'▲':t==='down'?'▼':t==='warn'?'⚠':'•'}</span>`;
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">技術指標解讀</div></div>
+  <div class="panel card"><div class="panel-body">
+    <div class="note-box" style="border-left-color:${_ciToneC(IR.overall.tone)};margin-bottom:10px"><b style="color:${_ciToneC(IR.overall.tone)}">總評</b>　${safe(IR.overall.text)}</div>
+    ${IR.items.map(it=>`<div class="kv" style="align-items:flex-start"><span style="flex:0 0 108px">${dot(it.tone)} ${safe(it.label)}</span><span style="color:var(--t2);font-weight:400;text-align:left;flex:1;margin-left:12px">${safe(it.reading)}</span></div>`).join('')}
+    <div style="font-size:11px;color:var(--t3);margin-top:6px">解讀由系統依本頁技術指標（與掃描同一套 indicators.py）自動生成，僅供參考，不構成買賣建議。</div>
+  </div></div>`;
+}
+function _ownershipHtml(d){
+  const FH=d.foreign_holding,DP=d.dispersion;if(!FH&&!DP)return '';
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">籌碼結構（法人持股／集保大戶）</div></div>
+  <div class="hero-row" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+    <div class="kpi" style="border-left:none"><div class="kpi-label">外資及陸資持股比率</div><div class="kpi-val" style="font-size:20px">${FH&&FH.ratio!=null?FH.ratio+'%':'—'}</div><div class="kpi-sub">${FH&&FH.ceiling!=null?'投資上限 '+FH.ceiling+'%':'僅上市股；上櫃暫無'}</div></div>
+    <div class="kpi"><div class="kpi-label">集保大戶持股（≥400 張）</div><div class="kpi-val" style="font-size:20px">${DP&&DP.big_pct!=null?DP.big_pct+'%':'—'}</div><div class="kpi-sub">${DP&&DP.date?safe(DP.date)+' 集保':'—'}</div></div>
+    <div class="kpi"><div class="kpi-label">散戶持股（≤10 張）</div><div class="kpi-val" style="font-size:20px">${DP&&DP.small_pct!=null?DP.small_pct+'%':'—'}</div><div class="kpi-sub">${DP&&DP.holders?_fmtN(DP.holders,0)+' 股東人數':''}</div></div>
+  </div>
+  <div style="font-size:11px;color:var(--t3);margin-top:6px">外資持股：證交所 MI_QFIIS（每日）。大戶／散戶：集保結算所股權分散表（每週，以集保庫存佔比計；大戶＝持股 ≥400 張級距合計）。大戶比例上升、散戶下降，常視為籌碼趨穩的參考，非投資建議。</div>`;
+}
+function _shortAnalysisHtml(d){
+  const M=d.margin,SH=(d.flags||{}).short;if(!M&&!SH)return '';
+  const parts=[];
+  if(M&&M.short_balance!=null)parts.push(`融券餘額 ${_fmtN(M.short_balance,0)} 張`+(M.short_balance_chg!=null?`（較前日 ${_sg(M.short_balance_chg)}）`:''));
+  if(SH&&SH.sbl_short_lots!=null)parts.push(`借券賣出 ${_fmtN(SH.sbl_short_lots,0)} 張`+(SH.sbl_short_chg_lots!=null?`（${SH.chg_days} 日 ${_sg(SH.sbl_short_chg_lots)}）`:''));
+  const ratio=(M&&M.margin_balance)?(M.short_balance/M.margin_balance*100):null;
+  const sVd=SH&&SH.short_vs_volume_days;
+  let read,tone;
+  if(sVd!=null&&sVd>=3){read=`空單餘額約為當日成交量的 ${sVd} 倍，水位偏高：看空力道強，但一旦回補／軋空可能快速助漲，雙面刃。`;tone='warn';}
+  else if(ratio!=null&&ratio>30){read=`券資比偏高（${ratio.toFixed(1)}%），籌碼面對多方較不利，留意融券回補與軋空風險。`;tone='warn';}
+  else if(!parts.length){read='暫無融券／借券資料（部分個股或上櫃股未涵蓋）。';tone='neutral';}
+  else{read='融券與借券水位不高，空方壓力有限。';tone='neutral';}
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">賣空數據分析（融券＋借券）</div></div>
+  <div class="panel card"><div class="panel-body">
+    <div style="font-size:12.5px;color:var(--t2);line-height:1.7">${parts.join('；')||'—'}${ratio!=null?`；券資比 ${ratio.toFixed(1)}%`:''}。</div>
+    <div class="note-box" style="margin-top:8px;border-left-color:${_ciToneC(tone)}">${read}</div>
+    <div style="font-size:11px;color:var(--t3);margin-top:6px">來源：證交所 MI_MARGN（融資融券）、TWT93U 借券賣出、TWTB4U。空單「倍數」＝空單餘額 ÷ 當日成交量。</div>
+  </div></div>`;
+}
+function _researchNoteHtml(d){
+  const RN=d.research_note;if(!RN)return '';
+  const row=(l,v)=>`<div class="kv" style="align-items:flex-start"><span style="flex:0 0 108px">${l}</span><span style="color:var(--t2);font-weight:400;text-align:left;flex:1;margin-left:12px">${safe(v)}</span></div>`;
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">本頁未提供的資料（誠實說明）</div></div>
+  <div class="panel card"><div class="panel-body">${row('內部人交易',RN.insider)}${row('分析師評級',RN.analyst)}</div></div>`;
+}
 function instExtraHtml(d){
-  let h='';const L=d.ohlcv_long&&d.ohlcv_long.closes&&d.ohlcv_long.closes.length?d.ohlcv_long:d.ohlcv;
+  let h='';h+=_companyProfileHtml(d);const L=d.ohlcv_long&&d.ohlcv_long.closes&&d.ohlcv_long.closes.length?d.ohlcv_long:d.ohlcv;
   const fmtPct=v=>v==null||!isFinite(v)?'—':`<span style="color:${clr(v)}">${v>0?'+':''}${v.toFixed(2)}%</span>`;
   const lots=v=>v==null?'—':`<span style="color:${_col(v)}">${_sg(v)}</span>`;
   if(L&&L.closes&&L.closes.length>5){
@@ -2645,6 +2708,10 @@ function instExtraHtml(d){
       <div class="kpi"><div class="kpi-label">資券互抵</div><div class="kpi-val" style="font-size:17px">${M.offsetting==null?'—':_fmtN(M.offsetting,0)}</div><div class="kpi-sub">張</div></div>
     </div><div style="font-size:11px;color:var(--t3);margin-top:6px">來源：${M.source==='tpex_openapi'?'櫃買中心 OpenAPI':'證交所 OpenAPI MI_MARGN'}（每日收盤後更新）</div>`;
   }
+  h+=_shortAnalysisHtml(d);
+  h+=_ownershipHtml(d);
+  h+=_indicatorReadingHtml(d);
+  h+=_researchNoteHtml(d);
   return h;
 }
 function renderInstrument(d){
