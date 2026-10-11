@@ -2753,8 +2753,73 @@ function instExtraHtml(d){
   }
   h+=_shortAnalysisHtml(d);
   h+=_ownershipHtml(d);
+  h+=_finChartHtml(d);
   h+=_indicatorReadingHtml(d);
   return h;
+}
+// 2026-10-11 財務指標圖：月營收年增率（近 24 月）＋季毛利率／營業利益率（近 12 季），資料取自 DB 已累積歷史。
+function _finChartHtml(d){
+  const F=d.fin_series||{};const hasR=(F.revenue||[]).length,hasM=(F.margin||[]).length;
+  if(!hasR&&!hasM)return '';
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">財務指標</div></div>
+  <div class="panel card"><div class="panel-body">
+    <div class="tabs" id="fin-tabs">
+      ${hasR?`<button class="on" onclick="finTab('revyoy',this)">月營收年增率</button>`:''}
+      ${hasM?`<button class="${hasR?'':'on'}" onclick="finTab('gross',this)">毛利率</button><button onclick="finTab('op',this)">營業利益率</button>`:''}
+    </div>
+    <div class="kl-info" id="fin-info" style="padding:2px 2px 6px">移動游標查看每期數值</div>
+    <div style="height:240px;margin-top:4px"><canvas id="fin-cv"></canvas></div>
+    <div style="font-size:11px;color:var(--t3);margin-top:8px">月營收年增率：公開資訊觀測站月營收（紅＝年增為正、綠＝為負）。毛利率／營業利益率：綜合損益表季報累積推算單季。資料由系統逐期累積，越久越完整；某些剛納入的個股歷史點數可能較少。</div>
+  </div></div>`;
+}
+// 以原生 canvas 繪製（與 K 線同手法，不依賴外部 CDN，離線也能顯示）。
+let _finD=null,_finMetric='revyoy',_finHover=-1;
+function _finSeries(m){
+  const F=(_finD&&_finD.fin_series)||{};
+  if(m==='revyoy'){const s=F.revenue||[];return {labels:s.map(x=>x.period),data:s.map(x=>x.yoy_pct),kind:'bar',name:'月營收年增率'};}
+  const s=F.margin||[],key=m==='gross'?'gross_margin_pct':'operating_margin_pct';
+  return {labels:s.map(x=>x.period),data:s.map(x=>x[key]),kind:'line',name:m==='gross'?'毛利率':'營業利益率'};
+}
+function finChartInit(d){
+  _finD=d;const F=d.fin_series||{};_finMetric=(F.revenue&&F.revenue.length)?'revyoy':'gross';_finHover=-1;
+  const cv=document.getElementById('fin-cv');
+  if(cv){const mv=e=>{const r=cv.getBoundingClientRect();finHover(((e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width);};
+    cv.addEventListener('mousemove',mv);cv.addEventListener('touchmove',mv,{passive:true});cv.addEventListener('touchstart',mv,{passive:true});
+    cv.addEventListener('mouseleave',()=>{_finHover=-1;finChartDraw(_finMetric);});}
+  finChartDraw(_finMetric);
+}
+function finTab(m,btn){if(!_finD)return;_finMetric=m;_finHover=-1;document.querySelectorAll('#fin-tabs button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');finChartDraw(m);}
+function finHover(fx){const s=_finSeries(_finMetric);if(!s.data.length)return;_finHover=Math.max(0,Math.min(s.data.length-1,Math.floor(fx*s.data.length)));finChartDraw(_finMetric);}
+function finChartDraw(m){
+  const cv=document.getElementById('fin-cv');if(!cv||!_finD)return;
+  const s=_finSeries(m),n=s.data.length;
+  const cs=getComputedStyle(document.documentElement);
+  const UP=cs.getPropertyValue('--up').trim()||'#e5484d',DN=cs.getPropertyValue('--down').trim()||'#16a34a',AC=cs.getPropertyValue('--accent').trim()||'#e0a63c',TX=cs.getPropertyValue('--t3').trim()||'#888',GR='rgba(120,110,90,.18)';
+  const wrap=cv.parentElement,W=wrap.clientWidth,H=wrap.clientHeight||240,dpr=window.devicePixelRatio||1;
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
+  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);c.font='10px sans-serif';c.textBaseline='middle';
+  const info=document.getElementById('fin-info');
+  if(!n){if(info)info.textContent='（尚無足夠歷史資料，系統逐期累積中）';return;}
+  const padL=42,padR=8,padT=12,padB=26,plotW=W-padL-padR,plotH=H-padT-padB;
+  const vals=s.data.filter(v=>v!=null&&isFinite(v));
+  let mn=Math.min(...vals,0),mx=Math.max(...vals,0);if(mn===mx){mn-=1;mx+=1;}const padv=(mx-mn)*.08;mn-=padv;mx+=padv;
+  const X=i=>padL+(i+.5)*plotW/n,Y=v=>padT+(mx-v)/(mx-mn)*plotH;
+  c.strokeStyle=GR;c.fillStyle=TX;c.lineWidth=1;
+  for(let g=0;g<=4;g++){const v=mn+(mx-mn)*g/4,y=Y(v);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.textAlign='right';c.fillText(v.toFixed(0)+'%',padL-4,y);}
+  const zy=Y(0);if(mn<0&&mx>0){c.strokeStyle='rgba(120,110,90,.45)';c.beginPath();c.moveTo(padL,zy);c.lineTo(W-padR,zy);c.stroke();}
+  if(s.kind==='bar'){
+    const bw=Math.max(2,Math.min(22,plotW/n*.64));
+    for(let i=0;i<n;i++){const v=s.data[i];if(v==null)continue;const x=X(i),y=Y(v);c.fillStyle=v>=0?UP:DN;c.globalAlpha=(_finHover<0||_finHover===i)?.9:.5;c.fillRect(x-bw/2,Math.min(y,zy),bw,Math.abs(y-zy)||1);c.globalAlpha=1;}
+  }else{
+    c.strokeStyle=AC;c.lineWidth=2;c.beginPath();let on=false;for(let i=0;i<n;i++){const v=s.data[i];if(v==null){on=false;continue;}const x=X(i),y=Y(v);on?c.lineTo(x,y):c.moveTo(x,y);on=true;}c.stroke();
+    c.fillStyle=AC;for(let i=0;i<n;i++){const v=s.data[i];if(v==null)continue;c.beginPath();c.arc(X(i),Y(v),(_finHover===i?3.5:2),0,7);c.fill();}
+  }
+  c.fillStyle=TX;c.textAlign='center';
+  const step=Math.max(1,Math.ceil(n/7));
+  for(let i=0;i<n;i++){if(i%step!==0&&i!==n-1)continue;const lab=String(s.labels[i]||'');c.fillText(lab.length>7?lab.slice(2):lab,X(i),H-padB/2+2);}
+  if(_finHover>=0){const x=X(_finHover);c.strokeStyle='rgba(120,110,90,.5)';c.setLineDash([3,3]);c.beginPath();c.moveTo(x,padT);c.lineTo(x,H-padB);c.stroke();c.setLineDash([]);}
+  const hi=_finHover>=0?_finHover:n-1,hv=s.data[hi];
+  if(info)info.innerHTML=`<b>${safe(s.labels[hi]||'')}</b>　${s.name} <b style="color:${s.kind==='bar'?(hv>=0?UP:DN):AC}">${hv==null?'—':(hv>=0&&s.kind==='bar'?'+':'')+hv.toFixed(2)+'%'}</b>`;
 }
 function renderInstrument(d){
   const el=document.getElementById('inst-result');if(!el)return;
@@ -2900,6 +2965,7 @@ function renderInstrument(d){
   el.innerHTML=html;
   try{if(info&&info.code)startLiveQuote(info.code);}catch(e){}
   try{klInit(d);}catch(e){console.error('kline',e);}
+  try{finChartInit(d);}catch(e){console.error('fin',e);}
   try{addInstEvents(d.code||(d.info&&d.info.code));}catch(e){}
 }
 

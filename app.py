@@ -1873,6 +1873,12 @@ def api_instrument(ticker: str):
         out["board_holding"] = company_info.get_board_holding(code)
     except Exception as e:
         out["board_holding"] = None; out["board_holding_error"] = str(e)
+    try:   # 財務指標時間序列：月營收年增率（近 24 月）＋季毛利率／營益率（近 12 季），皆取自已累積的 DB 歷史
+        from state_store import store as _stfs
+        out["fin_series"] = {"revenue": _stfs.get_monthly_revenue_series(code, 24),
+                             "margin": _stfs.get_quarterly_margin_series(code, 12)}
+    except Exception as e:
+        out["fin_series"] = None; out["fin_series_error"] = str(e)
     try:
         from indicators import interpret
         out["indicator_reading"] = interpret(out.get("indicators"))
