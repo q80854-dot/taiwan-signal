@@ -246,3 +246,63 @@ def get_dispersion(code: str) -> Optional[dict]:
         return None
     return {"date": d.get("date"), "big_pct": row.get("big"),
             "small_pct": row.get("small"), "holders": row.get("holders")}
+
+
+# ──────────────────── 董監事持股（內部人持股） ────────────────────
+# 來源：TWSE/TPEx opendata 董監事持股相關彙總表（t187ap11）。
+# 誠實註記：官方免費逐檔「全體董監持股比率」僅此類彙總表較接近，且主要涵蓋
+# 「持股不足法定成數」或當期揭露之公司，未必每檔都有；取不到就整塊不顯示（不以假資料充數）。
+# 沙箱無法連 TWSE 實測，正式站與「資料來源連線檢測」面板可確認是否取得。
+TWSE_BOARD_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap11_L"
+TPEX_BOARD_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap11_O"
+
+
+def _build_board_holding_map() -> Dict[str, dict]:
+    out: Dict[str, dict] = {}
+
+    def ingest(rows):
+        if not isinstance(rows, list) or not rows:
+            return
+        s = rows[0]
+        k_code = _find_key(s, "公司代號", "證券代號", "代號", "Code")
+        if not k_code:
+            return
+        k_issued = _find_key(s, "發行股數", "已發行", "issued")
+        # 直接的「成數／比率」欄位（實際、目前），排除法定應持有
+        k_ratio = _find_key(s, "持股成數", "持股比率", "percentage")
+        if k_ratio and any(x in str(k_ratio) for x in ("法定", "應")):
+            k_ratio = None
+        # 董事、監察人持股（可能分開，也可能已有合計）
+        k_all = _find_key(s, "全體董監", "董監事持股", "董監持股")
+        k_dir = _find_key(s, "全體董事持股", "董事持股", "董事目前")
+        k_sup = _find_key(s, "全體監察人持股", "監察人持股", "監察人目前")
+        k_pledge = _find_key(s, "設質", "質押", "pledge")
+        for r in rows:
+            code = str(r.get(k_code, "")).strip()
+            if not code or not code.isdigit():
+                continue
+            shares = None
+            if k_all:
+                shares = _num(r.get(k_all))
+            elif k_dir or k_sup:
+                shares = (_num(r.get(k_dir)) or 0) + (_num(r.get(k_sup)) or 0)
+            issued = _num(r.get(k_issued)) if k_issued else None
+            ratio = _num(r.get(k_ratio)) if k_ratio else None
+            if ratio is None and shares and issued:
+                ratio = round(shares / issued * 100, 2)
+            if ratio is None and shares is None:
+                continue
+            out[code] = {"ratio": ratio, "shares": shares, "issued": issued,
+                         "pledge_pct": _num(r.get(k_pledge)) if k_pledge else None}
+    for url, label in ((TWSE_BOARD_URL, "TWSE"), (TPEX_BOARD_URL, "TPEx")):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            if r.ok:
+                ingest(r.json())
+        except Exception as e:
+            logger.warning(f"board_holding {label}: {e}")
+    return out
+
+
+def get_board_holding(code: str) -> Optional[dict]:
+    return (_cached("board", _build_board_holding_map) or {}).get(str(code).strip())

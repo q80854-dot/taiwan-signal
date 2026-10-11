@@ -58,6 +58,24 @@ def test_foreign_holding_parsing(monkeypatch):
     assert f["ratio"] != 27.00
 
 
+def test_board_holding_sum_and_ratio(monkeypatch):
+    # 董事+監察人分開欄位、無現成成數 → 由 (董事+監察人)/發行股數 計算比率
+    rows = [{"公司代號": "2330", "發行股數": "1000000000",
+             "全體董事持股": "120000000", "全體監察人持股": "30000000",
+             "董監設質比率": "5.0"}]
+
+    def fake(url, *a, **k):
+        if "t187ap11_L" in url:
+            return FakeResp(rows)
+        return FakeResp([])
+    _patch(monkeypatch, fake)
+    b = C.get_board_holding("2330")
+    assert b and b["shares"] == 150000000.0
+    assert b["ratio"] == 15.0          # 150M / 1000M
+    assert b["pledge_pct"] == 5.0
+    assert C.get_board_holding("0001") is None
+
+
 def test_dispersion_big_small(monkeypatch):
     header = "資料日期,證券代號,持股分級,人數,股數,占集保庫存數比例\n"
     rows = [("1", "5"), ("2", "5"), ("3", "3"),        # 散戶 = 13

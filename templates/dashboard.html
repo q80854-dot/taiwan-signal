@@ -2651,14 +2651,16 @@ function _indicatorReadingHtml(d){
   </div></div>`;
 }
 function _ownershipHtml(d){
-  const FH=d.foreign_holding,DP=d.dispersion;if(!FH&&!DP)return '';
-  return `<div class="sec-label"><div class="bar"></div><div class="tx">籌碼結構（法人持股／集保大戶）</div></div>
-  <div class="hero-row" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+  const FH=d.foreign_holding,DP=d.dispersion,BD=d.board_holding;if(!FH&&!DP&&!BD)return '';
+  const bdSub=BD?((BD.pledge_pct!=null?'設質 '+BD.pledge_pct+'%':'內部人')):'官方免費資料有限';
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">籌碼結構（法人／董監／集保大戶）</div></div>
+  <div class="hero-row" style="grid-template-columns:repeat(4,minmax(0,1fr))">
     <div class="kpi" style="border-left:none"><div class="kpi-label">外資及陸資持股比率</div><div class="kpi-val" style="font-size:20px">${FH&&FH.ratio!=null?FH.ratio+'%':'—'}</div><div class="kpi-sub">${FH&&FH.ceiling!=null?'投資上限 '+FH.ceiling+'%':'僅上市股；上櫃暫無'}</div></div>
+    <div class="kpi"><div class="kpi-label">董監事持股比率</div><div class="kpi-val" style="font-size:20px">${BD&&BD.ratio!=null?BD.ratio+'%':'—'}</div><div class="kpi-sub">${safe(bdSub)}</div></div>
     <div class="kpi"><div class="kpi-label">集保大戶持股（≥400 張）</div><div class="kpi-val" style="font-size:20px">${DP&&DP.big_pct!=null?DP.big_pct+'%':'—'}</div><div class="kpi-sub">${DP&&DP.date?safe(DP.date)+' 集保':'—'}</div></div>
     <div class="kpi"><div class="kpi-label">散戶持股（≤10 張）</div><div class="kpi-val" style="font-size:20px">${DP&&DP.small_pct!=null?DP.small_pct+'%':'—'}</div><div class="kpi-sub">${DP&&DP.holders?_fmtN(DP.holders,0)+' 股東人數':''}</div></div>
   </div>
-  <div style="font-size:11px;color:var(--t3);margin-top:6px">外資持股：證交所 MI_QFIIS（每日）。大戶／散戶：集保結算所股權分散表（每週，以集保庫存佔比計；大戶＝持股 ≥400 張級距合計）。大戶比例上升、散戶下降，常視為籌碼趨穩的參考，非投資建議。</div>`;
+  <div style="font-size:11px;color:var(--t3);margin-top:6px">外資持股：證交所 MI_QFIIS（每日）。董監持股：TWSE／TPEx 董監事持股彙總表（內部人；官方免費逐檔資料有限，部分個股可能無資料）。大戶／散戶：集保結算所股權分散表（每週；大戶＝持股 ≥400 張級距合計）。董監與大戶比例上升、散戶下降，常視為籌碼趨穩的參考，非投資建議。</div>`;
 }
 function _shortAnalysisHtml(d){
   const M=d.margin,SH=(d.flags||{}).short;if(!M&&!SH)return '';
