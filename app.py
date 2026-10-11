@@ -1851,6 +1851,33 @@ def api_instrument(ticker: str):
         out["material_news"] = fetch_material_news_risk_map().get(code, [])
     except Exception as e:
         out["material_news"] = []; out["material_news_error"] = str(e)
+    # ★ 2026-10-11：個股研究延伸資料（使用者要求）——公司概況、外資（機構）持股比率、
+    # 集保股權分散（大戶／散戶）、技術指標白話解讀。逐項優雅降級，缺就不顯示。
+    try:
+        import company_info
+        out["company_profile"] = company_info.get_profile(code)
+    except Exception as e:
+        out["company_profile"] = None; out["company_profile_error"] = str(e)
+    try:
+        import company_info
+        out["foreign_holding"] = company_info.get_foreign_holding(code)
+    except Exception as e:
+        out["foreign_holding"] = None; out["foreign_holding_error"] = str(e)
+    try:
+        import company_info
+        out["dispersion"] = company_info.get_dispersion(code)
+    except Exception as e:
+        out["dispersion"] = None; out["dispersion_error"] = str(e)
+    try:
+        from indicators import interpret
+        out["indicator_reading"] = interpret(out.get("indicators"))
+    except Exception as e:
+        out["indicator_reading"] = None; out["indicator_reading_error"] = str(e)
+    # 台股沒有穩定的「逐檔內部人交易」「分析師評級」免費官方 API，明白標示未提供，不以推估充數。
+    out["research_note"] = {
+        "insider": "本系統未提供逐筆內部人（董監／大股東）交易：台股此資料散落於公開資訊觀測站申報表，無穩定免費逐檔 API。可至『公開資訊觀測站→股權相關→董監持股』查詢。",
+        "analyst": "本系統未提供分析師目標價／評級：台股無公開免費的券商評等彙整來源。本頁改以『技術指標解讀＋籌碼（三大法人／融券借券／集保大戶）＋基本面評分』作為研究依據。",
+    }
     try:
         from scanner import scanner
         live = [s for s in scanner.get_status().get("signals", []) if s.get("ticker") == t]

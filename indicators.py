@@ -280,3 +280,127 @@ def calc_all_indicators(data):
             "adx_trend":adx.get("trend","無趨勢"),"adx_strong":adx.get("strong",False),
             "total_score":total,"valid_count":valid_count,"overall_bias":bias,
             "current_price":closes[-1] if closes else None}
+
+
+def interpret(ind):
+    """把 calc_all_indicators() 的結果翻成白話「指標解讀」。
+    只讀已算好的值，不重算；回傳 {items:[{label,value,reading,tone}], overall:{bias,text,tone}}。
+    tone: up/down/neutral/warn。純邏輯、無外部相依，供個股研究頁顯示。"""
+    if not ind or not ind.get("valid"):
+        return {"items": [], "overall": {"bias": "neutral", "text": "資料不足，無法解讀技術指標。", "tone": "neutral"}}
+    items = []
+
+    def add(label, value, reading, tone):
+        items.append({"label": label, "value": value, "reading": reading, "tone": tone})
+
+    # 均線排列
+    ema = ind.get("ema") or {}
+    if ema.get("valid"):
+        al = ema.get("alignment", "")
+        bias = ema.get("bias", "neutral")
+        tone = "up" if bias == "bullish" else ("down" if bias == "bearish" else "neutral")
+        above200 = ema.get("above_e200")
+        tail = "，站上年線（200 日）長多格局" if above200 else ("，仍在年線下方" if above200 is False else "")
+        cross = ema.get("cross")
+        if cross and cross != "無交叉":
+            tail += f"；近日出現{cross}"
+        add("均線排列", al, f"短中長期均線呈「{al}」{tail}。", tone)
+
+    # RSI
+    rsi = ind.get("rsi") or {}
+    if rsi.get("valid"):
+        v, status = rsi.get("value"), rsi.get("status", "")
+        if status == "超買":
+            tone, txt = "warn", f"RSI {v}，進入超買區（≥70），短線漲多、追高風險升高。"
+        elif status == "超賣":
+            tone, txt = "warn", f"RSI {v}，進入超賣區（≤30），短線跌深、可能醞釀反彈。"
+        elif status == "多頭健康區":
+            tone, txt = "up", f"RSI {v}，位於多頭健康區（50 以上），動能偏多但未過熱。"
+        elif status == "空頭健康區":
+            tone, txt = "down", f"RSI {v}，位於空頭區（50 以下），動能偏弱。"
+        else:
+            tone, txt = "neutral", f"RSI {v}，動能中性。"
+        add("RSI 相對強弱", v, txt, tone)
+
+    # MACD
+    macd = ind.get("macd") or {}
+    if macd.get("valid"):
+        status = macd.get("status", "")
+        cross = macd.get("cross")
+        tone = "up" if "多頭" in status else ("down" if "空頭" in status else "neutral")
+        tail = f"；出現{cross}" if cross and cross != "無交叉" else ""
+        add("MACD 動能", status, f"MACD 顯示「{status}」{tail}。", tone)
+
+    # ADX 趨勢強度
+    if (ind.get("adx") or {}).get("valid"):
+        adx = ind["adx"]
+        v = adx.get("value")
+        strong = adx.get("strong")
+        trend = adx.get("trend", "")
+        pdi, ndi = adx.get("pdi"), adx.get("ndi")
+        dirn = "多方主導" if (pdi is not None and ndi is not None and pdi > ndi) else ("空方主導" if (pdi is not None and ndi is not None) else "")
+        if strong:
+            tone = "up" if dirn == "多方主導" else ("down" if dirn == "空方主導" else "neutral")
+            txt = f"ADX {v}，趨勢明確（{trend}）{('，' + dirn) if dirn else ''}，順勢操作勝率較高。"
+        else:
+            tone, txt = "neutral", f"ADX {v}，趨勢偏弱／盤整（{trend}），突破訊號可信度較低。"
+        add("ADX 趨勢強度", v, txt, tone)
+
+    # 布林通道
+    bb = ind.get("bb") or {}
+    if bb.get("valid"):
+        pos = bb.get("position", "")
+        squeeze = bb.get("squeeze")
+        if squeeze:
+            add("布林通道", "收口", "布林帶寬收窄（squeeze），波動壓縮，常為變盤前兆，留意放量突破方向。", "warn")
+        elif pos:
+            tone = "up" if ("上" in str(pos)) else ("down" if ("下" in str(pos)) else "neutral")
+            add("布林通道", pos, f"價格位於布林通道{pos}。", tone)
+
+    # 量能
+    vol = ind.get("volume") or {}
+    if vol.get("valid"):
+        ratio = vol.get("ratio")
+        status = vol.get("status", "")
+        if ratio is not None:
+            if ratio >= 2:
+                tone, txt = "warn", f"量比 {ratio}，爆量（為均量 {ratio} 倍），價量需同步確認，避免追高爆量長黑。"
+            elif ratio >= 1.3:
+                tone, txt = "up", f"量比 {ratio}，放量，資金轉趨積極。"
+            elif ratio <= 0.6:
+                tone, txt = "neutral", f"量比 {ratio}，量縮觀望。"
+            else:
+                tone, txt = "neutral", f"量比 {ratio}，量能持平。"
+            add("量能", ratio, txt, tone)
+
+    # 乖離／背離
+    rd = ind.get("rsi_divergence") or {}
+    if rd.get("valid") and (rd.get("bullish_divergence") or rd.get("bearish_divergence")):
+        if rd.get("bullish_divergence"):
+            add("RSI 背離", "底背離", "價創新低但 RSI 未創新低（底背離），下跌動能衰竭，留意反轉。", "up")
+        else:
+            add("RSI 背離", "頂背離", "價創新高但 RSI 未創新高（頂背離），上漲動能衰竭，留意拉回。", "down")
+
+    # 支撐壓力
+    sr = ind.get("support_resistance") or {}
+    if sr.get("valid"):
+        sup = sr.get("nearest_support")
+        res = sr.get("nearest_resistance")
+        if sup or res:
+            parts = []
+            if sup:
+                parts.append(f"最近支撐約 {sup}")
+            if res:
+                parts.append(f"最近壓力約 {res}")
+            add("支撐／壓力", "／".join(str(x) for x in (sup, res) if x), "；".join(parts) + "。", "neutral")
+
+    # 總評
+    score = ind.get("total_score", 0)
+    bias = ind.get("overall_bias", "neutral")
+    if bias == "bullish":
+        otone, otxt = "up", f"多項指標偏多（綜合分 {score}），技術面整體偏多；惟仍須搭配籌碼與大盤環境判斷。"
+    elif bias == "bearish":
+        otone, otxt = "down", f"多項指標偏空（綜合分 {score}），技術面整體偏弱；反彈宜謹慎。"
+    else:
+        otone, otxt = "neutral", f"多空指標互見（綜合分 {score}），方向未明，宜等待明確訊號。"
+    return {"items": items, "overall": {"bias": bias, "text": otxt, "tone": otone}}
