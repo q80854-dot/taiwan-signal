@@ -26,6 +26,10 @@ _TTL = 1800
 _EQ = {"臺股期貨": 1.0, "小型臺指期貨": 0.25, "微型臺指期貨": 0.05}
 
 
+class NoData(RuntimeError):
+    """來源回的是「尚無資料」（假日／尚未公布：只有標題列的 CSV、或網站的 HTML 提示頁），不是真的故障。"""
+
+
 def _num(x) -> Optional[float]:
     try:
         return float(str(x).replace(",", "").replace("%", "").strip())
@@ -51,9 +55,13 @@ def _get(path: str, tries: int = 3):
             try:
                 return r.json()
             except ValueError:
+                if r.text.lstrip("\ufeff").count("\n") <= 1 and "," in r.text[:200]:
+                    raise NoData(f"尚無資料（只有 CSV 標題列：{r.text[:30]!r}…，多為假日或尚未公布）")
                 raise RuntimeError(f"非 JSON 回應（{r.headers.get('Content-Type', '?')}，開頭：{r.text[:60]!r}）")
         except Exception as e:
             last = e
+            if isinstance(e, NoData):
+                break                            # 確定是「沒資料」就不必重試
             if i < tries - 1:
                 time.sleep(2 * (i + 1))
     raise last
@@ -139,6 +147,8 @@ def parse_futures_csv(text: str) -> Dict:
     i_d, i_c, i_w = col("日期"), col("商品"), col("身份")
     i_lo, i_sh, i_net = col("多方未平倉口數"), col("空方未平倉口數"), col("未平倉口數淨額")
     if None in (i_d, i_c, i_w, i_net):
+        if head and head[0].lstrip().lower().startswith("<!doctype") or (head and head[0].lstrip().startswith("<html")):
+            raise NoData("期交所網站回 HTML 提示頁（該日無資料，多為假日）")
         raise RuntimeError(f"CSV 欄位無法辨識：{head[:8]}")
     conv = []
     for r in rows[1:]:
@@ -202,7 +212,7 @@ def fetch_taifex() -> Dict:
             out[key] = fn(_get(path))
         except Exception as e:
             out["errors"].append(f"{key}: {e}")
-            logger.warning(f"taifex {key}: {e}")
+            (logger.info if isinstance(e, NoData) else logger.warning)(f"taifex {key}: {e}")
     fut = out.get("futures") or {}
     if not fut.get("items") or _need_newer(fut.get("date")):
         # OpenAPI 失敗或還停在前一天：改抓期交所網站 CSV。查「應有的交易日」而非今天，
@@ -221,7 +231,7 @@ def fetch_taifex() -> Dict:
                     break                       # 有資料但不比現有新：不用再往前找
             except Exception as e:
                 out["errors"].append(f"futures_web: {e}")
-                logger.warning(f"taifex futures_web({day:%Y-%m-%d}): {e}")
+                (logger.info if isinstance(e, NoData) else logger.warning)(f"taifex futures_web({day:%Y-%m-%d}): {e}")
             day -= timedelta(days=1)
             while day.weekday() > 4:
                 day -= timedelta(days=1)
