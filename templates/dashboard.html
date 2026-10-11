@@ -2755,7 +2755,19 @@ function instExtraHtml(d){
   h+=_ownershipHtml(d);
   h+=_finChartHtml(d);
   h+=_indicatorReadingHtml(d);
+  h+=_newsHtml(d);
   return h;
+}
+function _newsHtml(d){
+  const N=d.news_items;if(!N||!N.length)return '';
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">相關新聞</div></div>
+  <div class="panel card"><div class="panel-body">
+    ${N.map(x=>`<div class="kv" style="align-items:flex-start;gap:12px">
+      <span style="flex:0 0 82px;color:var(--t3);font-variant-numeric:tabular-nums">${safe(x.date)}</span>
+      <span style="flex:1;text-align:left;font-weight:400">${x.link?`<a class="lnk" href="${escH(x.link)}" target="_blank" rel="noopener">${safe(x.title)}</a>`:safe(x.title)}${x.source?` <small style="color:var(--t3)">${safe(x.source)}</small>`:''}</span>
+    </div>`).join('')}
+    <div style="font-size:11px;color:var(--t3);margin-top:6px">來源：FinMind 新聞彙整（需啟用 FinMind）；僅供研究參考，不構成投資建議。</div>
+  </div></div>`;
 }
 // 2026-10-11 財務指標圖：月營收年增率（近 24 月）＋季毛利率／營業利益率（近 12 季），資料取自 DB 已累積歷史。
 // 財務指標頁籤定義（有資料才顯示）。FinMind（選用）補齊 EPS／ROE／ROA／淨利率等完整季度歷史。
@@ -2769,6 +2781,7 @@ const _FIN_TABS=[
   {key:'roa',label:'ROA 總資產收益率',kind:'line',unit:'%'},
   {key:'current_ratio',label:'流動比率',kind:'line',unit:'%'},
   {key:'equity_ratio',label:'股東權益比率',kind:'line',unit:'%'},
+  {key:'fcf',label:'自由現金流',kind:'bar',unit:'仟元'},
 ];
 function _finRows(d,key){
   const F=(d&&d.fin_series)||{},fm=F.finmind||{};

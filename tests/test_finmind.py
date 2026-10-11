@@ -59,5 +59,34 @@ def test_build_ratios():
     assert er["2026Q1"] == 50.0                # 4000/8000
 
 
+def test_build_fcf_single_quarter():
+    inc = {"2026-03-31": {"revenue": 1000.0}, "2026-06-30": {"revenue": 2000.0}}
+    # 現金流累計：OCF Q1=300、H1=700 → 單季 300/400；capex Q1=-100、H1=-250 → 單季 -100/-150
+    cf = {"2026-03-31": {"ocf": 300.0, "capex": -100.0},
+          "2026-06-30": {"ocf": 700.0, "capex": -250.0}}
+    out = FM._build(inc, {}, cf)
+    fcf = {r["period"]: r["value"] for r in out["fcf"]}
+    assert fcf["2026Q1"] == 200.0          # 300 - |−100|
+    assert fcf["2026Q2"] == 250.0          # 400 - |−150|
+
+
+def test_news_disabled_without_token(monkeypatch):
+    monkeypatch.delenv("FINMIND_TOKEN", raising=False)
+    assert FM.news("2330") is None
+
+
+def test_news_parse(monkeypatch):
+    monkeypatch.setenv("FINMIND_TOKEN", "x")
+    FM._cache.clear()
+    rows = [{"date": "2026-10-10", "title": "台積電法說會", "source": "鉅亨網", "link": "http://a"},
+            {"date": "2026-10-11", "title": "外資調高目標價", "source": "工商", "link": "http://b"},
+            {"date": "2026-10-09", "title": "", "source": "x", "link": "http://c"}]
+    monkeypatch.setattr(FM, "_fetch", lambda ds, cid, start: rows)
+    out = FM.news("2330")
+    assert len(out) == 2                    # 空標題被濾掉
+    assert out[0]["date"] == "2026-10-11"   # 由新到舊
+    assert out[0]["title"] == "外資調高目標價"
+
+
 def test_build_empty_when_no_rows():
     assert FM._build({}, {}) is None
