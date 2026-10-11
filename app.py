@@ -13,6 +13,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ★ 2026-10-10：資料來源連線檢測——在任何對外抓取之前包住 requests.get/post 計時記錄
+try:
+    import source_health
+    source_health.install()
+except Exception as _e:
+    logger.warning(f"source_health 啟用失敗：{_e}")
+
 
 # ★ 2026-10-06：日誌一律遮蔽 Telegram Bot Token（原本 Webhook 網址會連 token 一起寫進日誌）
 import re as _re
@@ -1461,6 +1468,16 @@ def api_freshness():
         if st.get("late"):
             freshness.kick_background()      # 有人在看、且有資料落後：立刻在背景補抓（每分鐘最多一次）
         return jsonify(st)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/source_health")
+def api_source_health():
+    """各外部資料來源（依主機分類）的連線健康：最近成功率、延遲、最後成功時間。"""
+    try:
+        import source_health
+        return jsonify(source_health.snapshot())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
