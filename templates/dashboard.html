@@ -2576,7 +2576,7 @@ async function revRefresh(btn){
 }
 /* 2026-10-08 個股研究補強：區間績效、三大法人近 20 日、融資融券 */
 // 2026-10-11：個股研究延伸區塊——公司概況、技術指標解讀、籌碼結構（外資持股／集保大戶）、
-// 賣空分析、未提供資料的誠實說明。全部優雅降級：對應資料缺就整塊不顯示。
+// 賣空分析。全部優雅降級：對應資料缺就整塊不顯示（抓不到就不放空區塊）。
 function _ciToneC(t){return t==='up'?'var(--up)':t==='down'?'var(--down)':t==='warn'?'var(--warn,#e0a63c)':'var(--t2)';}
 function _companyProfileHtml(d){
   const CP=d.company_profile;if(!CP)return '';
@@ -2631,12 +2631,6 @@ function _shortAnalysisHtml(d){
     <div class="note-box" style="margin-top:8px;border-left-color:${_ciToneC(tone)}">${read}</div>
     <div style="font-size:11px;color:var(--t3);margin-top:6px">來源：證交所 MI_MARGN（融資融券）、TWT93U 借券賣出、TWTB4U。空單「倍數」＝空單餘額 ÷ 當日成交量。</div>
   </div></div>`;
-}
-function _researchNoteHtml(d){
-  const RN=d.research_note;if(!RN)return '';
-  const row=(l,v)=>`<div class="kv" style="align-items:flex-start"><span style="flex:0 0 108px">${l}</span><span style="color:var(--t2);font-weight:400;text-align:left;flex:1;margin-left:12px">${safe(v)}</span></div>`;
-  return `<div class="sec-label"><div class="bar"></div><div class="tx">本頁未提供的資料（誠實說明）</div></div>
-  <div class="panel card"><div class="panel-body">${row('內部人交易',RN.insider)}${row('分析師評級',RN.analyst)}</div></div>`;
 }
 function instExtraHtml(d){
   let h='';h+=_companyProfileHtml(d);const L=d.ohlcv_long&&d.ohlcv_long.closes&&d.ohlcv_long.closes.length?d.ohlcv_long:d.ohlcv;
@@ -2711,7 +2705,6 @@ function instExtraHtml(d){
   h+=_shortAnalysisHtml(d);
   h+=_ownershipHtml(d);
   h+=_indicatorReadingHtml(d);
-  h+=_researchNoteHtml(d);
   return h;
 }
 function renderInstrument(d){

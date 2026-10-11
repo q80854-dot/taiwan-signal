@@ -1873,11 +1873,7 @@ def api_instrument(ticker: str):
         out["indicator_reading"] = interpret(out.get("indicators"))
     except Exception as e:
         out["indicator_reading"] = None; out["indicator_reading_error"] = str(e)
-    # 台股沒有穩定的「逐檔內部人交易」「分析師評級」免費官方 API，明白標示未提供，不以推估充數。
-    out["research_note"] = {
-        "insider": "本系統未提供逐筆內部人（董監／大股東）交易：台股此資料散落於公開資訊觀測站申報表，無穩定免費逐檔 API。可至『公開資訊觀測站→股權相關→董監持股』查詢。",
-        "analyst": "本系統未提供分析師目標價／評級：台股無公開免費的券商評等彙整來源。本頁改以『技術指標解讀＋籌碼（三大法人／融券借券／集保大戶）＋基本面評分』作為研究依據。",
-    }
+    # 內部人交易／分析師評級：台股無穩定的免費逐檔來源，抓不到就不放（不顯示佔版面的空區塊）。
     try:
         from scanner import scanner
         live = [s for s in scanner.get_status().get("signals", []) if s.get("ticker") == t]
