@@ -35,6 +35,7 @@ _FRIENDLY = {
     "query2.finance.yahoo.com": "Yahoo Finance",
     "api.coingecko.com": "CoinGecko（BTC／黃金）",
     "api.fugle.tw": "富果 Fugle",
+    "api.finmindtrade.com": "FinMind 財報",
     "www.fubon.com": "富邦 公開報價",
 }
 

@@ -2758,30 +2758,48 @@ function instExtraHtml(d){
   return h;
 }
 // 2026-10-11 財務指標圖：月營收年增率（近 24 月）＋季毛利率／營業利益率（近 12 季），資料取自 DB 已累積歷史。
+// 財務指標頁籤定義（有資料才顯示）。FinMind（選用）補齊 EPS／ROE／ROA／淨利率等完整季度歷史。
+const _FIN_TABS=[
+  {key:'revyoy',label:'月營收年增率',kind:'bar',unit:'%'},
+  {key:'eps',label:'每股盈餘',kind:'bar',unit:'元'},
+  {key:'gross',label:'毛利率',kind:'line',unit:'%'},
+  {key:'op',label:'營業利益率',kind:'line',unit:'%'},
+  {key:'net',label:'淨利率',kind:'line',unit:'%'},
+  {key:'roe',label:'ROE 淨資產收益率',kind:'line',unit:'%'},
+  {key:'roa',label:'ROA 總資產收益率',kind:'line',unit:'%'},
+  {key:'current_ratio',label:'流動比率',kind:'line',unit:'%'},
+  {key:'equity_ratio',label:'股東權益比率',kind:'line',unit:'%'},
+];
+function _finRows(d,key){
+  const F=(d&&d.fin_series)||{},fm=F.finmind||{};
+  if(key==='revyoy')return (F.revenue||[]).map(x=>({period:x.period,value:x.yoy_pct}));
+  if(key==='gross'){if((fm.gross||[]).length)return fm.gross;return (F.margin||[]).map(x=>({period:x.period,value:x.gross_margin_pct})).filter(x=>x.value!=null);}
+  if(key==='op'){if((fm.op||[]).length)return fm.op;return (F.margin||[]).map(x=>({period:x.period,value:x.operating_margin_pct})).filter(x=>x.value!=null);}
+  return fm[key]||[];
+}
+function _finAvail(d){return _FIN_TABS.filter(t=>(_finRows(d,t.key)||[]).some(r=>r.value!=null));}
 function _finChartHtml(d){
-  const F=d.fin_series||{};const hasR=(F.revenue||[]).length,hasM=(F.margin||[]).length;
-  if(!hasR&&!hasM)return '';
+  const tabs=_finAvail(d);if(!tabs.length)return '';
+  const fmOn=!!((d.fin_series||{}).finmind);
   return `<div class="sec-label"><div class="bar"></div><div class="tx">財務指標</div></div>
   <div class="panel card"><div class="panel-body">
     <div class="tabs" id="fin-tabs">
-      ${hasR?`<button class="on" onclick="finTab('revyoy',this)">月營收年增率</button>`:''}
-      ${hasM?`<button class="${hasR?'':'on'}" onclick="finTab('gross',this)">毛利率</button><button onclick="finTab('op',this)">營業利益率</button>`:''}
+      ${tabs.map((t,i)=>`<button class="${i===0?'on':''}" onclick="finTab('${t.key}',this)">${t.label}</button>`).join('')}
     </div>
     <div class="kl-info" id="fin-info" style="padding:2px 2px 6px">移動游標查看每期數值</div>
     <div style="height:240px;margin-top:4px"><canvas id="fin-cv"></canvas></div>
-    <div style="font-size:11px;color:var(--t3);margin-top:8px">月營收年增率：公開資訊觀測站月營收（紅＝年增為正、綠＝為負）。毛利率／營業利益率：綜合損益表季報累積推算單季。資料由系統逐期累積，越久越完整；某些剛納入的個股歷史點數可能較少。</div>
+    <div style="font-size:11px;color:var(--t3);margin-top:8px">月營收年增率：月營收（紅＝年增為正、綠＝為負）。毛利／營益／淨利率、EPS、ROE、ROA、流動比率、股東權益比率：季報單季${fmOn?'（來源 FinMind 財報）':'（系統逐期累積，越久越完整）'}。僅供研究參考，不構成投資建議。</div>
   </div></div>`;
 }
 // 以原生 canvas 繪製（與 K 線同手法，不依賴外部 CDN，離線也能顯示）。
 let _finD=null,_finMetric='revyoy',_finHover=-1;
 function _finSeries(m){
-  const F=(_finD&&_finD.fin_series)||{};
-  if(m==='revyoy'){const s=F.revenue||[];return {labels:s.map(x=>x.period),data:s.map(x=>x.yoy_pct),kind:'bar',name:'月營收年增率'};}
-  const s=F.margin||[],key=m==='gross'?'gross_margin_pct':'operating_margin_pct';
-  return {labels:s.map(x=>x.period),data:s.map(x=>x[key]),kind:'line',name:m==='gross'?'毛利率':'營業利益率'};
+  const meta=_FIN_TABS.find(t=>t.key===m)||{kind:'line',unit:'%',label:m};
+  const rows=_finRows(_finD,m)||[];
+  return {labels:rows.map(x=>x.period),data:rows.map(x=>x.value),kind:meta.kind,name:meta.label,unit:meta.unit};
 }
 function finChartInit(d){
-  _finD=d;const F=d.fin_series||{};_finMetric=(F.revenue&&F.revenue.length)?'revyoy':'gross';_finHover=-1;
+  _finD=d;const av=_finAvail(d);_finMetric=av.length?av[0].key:'revyoy';_finHover=-1;
   const cv=document.getElementById('fin-cv');
   if(cv){const mv=e=>{const r=cv.getBoundingClientRect();finHover(((e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width);};
     cv.addEventListener('mousemove',mv);cv.addEventListener('touchmove',mv,{passive:true});cv.addEventListener('touchstart',mv,{passive:true});
@@ -2805,7 +2823,8 @@ function finChartDraw(m){
   let mn=Math.min(...vals,0),mx=Math.max(...vals,0);if(mn===mx){mn-=1;mx+=1;}const padv=(mx-mn)*.08;mn-=padv;mx+=padv;
   const X=i=>padL+(i+.5)*plotW/n,Y=v=>padT+(mx-v)/(mx-mn)*plotH;
   c.strokeStyle=GR;c.fillStyle=TX;c.lineWidth=1;
-  for(let g=0;g<=4;g++){const v=mn+(mx-mn)*g/4,y=Y(v);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.textAlign='right';c.fillText(v.toFixed(0)+'%',padL-4,y);}
+  const U=s.unit||'%',dec=U==='元'?1:0;
+  for(let g=0;g<=4;g++){const v=mn+(mx-mn)*g/4,y=Y(v);c.beginPath();c.moveTo(padL,y);c.lineTo(W-padR,y);c.stroke();c.textAlign='right';c.fillText(v.toFixed(dec)+(U==='%'?'%':''),padL-4,y);}
   const zy=Y(0);if(mn<0&&mx>0){c.strokeStyle='rgba(120,110,90,.45)';c.beginPath();c.moveTo(padL,zy);c.lineTo(W-padR,zy);c.stroke();}
   if(s.kind==='bar'){
     const bw=Math.max(2,Math.min(22,plotW/n*.64));
@@ -2819,7 +2838,7 @@ function finChartDraw(m){
   for(let i=0;i<n;i++){if(i%step!==0&&i!==n-1)continue;const lab=String(s.labels[i]||'');c.fillText(lab.length>7?lab.slice(2):lab,X(i),H-padB/2+2);}
   if(_finHover>=0){const x=X(_finHover);c.strokeStyle='rgba(120,110,90,.5)';c.setLineDash([3,3]);c.beginPath();c.moveTo(x,padT);c.lineTo(x,H-padB);c.stroke();c.setLineDash([]);}
   const hi=_finHover>=0?_finHover:n-1,hv=s.data[hi];
-  if(info)info.innerHTML=`<b>${safe(s.labels[hi]||'')}</b>　${s.name} <b style="color:${s.kind==='bar'?(hv>=0?UP:DN):AC}">${hv==null?'—':(hv>=0&&s.kind==='bar'?'+':'')+hv.toFixed(2)+'%'}</b>`;
+  if(info)info.innerHTML=`<b>${safe(s.labels[hi]||'')}</b>　${safe(s.name)} <b style="color:${s.kind==='bar'?(hv>=0?UP:DN):AC}">${hv==null?'—':(hv>=0&&s.kind==='bar'?'+':'')+hv.toFixed(2)+(U==='%'?'%':' '+U)}</b>`;
 }
 function renderInstrument(d){
   const el=document.getElementById('inst-result');if(!el)return;

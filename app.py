@@ -1875,8 +1875,16 @@ def api_instrument(ticker: str):
         out["board_holding"] = None; out["board_holding_error"] = str(e)
     try:   # 財務指標時間序列：月營收年增率（近 24 月）＋季毛利率／營益率（近 12 季），皆取自已累積的 DB 歷史
         from state_store import store as _stfs
-        out["fin_series"] = {"revenue": _stfs.get_monthly_revenue_series(code, 24),
-                             "margin": _stfs.get_quarterly_margin_series(code, 12)}
+        _fs = {"revenue": _stfs.get_monthly_revenue_series(code, 24),
+               "margin": _stfs.get_quarterly_margin_series(code, 12)}
+        try:   # FinMind（選用）：補齊 EPS／淨利率／ROE／ROA／流動比率／股東權益比率 等完整季度歷史
+            import finmind
+            _fm = finmind.financial_indicators(code)
+            if _fm:
+                _fs["finmind"] = _fm
+        except Exception as _e:
+            logger.warning(f"finmind {code}: {_e}")
+        out["fin_series"] = _fs
     except Exception as e:
         out["fin_series"] = None; out["fin_series_error"] = str(e)
     try:
