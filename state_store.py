@@ -1004,6 +1004,31 @@ class StateStore:
             logger.warning(f"get_quarterly_margin_snapshot {code}/{period}: {e}")
             return None
 
+    def get_monthly_revenue_series(self, code: str, limit: int = 24) -> List[Dict]:
+        """某檔近 limit 個月的月營收年增率（YoY）／月增率（MoM）時間序列，依期別由舊到新。
+        供個股研究『財務指標』圖使用（period 'YYYY-MM'）。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT period,yoy_pct,mom_pct FROM monthly_revenue_history "
+                    "WHERE ticker=? ORDER BY period DESC LIMIT ?", (str(code), int(limit))).fetchall()
+            return [dict(r) for r in rows][::-1]
+        except Exception as e:
+            logger.warning(f"get_monthly_revenue_series {code}: {e}")
+            return []
+
+    def get_quarterly_margin_series(self, code: str, limit: int = 12) -> List[Dict]:
+        """某檔近 limit 季的毛利率／營業利益率時間序列，依期別由舊到新（period '115Q1'）。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT period,gross_margin_pct,operating_margin_pct FROM quarterly_margin_snapshot "
+                    "WHERE code=? ORDER BY period DESC LIMIT ?", (str(code), int(limit))).fetchall()
+            return [dict(r) for r in rows][::-1]
+        except Exception as e:
+            logger.warning(f"get_quarterly_margin_series {code}: {e}")
+            return []
+
     # ── Telegram 訂閱名單 ──
     # ★ 新增：2026-09-29（跨AI覆核發現，經 grep/Read 驗證屬實）——telegram_bot.py
     # 原本把 free/paid 訂閱名單存在本機檔案 instance/subscribers.json，跟這個
