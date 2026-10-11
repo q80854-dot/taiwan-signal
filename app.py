@@ -1869,6 +1869,11 @@ def api_instrument(ticker: str):
     except Exception as e:
         out["dispersion"] = None; out["dispersion_error"] = str(e)
     try:
+        import company_info
+        out["board_holding"] = company_info.get_board_holding(code)
+    except Exception as e:
+        out["board_holding"] = None; out["board_holding_error"] = str(e)
+    try:
         from indicators import interpret
         out["indicator_reading"] = interpret(out.get("indicators"))
     except Exception as e:
