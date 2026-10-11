@@ -1683,6 +1683,9 @@ html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:v
     <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">各項資料目前的日期</div></div>
     <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料</th><th>目前日期</th><th>應有日期</th><th>狀態</th><th class="fr-x">來源</th><th class="fr-x">官方約</th></tr></thead><tbody id="fr-tbody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--t3)">載入中…</td></tr></tbody></table></div></div>
     <div id="fr-note" style="font-size:12px;color:var(--t3);margin-top:10px;line-height:1.7"></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">資料來源連線檢測</div><div class="lnk" onclick="pollFreshness(true)">重新整理</div></div>
+    <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>來源</th><th>狀態</th><th>近期成功率</th><th>延遲 (中位/最近)</th><th class="fr-x">最後成功</th><th class="fr-x">備註</th></tr></thead><tbody id="sh-tbody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--t3)">載入中…</td></tr></tbody></table></div></div>
+    <div id="sh-note" style="font-size:12px;color:var(--t3);margin-top:10px;line-height:1.7">「連線檢測」看的是每個外部來源最近幾次請求「連不連得上、多快、成功率」；上面的「資料日期」看的是「抓到的是哪一天」。兩者互補：日期落後可能只是官方還沒公布，連線異常才是來源本身出問題。統計自本次服務啟動後累積，只保留每個來源最近 40 次請求。</div>
   </div></div>
   <div class="page" id="page-news">
     <div class="pad">
@@ -4509,7 +4512,26 @@ async function pollFreshness(render){
     if(tb)tb.innerHTML=d.items.map(i=>{const st=_FR_ST[i.status]||_FR_ST.unknown;return `<tr><td><b>${safe(i.name)}</b></td><td class="num">${safe(dd(i.date))}</td><td class="num" style="color:var(--t3)">${safe(dd(i.expected))}</td><td style="color:${st[1]};font-weight:600;white-space:nowrap">${st[0]}</td><td class="fr-x" style="color:var(--t3);white-space:normal">${safe(i.source)}</td><td class="num fr-x" style="color:var(--t3)">${safe(i.publish)}</td></tr>`;}).join('');
     const n=document.getElementById('fr-note');
     if(n)n.innerHTML=`檢查時間：${safe(d.now)}（台北）。「應有日期」＝今天若已過官方公布時間，否則為上一個交易日。<br>收盤後 14:00～22:00 系統每 3 分鐘自動檢查（有人開網頁時遇到落後也會立刻補抓），哪一項還沒更新就只重抓那一項；網頁每分鐘確認一次，有新資料會自動重新載入並提示。<br>「尚未更新」通常是官方還沒公布（各資料公布時間不同），不是資料算錯。`;
+    pollSourceHealth();
   }
+}
+const _SH_ST={ok:['正常','var(--ok,#16a34a)'],warn:['不穩','var(--warn,#d97706)'],down:['異常','var(--alert,#dc2626)'],unknown:['未測','var(--t3)']};
+function _agoTxt(s){if(s==null)return '—';if(s<60)return s+' 秒前';if(s<3600)return Math.round(s/60)+' 分前';if(s<86400)return Math.round(s/3600)+' 時前';return Math.round(s/86400)+' 天前';}
+async function pollSourceHealth(){
+  let d;try{d=await(await fetch('/api/source_health',{cache:'no-store'})).json();}catch(e){return;}
+  const tb=document.getElementById('sh-tbody');if(!tb)return;
+  const rows=(d&&d.sources)||[];
+  if(!rows.length){tb.innerHTML='<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--t3)">本次啟動後尚未對外抓取任何來源（盤後掃描或有人瀏覽時會開始累積）</td></tr>';return;}
+  tb.innerHTML=rows.map(r=>{const st=_SH_ST[r.state]||_SH_ST.unknown;
+    const lat=(r.p50_ms!=null?Math.round(r.p50_ms):'—')+' / '+(r.last_ms!=null?Math.round(r.last_ms):'—')+' ms';
+    const rate=r.success_rate!=null?(r.success_rate+'%'):'—';
+    const rateC=r.success_rate==null?'var(--t3)':(r.success_rate>=90?'var(--t1)':(r.success_rate>=60?'var(--warn)':'var(--alert)'));
+    return `<tr><td><b>${safe(r.name)}</b><br><small style="color:var(--t3)">${safe(r.host)}</small></td>`+
+      `<td style="color:${st[1]};font-weight:600;white-space:nowrap">${st[0]}</td>`+
+      `<td class="num" style="color:${rateC}">${rate}<small style="color:var(--t3)">（${r.attempts} 次）</small></td>`+
+      `<td class="num" style="color:var(--t3)">${lat}</td>`+
+      `<td class="num fr-x" style="color:var(--t3)">${_agoTxt(r.last_success_ago)}</td>`+
+      `<td class="fr-x" style="color:var(--alert);white-space:normal;font-size:11px">${r.last_err?safe(r.last_err):''}</td></tr>`;}).join('');
 }
 /* 2026-10-08 總覽市場儀表板：排行速覽、籌碼速覽、產業熱度；底部狀態列 */
 const _ovdPct=v=>v==null?'—':(v>0?'+':'')+Number(v).toFixed(2)+'%';

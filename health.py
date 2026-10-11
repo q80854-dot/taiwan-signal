@@ -203,8 +203,73 @@ def check_freshness():
     return out
 
 
+def check_infra():
+    """系統與基礎設施：資料庫連線／完整性／讀寫、對外來源連線健康、記憶體用量。"""
+    out = []
+    # 1 資料庫連線 + 完整性
+    try:
+        from state_store import store, USE_PG, DB_PATH
+        import os as _os
+        t0 = _now_tpe()
+        with store._conn() as conn:
+            if USE_PG:
+                conn.execute("SELECT 1")
+                integ = "ok"
+            else:
+                row = conn.execute("PRAGMA quick_check").fetchone()
+                integ = (row[0] if row else "").lower()
+        ms = (_now_tpe() - t0).total_seconds() * 1000
+        size_txt = ""
+        if not USE_PG:
+            try:
+                size_txt = f"，檔案 {round(_os.path.getsize(DB_PATH) / 1048576, 1)} MB"
+            except Exception:
+                pass
+        ok = (integ == "ok")
+        out.append(_c("資料庫連線與完整性",
+                      "ok" if ok else "fail",
+                      f"{'Postgres（持久化）' if USE_PG else 'SQLite'}；查詢 {round(ms)}ms；完整性 {integ or '未知'}{size_txt}"))
+    except Exception as e:
+        out.append(_c("資料庫連線與完整性", "fail", f"無法連線或查詢：{e}"))
+    # 2 資料庫讀寫往返
+    try:
+        from state_store import store
+        import time as _t
+        token = f"hb-{int(_t.time())}"
+        store.set_meta("health_write_probe", {"t": token, "at": _now_tpe().isoformat()})
+        back = (store.get_meta("health_write_probe") or {}).get("t")
+        out.append(_c("資料庫讀寫", "ok" if back == token else "fail",
+                      "寫入後讀回一致" if back == token else "寫入後讀回不一致，持久層可能異常"))
+    except Exception as e:
+        out.append(_c("資料庫讀寫", "fail", f"讀寫測試失敗：{e}"))
+    # 3 對外來源連線健康（由 source_health 累積的即時統計彙總）
+    try:
+        import source_health
+        lvl, msg = source_health.summary()
+        out.append(_c("對外資料來源連線", lvl, msg + "（詳見「資料更新狀態」頁的連線檢測）"))
+    except Exception as e:
+        out.append(_c("對外資料來源連線", "warn", str(e)))
+    # 4 記憶體用量（容器資源）
+    try:
+        import os as _os
+        rss = None
+        try:
+            with open(f"/proc/{_os.getpid()}/status") as f:
+                for ln in f:
+                    if ln.startswith("VmRSS:"):
+                        rss = int(ln.split()[1]) / 1024  # MB
+                        break
+        except Exception:
+            pass
+        if rss is not None:
+            out.append(_c("記憶體用量", "warn" if rss > 480 else "ok", f"本進程 RSS 約 {round(rss)} MB"))
+    except Exception:
+        pass
+    return out
+
+
 def run_health():
-    sections = [("資料即時性", check_freshness), ("資料來源", check_data), ("基本面與消息", check_fundamentals), ("引擎與推播", check_engine), ("策略狀態", check_strategy)]
+    sections = [("系統與基礎設施", check_infra), ("資料即時性", check_freshness), ("資料來源", check_data), ("基本面與消息", check_fundamentals), ("引擎與推播", check_engine), ("策略狀態", check_strategy)]
     res, cnt = [], {"ok": 0, "warn": 0, "fail": 0, "info": 0}
     for title, fn in sections:
         items = _safe(fn, title)
