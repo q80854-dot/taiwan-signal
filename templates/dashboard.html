@@ -2851,6 +2851,95 @@ function finChartDraw(m){
   const hi=_finHover>=0?_finHover:n-1,hv=s.data[hi];
   if(info)info.innerHTML=`<b>${safe(s.labels[hi]||'')}</b>　${safe(s.name)} <b style="color:${s.kind==='bar'?(hv>=0?UP:DN):AC}">${hv==null?'—':(hv>=0&&s.kind==='bar'?'+':'')+hv.toFixed(2)+(U==='%'?'%':' '+U)}</b>`;
 }
+// ★ 新增：2026-10-12——FinMind 補充資料（個股深度分析、大盤法人、台指期）。後端 finmind_data.py 自己做額度保護與快取，
+// 取不到時沿用前次資料並標記 stale；這裡把「資料日期」「沿用前次」都明確顯示，不假裝是最新。
+const fmE=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmN=(v,d=0)=>(v===null||v===undefined||v!==v)?'—':Number(v).toLocaleString('zh-TW',{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmS=(v,d=0)=>(v===null||v===undefined||v!==v)?'—':`<span style="color:${clr(v)}">${v>0?'+':''}${fmN(v,d)}</span>`;
+const fmYi=v=>(v===null||v===undefined)?'—':fmN(v/1e8,1);
+const fmSec=t=>`<div class="sec-label"><div class="bar"></div><div class="tx">${t}</div></div>`;
+const fmMiss=t=>`<div class="panel card"><div class="panel-body"><div class="empty">${t}：這項資料暫時取不到，稍後重新整理會再試</div></div></div>`;
+function fmTbl(head,rows){return `<div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`;}
+function fmKv(rows){return `<div class="panel card"><div class="panel-body">${rows.filter(Boolean).map(r=>`<div class="kv"><span>${r[0]}</span><span>${r[1]}</span></div>`).join('')}</div></div>`;}
+function fmPos(x,label){if(!x)return null;const w=Math.max(2,Math.min(98,x.pctile));
+  return [label,`<span class="num">${fmN(x.cur,2)}</span>　<small style="color:var(--t3)">近一年 ${fmN(x.min,1)}～${fmN(x.max,1)}，位置 ${x.pctile}%</small><div style="height:4px;background:var(--line2);border-radius:2px;margin-top:5px;position:relative"><i style="position:absolute;left:${w}%;top:-3px;width:3px;height:10px;background:var(--t1);border-radius:1px"></i></div>`];}
+function fmStockHtml(p){
+  if(!p||p.error)return fmSec('FinMind 深度分析')+`<div class="panel card"><div class="panel-body"><div class="empty">${fmE((p&&p.error)||'資料暫時無法取得')}</div></div></div>`;
+  let h=fmSec('深度分析（FinMind）');
+  const warn=[];
+  if(p.any_stale)warn.push('部分資料是沿用前次成功取得的版本');
+  if((p.failed||[]).length)warn.push(p.failed.length+' 項暫時取不到');
+  h+=`<div style="font-size:10.5px;color:var(--t3);margin-bottom:10px">來源：FinMind 開放資料。籌碼最新資料日 <b style="color:var(--t1)">${fmE(p.latest_date||'—')}</b>${warn.length?'　<span style="color:var(--warn)">⚠ '+warn.join('；')+'</span>':''}。以下只描述數字，不構成買賣建議。</div>`;
+  const ins=p.insights||[];
+  if(ins.length)h+=`<div class="panel card"><div class="panel-body">${ins.map(x=>`<div style="padding:7px 0 7px 10px;border-left:3px solid ${x.level==='good'?'var(--up)':x.level==='warn'?'var(--warn,#c80)':'var(--line2)'};margin:4px 0;font-size:13px;line-height:1.6">${fmE(x.text)}</div>`).join('')}</div></div>`;
+  const c=p.chips;
+  h+=fmSec('三大法人買賣超（張）');
+  h+=(c&&c.ok)?fmKv([['近 5 日合計',`外資 ${fmS(c.sum5.foreign)}　投信 ${fmS(c.sum5.trust)}　自營 ${fmS(c.sum5.dealer)}`],['近 20 日合計',`外資 ${fmS(c.sum20.foreign)}　投信 ${fmS(c.sum20.trust)}　自營 ${fmS(c.sum20.dealer)}`]])+fmTbl(['日期','外資','投信','自營商','合計'],c.days.slice().reverse().map(x=>[fmE(x.date),fmS(x.foreign),fmS(x.trust),fmS(x.dealer),fmS(x.total)])):fmMiss('法人買賣超');
+  const m=p.margin,fh=p.foreign_hold,lend=p.lending,dt=p.daytrade;
+  h+=fmSec('融資融券・借券・外資持股・當沖');
+  if(m&&m.ok){const l=m.latest;
+    h+=fmKv([['融資餘額（張）',`${fmN(l.margin)}　${fmS(l.margin_chg)}`],['融券餘額（張）',`${fmN(l.short)}　${fmS(l.short_chg)}`],['券資比',l.ratio==null?'—':l.ratio+'%'],m.margin_use_pct!=null?['融資使用率',m.margin_use_pct+'%']:null,['資料日期',fmE(m.date)]]);
+    h+=fmTbl(['日期','融資餘額','增減','融券餘額','增減'],m.days.slice().reverse().map(x=>[fmE(x.date),fmN(x.margin),fmS(x.margin_chg),fmN(x.short),fmS(x.short_chg)]));
+  }else h+=fmMiss('融資融券');
+  const rows2=[];
+  if(fh&&fh.ok)rows2.push(['外資持股比率',`${fh.latest.ratio}%${fh.chg5!=null?`　近 5 日 ${fmS(fh.chg5,2)} 個百分點`:''}`]);
+  if(lend&&lend.ok)rows2.push(['借券成交（張）',lend.days.map(x=>`${fmE(x.date.slice(5))} ${fmN(x.lots)}`).join('　')]);
+  if(dt&&dt.ok)rows2.push(['當沖比率',dt.days.map(x=>`${fmE(x.date.slice(5))} ${x.ratio==null?'—':x.ratio+'%'}`).join('　')]);
+  if(rows2.length)h+=fmKv(rows2);
+  const v=p.valuation;
+  h+=fmSec('估值位置');
+  h+=(v&&v.ok&&(v.per||v.pbr))?fmKv([fmPos(v.per,'本益比 PER'),fmPos(v.pbr,'股價淨值比 PBR'),v.yield!=null?['殖利率',v.yield+'%']:null,['資料日期',fmE(v.date)]]):fmMiss('估值');
+  const r=p.revenue;
+  h+=fmSec('月營收（億元）');
+  h+=(r&&r.ok)?fmTbl(['月份','營收','年增','月增'],r.months.slice().reverse().map(x=>[fmE(x.ym),fmYi(x.revenue),fmS(x.yoy,1)+'%',fmS(x.mom,1)+'%']))+`<div style="font-size:11px;color:var(--t3);margin:6px 0 0">今年累計年增 ${fmS(r.ytd_yoy,1)}%　近 3 個月平均年增 ${fmS(r.yoy_3m_avg,1)}%</div>`:fmMiss('月營收');
+  const q=p.income;
+  h+=fmSec('每季獲利（億元）');
+  h+=(q&&q.ok)?fmTbl(['季末','營收','毛利率','營益率','淨利率','EPS','營收年增','EPS 年增'],q.quarters.slice().reverse().map(x=>[fmE(x.date.slice(0,7)),fmYi(x.revenue),x.gm==null?'—':x.gm+'%',x.om==null?'—':x.om+'%',x.nm==null?'—':x.nm+'%',x.eps==null?'—':fmN(x.eps,2),fmS(x.rev_yoy,1)+'%',fmS(x.eps_yoy,1)+'%']))+(q.eps_ttm!=null?`<div style="font-size:11px;color:var(--t3);margin:6px 0 0">近四季 EPS 合計 ${fmN(q.eps_ttm,2)}</div>`:''):fmMiss('財報');
+  const b=p.balance,cf=p.cashflow,fr=[];
+  if(b&&b.ok){const l=b.latest;fr.push(['資產負債表日期',fmE(b.date)],['負債比',l.debt_ratio==null?'—':l.debt_ratio+'%'],['流動比',l.current_ratio==null?'—':l.current_ratio+'%'],['速動比',l.quick_ratio==null?'—':l.quick_ratio+'%'],['現金及約當現金（億）',fmYi(l.cash)],['股東權益（億）',fmYi(l.equity)]);}
+  if(cf&&cf.ok){const l=cf.latest;fr.push(['營業現金流（億，單季）',fmS(l.ocf/1e8,1)],['投資現金流（億）',l.icf==null?'—':fmS(l.icf/1e8,1)],['籌資現金流（億）',l.fin==null?'—':fmS(l.fin/1e8,1)]);}
+  h+=fmSec('財務體質');
+  h+=fr.length?fmKv(fr):fmMiss('資產負債與現金流');
+  const dv=p.dividend;
+  h+=fmSec('股利政策');
+  h+=(dv&&dv.ok)?fmTbl(['所屬期間','現金股利','股票股利','除息日','除權日'],dv.records.slice().reverse().map(x=>[fmE(x.period),fmN(x.cash,2),fmN(x.stock,2),fmE(x.ex_cash||'—'),fmE(x.ex_stock||'—')])):fmMiss('股利');
+  const nw=p.news;
+  h+=fmSec('近期新聞');
+  h+=(nw&&nw.ok&&nw.items.length)?`<div class="panel card"><div class="panel-body">${nw.items.map(x=>`<div style="padding:7px 0;border-bottom:1px solid var(--line);font-size:13px;line-height:1.55">${x.link?`<a href="${fmE(x.link)}" target="_blank" rel="noopener noreferrer nofollow" style="color:var(--t1)">${fmE(x.title)}</a>`:fmE(x.title)}<div style="font-size:10.5px;color:var(--t3)">${fmE(x.date)}　${fmE(x.source)}</div></div>`).join('')}</div></div>`:fmMiss('新聞');
+  return h;
+}
+async function loadFmStock(code){
+  const el=document.getElementById('fm-stock');if(!el)return;
+  el.dataset.code=code;
+  try{
+    const p=await(await fetch('/api/finmind/stock/'+encodeURIComponent(code),{cache:'no-store'})).json();
+    const e2=document.getElementById('fm-stock');
+    if(e2&&e2.dataset.code===code)e2.innerHTML=fmStockHtml(p);
+  }catch(e){const e2=document.getElementById('fm-stock');if(e2)e2.innerHTML=fmSec('深度分析（FinMind）')+'<div class="panel card"><div class="panel-body"><div class="empty">暫時無法載入，請稍後再試</div></div></div>';}
+}
+async function fmMarketAppend(el,hasTaifex){
+  try{
+    const m=await(await fetch('/api/finmind/market')).json();
+    if(!m||m.error)return;
+    const f=m.futures,fi=m.inst,mg=m.margin;let h='';
+    if(f&&f.ok&&f.latest){const l=f.latest,n=f.night;
+      h+=`<div><dt>台指期近月・日盤</dt><dd class="num" style="color:${_col(l.chg)}">${_fmtN(l.close)} <small>${l.chg>0?'▲':l.chg<0?'▼':''}${_fmtN(Math.abs(l.chg||0))}</small></dd><em>${fmE(l.date)}　量 ${_fmtN(l.volume)}　未平倉 ${_fmtN(l.oi)}</em></div>`;
+      if(n)h+=`<div><dt>台指期夜盤</dt><dd class="num" style="color:${_col(n.chg)}">${_fmtN(n.close)}</dd><em>${fmE(n.date)}　量 ${_fmtN(n.volume)}</em></div>`;}
+    if(fi&&fi.ok&&fi.days&&fi.days.length){const l=fi.days[fi.days.length-1];
+      h+=`<div><dt>大盤三大法人（億元）</dt><dd class="num">外資 <span style="color:${_col(l.foreign)}">${_sg(l.foreign,1)}</span></dd><em>投信 ${_sg(l.trust,1)}　自營 ${_sg(l.dealer,1)}　${fmE(l.date)}</em></div>`;}
+    if(mg&&mg.ok&&mg.days&&mg.days.length){const l=mg.days[mg.days.length-1];
+      h+=`<div><dt>大盤融資餘額（張）</dt><dd class="num">${_fmtN(l.margin_lots)}</dd><em>${_sg(l.margin_chg)}　融券 ${_fmtN(l.short_lots)}　${fmE(l.date)}</em></div>`;}
+    if(!h)return;
+    el.hidden=false;
+    const box=document.createElement('dl');box.innerHTML=h;
+    el.querySelectorAll('.fm-mkt').forEach(x=>x.remove());
+    box.className='fm-mkt';
+    el.appendChild(box);
+    if(!hasTaifex)el.insertAdjacentHTML('afterbegin','<header><h3>期貨與大盤籌碼</h3><span class="mut">FinMind</span></header>');
+    el.insertAdjacentHTML('beforeend','<p class="mut fm-mkt">台指期、大盤法人與融資餘額來源：FinMind 開放資料；期交所開放資料落後時，期貨籌碼也改採 FinMind。</p>');
+  }catch(e){}
+}
+
 function renderInstrument(d){
   const el=document.getElementById('inst-result');if(!el)return;
   const info=d.info, ind=d.indicators, sig=d.active_signal, hist=d.signal_history||[],
@@ -2972,6 +3061,7 @@ function renderInstrument(d){
     <div style="font-size:10.5px;color:var(--t3);margin-top:8px">基本面資料可能有落後（估值／營收非即時），實際期間以「營收資料期間」欄位為準</div>
   </div></div>`;
 
+  html+='<div id="fm-stock"><div class="empty ld"><i class="spin"></i>載入深度分析（法人、融資券、營收、財報、股利）…</div></div>';
   html+=`<div class="sec-label"><div class="bar"></div><div class="tx">重大訊息公告</div></div>`;
   if(!news.length){
     html+=`<div class="panel card"><div class="panel-body"><div class="empty">目前無命中風險關鍵字的公告</div></div></div>`;
@@ -2994,6 +3084,7 @@ function renderInstrument(d){
 
   el.innerHTML=html;
   try{if(info&&info.code)startLiveQuote(info.code);}catch(e){}
+  try{loadFmStock(d.code);}catch(e){}
   try{klInit(d);}catch(e){console.error('kline',e);}
   try{finChartInit(d);}catch(e){console.error('fin',e);}
   try{addInstEvents(d.code||(d.info&&d.info.code));}catch(e){}
@@ -3050,21 +3141,22 @@ async function fetchTaifexStrip(){
   const el=document.getElementById('taifex-strip');if(!el)return;
   try{
     const d=await(await fetch('/api/taifex')).json();
-    if(d.error||!d.date||!d.items){el.hidden=true;return;}
+    if(d.error||!d.date||!d.items){el.hidden=true;fmMarketAppend(el,false);return;}
     const o=(d.options||{})['外資及陸資']||{};
     const p=d.pcr,l=d.large;
     const cell=(lab,who,sub)=>{const x=d.items[who];if(!x)return '';const tx=(x.tx_net_oi!=null&&x.tx_net_oi!==x.equiv_net_oi)?`臺股期貨 ${_sg(x.tx_net_oi)}`:'';const ss=[tx,sub].filter(Boolean).join('　');return `<div><dt>${lab}</dt><dd class="num" style="color:${_col(x.equiv_net_oi)}">${_sg(x.equiv_net_oi)}<small>口</small></dd>${ss?`<em>${ss}</em>`:''}</div>`;};
     const _tp=new Date(Date.now()+8*3600e3),_late=_tp.getUTCDay()>=1&&_tp.getUTCDay()<=5&&_tp.getUTCHours()>=15&&d.date<todayISO();
     const stale=(d.stale||[]).length?`<span class="pill warn" title="期交所這次沒回資料，先沿用上一次成功取得的數字">沿用前次資料</span>`:_late?`<span class="pill warn" title="期交所今日資料尚未取得，系統每 10 分鐘重抓一次">今日資料尚未公布</span>`:'';
     el.hidden=false;
-    el.innerHTML=`<header><h3>期交所籌碼</h3><span class="mut"><span>${d.date}</span><span>期貨：大台等效淨未平倉</span>${stale}</span></header>
+    el.innerHTML=`<header><h3>期交所籌碼</h3><span class="mut"><span>${d.date}</span><span>期貨：大台等效淨未平倉</span>${stale}${d.source==='finmind'?'<span class="pill" title="期交所開放資料還沒更新到最新交易日，改用 FinMind 的期貨三大法人">FinMind 較新</span>':''}</span></header>
     <dl>
       ${cell('外資','外資及陸資',d.foreign_chg_5d!==undefined?'5 日 '+_sg(d.foreign_chg_5d):'')}${cell('投信','投信')}${cell('自營商','自營商')}
       ${o.call_net_oi!==undefined?`<div><dt>外資臺指選擇權淨未平倉</dt><dd class="num opt"><span><small>Call</small><b style="font-weight:inherit;color:${_col(o.call_net_oi)}">${_sg(o.call_net_oi)}</b></span><span><small>Put</small><b style="font-weight:inherit;color:${_col(o.put_net_oi||0)}">${_sg(o.put_net_oi||0)}</b></span></dd><em>單位：口</em></div>`:''}
       ${p?`<div><dt>Put/Call 未平倉比</dt><dd class="num">${p.oi_ratio}<small>%</small></dd>${d.pcr_chg_5d!==undefined?`<em>5 日 ${d.pcr_chg_5d>0?'+':''}${d.pcr_chg_5d}</em>`:''}</div>`:''}
       ${l?`<div><dt>前十大交易人淨部位</dt><dd class="num" style="color:${_col(l.top10_net)}">${_sg(l.top10_net)}<small>口</small></dd><em>占市場 ${l.top10_net_pct}%</em></div>`:''}
     </dl>
-    <p class="mut">${d.foreign_note?d.foreign_note+'（僅描述部位，不影響訊號分數）。':''}大台等效＝臺股期貨＋小型臺指÷4＋微型臺指÷20。來源：期交所 OpenAPI。</p>`;
+    <p class="mut">${d.foreign_note?d.foreign_note+'（僅描述部位，不影響訊號分數）。':''}大台等效＝臺股期貨＋小型臺指÷4＋微型臺指÷20。來源：${d.source==='finmind'?'FinMind（期交所開放資料尚未更新）':'期交所 OpenAPI'}。</p>`;
+    fmMarketAppend(el,true);
   }catch(e){el.hidden=true;}
 }
 async function fetchLiveStrip(){

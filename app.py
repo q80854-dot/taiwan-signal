@@ -293,6 +293,18 @@ def job_final_bars():
         logger.error(f"job_final_bars: {e}", exc_info=True)
 
 
+def job_finmind_warm():
+    """預先抓 FinMind 大盤／期貨資料並補記期貨籌碼歷史，使用者開網站時直接命中快取。"""
+    try:
+        import finmind_data as finmind, taifex
+        from state_store import store
+        r = finmind.warm_market()
+        _d = taifex.update_hist(store, taifex.get_taifex(force=True))
+        logger.info(f"FinMind 預抓：{r}；期貨籌碼歷史日期 {_d}；剩餘額度 {finmind.budget_left()}")
+    except Exception as e:
+        logger.error(f"job_finmind_warm: {e}", exc_info=True)
+
+
 def job_market_extras():
     """證交所補充資料：交易限制旗標（暫停/變更交易、停資停券…）與融券／借券賣出餘額歷史。"""
     try:
@@ -437,6 +449,8 @@ def setup_scheduler():
     scheduler.add_job(job_final_bars, CronTrigger(hour=13, minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="final_bars_1340", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_final_bars, CronTrigger(hour=14, minute=10, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="final_bars_1410", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_market_extras, CronTrigger(hour="8,17,21", minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="market_extras", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_finmind_warm, CronTrigger(hour="8,14,15,16,17,18,20,22", minute=50, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="finmind_warm", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_finmind_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="finmind_warm_boot", replace_existing=True)
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     # 2026-10-08：各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）。
@@ -1504,6 +1518,36 @@ def api_taifex():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/finmind/stock/<code>")
+def api_finmind_stock(code: str):
+    """個股研究的 FinMind 補充資料：籌碼、融資券、借券、外資持股、估值位置、營收、三表、股利、新聞＋白話解讀。"""
+    try:
+        import finmind_data as finmind
+        out = finmind.stock_pack(code)
+        return jsonify(out), (400 if out.get("error") else 200)
+    except Exception as e:
+        logger.warning(f"api_finmind_stock {code}: {e}")
+        return jsonify({"error": "資料暫時無法取得"}), 500
+
+
+@app.route("/api/finmind/market")
+def api_finmind_market():
+    """大盤三大法人、融資融券、台指期（日盤／夜盤）、期貨三大法人。"""
+    try:
+        import finmind_data as finmind
+        return jsonify(finmind.market_pack())
+    except Exception as e:
+        logger.warning(f"api_finmind_market: {e}")
+        return jsonify({"error": "資料暫時無法取得"}), 500
+
+
+@app.route("/api/finmind/status")
+@admin_auth.admin_required
+def api_finmind_status():
+    import finmind_data as finmind
+    return jsonify(finmind.status())
+
+
 @app.route("/api/db_stats")
 def api_db_stats():
     """資料庫用量：各表筆數與大小、meta 各鍵大小、K 線覆蓋檔數與日期範圍（只有計數，不含內容）。"""
@@ -1665,8 +1709,14 @@ def _long_history(t):
              "volumes": [int(float(x) // 1000) for x in h["Volume"].fillna(0)]}
         bad = sum(1 for i in range(len(d["dates"])) if d["highs"][i] < d["lows"][i]
                   or not (d["lows"][i] - 1e-6 <= d["closes"][i] <= d["highs"][i] + 1e-6))
+        n_fm = 0
+        try:   # Yahoo 偶爾晚一天更新：用 FinMind 把最新交易日接上去
+            import finmind_data as finmind
+            n_fm = finmind.append_to_series(d, t.split(".")[0])
+        except Exception as _e:
+            logger.warning(f"_long_history finmind {t}: {_e}")
         d["quality"] = {"bars": len(d["dates"]), "bad_ohlc": bad, "zero_volume": sum(1 for v in d["volumes"] if v == 0),
-                        "source": "Yahoo Finance 日線（還原價，已含除權息調整）"}
+                        "source": "Yahoo Finance 日線（還原價，已含除權息調整）" + (f"；最新 {n_fm} 根由 FinMind 補上" if n_fm else "")}
         _long_hist_cache[t] = (_t.time(), d)
         return d
     except Exception as e:
@@ -1739,6 +1789,11 @@ def api_instrument(ticker: str):
         from data_fetcher import fetch_ohlcv
         # 5 年長歷史與一年日線互不相依，原本串行（冷快取時合計近 20 秒），改成同時抓。
         _fut_long = _INST_POOL.submit(_long_history, t)
+        try:
+            from data_fetcher import fill_from_finmind
+            fill_from_finmind(t)
+        except Exception as _e:
+            logger.warning(f"fill_from_finmind {t}: {_e}")
         ohlcv = fetch_ohlcv(t, "daily")
         try:   # 收盤後 K 線（Yahoo）還沒有今天這根時，用 MIS 當日定案的開高低收補上，指標才會是最新的
             import realtime as _rt
