@@ -717,7 +717,7 @@ def market_pack() -> Dict:
             ts, ys = _f(sp.get("TodayBalance")), _f(sp.get("YesBalance"))
             days.append({"date": d, "margin_lots": int(tb or 0), "margin_chg": int((tb or 0) - (yb or 0)),
                          "short_lots": int(ts or 0), "short_chg": int((ts or 0) - (ys or 0)),
-                         "margin_money_100m": round((_f(mm.get("TodayBalance")) or 0) / 1e5, 1) if mm else None})
+                         "margin_money_100m": round((_f(mm.get("TodayBalance")) or 0) / 1e8, 1) if mm else None})
         out["margin"] = _sec(res, days, {"days": days[-8:], "date": days[-1]["date"] if days else None})
     except Exception as e:
         out["margin"] = {"ok": False, "error": type(e).__name__}
