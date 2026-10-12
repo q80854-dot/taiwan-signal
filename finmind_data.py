@@ -475,7 +475,7 @@ def sec_cashflow(code: str) -> Dict:
         cum.append({"date": d, "ocf": ocf,
                     "icf": _pick(x, "CashProvidedByInvestingActivities", contains="InvestingActivities"),
                     "fin": _pick(x, "CashFlowsProvidedFromFinancingActivities", "CashFlowsFromFinancingActivities", contains="FinancingActivities"),
-                    "capex": _pick(x, contains="AcquisitionOfPropertyPlantAndEquipment")})
+                    "capex": _pick(x, "PropertyAndPlantAndEquipment", "AcquisitionOfPropertyPlantAndEquipment", contains="AcquisitionOfPropertyPlantAndEquipment")})
     rows = []
     for i, c in enumerate(cum):
         prev = cum[i - 1] if i and cum[i - 1]["date"][:4] == c["date"][:4] else None
@@ -563,7 +563,7 @@ def sec_indicators(code: str) -> Dict:
 
     def cfv(x):
         return (_pick(x, "CashFlowsFromOperatingActivities", "NetCashInflowFromOperatingActivities", contains="OperatingActivities"),
-                _pick(x, contains="AcquisitionOfPropertyPlantAndEquipment"))
+                _pick(x, "PropertyAndPlantAndEquipment", "AcquisitionOfPropertyPlantAndEquipment", contains="AcquisitionOfPropertyPlantAndEquipment"))
     fcf: Dict[str, float] = {}
     cds = sorted(cf)
     for i, d in enumerate(cds):

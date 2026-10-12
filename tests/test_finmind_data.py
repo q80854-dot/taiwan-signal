@@ -185,8 +185,8 @@ def test_indicators_from_raw_statements(monkeypatch):
            + rows("2026-06-30", Revenue=1200, GrossProfit=540, OperatingIncome=300, IncomeAfterTaxes=240, EquityAttributableToOwnersOfParent=225, EPS=1.5))
     bs = (rows("2025-06-30", TotalAssets=5000, Equity=2000, EquityAttributableToOwnersOfParent=1500, CurrentAssets=1500, CurrentLiabilities=1000)
           + rows("2026-06-30", TotalAssets=6000, Equity=2400, EquityAttributableToOwnersOfParent=1800, CurrentAssets=2400, CurrentLiabilities=1200))
-    cf = (rows("2026-03-31", CashFlowsFromOperatingActivities=300, AcquisitionOfPropertyPlantAndEquipment=-100)
-          + rows("2026-06-30", CashFlowsFromOperatingActivities=700, AcquisitionOfPropertyPlantAndEquipment=-250))
+    cf = (rows("2026-03-31", CashFlowsFromOperatingActivities=300, PropertyAndPlantAndEquipment=-100)       # FinMind 實際科目名
+          + rows("2026-06-30", CashFlowsFromOperatingActivities=700, PropertyAndPlantAndEquipment=-250))
     _fake(monkeypatch, {"TaiwanStockFinancialStatements": inc, "TaiwanStockBalanceSheet": bs, "TaiwanStockCashFlowsStatement": cf})
     r = fm.sec_indicators("2330")
     m = {x["key"]: {y["period"]: y for y in x["rows"]} for x in r["metrics"]}
@@ -196,6 +196,6 @@ def test_indicators_from_raw_statements(monkeypatch):
     assert m["roe"][q]["value"] == 12.5                                            # 225/1800，歸屬母公司
     assert m["roa"][q]["value"] == 4.0                                             # 240/6000
     assert m["current_ratio"][q]["value"] == 200.0 and m["equity_ratio"][q]["value"] == 40.0
-    assert m["fcf"][q]["value"] == round(((700 - 300) - (250 - 100)) / 1e8, 2)    # 單季＝累計相減
+    assert q in m["fcf"] and m["fcf"][q]["value"] == round(((700 - 300) - (250 - 100)) / 1e8, 2)    # 單季＝累計相減
     assert r["ok"] and r["date"] == "2026-06-30"
     assert fm.stock_pack("2330")["indicators"]["ok"]
