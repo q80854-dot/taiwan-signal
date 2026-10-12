@@ -2912,7 +2912,7 @@ function fiCss(){return `<style>
 .fi-chart svg{display:block;width:100%;height:auto}
 .fi-leg{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--t3);margin-top:4px}
 .fi-leg i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.fi-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:12px}
+.fi-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:12px}.fi-stats div:last-child:nth-child(odd){grid-column:1/-1}
 .fi-stats div{background:var(--s2);border-radius:6px;padding:8px 10px}
 .fi-stats span{display:block;font-size:11px;color:var(--t3)}
 .fi-stats b{font-size:13.5px;color:var(--t1)}
@@ -2932,7 +2932,7 @@ function fiCss(){return `<style>
 .fi-card .v{font-size:16px;font-weight:700;margin-top:1px}
 .fi-card .y{font-size:11px}
 .fi-card svg{display:block;width:100%;height:20px;margin-top:3px}
-@media(min-width:760px){.fi-big{font-size:36px}.fi-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}}
+@media(min-width:760px){.fi-stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.fi-stats div:last-child:nth-child(odd){grid-column:auto}.fi-big{font-size:36px}.fi-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}}
 </style>`}
 function fmIndHtml(ind){
   if(!ind||!ind.ok||!(ind.metrics||[]).length)return fmSec('財務指標（單季）')+fmMiss('財務指標');
@@ -2989,12 +2989,12 @@ function fiDraw(){
   const yy=v=>yTop+8+(lmax-v)/(lmax-lmin)*(yH-16);
   let s=`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${fmE(cur.label)}近 ${k} 季走勢">`;
   s+=`<line x1="${padL}" x2="${W-padR}" y1="${yy(0).toFixed(1)}" y2="${yy(0).toFixed(1)}" stroke="var(--line2)" stroke-dasharray="3 3"/>`;
-  s+=`<text x="${padL}" y="${yTop+6}" font-size="10" fill="var(--t3)">同比</text>`;
   let path='',prev=false;
   rows.forEach((r,i)=>{if(r.yoy==null){prev=false;return}path+=(prev?'L':'M')+cx(i).toFixed(1)+' '+yy(r.yoy).toFixed(1)+' ';prev=true});
   if(path)s+=`<path d="${path}" fill="none" stroke="var(--warn)" stroke-width="1.8" stroke-linejoin="round"/>`;
   rows.forEach((r,i)=>{if(r.yoy==null)return;const px=cx(i),py=yy(r.yoy);
     s+=`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3" fill="var(--warn)"/>`;
+    if(sw<44&&((k-1-i)%2))return;
     const t=(r.yoy>0?'+':'')+(Math.abs(r.yoy)>=100?r.yoy.toFixed(0):r.yoy.toFixed(1))+'%';
     s+=`<text x="${px.toFixed(1)}" y="${(py+(r.yoy>=0?-7:15)).toFixed(1)}" font-size="${W<520?9.5:11}" text-anchor="middle" fill="${r.yoy>0?'var(--up)':'var(--down)'}">${t}</text>`});
   s+=`<line x1="${padL}" x2="${W-padR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="var(--line2)"/>`;
