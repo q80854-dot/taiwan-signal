@@ -218,7 +218,7 @@ def build_quality(code: str) -> Dict:
     cons = "營造" in industry                                # 建材營造：預售屋合約負債使負債比率天生偏高
     notes: List[str] = []
     if fin:
-        notes.append("金融保險業的財報結構與一般公司不同，毛利率、營業利益率、負債比率、流動比率、現金流相關項目不適用，已不列入評分。")
+        notes.append("金融保險業的財報結構與一般公司不同，毛利率、營業利益率、負債比率、流動比率、現金流相關項目不適用；「營收」為含投資損益的淨收益，單季波動極大、同比不具意義，也不列入評分。")
     if cons:
         notes.append("建材營造業有預售屋合約負債，負債比率天生偏高，本檢查改用較寬鬆門檻（≤55% 優、≤70% 普通）。")
     items: List[Dict] = []
@@ -260,7 +260,7 @@ def build_quality(code: str) -> Dict:
         add("成長動能", "EPS 連續同比成長", f"{streak} 季", "good" if streak >= 4 else "warn" if streak >= 2 else "bad",
             "連續幾季 EPS 高於去年同季")
     rv = _mrows(ind, "revenue")
-    if rv and rv[-1].get("yoy") is not None:
+    if not fin and rv and rv[-1].get("yoy") is not None:
         r = rv[-1]
         add("成長動能", f"單季營收同比 {r['period']}", f"{r['value']:.1f} 億（{r['yoy']:+.1f}%）", band(r["yoy"], 10, 0), "與去年同季相比")
     dr = _mrows(ind, "debt_ratio")
