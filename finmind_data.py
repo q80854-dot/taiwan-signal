@@ -40,6 +40,7 @@ _blocked_until = 0.0                        # 被 FinMind 回報額度用完／�
 _stats = {"calls": 0, "cache_hits": 0, "errors": 0, "last_error": None, "last_ok": None, "last_http": None}
 _POOL = ThreadPoolExecutor(max_workers=5)
 _MAX_CACHE = 800
+_FIN_DAYS = 1500                              # 三張財報共用同一個查詢區間（約 16 季），才會命中同一份快取、不多吃額度
 
 # 各資料的快取秒數：盤後資料一天才變一次，不必頻繁問；新聞與當日籌碼短一點。
 TTL = {
@@ -385,7 +386,7 @@ def sec_revenue(code: str) -> Dict:
 
 
 def sec_income(code: str) -> Dict:
-    res = fm_get("TaiwanStockFinancialStatements", code, _day(-1100))
+    res = fm_get("TaiwanStockFinancialStatements", code, _day(-_FIN_DAYS))
     q = {}
     for r in res["rows"]:
         v = _f(r.get("value"))
@@ -427,7 +428,7 @@ def _pick(d: Dict[str, float], *names, contains: str = "") -> Optional[float]:
 
 
 def sec_balance(code: str) -> Dict:
-    res = fm_get("TaiwanStockBalanceSheet", code, _day(-800))
+    res = fm_get("TaiwanStockBalanceSheet", code, _day(-_FIN_DAYS))
     q = {}
     for r in res["rows"]:
         v = _f(r.get("value"))
@@ -459,7 +460,7 @@ def sec_balance(code: str) -> Dict:
 def sec_cashflow(code: str) -> Dict:
     """FinMind 現金流量表是「當年度累計」（Q2 = 上半年、Q4 = 全年），要把同年度前一季相減才是單季。
     2026-10-12 以台積電實測：2025Q2 營業現金流 1.12 兆、Q3 1.55 兆、Q4 2.27 兆、2026Q1 又從 0.70 兆重新累計。"""
-    res = fm_get("TaiwanStockCashFlowsStatement", code, _day(-900))
+    res = fm_get("TaiwanStockCashFlowsStatement", code, _day(-_FIN_DAYS))
     q = {}
     for r in res["rows"]:
         v = _f(r.get("value"))
@@ -524,6 +525,111 @@ def sec_news(code: str) -> Dict:
         if len(rows) >= 12:
             break
     return _sec(res, rows, {"items": rows})
+
+
+def _qlabel(d: str) -> str:
+    return f"{d[:4]}/Q{(int(d[5:7]) - 1) // 3 + 1}"
+
+
+def _yoy_pct(cur, prev) -> Optional[float]:
+    """同比增長率（相對變化 %）。去年同期為 0 或負數時沒有意義，回傳 None，不硬算。"""
+    if cur is None or prev is None or prev <= 0:
+        return None
+    return round((cur / prev - 1) * 100, 2)
+
+
+def sec_indicators(code: str) -> Dict:
+    """財務指標（單季）。全部由 FinMind 三大報表原始科目直接計算，每個數字都能對回財報：
+      每股盈餘 EPS             ＝ 損益表 EPS（單季）
+      自由現金流               ＝ 營業活動現金流 − 購置不動產廠房及設備（現金流量表為年度累計，已相減還原單季）
+      流動比率                 ＝ 流動資產 ÷ 流動負債
+      股東權益比率             ＝ 權益總額 ÷ 資產總額
+      淨資產收益率 ROE（單季） ＝ 歸屬母公司淨利 ÷ 歸屬母公司權益（期末）；缺母公司科目時改用稅後淨利 ÷ 權益總額
+      總資產收益率 ROA（單季） ＝ 稅後淨利 ÷ 資產總額（期末）
+      毛利率／營業利益率／淨利率 ＝ 毛利／營業利益／稅後淨利 ÷ 營業收入
+    科目缺漏的季度該指標留空，不推估。同比＝與去年同季相比。"""
+    inc_r = fm_get("TaiwanStockFinancialStatements", code, _day(-_FIN_DAYS))
+    bs_r = fm_get("TaiwanStockBalanceSheet", code, _day(-_FIN_DAYS))
+    cf_r = fm_get("TaiwanStockCashFlowsStatement", code, _day(-_FIN_DAYS))
+
+    def pivot(res):
+        q: Dict[str, Dict[str, float]] = {}
+        for r in res["rows"]:
+            v = _f(r.get("value"))
+            if v is not None:
+                q.setdefault(str(r["date"])[:10], {})[r.get("type")] = v
+        return q
+    inc, bs, cf = pivot(inc_r), pivot(bs_r), pivot(cf_r)
+
+    def cfv(x):
+        return (_pick(x, "CashFlowsFromOperatingActivities", "NetCashInflowFromOperatingActivities", contains="OperatingActivities"),
+                _pick(x, contains="AcquisitionOfPropertyPlantAndEquipment"))
+    fcf: Dict[str, float] = {}
+    cds = sorted(cf)
+    for i, d in enumerate(cds):
+        ocf, capex = cfv(cf[d])
+        if ocf is None or capex is None:
+            continue
+        if d[5:7] == "03":
+            fcf[d] = ocf - abs(capex)
+            continue
+        pd_ = cds[i - 1] if i and cds[i - 1][:4] == d[:4] else None
+        if pd_ is None:
+            continue                       # 缺同年度前一季，無法還原單季，寧可留空
+        po, pc = cfv(cf[pd_])
+        if po is None or pc is None:
+            continue
+        fcf[d] = (ocf - po) - (abs(capex) - abs(pc))
+    vals: Dict[str, Dict[str, float]] = {}
+    for d in sorted(set(inc) | set(bs) | set(fcf)):
+        i_, b_ = inc.get(d, {}), bs.get(d, {})
+        v: Dict[str, float] = {}
+        rev, net = i_.get("Revenue"), i_.get("IncomeAfterTaxes")
+        if i_.get("EPS") is not None:
+            v["eps"] = i_["EPS"]
+        if rev:
+            if i_.get("GrossProfit") is not None:
+                v["gross"] = i_["GrossProfit"] / rev * 100
+            if i_.get("OperatingIncome") is not None:
+                v["op"] = i_["OperatingIncome"] / rev * 100
+            if net is not None:
+                v["net"] = net / rev * 100
+        ta, eq, peq = b_.get("TotalAssets"), b_.get("Equity"), b_.get("EquityAttributableToOwnersOfParent")
+        pni = i_.get("EquityAttributableToOwnersOfParent")
+        if pni is not None and peq:
+            v["roe"] = pni / peq * 100
+        elif net is not None and eq:
+            v["roe"] = net / eq * 100
+        if net is not None and ta:
+            v["roa"] = net / ta * 100
+        if b_.get("CurrentAssets") and b_.get("CurrentLiabilities"):
+            v["current_ratio"] = b_["CurrentAssets"] / b_["CurrentLiabilities"] * 100
+        if eq is not None and ta:
+            v["equity_ratio"] = eq / ta * 100
+        if d in fcf:
+            v["fcf"] = fcf[d]
+        vals[d] = v
+    spec = [("eps", "每股收益", "元"), ("fcf", "自由現金流", "億"), ("current_ratio", "流動比率", "%"),
+            ("equity_ratio", "股東權益比率", "%"), ("roe", "淨資產收益率", "%"), ("roa", "總資產收益率", "%"),
+            ("gross", "毛利率", "%"), ("op", "營業利益率", "%"), ("net", "淨利率", "%")]
+    metrics = []
+    for key, label, unit in spec:
+        rows = []
+        for d in sorted(vals):
+            if key not in vals[d]:
+                continue
+            ly = f"{int(d[:4]) - 1}{d[4:]}"
+            cur, prev = vals[d][key], vals.get(ly, {}).get(key)
+            val = cur / 1e8 if key == "fcf" else cur
+            rows.append({"period": _qlabel(d), "date": d, "value": round(val, 2),
+                         "yoy": _yoy_pct(cur, prev),
+                         "yoy_pp": round(cur - prev, 2) if prev is not None and unit == "%" else None})
+        if rows:
+            metrics.append({"key": key, "label": label, "unit": unit, "rows": rows[-12:]})
+    ok = bool(metrics)
+    return {"ok": ok, "stale": bool(inc_r.get("stale") or bs_r.get("stale") or cf_r.get("stale")),
+            "error": None if ok else (inc_r.get("error") or bs_r.get("error") or "無資料"),
+            "date": max(vals) if vals else None, "metrics": metrics}
 
 
 SECTIONS = {"chips": sec_chips, "margin": sec_margin, "lending": sec_lending, "foreign_hold": sec_foreign_hold,
@@ -617,6 +723,11 @@ def stock_pack(code: str) -> Dict:
         except Exception as e:
             logger.warning("finmind %s %s: %s", code, name, e)
             out[name] = {"ok": False, "error": type(e).__name__}
+    try:
+        out["indicators"] = sec_indicators(code)
+    except Exception as e:
+        logger.warning("finmind indicators %s: %s", code, e)
+        out["indicators"] = {"ok": False, "error": type(e).__name__}
     out["insights"] = insights(out)
     dates = [out[k].get("date") for k in ("chips", "margin", "valuation") if isinstance(out.get(k), dict) and out[k].get("date")]
     out["latest_date"] = max(dates) if dates else None
