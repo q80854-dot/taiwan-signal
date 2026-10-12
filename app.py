@@ -1746,6 +1746,9 @@ def api_instrument(ticker: str):
     t = raw if had_suffix else raw + ".TW"
     code = t.split(".")[0]
     out = {"ticker": t, "code": code}
+    _T0 = __import__("time").time()
+    def _tk(k):
+        out.setdefault("timing", {})[k] = round(__import__("time").time() - _T0, 1)
     try:
         from stock_universe import get_stock_info_any
         info = get_stock_info_any(t)
@@ -1795,6 +1798,7 @@ def api_instrument(ticker: str):
         except Exception as _e:
             logger.warning(f"fill_from_finmind {t}: {_e}")
         ohlcv = fetch_ohlcv(t, "daily")
+        _tk("fill_and_ohlcv")
         try:   # 收盤後 K 線（Yahoo）還沒有今天這根時，用 MIS 當日定案的開高低收補上，指標才會是最新的
             import realtime as _rt
             if (ohlcv and ohlcv.get("dates") and _q and _q.get("price") and _q.get("open") and _q.get("high")
@@ -1815,6 +1819,7 @@ def api_instrument(ticker: str):
             out["indicators"] = None
         try:
             out["ohlcv_long"] = _fut_long.result(timeout=45)
+            _tk("long_history")
         except Exception as _e:
             logger.warning(f"ohlcv_long {t}: {_e}"); out["ohlcv_long"] = None
         try:
@@ -1839,7 +1844,9 @@ def api_instrument(ticker: str):
         out["ohlcv"] = None; out["indicators"] = None; out["ohlcv_error"] = str(e)
     try:
         from fundamentals import get_profitability_quality, fetch_valuation_map, fetch_monthly_revenue_map
+        _tk("before_fundamentals")
         out["profitability_quality"] = get_profitability_quality(code)
+        _tk("profitability_quality")
         out["valuation"] = fetch_valuation_map().get(code)
         out["monthly_revenue"] = fetch_monthly_revenue_map().get(code)
         try:
@@ -1850,6 +1857,7 @@ def api_instrument(ticker: str):
         try:
             from fund_score import build_fundamental_profile
             out["fundamental_profile"] = build_fundamental_profile(code)
+            _tk("fund_profile")
         except Exception as _e:
             out["fundamental_profile"] = {"error": str(_e)}
     except Exception as e:
@@ -2027,6 +2035,8 @@ def api_instrument(ticker: str):
         }
     except Exception as e:
         out["data_sources_error"] = str(e)
+    _tk("total")
+    logger.info(f"instrument timing {t}: {out['timing']}")
     return jsonify(out)
 
 @app.route("/api/scan/force", methods=["POST"])
