@@ -35,8 +35,9 @@ BUDGET = int(HOURLY_LIMIT * 0.9)            # 留 10% 給排程與意外
 _calls: deque = deque()                     # 最近一小時每次對外請求的時間
 _lock = threading.Lock()
 _cache: Dict[tuple, dict] = {}
+_token_bad_until = 0.0                      # token 被拒時，暫時改用免登入額度到這個時間
 _blocked_until = 0.0                        # 被 FinMind 回報額度用完／維護時，暫停到這個時間
-_stats = {"calls": 0, "cache_hits": 0, "errors": 0, "last_error": None, "last_ok": None}
+_stats = {"calls": 0, "cache_hits": 0, "errors": 0, "last_error": None, "last_ok": None, "last_http": None}
 _POOL = ThreadPoolExecutor(max_workers=5)
 _MAX_CACHE = 800
 
@@ -72,7 +73,8 @@ def budget_left() -> int:
 def status() -> Dict:
     """給管理頁／健康檢查：額度、快取、最近錯誤（不含 token）。"""
     return {"has_token": bool(TOKEN), "hourly_limit": HOURLY_LIMIT, "budget_left": budget_left(),
-            "cache_entries": len(_cache), "blocked_for_sec": max(0, int(_blocked_until - time.time())), **_stats}
+            "cache_entries": len(_cache), "blocked_for_sec": max(0, int(_blocked_until - time.time())),
+            "token_fallback_sec": max(0, int(_token_bad_until - time.time())), **_stats}
 
 
 def _prune():
@@ -85,7 +87,7 @@ def _prune():
 def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = None,
            end: Optional[str] = None, ttl: Optional[int] = None, force: bool = False) -> Dict:
     """→ {rows, ok, stale, fetched_at, error}。永遠回傳 dict，不丟例外。"""
-    global _blocked_until
+    global _blocked_until, _token_bad_until
     key = (dataset, data_id, start, end)
     ttl = TTL.get(dataset, 900) if ttl is None else ttl
     c = _cache.get(key)
@@ -111,28 +113,37 @@ def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = N
         params["start_date"] = start
     if end:
         params["end_date"] = end
-    headers = {"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}
     last = "未知錯誤"
     for i in range(2):
+        # 帶 token 被拒（額度或 token 無效）時，改用免登入額度再試一次，不讓單一 token 問題讓整站沒資料
+        use_token = bool(TOKEN) and time.time() >= _token_bad_until
+        headers = {"Authorization": f"Bearer {TOKEN}"} if use_token else {}
         try:
             with _lock:
                 _calls.append(time.time())
             _stats["calls"] += 1
             r = requests.get(BASE, params=params, headers=headers, timeout=20)
-            if r.status_code in (402, 429):
-                _blocked_until = time.time() + 900
-                return fallback(f"HTTP {r.status_code}（額度用完）")
-            j = r.json()
-            st = j.get("status")
-            if st == 200:
+            try:
+                j = r.json()
+            except Exception:
+                j = {}
+            st = j.get("status", r.status_code)
+            msg = str(j.get("msg", ""))[:80]
+            if st == 200 and r.status_code == 200:
                 rows = j.get("data") or []
                 _cache[key] = {"rows": rows, "ts": time.time()}
                 _prune()
                 _stats["last_ok"] = time.time()
+                _stats["last_http"] = None
                 return {"rows": rows, "ok": True, "stale": False, "fetched_at": _cache[key]["ts"], "error": None}
-            msg = str(j.get("msg", ""))[:80]
-            if st in (402, 429) or "limit" in msg.lower():
-                _blocked_until = time.time() + 900
+            _stats["last_http"] = f"{dataset} HTTP {r.status_code} status {st} {msg}"[:200]
+            denied = r.status_code in (401, 402, 403, 429) or st in (401, 402, 403, 429) or "limit" in msg.lower() or "token" in msg.lower()
+            if denied and use_token:
+                _token_bad_until = time.time() + 600     # 10 分鐘內改用免登入額度
+                continue
+            if denied:
+                _blocked_until = time.time() + 120      # 免登入也被拒才短暫暫停（2 分鐘），不再一停 15 分鐘
+                return fallback(f"HTTP {r.status_code} status {st} {msg}")
             return fallback(f"status {st} {msg}")
         except Exception as e:   # 逾時、連線中斷、非 JSON
             last = f"{type(e).__name__}"

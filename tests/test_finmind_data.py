@@ -158,3 +158,22 @@ def test_cashflow_cumulative_to_single_quarter(monkeypatch):
     c = fm.sec_cashflow("2330")
     got = {x["date"]: x["ocf"] for x in c["quarters"]}
     assert got == {"2025-12-31": 726, "2026-03-31": 699, "2026-06-30": 801}   # 2025Q3 缺 Q2 無法還原單季，不顯示
+
+
+def test_token_rejected_falls_back_to_anonymous(monkeypatch):
+    fm._cache.clear(); fm._calls.clear(); fm._blocked_until = 0; fm._token_bad_until = 0
+    monkeypatch.setattr(fm, "TOKEN", "fake-token")
+    seen = []
+
+    def get(url, params=None, headers=None, timeout=0):
+        seen.append(bool(headers))
+        if headers:      # 帶 token 被拒
+            return _Resp({"status": 402, "msg": "Requests reach the upper limit"}, 402)
+        return _Resp({"status": 200, "data": [{"date": "2026-10-08"}]})
+    monkeypatch.setattr(fm.requests, "get", get)
+    monkeypatch.setattr(fm.time, "sleep", lambda s: None)
+    r = fm.fm_get("TaiwanStockPER", "2330", "2026-10-01")
+    assert r["ok"] and seen == [True, False] and fm._blocked_until == 0
+    fm.fm_get("TaiwanStockPER", "2330", "2026-10-02")      # token 暫停期間直接用免登入
+    assert seen[-1] is False and fm._token_bad_until > time.time()
+    fm._token_bad_until = 0

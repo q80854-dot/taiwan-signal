@@ -37,7 +37,7 @@ def test_build_ratios():
     # 損益（累計）+ 資產負債（時點）→ 單季毛利率/淨利率/ROE/流動比率
     inc = {
         "2026-03-31": {"revenue": 1000.0, "gross": 500.0, "net_income": 200.0, "eps": 2.0},
-        "2026-06-30": {"revenue": 2200.0, "gross": 1100.0, "net_income": 460.0, "eps": 4.6},
+        "2026-06-30": {"revenue": 1200.0, "gross": 600.0, "net_income": 260.0, "eps": 2.6},
     }
     bs = {
         "2026-03-31": {"equity": 4000.0, "assets": 8000.0, "cur_assets": 3000.0, "cur_liab": 1500.0},
