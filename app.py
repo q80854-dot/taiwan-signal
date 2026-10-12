@@ -1843,6 +1843,20 @@ def api_instrument(ticker: str):
             _tk("long_history")
         except Exception as _e:
             logger.warning(f"ohlcv_long {t}: {_e}"); out["ohlcv_long"] = None
+        if not out.get("ohlcv") and out.get("ohlcv_long") and len(out["ohlcv_long"].get("closes") or []) >= 20:
+            # 備援：一年日線抓不到時，改用長歷史最近 250 根，避免 K 線整個空白
+            _L = out["ohlcv_long"]
+            _o = {k: (v[-250:] if isinstance(v, list) else v) for k, v in _L.items() if k != "quality"}
+            _c = _o["closes"]
+            _o.update({"source": "long_history_fallback", "tf_key": "daily", "bar_count": len(_c), "ticker": t,
+                       "current_price": _c[-1], "prev_close": _c[-2] if len(_c) > 1 else _c[-1],
+                       "change_pct": round((_c[-1] / _c[-2] - 1) * 100, 2) if len(_c) > 1 and _c[-2] else 0})
+            out["ohlcv"] = _o
+            try:
+                from indicators import calc_all_indicators
+                out["indicators"] = calc_all_indicators(_o)
+            except Exception as _e2:
+                logger.warning(f"fallback indicators {t}: {_e2}")
         try:
             from state_store import store as _st
             ov = _st.get_official_volumes(code)
