@@ -305,6 +305,25 @@ def job_finmind_warm():
         logger.error(f"job_finmind_warm: {e}", exc_info=True)
 
 
+def job_warm_instrument():
+    """預熱個股研究頁會用到的資料（估值、月營收、重大訊息、掃描池），避免部署或重啟後第一位使用者等一兩分鐘。"""
+    import time as _t
+    t0 = _t.time()
+    done = []
+    steps = (("估值", lambda: __import__("fundamentals").fetch_valuation_map()),
+             ("月營收", lambda: __import__("fundamentals").fetch_monthly_revenue_map()),
+             ("重大訊息", lambda: __import__("fundamentals").fetch_material_news_risk_map()),
+             ("股票清單", lambda: __import__("stock_universe").get_stock_info_any("2330.TW")),
+             ("獲利品質", lambda: __import__("fundamentals").get_profitability_quality("2330")))
+    for name, fn in steps:
+        try:
+            fn()
+            done.append(f"{name}:{_t.time() - t0:.0f}s")
+        except Exception as e:
+            logger.warning(f"job_warm_instrument {name}: {e}")
+    logger.info("個股頁預熱：" + "，".join(done))
+
+
 def job_market_extras():
     """證交所補充資料：交易限制旗標（暫停/變更交易、停資停券…）與融券／借券賣出餘額歷史。"""
     try:
@@ -452,6 +471,8 @@ def setup_scheduler():
     scheduler.add_job(job_finmind_warm, CronTrigger(hour="8,14,15,16,17,18,20,22", minute=50, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="finmind_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_finmind_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="finmind_warm_boot", replace_existing=True)
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
+    scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
+    scheduler.add_job(job_warm_instrument, "interval", minutes=20, id="warm_instrument", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     # 2026-10-08：各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）。
     # 原本只跑 14:00–22:00，過 22:00 就停到隔天早上——證交所 STOCK_DAY_ALL（上市日行情）與期交所三大法人
@@ -1862,6 +1883,7 @@ def api_instrument(ticker: str):
             out["fundamental_profile"] = {"error": str(_e)}
     except Exception as e:
         out["fundamentals_error"] = str(e)
+    _tk("fundamentals_done")
     try:   # 三大法人近 20 個交易日（T86，僅上市；張）
         from state_store import store as _st3
         dates = _st3.get_inst_dates(limit=20)
@@ -1920,6 +1942,7 @@ def api_instrument(ticker: str):
         out["margin"] = fetch_margin_short_map().get(code)
     except Exception as e:
         out["margin_error"] = str(e)
+    _tk("inst20_done")
     try:
         from fundamentals import fetch_material_news_risk_map
         out["material_news"] = fetch_material_news_risk_map().get(code, [])
@@ -1979,12 +2002,14 @@ def api_instrument(ticker: str):
     except Exception as e:
         out["indicator_reading"] = None; out["indicator_reading_error"] = str(e)
     # 內部人交易／分析師評級：台股無穩定的免費逐檔來源，抓不到就不放（不顯示佔版面的空區塊）。
+    _tk("news_done")
     try:
         from scanner import scanner
         live = [s for s in scanner.get_status().get("signals", []) if s.get("ticker") == t]
         out["active_signal"] = live[0] if live else None
     except Exception as e:
         out["active_signal"] = None; out["active_signal_error"] = str(e)
+    _tk("signal_done")
     try:
         from state_store import store
         history = [s for s in store.get_recent_signals(limit=300, days_back=180) if s.get("ticker") == t]
