@@ -14,11 +14,15 @@
   3. 每筆資料都帶資料日期；日期早於預期交易日就標記落後。
   4. token 只從環境變數 FINMIND_TOKEN 讀，以 Authorization 標頭送出，不寫進日誌、不回傳給前端。
 """
+import base64
+import hashlib
+import json
 import logging
 import os
 import re
 import threading
 import time
+import zlib
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -53,6 +57,68 @@ TTL = {
     "TaiwanStockTotalInstitutionalInvestors": 900, "TaiwanStockTotalMarginPurchaseShortSale": 900,
     "TaiwanFuturesDaily": 600, "TaiwanFuturesInstitutionalInvestors": 600,
 }
+
+
+# ───────── 持久快取（寫進 DB）─────────
+# 部署／重啟會清空記憶體；若 FinMind 當下又剛好額度用完（402），整頁資料就會空白。
+# 所以每次成功取得的資料都存進 DB（壓縮後），重啟後直接沿用，額度暫停期間也能顯示最近一次成功的資料。
+_PERSIST_MAX = 700_000          # 壓縮後超過這個大小就不存
+_boot_loaded = False
+
+
+def _pkey(key: tuple) -> str:
+    return "fm:" + hashlib.sha1(repr(key).encode()).hexdigest()[:28]
+
+
+def _pget(name: str):
+    try:
+        from state_store import store
+        return store.get_meta(name, None)
+    except Exception:
+        return None
+
+
+def _pset(name: str, value: str):
+    try:
+        from state_store import store
+        store.set_meta(name, value)
+    except Exception as e:
+        logger.debug("finmind persist %s: %s", name, e)
+
+
+def _persist_load(key: tuple) -> Optional[dict]:
+    raw = _pget(_pkey(key))
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        d = json.loads(zlib.decompress(base64.b64decode(raw)).decode("utf-8"))
+        return {"rows": d["rows"], "ts": float(d["ts"])}
+    except Exception:
+        return None
+
+
+def _persist_save(key: tuple, rows: list, ts: float):
+    try:
+        raw = base64.b64encode(zlib.compress(json.dumps({"ts": ts, "rows": rows}, ensure_ascii=False,
+                                                        separators=(",", ":")).encode("utf-8"), 6)).decode("ascii")
+        if len(raw) <= _PERSIST_MAX:
+            _pset(_pkey(key), raw)
+    except Exception as e:
+        logger.debug("finmind persist save: %s", e)
+
+
+def _load_block_once():
+    """重啟後沿用上次的『暫停到何時』，避免剛重啟就又去撞已經用完的額度。"""
+    global _boot_loaded, _blocked_until
+    if _boot_loaded:
+        return
+    _boot_loaded = True
+    try:
+        v = float(_pget("fm:blocked_until") or 0)
+        if v > time.time():
+            _blocked_until = max(_blocked_until, v)
+    except Exception:
+        pass
 
 
 def tpe_now() -> datetime:
@@ -91,7 +157,12 @@ def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = N
     global _blocked_until, _token_bad_until
     key = (dataset, data_id, start, end)
     ttl = TTL.get(dataset, 900) if ttl is None else ttl
+    _load_block_once()
     c = _cache.get(key)
+    if c is None:
+        c = _persist_load(key)
+        if c:
+            _cache[key] = c
     if c and not force and time.time() - c["ts"] < ttl:
         _stats["cache_hits"] += 1
         return {"rows": c["rows"], "ok": True, "stale": False, "fetched_at": c["ts"], "error": None}
@@ -133,6 +204,7 @@ def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = N
             if st == 200 and r.status_code == 200:
                 rows = j.get("data") or []
                 _cache[key] = {"rows": rows, "ts": time.time()}
+                _persist_save(key, rows, _cache[key]["ts"])
                 _prune()
                 _stats["last_ok"] = time.time()
                 _stats["last_http"] = None
@@ -143,7 +215,8 @@ def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = N
                 _token_bad_until = time.time() + 600     # 10 分鐘內改用免登入額度
                 continue
             if denied:
-                _blocked_until = time.time() + 120      # 免登入也被拒才短暫暫停（2 分鐘），不再一停 15 分鐘
+                _blocked_until = time.time() + 300      # 帶 token 與免登入都被拒＝額度真的用完，暫停 5 分鐘（寫進 DB，重啟也記得）
+                _pset("fm:blocked_until", str(_blocked_until))
                 return fallback(f"HTTP {r.status_code} status {st} {msg}")
             return fallback(f"status {st} {msg}")
         except Exception as e:   # 逾時、連線中斷、非 JSON

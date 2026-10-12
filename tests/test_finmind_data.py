@@ -199,3 +199,41 @@ def test_indicators_from_raw_statements(monkeypatch):
     assert q in m["fcf"] and m["fcf"][q]["value"] == round(((700 - 300) - (250 - 100)) / 1e8, 2)    # 單季＝累計相減
     assert r["ok"] and r["date"] == "2026-06-30"
     assert fm.stock_pack("2330")["indicators"]["ok"]
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _mem_store(monkeypatch):
+    """持久快取改用記憶體字典，測試不碰真的資料庫。"""
+    d = {}
+    monkeypatch.setattr(fm, "_pget", lambda name: d.get(name))
+    monkeypatch.setattr(fm, "_pset", lambda name, v: d.__setitem__(name, v))
+    monkeypatch.setattr(fm, "_boot_loaded", True)
+    monkeypatch.setattr(fm, "_blocked_until", 0.0)
+    monkeypatch.setattr(fm, "_token_bad_until", 0.0)
+    return d
+
+
+def test_persistent_cache_survives_restart_and_quota_block(monkeypatch, _mem_store):
+    fm._cache.clear(); fm._calls.clear()
+    n = {"c": 0}
+
+    def ok(url, params=None, headers=None, timeout=0):
+        n["c"] += 1
+        return _Resp({"status": 200, "data": [{"date": "2026-10-08", "close": 7}]})
+    monkeypatch.setattr(fm.requests, "get", ok)
+    a = fm.fm_get("TaiwanStockPrice", "2330", "2026-10-01")
+    assert a["ok"] and n["c"] == 1
+    fm._cache.clear()                                    # 模擬重啟：記憶體清空
+    monkeypatch.setattr(fm.requests, "get", lambda *x, **k: (_ for _ in ()).throw(AssertionError("不該再請求")))
+    b = fm.fm_get("TaiwanStockPrice", "2330", "2026-10-01")
+    assert b["ok"] and not b["stale"] and b["rows"] == a["rows"]
+    # 額度用完（帶 token 與免登入都 402）：沿用 DB 裡的舊資料並標記 stale，且暫停時間寫進 DB
+    monkeypatch.setattr(fm, "TOKEN", "")
+    monkeypatch.setattr(fm.requests, "get", lambda *x, **k: _Resp({"status": 402, "msg": "Requests reach the upper limit"}, 402))
+    fm._cache.clear()
+    c = fm.fm_get("TaiwanStockPrice", "2330", "2026-10-01", force=True)
+    assert c["ok"] and c["stale"] and c["rows"] == a["rows"]
+    assert float(_mem_store["fm:blocked_until"]) > time.time()
