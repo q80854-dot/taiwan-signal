@@ -39,9 +39,10 @@ BUDGET = int(HOURLY_LIMIT * 0.9)            # 留 10% 給排程與意外
 _calls: deque = deque()                     # 最近一小時每次對外請求的時間
 _lock = threading.Lock()
 _cache: Dict[tuple, dict] = {}
+_auth_mode = "header"                       # 目前有效的 token 傳法（header／param）
 _token_bad_until = 0.0                      # token 被拒時，暫時改用免登入額度到這個時間
 _blocked_until = 0.0                        # 被 FinMind 回報額度用完／維護時，暫停到這個時間
-_stats = {"calls": 0, "cache_hits": 0, "errors": 0, "last_error": None, "last_ok": None, "last_http": None}
+_stats = {"calls": 0, "cache_hits": 0, "errors": 0, "last_error": None, "last_ok": None, "last_http": None, "auth": None}
 _POOL = ThreadPoolExecutor(max_workers=5)
 _MAX_CACHE = 800
 _FIN_DAYS = 1500                              # 三張財報共用同一個查詢區間（約 16 季），才會命中同一份快取、不多吃額度
@@ -154,7 +155,7 @@ def _prune():
 def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = None,
            end: Optional[str] = None, ttl: Optional[int] = None, force: bool = False) -> Dict:
     """→ {rows, ok, stale, fetched_at, error}。永遠回傳 dict，不丟例外。"""
-    global _blocked_until, _token_bad_until
+    global _blocked_until, _token_bad_until, _auth_mode
     key = (dataset, data_id, start, end)
     ttl = TTL.get(dataset, 900) if ttl is None else ttl
     _load_block_once()
@@ -186,15 +187,21 @@ def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = N
     if end:
         params["end_date"] = end
     last = "未知錯誤"
-    for i in range(2):
-        # 帶 token 被拒（額度或 token 無效）時，改用免登入額度再試一次，不讓單一 token 問題讓整站沒資料
-        use_token = bool(TOKEN) and time.time() >= _token_bad_until
-        headers = {"Authorization": f"Bearer {TOKEN}"} if use_token else {}
+    # 認證順序：token 放標頭 → token 放參數（兩種 FinMind 都支援，記住哪種有效）→ 免登入。
+    # 帶 token 全被拒時 10 分鐘內直接走免登入，不讓單一 token 問題讓整站沒資料。
+    modes = []
+    if TOKEN and time.time() >= _token_bad_until:
+        modes = ["param", "header"] if _auth_mode == "param" else ["header", "param"]
+    modes.append("anon")
+    token_denied = 0
+    for mode in modes:
+        headers = {"Authorization": f"Bearer {TOKEN}"} if mode == "header" else {}
+        prm = dict(params, token=TOKEN) if mode == "param" else params
         try:
             with _lock:
                 _calls.append(time.time())
             _stats["calls"] += 1
-            r = requests.get(BASE, params=params, headers=headers, timeout=20)
+            r = requests.get(BASE, params=prm, headers=headers, timeout=20)
             try:
                 j = r.json()
             except Exception:
@@ -208,20 +215,27 @@ def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = N
                 _prune()
                 _stats["last_ok"] = time.time()
                 _stats["last_http"] = None
+                _stats["auth"] = mode
+                if mode != "anon":
+                    _auth_mode = mode
+                elif token_denied:
+                    _token_bad_until = time.time() + 600     # 帶 token 都被拒、免登入可用：10 分鐘內直接走免登入
                 return {"rows": rows, "ok": True, "stale": False, "fetched_at": _cache[key]["ts"], "error": None}
-            _stats["last_http"] = f"{dataset} HTTP {r.status_code} status {st} {msg}"[:200]
+            _stats["last_http"] = f"{dataset} {mode} HTTP {r.status_code} status {st} {msg}"[:200]
             denied = r.status_code in (401, 402, 403, 429) or st in (401, 402, 403, 429) or "limit" in msg.lower() or "token" in msg.lower()
-            if denied and use_token:
-                _token_bad_until = time.time() + 600     # 10 分鐘內改用免登入額度
+            if denied and mode != "anon":
+                token_denied += 1
                 continue
             if denied:
+                if token_denied:
+                    _token_bad_until = time.time() + 600
                 _blocked_until = time.time() + 300      # 帶 token 與免登入都被拒＝額度真的用完，暫停 5 分鐘（寫進 DB，重啟也記得）
                 _pset("fm:blocked_until", str(_blocked_until))
                 return fallback(f"HTTP {r.status_code} status {st} {msg}")
             return fallback(f"status {st} {msg}")
-        except Exception as e:   # 逾時、連線中斷、非 JSON
+        except Exception as e:   # 逾時、連線中斷、非 JSON（只記例外類型，避免把含 token 的網址寫進日誌）
             last = f"{type(e).__name__}"
-            time.sleep(1.5)
+            time.sleep(1.0)
     return fallback(last)
 
 

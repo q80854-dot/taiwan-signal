@@ -166,17 +166,35 @@ def test_token_rejected_falls_back_to_anonymous(monkeypatch):
     seen = []
 
     def get(url, params=None, headers=None, timeout=0):
-        seen.append(bool(headers))
-        if headers:      # 帶 token 被拒
+        mode = "header" if headers else "param" if (params or {}).get("token") else "anon"
+        seen.append(mode)
+        if mode != "anon":      # 帶 token（標頭或參數）都被拒
             return _Resp({"status": 402, "msg": "Requests reach the upper limit"}, 402)
         return _Resp({"status": 200, "data": [{"date": "2026-10-08"}]})
     monkeypatch.setattr(fm.requests, "get", get)
     monkeypatch.setattr(fm.time, "sleep", lambda s: None)
     r = fm.fm_get("TaiwanStockPER", "2330", "2026-10-01")
-    assert r["ok"] and seen == [True, False] and fm._blocked_until == 0
+    assert r["ok"] and seen == ["header", "param", "anon"] and fm._blocked_until == 0
     fm.fm_get("TaiwanStockPER", "2330", "2026-10-02")      # token 暫停期間直接用免登入
-    assert seen[-1] is False and fm._token_bad_until > time.time()
+    assert seen[-1] == "anon" and len(seen) == 4 and fm._token_bad_until > time.time()
     fm._token_bad_until = 0
+
+
+def test_token_in_param_when_header_not_accepted(monkeypatch):
+    fm._cache.clear(); fm._calls.clear(); fm._token_bad_until = 0; fm._auth_mode = "header"
+    monkeypatch.setattr(fm, "TOKEN", "fake-token")
+    seen = []
+
+    def get(url, params=None, headers=None, timeout=0):
+        mode = "header" if headers else "param" if (params or {}).get("token") else "anon"
+        seen.append(mode)
+        if mode == "param":
+            return _Resp({"status": 200, "data": [{"date": "2026-10-08"}]})
+        return _Resp({"status": 402, "msg": "Requests reach the upper limit"}, 402)
+    monkeypatch.setattr(fm.requests, "get", get)
+    assert fm.fm_get("TaiwanStockPER", "2330", "2026-10-01")["ok"] and seen == ["header", "param"]
+    assert fm.fm_get("TaiwanStockPER", "2330", "2026-10-03")["ok"] and seen[2] == "param"   # 記住有效的傳法
+    fm._auth_mode = "header"
 
 
 def test_indicators_from_raw_statements(monkeypatch):

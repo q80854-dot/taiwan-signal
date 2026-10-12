@@ -54,10 +54,13 @@ def _token() -> str:
 
 def _fetch(dataset: str, data_id: str, start: str) -> List[dict]:
     tok = _token()
-    for use_tok in ([True, False] if tok else [False]):      # token 被拒或無效時，改用免登入額度再試一次
+    for mode in (["header", "param", "anon"] if tok else ["anon"]):      # token 放標頭被拒→放參數→最後才免登入
         try:
-            headers = {"Authorization": f"Bearer {tok}"} if use_tok else {}
-            r = requests.get(FINMIND_URL, params={"dataset": dataset, "data_id": data_id, "start_date": start},
+            headers = {"Authorization": f"Bearer {tok}"} if mode == "header" else {}
+            prm = {"dataset": dataset, "data_id": data_id, "start_date": start}
+            if mode == "param":
+                prm["token"] = tok
+            r = requests.get(FINMIND_URL, params=prm,
                              headers=headers, timeout=(5, 25))
             try:
                 j = r.json()
