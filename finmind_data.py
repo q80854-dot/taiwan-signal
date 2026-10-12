@@ -618,6 +618,13 @@ def _qlabel(d: str) -> str:
     return f"{d[:4]}/Q{(int(d[5:7]) - 1) // 3 + 1}"
 
 
+def _shift_q(d: str, n: int) -> str:
+    """日期往前（n<0）推 |n| 季，回傳 YYYY-MM（用來確認四個季度是連續的）。"""
+    y, m = int(d[:4]), int(d[5:7])
+    t = y * 12 + (m - 1) + n * 3
+    return f"{t // 12:04d}-{t % 12 + 1:02d}-00"
+
+
 def _yoy_pct(cur, prev) -> Optional[float]:
     """同比增長率（相對變化 %）。去年同期為 0 或負數時沒有意義，回傳 None，不硬算。"""
     if cur is None or prev is None or prev <= 0:
@@ -652,23 +659,21 @@ def sec_indicators(code: str) -> Dict:
         return (_pick(x, "CashFlowsFromOperatingActivities", "NetCashInflowFromOperatingActivities", contains="OperatingActivities"),
                 _pick(x, "PropertyAndPlantAndEquipment", "AcquisitionOfPropertyPlantAndEquipment", contains="AcquisitionOfPropertyPlantAndEquipment"))
     fcf: Dict[str, float] = {}
+    ocfq: Dict[str, float] = {}
     cds = sorted(cf)
     for i, d in enumerate(cds):
         ocf, capex = cfv(cf[d])
-        if ocf is None or capex is None:
-            continue
-        if d[5:7] == "03":
-            fcf[d] = ocf - abs(capex)
-            continue
-        pd_ = cds[i - 1] if i and cds[i - 1][:4] == d[:4] else None
-        if pd_ is None:
+        pd_ = None if d[5:7] == "03" else (cds[i - 1] if i and cds[i - 1][:4] == d[:4] else None)
+        if d[5:7] != "03" and pd_ is None:
             continue                       # 缺同年度前一季，無法還原單季，寧可留空
-        po, pc = cfv(cf[pd_])
-        if po is None or pc is None:
+        po, pc = (0.0, 0.0) if pd_ is None else cfv(cf[pd_])
+        if ocf is not None and po is not None:
+            ocfq[d] = ocf - po
+        if ocf is None or capex is None or po is None or pc is None:
             continue
         fcf[d] = (ocf - po) - (abs(capex) - abs(pc))
     vals: Dict[str, Dict[str, float]] = {}
-    for d in sorted(set(inc) | set(bs) | set(fcf)):
+    for d in sorted(set(inc) | set(bs) | set(fcf) | set(ocfq)):
         i_, b_ = inc.get(d, {}), bs.get(d, {})
         v: Dict[str, float] = {}
         rev, net = i_.get("Revenue"), i_.get("IncomeAfterTaxes")
@@ -695,10 +700,33 @@ def sec_indicators(code: str) -> Dict:
             v["equity_ratio"] = eq / ta * 100
         if d in fcf:
             v["fcf"] = fcf[d]
+        if rev:
+            v["revenue"] = rev
+            if i_.get("GrossProfit") is not None and i_.get("OperatingIncome") is not None:
+                v["opex_ratio"] = (i_["GrossProfit"] - i_["OperatingIncome"]) / rev * 100
+        if i_.get("OperatingIncome") is not None:
+            v["op_income"] = i_["OperatingIncome"]
+        if net is not None:
+            v["net_income"] = net
+        if b_.get("Liabilities") is not None and ta:
+            v["debt_ratio"] = b_["Liabilities"] / ta * 100
+        if d in ocfq:
+            v["ocf"] = ocfq[d]
+            if net is not None and net > 0:
+                v["ocf_ni"] = ocfq[d] / net * 100
         vals[d] = v
-    spec = [("eps", "每股收益", "元"), ("fcf", "自由現金流", "億"), ("current_ratio", "流動比率", "%"),
-            ("equity_ratio", "股東權益比率", "%"), ("roe", "淨資產收益率", "%"), ("roa", "總資產收益率", "%"),
-            ("gross", "毛利率", "%"), ("op", "營業利益率", "%"), ("net", "淨利率", "%")]
+    # 近四季合計 EPS（滾動），湊滿連續四個季度才算
+    ds_all = sorted(inc)
+    for i, d in enumerate(ds_all):
+        win = ds_all[i - 3:i + 1] if i >= 3 else []
+        if len(win) == 4 and all(inc[x].get("EPS") is not None for x in win) and win[0] >= _shift_q(d, -3):
+            vals.setdefault(d, {})["eps_ttm"] = sum(inc[x]["EPS"] for x in win)
+    spec = [("eps", "每股收益", "元"), ("eps_ttm", "近四季EPS", "元"), ("revenue", "營業收入", "億"),
+            ("net_income", "稅後淨利", "億"), ("op_income", "營業利益", "億"),
+            ("gross", "毛利率", "%"), ("op", "營業利益率", "%"), ("net", "淨利率", "%"), ("opex_ratio", "營業費用率", "%"),
+            ("roe", "淨資產收益率", "%"), ("roa", "總資產收益率", "%"),
+            ("ocf", "營業現金流", "億"), ("fcf", "自由現金流", "億"), ("ocf_ni", "現金流量比", "%"),
+            ("current_ratio", "流動比率", "%"), ("equity_ratio", "股東權益比率", "%"), ("debt_ratio", "負債比率", "%")]
     metrics = []
     for key, label, unit in spec:
         rows = []
@@ -707,7 +735,7 @@ def sec_indicators(code: str) -> Dict:
                 continue
             ly = f"{int(d[:4]) - 1}{d[4:]}"
             cur, prev = vals[d][key], vals.get(ly, {}).get(key)
-            val = cur / 1e8 if key == "fcf" else cur
+            val = cur / 1e8 if unit == "億" else cur
             rows.append({"period": _qlabel(d), "date": d, "value": round(val, 2),
                          "yoy": _yoy_pct(cur, prev),
                          "yoy_pp": round(cur - prev, 2) if prev is not None and unit == "%" else None})

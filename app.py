@@ -957,7 +957,7 @@ def api_autopsy():
 def api_fundamentals(code: str):
     try:
         from fund_score import build_fundamental_profile
-        return jsonify(build_fundamental_profile(code.split(".")[0]))
+        return jsonify(build_fundamental_profile(code.split(".")[0], deep=request.args.get("deep") == "1"))
     except Exception as e:
         logger.error(f"api_fundamentals: {e}"); return jsonify({"error": str(e)}), 500
 
