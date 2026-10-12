@@ -2864,7 +2864,7 @@ function fmKv(rows){return `<div class="panel card"><div class="panel-body">${ro
 function fmPos(x,label){if(!x)return null;const w=Math.max(2,Math.min(98,x.pctile));
   return [label,`<span class="num">${fmN(x.cur,2)}</span>　<small style="color:var(--t3)">近一年 ${fmN(x.min,1)}～${fmN(x.max,1)}，位置 ${x.pctile}%</small><div style="height:4px;background:var(--line2);border-radius:2px;margin-top:5px;position:relative"><i style="position:absolute;left:${w}%;top:-3px;width:3px;height:10px;background:var(--t1);border-radius:1px"></i></div>`];}
 let _fmI={m:null,key:'eps',off:0};
-const _fmDefs={eps:'損益表單季每股盈餘（EPS）。',fcf:'營業活動現金流 − 購置不動產廠房及設備；現金流量表為年度累計，已相減還原為單季。',current_ratio:'流動資產 ÷ 流動負債。',equity_ratio:'權益總額 ÷ 資產總額。',roe:'單季歸屬母公司淨利 ÷ 期末歸屬母公司權益（單季數，未年化）。',roa:'單季稅後淨利 ÷ 期末資產總額（單季數，未年化）。',gross:'毛利 ÷ 營業收入。',op:'營業利益 ÷ 營業收入。',net:'稅後淨利 ÷ 營業收入。'};
+const _fmDefs={eps:'損益表單季每股盈餘（EPS）。',fcf:'營業活動現金流 − 購置不動產廠房及設備；現金流量表為年度累計，已相減還原為單季。',current_ratio:'流動資產 ÷ 流動負債。',equity_ratio:'權益總額 ÷ 資產總額。',roe:'單季歸屬母公司淨利 ÷ 期末歸屬母公司權益（單季數，未年化）。',roa:'單季稅後淨利 ÷ 期末資產總額（單季數，未年化）。',gross:'毛利 ÷ 營業收入。',op:'營業利益 ÷ 營業收入。',net:'稅後淨利 ÷ 營業收入。',eps_ttm:'近四季單季 EPS 加總（需連續四季）。',revenue:'損益表單季營業收入（億元）。',net_income:'損益表單季稅後淨利（億元）。',op_income:'損益表單季營業利益（億元）。',opex_ratio:'（毛利 − 營業利益）÷ 營業收入，即營業費用率。',ocf:'營業活動現金流（年度累計已相減還原為單季，億元）。',ocf_ni:'單季營業現金流 ÷ 稅後淨利；僅在淨利為正時計算。',debt_ratio:'負債總額 ÷ 資產總額（金融業天生偏高）。'};
 function fmIndFmt(v,unit){if(v===null||v===undefined)return '—';return unit==='%'?fmN(v,2)+'%':unit==='億'?fmN(v,1)+'億':fmN(v,2);}
 function fmIndHtml(ind){
   if(!ind||!ind.ok||!(ind.metrics||[]).length)return fmSec('財務指標（單季）')+fmMiss('財務指標');
@@ -2950,7 +2950,25 @@ function fmStockHtml(p){
   h+=(nw&&nw.ok&&nw.items.length)?`<div class="panel card"><div class="panel-body">${nw.items.map(x=>`<div style="padding:7px 0;border-bottom:1px solid var(--line);font-size:13px;line-height:1.55">${x.link?`<a href="${fmE(x.link)}" target="_blank" rel="noopener noreferrer nofollow" style="color:var(--t1)">${fmE(x.title)}</a>`:fmE(x.title)}<div style="font-size:10.5px;color:var(--t3)">${fmE(x.date)}　${fmE(x.source)}</div></div>`).join('')}</div></div>`:fmMiss('新聞');
   return h;
 }
+function fundQualityHtml(q){
+  if(!q)return '';
+  if(!q.ok)return fmSec('財報體質體檢（FinMind）')+fmMiss('財報體質體檢');
+  const grp={};(q.items||[]).forEach(i=>{(grp[i.group]=grp[i.group]||[]).push(i)});
+  const ST={good:['優','#4cc38a'],warn:['普通','#e5a23c'],bad:['偏弱','#e5645a']};
+  const rows=Object.keys(grp).map(g=>`<div style="margin-top:12px"><div style="font-size:11.5px;color:var(--t3);margin-bottom:4px">${fmE(g)}</div>`+grp[g].map(i=>{const s=ST[i.status]||ST.warn;return `<div style="display:flex;gap:10px;align-items:baseline;padding:6px 0;border-top:1px solid rgba(128,128,128,.18)"><span style="flex:0 0 58px;font-size:11px;color:${s[1]};font-weight:600">● ${s[0]}</span><span style="flex:1;min-width:0"><b style="font-size:12.5px;color:var(--t1)">${fmE(i.label)}</b>　<span style="font-size:12.5px">${fmE(i.value)}</span><div style="font-size:10.5px;color:var(--t3)">${fmE(i.note)}</div></span></div>`}).join('')+'</div>').join('');
+  return fmSec('財報體質體檢（FinMind）')+`<div class="panel card"><div class="panel-body"><div style="display:flex;gap:14px;align-items:baseline;flex-wrap:wrap"><span style="font-size:28px;font-weight:700">${q.score}</span><span style="font-size:12px;color:var(--t3)">財報體質：${fmE(q.grade)}　共 ${q.n} 項有資料的檢查${q.stale?'　（沿用前次資料，可能非最新）':''}</span></div>${rows}<div style="font-size:10.5px;color:var(--t3);margin-top:10px">分數＝（優×1＋普通×0.5）÷ 有資料的項目數；缺資料的項目不計、不推估。門檻為一般參考值，金融、營建等產業的負債結構不同，請另行判讀。僅供研究，不構成投資建議。</div></div></div>`;
+}
+async function loadFundQuality(code){
+  const el=document.getElementById('fund-quality');if(!el)return;
+  el.dataset.code=code;
+  try{
+    const p=await(await fetch('/api/fundamentals/'+encodeURIComponent(code)+'?deep=1',{cache:'no-store'})).json();
+    const e2=document.getElementById('fund-quality');
+    if(e2&&e2.dataset.code===code)e2.innerHTML=fundQualityHtml(p&&p.quality);
+  }catch(e){}
+}
 async function loadFmStock(code){
+  loadFundQuality(code);
   const el=document.getElementById('fm-stock');if(!el)return;
   el.dataset.code=code;
   try{
@@ -3018,7 +3036,7 @@ function renderInstrument(d){
 
   html+='<div id="live-quote"></div>';
   html+=klineHtml(d);
-  html+=fundBlock(d.fundamental_profile);
+  html+=fundBlock(d.fundamental_profile)+'<div id="fund-quality"></div>';
   html+=`<div class="sec-label"><div class="bar"></div><div class="tx">基本資料與行情</div></div>`;
   if(!info){
     html+=`<div class="panel card"><div class="panel-body"><div class="empty">查無 ${d.code}——已同時查過上市(.TW)與上櫃(.TWO)，TWSE/TPEX 公開清單中都沒有這個代號（可能是代號輸入錯誤，或該股票已下市）</div></div></div>`;
