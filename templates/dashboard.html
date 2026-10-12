@@ -2863,47 +2863,153 @@ function fmTbl(head,rows){return `<div class="panel card"><div style="overflow-x
 function fmKv(rows){return `<div class="panel card"><div class="panel-body">${rows.filter(Boolean).map(r=>`<div class="kv"><span>${r[0]}</span><span>${r[1]}</span></div>`).join('')}</div></div>`;}
 function fmPos(x,label){if(!x)return null;const w=Math.max(2,Math.min(98,x.pctile));
   return [label,`<span class="num">${fmN(x.cur,2)}</span>　<small style="color:var(--t3)">近一年 ${fmN(x.min,1)}～${fmN(x.max,1)}，位置 ${x.pctile}%</small><div style="height:4px;background:var(--line2);border-radius:2px;margin-top:5px;position:relative"><i style="position:absolute;left:${w}%;top:-3px;width:3px;height:10px;background:var(--t1);border-radius:1px"></i></div>`];}
-let _fmI={m:null,key:'eps',off:0};
-const _fmDefs={eps:'損益表單季每股盈餘（EPS）。',fcf:'營業活動現金流 − 購置不動產廠房及設備；現金流量表為年度累計，已相減還原為單季。',current_ratio:'流動資產 ÷ 流動負債。',equity_ratio:'權益總額 ÷ 資產總額。',roe:'單季歸屬母公司淨利 ÷ 期末歸屬母公司權益（單季數，未年化）。',roa:'單季稅後淨利 ÷ 期末資產總額（單季數，未年化）。',gross:'毛利 ÷ 營業收入。',op:'營業利益 ÷ 營業收入。',net:'稅後淨利 ÷ 營業收入。',eps_ttm:'近四季單季 EPS 加總（需連續四季）。',revenue:'損益表單季營業收入（億元）。',net_income:'損益表單季稅後淨利（億元）。',op_income:'損益表單季營業利益（億元）。',opex_ratio:'（毛利 − 營業利益）÷ 營業收入，即營業費用率。',ocf:'營業活動現金流（年度累計已相減還原為單季，億元）。',ocf_ni:'單季營業現金流 ÷ 稅後淨利；僅在淨利為正時計算。',debt_ratio:'負債總額 ÷ 資產總額（金融業天生偏高）。'};
-function fmIndFmt(v,unit){if(v===null||v===undefined)return '—';return unit==='%'?fmN(v,2)+'%':unit==='億'?fmN(v,1)+'億':fmN(v,2);}
+/* ───── 財務指標（單季）：手機優先版 ───── */
+const _FI_G=[['profit','獲利能力',['eps','eps_ttm','gross','op','net','opex_ratio','roe','roa']],
+  ['scale','成長與規模',['revenue','net_income','op_income']],
+  ['cash','現金流',['ocf','fcf','ocf_ni']],
+  ['bs','財務結構',['current_ratio','equity_ratio','debt_ratio']]];
+const _FI_FLOW={eps:1,revenue:1,net_income:1,op_income:1,ocf:1,fcf:1};
+const _FI_SUM_PCT={roe:1,roa:1};
+const _FI_AVG={gross:1,op:1,net:1,opex_ratio:1,ocf_ni:1};
+let _fmI={m:null,key:'eps',g:'profit'};
+const _fmDefs={eps:'損益表單季每股盈餘（EPS）。',eps_ttm:'近四季單季 EPS 加總（需連續四季）。',revenue:'損益表單季營業收入。',net_income:'損益表單季稅後淨利（含非控制權益）。',op_income:'損益表單季營業利益。',
+  gross:'毛利 ÷ 營業收入。',op:'營業利益 ÷ 營業收入。',net:'稅後淨利 ÷ 營業收入。',opex_ratio:'（毛利 − 營業利益）÷ 營業收入，即營業費用率。',
+  roe:'單季歸屬母公司淨利 ÷ 期末歸屬母公司權益（單季數，未年化；近四季相加約等於年度 ROE）。',roa:'單季稅後淨利 ÷ 期末資產總額（單季數，未年化）。',
+  ocf:'營業活動現金流；現金流量表為年度累計，已相減還原為單季。',fcf:'營業活動現金流 − 購置不動產廠房及設備；現金流量表為年度累計，已相減還原為單季。',ocf_ni:'單季營業現金流 ÷ 稅後淨利；僅在淨利為正時計算。',
+  current_ratio:'流動資產 ÷ 流動負債。',equity_ratio:'權益總額 ÷ 資產總額。',debt_ratio:'負債總額 ÷ 資產總額（金融業天生偏高）。'};
+function fiN(v,d){return Number(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d})}
+function fiS(v,d){return (v>0?'+':'')+fiN(v,d)}
+function fiFmt(v,unit){if(v===null||v===undefined)return '—';if(unit==='%')return fiN(v,2)+'%';if(unit==='億')return Math.abs(v)>=10000?fiN(v/10000,2)+' 兆':fiN(v,1)+' 億';return fiN(v,2)}
+function fiShort(v,unit){if(v===null||v===undefined)return '';if(unit==='%')return fiN(v,1)+'%';if(unit==='億')return Math.abs(v)>=10000?fiN(v/10000,2)+'兆':fiN(Math.abs(v)>=1000?Math.round(v):v,Math.abs(v)>=1000?0:1);return fiN(v,2)}
+function fiQi(d){return parseInt(d.slice(0,4),10)*4+Math.floor((parseInt(d.slice(5,7),10)-1)/3)}
+function fiSeg(rows,i,n){if(i-n+1<0)return false;for(let j=i-n+2;j<=i;j++){if(fiQi(rows[j].date)-fiQi(rows[j-1].date)!==1)return false}return true}
+function fiQoq(cur,rows,i){if(i<1||!fiSeg(rows,i,2))return null;const p=rows[i-1].value,c=rows[i].value;if(cur.unit==='%')return {v:c-p,t:'pp'};if(p>0)return {v:(c/p-1)*100,t:'%'};return null}
+function fiCls(v){return v>0?'var(--up)':v<0?'var(--down)':'var(--t3)'}
+function fiMetric(k){return (_fmI.m||[]).find(x=>x.key===k)}
+function fiGroupOf(k){const g=_FI_G.find(x=>x[2].includes(k));return g?g[0]:'profit'}
+function fiCss(){return `<style>
+.fi{min-width:0;overflow-x:hidden}
+.fi button{font:inherit;cursor:pointer}
+.fi-meta{font-size:11.5px;color:var(--t3);margin-bottom:10px;line-height:1.6}
+.fi-seg{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line2);border-radius:6px;overflow:hidden}
+.fi-seg button{padding:9px 2px;font-size:12.5px;background:var(--s1);color:var(--t2);border:0;border-right:1px solid var(--line2)}
+.fi-seg button:last-child{border-right:0}
+.fi-seg button[aria-pressed=true]{background:var(--t1);color:var(--s1);font-weight:600}
+.fi-chips{display:flex;gap:8px;overflow-x:auto;padding:10px 1px 6px;scrollbar-width:none;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity}
+.fi-chips::-webkit-scrollbar{display:none}
+.fi-chips button{flex:0 0 auto;scroll-snap-align:start;padding:6px 13px;border:1px solid var(--line2);border-radius:16px;background:var(--s1);color:var(--t1);font-size:12.5px;white-space:nowrap}
+.fi-chips button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.fi-top{display:flex;justify-content:space-between;align-items:flex-end;gap:10px 16px;flex-wrap:wrap;margin-top:12px}
+.fi-name{font-size:12.5px;color:var(--t3)}
+.fi-big{font-size:30px;line-height:1.15;font-weight:700;color:var(--t1);letter-spacing:-.5px}
+.fi-big small{font-size:13px;font-weight:400;color:var(--t3);margin-left:4px;letter-spacing:0}
+.fi-sub{font-size:12px;color:var(--t2);margin-top:2px}
+.fi-chg{display:flex;gap:14px}
+.fi-chg div{text-align:right}
+.fi-chg b{display:block;font-size:15px}
+.fi-chg span{font-size:11px;color:var(--t3)}
+.fi-chart{margin-top:10px;width:100%}
+.fi-chart svg{display:block;width:100%;height:auto}
+.fi-leg{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--t3);margin-top:4px}
+.fi-leg i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.fi-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:12px}
+.fi-stats div{background:var(--s2);border-radius:6px;padding:8px 10px}
+.fi-stats span{display:block;font-size:11px;color:var(--t3)}
+.fi-stats b{font-size:13.5px;color:var(--t1)}
+.fi-tbl{width:100%;max-width:820px;border-collapse:collapse;margin-top:14px;font-size:12.5px}
+.fi-tbl th{font-size:11px;font-weight:400;color:var(--t3);text-align:right;padding:6px 4px;border-bottom:1px solid var(--line2)}
+.fi-tbl th:first-child,.fi-tbl td:first-child{text-align:left}
+.fi-tbl td{text-align:right;padding:7px 4px;border-bottom:1px solid var(--line);color:var(--t1)}
+.fi-tbl tr:first-child td{font-weight:600}
+.fi-note{margin-top:10px;font-size:11.5px;color:var(--t3);line-height:1.65}
+.fi-note summary{cursor:pointer;color:var(--t2)}
+.fi-gt{font-size:12.5px;color:var(--t1);font-weight:600;margin:20px 0 8px}
+.fi-gh{font-size:11.5px;color:var(--t3);margin:12px 0 6px}
+.fi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.fi-card{display:block;text-align:left;padding:9px 10px 7px;border:1px solid var(--line2);border-radius:8px;background:var(--s1);color:var(--t1);min-width:0}
+.fi-card[aria-pressed=true]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.fi-card .l{font-size:11.5px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fi-card .v{font-size:16px;font-weight:700;margin-top:1px}
+.fi-card .y{font-size:11px}
+.fi-card svg{display:block;width:100%;height:20px;margin-top:3px}
+@media(min-width:760px){.fi-big{font-size:36px}.fi-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}}
+</style>`}
 function fmIndHtml(ind){
   if(!ind||!ind.ok||!(ind.metrics||[]).length)return fmSec('財務指標（單季）')+fmMiss('財務指標');
-  _fmI.m=ind.metrics;
-  if(!ind.metrics.some(x=>x.key===_fmI.key))_fmI.key=ind.metrics[0].key;
-  _fmI.off=0;
+  _fmI.m=ind.metrics;_fmI.date=ind.date;_fmI.stale=ind.stale;_fmI.industry=ind.industry;
+  if(!fiMetric(_fmI.key))_fmI.key=ind.metrics[0].key;
+  _fmI.g=fiGroupOf(_fmI.key);
+  setTimeout(fiDraw,30);setTimeout(fiDraw,400);
   return fmSec('財務指標（單季）')+`<div class="panel card"><div class="panel-body" id="fm-ind">${fmIndInner()}</div></div>`;
 }
 function fmIndInner(){
-  const ms=_fmI.m,cur=ms.find(x=>x.key===_fmI.key)||ms[0];
-  const tabs=`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${ms.map(x=>`<button type="button" onclick="fmIndTab('${x.key}')" style="padding:5px 11px;border:1px solid ${x.key===cur.key?'var(--t1)':'var(--line2)'};background:${x.key===cur.key?'var(--s3)':'var(--s1)'};color:var(--t1);border-radius:14px;font-size:12px;cursor:pointer">${fmE(x.label)}</button>`).join('')}</div>`;
-  const n=cur.rows.length,W=6,maxOff=Math.max(0,n-W);
-  const off=Math.min(_fmI.off,maxOff);_fmI.off=off;
-  const vis=cur.rows.slice(Math.max(0,n-W-off),n-off),k=vis.length;
-  const vals=vis.map(r=>r.value),vmax=Math.max(0,...vals),vmin=Math.min(0,...vals),span=(vmax-vmin)||1;
-  const CW=360,CH=150,top=14,bot=10,hh=CH-top-bot,sw=CW/k,bw=Math.min(18,sw*0.35);
-  const yv=v=>top+(vmax-v)/span*hh;
-  const yl=vis.map(r=>r.yoy).filter(v=>v!==null&&v!==undefined);
-  const lmax=yl.length?Math.max(...yl):1,lmin=yl.length?Math.min(...yl):0,lspan=(lmax-lmin)||1;
-  const yy=v=>top+6+(lmax-v)/lspan*(hh-12);
-  let bars='',pts=[],dots='';
-  vis.forEach((r,i)=>{const cx=sw*i+sw/2,y0=yv(0),y1=yv(r.value);
-    bars+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="var(--accent)" opacity=".85" rx="1"/>`;
-    if(r.yoy!==null&&r.yoy!==undefined){const y=yy(r.yoy);pts.push(`${cx.toFixed(1)},${y.toFixed(1)}`);dots+=`<circle cx="${cx.toFixed(1)}" cy="${y.toFixed(1)}" r="3.2" fill="var(--s1)" stroke="#d9772b" stroke-width="1.6"/>`;}
-    else pts.push(null);});
-  let line='',seg=[];pts.concat([null]).forEach(p=>{if(p)seg.push(p);else{if(seg.length>1)line+=`<polyline points="${seg.join(' ')}" fill="none" stroke="#d9772b" stroke-width="1.6"/>`;seg=[];}});
-  const svg=`<svg viewBox="0 0 ${CW} ${CH}" style="width:100%;height:auto;display:block" role="img" aria-label="${fmE(cur.label)}"><line x1="0" x2="${CW}" y1="${yv(0).toFixed(1)}" y2="${yv(0).toFixed(1)}" stroke="var(--line2)"/>${bars}${line}${dots}</svg>`;
-  const cols=`repeat(${k},1fr)`;
-  const row=(cells)=>`<div style="display:grid;grid-template-columns:${cols};text-align:center;margin-top:4px">${cells.join('')}</div>`;
-  const periods=row(vis.map(r=>`<div style="font-size:12px;color:var(--t1)">${fmE(r.period)}</div>`));
-  const vrow=row(vis.map(r=>`<div class="num" style="font-size:12.5px;color:var(--accent)">${fmIndFmt(r.value,cur.unit)}</div>`));
-  const yrow=row(vis.map(r=>`<div class="num" style="font-size:12px">${r.yoy==null?'—':fmS(r.yoy,2)+'%'}</div>`));
-  const prow=cur.unit==='%'?row(vis.map(r=>`<div class="num" style="font-size:11px;color:var(--t3)">${r.yoy_pp==null?'—':(r.yoy_pp>0?'+':'')+fmN(r.yoy_pp,2)+' pp'}</div>`)):'';
-  const pager=`<div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px"><button type="button" ${off>=maxOff?'disabled':''} onclick="fmIndPage(1)" style="border:0;background:none;color:${off>=maxOff?'var(--line2)':'var(--accent)'};cursor:pointer">‹ 較早</button><span style="color:var(--t3)">${vis[0].period} – ${vis[k-1].period}（共 ${n} 季）</span><button type="button" ${off<=0?'disabled':''} onclick="fmIndPage(-1)" style="border:0;background:none;color:${off<=0?'var(--line2)':'var(--accent)'};cursor:pointer">較新 ›</button></div>`;
-  const legend=`<div style="font-size:11px;color:var(--t3);margin-top:6px"><span style="color:var(--accent)">■</span> ${fmE(cur.label)}　<span style="color:#d9772b">●</span> 同比增長率（與去年同季相比）${cur.unit==='%'?'；pp＝百分點':''}</div>`;
-  return tabs+svg+periods+vrow+yrow+prow+pager+legend+`<div style="font-size:11px;color:var(--t3);margin-top:6px">算法：${fmE(_fmDefs[cur.key]||'')}數字全由 FinMind 財報原始科目計算，缺科目的季度留空。去年同期為 0 或負值時，同比不計算。</div>`;
+  const ms=_fmI.m,cur=fiMetric(_fmI.key)||ms[0];
+  const have=new Set(ms.map(x=>x.key));
+  const gs=_FI_G.filter(g=>g[2].some(k=>have.has(k)));
+  const g0=gs.find(g=>g[0]===_fmI.g)||gs[0];
+  const seg=`<div class="fi-seg" role="group" aria-label="指標類別">${gs.map(g=>`<button type="button" aria-pressed="${g[0]===g0[0]}" onclick="fmIndGrp('${g[0]}')">${g[1]}</button>`).join('')}</div>`;
+  const chips=`<div class="fi-chips" id="fi-chips">${g0[2].filter(k=>have.has(k)).map(k=>`<button type="button" aria-pressed="${k===cur.key}" onclick="fmIndSel('${k}')">${fmE(fiMetric(k).label)}</button>`).join('')}</div>`;
+  const rows=cur.rows,n=rows.length,last=rows[n-1],qoq=fiQoq(cur,rows,n-1);
+  const yTxt=cur.unit==='%'?(last.yoy_pp==null?null:{v:last.yoy_pp,t:'pp'}):(last.yoy==null?null:{v:last.yoy,t:'%'});
+  const chg=`<div class="fi-chg">${yTxt?`<div><b style="color:${fiCls(yTxt.v)}">${fiS(yTxt.v,2)}${yTxt.t==='pp'?' pp':'%'}</b><span>同比（去年同季）</span></div>`:''}${qoq?`<div><b style="color:${fiCls(qoq.v)}">${fiS(qoq.v,2)}${qoq.t==='pp'?' pp':'%'}</b><span>較上一季</span></div>`:''}</div>`;
+  const vs=rows.map(r=>r.value);const mx=Math.max(...vs),mn=Math.min(...vs);
+  const stats=[];
+  if(n>=4&&fiSeg(rows,n-1,4)){const l4=rows.slice(-4).map(r=>r.value);const s=l4.reduce((a,b)=>a+b,0);
+    if(_FI_FLOW[cur.key]&&cur.key!=='eps_ttm')stats.push(['近四季合計',fiFmt(s,cur.unit)]);
+    else if(_FI_SUM_PCT[cur.key])stats.push(['近四季合計（約年度值）',fiFmt(s,cur.unit)]);
+    else if(_FI_AVG[cur.key])stats.push(['近四季平均',fiFmt(s/4,cur.unit)]);}
+  stats.push(['近 '+n+' 季最高',fiFmt(mx,cur.unit)+'（'+fmE(rows[vs.indexOf(mx)].period)+'）']);
+  stats.push(['近 '+n+' 季最低',fiFmt(mn,cur.unit)+'（'+fmE(rows[vs.indexOf(mn)].period)+'）']);
+  const top=`<div class="fi-top" id="fi-detail"><div><div class="fi-name">${fmE(cur.label)}　${fmE(last.period)}</div><div class="fi-big num">${fiFmt(last.value,cur.unit).replace(/ (億|兆)$/,'<small>$1</small>')}${cur.unit==='元'?'<small>元</small>':''}</div></div>${chg}</div>`;
+  const tbl=`<table class="fi-tbl"><thead><tr><th>季度</th><th>${fmE(cur.label)}</th><th>同比</th><th>${cur.unit==='%'?'同比(pp)':'較上季'}</th></tr></thead><tbody>${rows.slice().reverse().map((r,ri)=>{const i=n-1-ri;const q=fiQoq(cur,rows,i);
+    const yy=r.yoy==null?'—':`<span style="color:${fiCls(r.yoy)}">${fiS(r.yoy,2)}%</span>`;
+    const c4=cur.unit==='%'?(r.yoy_pp==null?'—':`<span style="color:${fiCls(r.yoy_pp)}">${fiS(r.yoy_pp,2)}</span>`):(q?`<span style="color:${fiCls(q.v)}">${fiS(q.v,2)}%</span>`:'—');
+    return `<tr><td>${fmE(r.period)}</td><td class="num">${fiFmt(r.value,cur.unit)}</td><td class="num">${yy}</td><td class="num">${c4}</td></tr>`}).join('')}</tbody></table>`;
+  const note=`<details class="fi-note"><summary>算法與資料來源</summary><div style="margin-top:6px">${fmE(_fmDefs[cur.key]||'')}　全部數字由 FinMind 財報原始科目計算（損益表為單季、資產負債表為期末、現金流量表由年度累計還原），缺科目的季度留空、不推估。同比＝與去年同季相比；去年同期為 0 或負值時，同比不計算。紅＝上升、綠／藍＝下降，是台股漲跌慣例，不代表好壞。</div></details>`;
+  const grid=_FI_G.map(g=>{const ks=g[2].filter(k=>have.has(k));if(!ks.length)return '';
+    return `<div class="fi-gh">${g[1]}</div><div class="fi-grid">${ks.map(k=>{const m=fiMetric(k),rr=m.rows,l=rr[rr.length-1];
+      const y=m.unit==='%'?(l.yoy_pp==null?null:{v:l.yoy_pp,t:' pp'}):(l.yoy==null?null:{v:l.yoy,t:'%'});
+      const sp=rr.slice(-8).map(r=>r.value),a=Math.min(...sp),b=Math.max(...sp),sd=(b-a)||1;
+      const pts=sp.map((v,i)=>`${(i/(Math.max(1,sp.length-1))*80).toFixed(1)},${(20-(v-a)/sd*18).toFixed(1)}`).join(' ');
+      return `<button type="button" class="fi-card" aria-pressed="${k===cur.key}" onclick="fmIndSel('${k}',true)"><div class="l">${fmE(m.label)}</div><div class="v num">${fiFmt(l.value,m.unit)}</div><div class="y num" style="color:${y?fiCls(y.v):'var(--t3)'}">${y?fiS(y.v,1)+y.t:'—'}</div><svg viewBox="0 0 80 22" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg></button>`}).join('')}</div>`}).join('');
+  const meta=`<div class="fi-meta">最新財報：${fmE(_fmI.date||last.date||'')}${_fmI.industry?'　產業：'+fmE(_fmI.industry):''}${_fmI.stale?'　<span style="color:var(--warn)">（沿用前次資料，可能非最新）</span>':''}</div>`;
+  return fiCss()+`<div class="fi">${meta}${seg}${chips}${top}<div class="fi-chart" id="fi-chart"></div><div class="fi-leg"><span><i style="background:var(--accent)"></i>${fmE(cur.label)}${cur.unit==='億'?'（億元；≥1 萬億以兆表示）':cur.unit==='元'?'（元）':'（%）'}</span><span><i style="background:var(--warn);border-radius:50%"></i>同比增長率（與去年同季相比）</span></div><div class="fi-stats">${stats.map(s=>`<div><span>${s[0]}</span><b class="num">${s[1]}</b></div>`).join('')}</div>${tbl}${note}<div class="fi-gt">全部指標一覽（點選查看）</div>${grid}</div>`;
 }
-function fmIndTab(k){_fmI.key=k;_fmI.off=0;const e=document.getElementById('fm-ind');if(e)e.innerHTML=fmIndInner();}
-function fmIndPage(d){_fmI.off=Math.max(0,_fmI.off+d);const e=document.getElementById('fm-ind');if(e)e.innerHTML=fmIndInner();}
+function fiDraw(){
+  const box=document.getElementById('fi-chart');if(!box||!_fmI.m)return;
+  const cur=fiMetric(_fmI.key);if(!cur)return;
+  const W=Math.max(260,Math.floor(box.clientWidth||320));
+  const N=W<520?8:12,rows=cur.rows.slice(-N),k=rows.length;
+  const padL=4,padR=4,yTop=8,yH=50,gap=14,bTop=yTop+yH+gap+16,bBot=bTop+(W<520?120:150),H=bBot+26;
+  const sw=(W-padL-padR)/k,bw=Math.max(9,Math.min(36,sw*0.5)),cx=i=>padL+sw*(i+.5);
+  const vals=rows.map(r=>r.value),vmax=Math.max(0,...vals),vmin=Math.min(0,...vals),span=(vmax-vmin)||1;
+  const y=v=>bTop+(vmax-v)/span*(bBot-bTop);
+  const yo=rows.map(r=>r.yoy),yv=yo.filter(v=>v!=null);
+  let lmax=yv.length?Math.max(0,...yv):1,lmin=yv.length?Math.min(0,...yv):-1;if(lmax===lmin){lmax+=1;lmin-=1}
+  const yy=v=>yTop+8+(lmax-v)/(lmax-lmin)*(yH-16);
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${fmE(cur.label)}近 ${k} 季走勢">`;
+  s+=`<line x1="${padL}" x2="${W-padR}" y1="${yy(0).toFixed(1)}" y2="${yy(0).toFixed(1)}" stroke="var(--line2)" stroke-dasharray="3 3"/>`;
+  s+=`<text x="${padL}" y="${yTop+6}" font-size="10" fill="var(--t3)">同比</text>`;
+  let path='',prev=false;
+  rows.forEach((r,i)=>{if(r.yoy==null){prev=false;return}path+=(prev?'L':'M')+cx(i).toFixed(1)+' '+yy(r.yoy).toFixed(1)+' ';prev=true});
+  if(path)s+=`<path d="${path}" fill="none" stroke="var(--warn)" stroke-width="1.8" stroke-linejoin="round"/>`;
+  rows.forEach((r,i)=>{if(r.yoy==null)return;const px=cx(i),py=yy(r.yoy);
+    s+=`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3" fill="var(--warn)"/>`;
+    const t=(r.yoy>0?'+':'')+(Math.abs(r.yoy)>=100?r.yoy.toFixed(0):r.yoy.toFixed(1))+'%';
+    s+=`<text x="${px.toFixed(1)}" y="${(py+(r.yoy>=0?-7:15)).toFixed(1)}" font-size="${W<520?9.5:11}" text-anchor="middle" fill="${r.yoy>0?'var(--up)':'var(--down)'}">${t}</text>`});
+  s+=`<line x1="${padL}" x2="${W-padR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="var(--line2)"/>`;
+  rows.forEach((r,i)=>{const v=r.value,y0=y(0),yv2=y(v),h=Math.max(1,Math.abs(yv2-y0)),top=v>=0?yv2:y0;
+    s+=`<rect x="${(cx(i)-bw/2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${v<0?'var(--down)':'var(--accent)'}" opacity="${i===k-1?1:.55}"/>`;
+    s+=`<text x="${cx(i).toFixed(1)}" y="${(v>=0?top-5:top+h+11).toFixed(1)}" font-size="${W<520?9.5:11}" text-anchor="middle" fill="var(--t1)">${fiShort(v,cur.unit)}</text>`;
+    s+=`<text x="${cx(i).toFixed(1)}" y="${H-8}" font-size="${W<520?10:11.5}" text-anchor="middle" fill="var(--t2)">${fmE(r.period.slice(2,4)+'Q'+r.period.slice(-1))}</text>`});
+  s+='</svg>';
+  box.innerHTML=s;
+  if(!window._fiRs){window._fiRs=1;let w0=window.innerWidth;window.addEventListener('resize',()=>{if(window.innerWidth!==w0){w0=window.innerWidth;clearTimeout(window._fiT);window._fiT=setTimeout(fiDraw,120)}})}
+}
+function fmIndSel(k,scroll){_fmI.key=k;_fmI.g=fiGroupOf(k);const el=document.getElementById('fm-ind');if(!el)return;el.innerHTML=fmIndInner();fiDraw();
+  const a=el.querySelector('.fi-chips [aria-pressed=true]');if(a&&a.scrollIntoView)a.scrollIntoView({inline:'center',block:'nearest'});
+  if(scroll){const d=document.getElementById('fi-detail');if(d&&d.scrollIntoView)d.scrollIntoView({block:'start',behavior:'smooth'})}}
+function fmIndGrp(g){const gr=_FI_G.find(x=>x[0]===g);if(!gr)return;const k=gr[2].find(x=>fiMetric(x));if(k)fmIndSel(k)}
 function fmStockHtml(p){
   if(!p||p.error)return fmSec('FinMind 深度分析')+`<div class="panel card"><div class="panel-body"><div class="empty">${fmE((p&&p.error)||'資料暫時無法取得')}</div></div></div>`;
   let h=fmSec('深度分析（FinMind）');
