@@ -210,6 +210,29 @@ def _build(inc: Dict[str, Dict[str, float]], bs: Dict[str, Dict[str, float]],
     return out or None
 
 
+def schema_probe(code: str = "2382") -> dict:
+    """診斷用（站主）：回傳 FinMind 財報三張表的實際欄位（type／origin_name）與最新一期原始列，
+    讓我們用真實回應核對欄位名稱、以已知個股驗證數字後，再精準重新開啟財務比率。"""
+    if not enabled():
+        return {"enabled": False, "note": "未設定 FINMIND_TOKEN"}
+    code = str(code).strip()
+    start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 400 * 86400))
+    out = {"enabled": True, "code": code, "datasets": {}}
+    for ds in ("TaiwanStockFinancialStatements", "TaiwanStockBalanceSheet", "TaiwanStockCashFlowsStatement"):
+        rows = _fetch(ds, code, start)
+        latest = max((r.get("date") for r in rows if r.get("date")), default=None)
+        types = {}
+        for r in rows:
+            t = str(r.get("type"))
+            if t not in types:
+                types[t] = str(r.get("origin_name") or "")
+        latest_rows = [{"type": r.get("type"), "value": r.get("value"), "origin_name": r.get("origin_name")}
+                       for r in rows if r.get("date") == latest]
+        out["datasets"][ds] = {"n_rows": len(rows), "latest_date": latest,
+                               "types": types, "latest_rows": latest_rows[:120]}
+    return out
+
+
 def news(code: str, days: int = 14, limit: int = 10) -> Optional[list]:
     """個股近期新聞（FinMind TaiwanStockNews：date/title/source/link/description）。
     未啟用回 None；取最近 days 天、最新 limit 則。"""

@@ -1482,6 +1482,17 @@ def api_source_health():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/diagnostics/finmind")
+def api_diag_finmind():
+    """站主診斷：FinMind 財報三張表的實際欄位與最新一期原始列（供核對欄位、重新啟用財務比率）。
+    路徑在 /api/diagnostics/ 之下，已由 members.gate 限站主存取。"""
+    try:
+        import finmind
+        return jsonify(finmind.schema_probe(request.args.get("code", "2382")))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/taifex")
 def api_taifex():
     """期交所籌碼：外資／投信／自營商期貨未平倉（大台等效）、臺指選擇權、Put/Call 比、大額交易人。"""
