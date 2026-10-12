@@ -54,7 +54,7 @@ TTL = {
     "TaiwanStockShareholding": 3600, "TaiwanStockSecuritiesLending": 3600,
     "TaiwanStockMonthRevenue": 6 * 3600, "TaiwanStockFinancialStatements": 12 * 3600,
     "TaiwanStockBalanceSheet": 12 * 3600, "TaiwanStockCashFlowsStatement": 12 * 3600,
-    "TaiwanStockDividend": 24 * 3600, "TaiwanStockNews": 900,
+    "TaiwanStockDividend": 24 * 3600, "TaiwanStockInfo": 7 * 24 * 3600, "TaiwanStockNews": 900,
     "TaiwanStockTotalInstitutionalInvestors": 900, "TaiwanStockTotalMarginPurchaseShortSale": 900,
     "TaiwanFuturesDaily": 600, "TaiwanFuturesInstitutionalInvestors": 600,
 }
@@ -486,11 +486,12 @@ def sec_income(code: str) -> Dict:
         rev = x.get("Revenue")
         if not rev:
             continue
+        ni = _pick(x, "IncomeAfterTaxes", "IncomeAfterTax", "IncomeFromContinuingOperations")
         rows.append({"date": d, "revenue": rev, "gross": x.get("GrossProfit"),
-                     "op": x.get("OperatingIncome"), "net": x.get("IncomeAfterTaxes"), "eps": x.get("EPS"),
+                     "op": x.get("OperatingIncome"), "net": ni, "eps": x.get("EPS"),
                      "gm": round(x["GrossProfit"] / rev * 100, 1) if x.get("GrossProfit") is not None else None,
                      "om": round(x["OperatingIncome"] / rev * 100, 1) if x.get("OperatingIncome") is not None else None,
-                     "nm": round(x["IncomeAfterTaxes"] / rev * 100, 1) if x.get("IncomeAfterTaxes") is not None else None})
+                     "nm": round(ni / rev * 100, 1) if ni is not None else None})
     for i, r in enumerate(rows):
         ly = next((p for p in rows[:i] if p["date"][5:] == r["date"][5:] and int(r["date"][:4]) - int(p["date"][:4]) == 1), None)
         r["rev_yoy"] = round((r["revenue"] / ly["revenue"] - 1) * 100, 1) if ly and ly["revenue"] else None
@@ -614,6 +615,18 @@ def sec_news(code: str) -> Dict:
     return _sec(res, rows, {"items": rows})
 
 
+def industry_of(code: str) -> Optional[str]:
+    """產業別（FinMind TaiwanStockInfo.industry_category，例如「金融保險」「建材營造」）。取不到回傳 None。"""
+    try:
+        res = fm_get("TaiwanStockInfo", _clean_code(code))
+        for r in res["rows"]:
+            if str(r.get("stock_id")) == _clean_code(code) and r.get("industry_category"):
+                return str(r["industry_category"])
+    except Exception:
+        pass
+    return None
+
+
 def _qlabel(d: str) -> str:
     return f"{d[:4]}/Q{(int(d[5:7]) - 1) // 3 + 1}"
 
@@ -676,7 +689,8 @@ def sec_indicators(code: str) -> Dict:
     for d in sorted(set(inc) | set(bs) | set(fcf) | set(ocfq)):
         i_, b_ = inc.get(d, {}), bs.get(d, {})
         v: Dict[str, float] = {}
-        rev, net = i_.get("Revenue"), i_.get("IncomeAfterTaxes")
+        rev = i_.get("Revenue")
+        net = _pick(i_, "IncomeAfterTaxes", "IncomeAfterTax", "IncomeFromContinuingOperations")   # 金融保險業用 IncomeAfterTax
         if i_.get("EPS") is not None:
             v["eps"] = i_["EPS"]
         if rev:
@@ -687,6 +701,8 @@ def sec_indicators(code: str) -> Dict:
             if net is not None:
                 v["net"] = net / rev * 100
         ta, eq, peq = b_.get("TotalAssets"), b_.get("Equity"), b_.get("EquityAttributableToOwnersOfParent")
+        if peq is None and eq is not None and b_.get("NoncontrollingInterests") is not None:
+            peq = eq - b_["NoncontrollingInterests"]       # 母公司權益＝權益總額 − 非控制權益
         pni = i_.get("EquityAttributableToOwnersOfParent")
         if pni is not None and peq:
             v["roe"] = pni / peq * 100
@@ -744,7 +760,7 @@ def sec_indicators(code: str) -> Dict:
     ok = bool(metrics)
     return {"ok": ok, "stale": bool(inc_r.get("stale") or bs_r.get("stale") or cf_r.get("stale")),
             "error": None if ok else (inc_r.get("error") or bs_r.get("error") or "無資料"),
-            "date": max(vals) if vals else None, "metrics": metrics}
+            "date": max(vals) if vals else None, "metrics": metrics, "industry": industry_of(code)}
 
 
 SECTIONS = {"chips": sec_chips, "margin": sec_margin, "lending": sec_lending, "foreign_hold": sec_foreign_hold,

@@ -213,6 +213,14 @@ def build_quality(code: str) -> Dict:
     ind = fm.sec_indicators(code)
     if not ind.get("ok"):
         return {"ok": False, "error": ind.get("error") or "無財報資料"}
+    industry = ind.get("industry") or ""
+    fin = "金融" in industry or "保險" in industry          # 金融保險業：財報結構不同，毛利、流動比率、負債比率、現金流指標不適用
+    cons = "營造" in industry                                # 建材營造：預售屋合約負債使負債比率天生偏高
+    notes: List[str] = []
+    if fin:
+        notes.append("金融保險業的財報結構與一般公司不同，毛利率、營業利益率、負債比率、流動比率、現金流相關項目不適用，已不列入評分。")
+    if cons:
+        notes.append("建材營造業有預售屋合約負債，負債比率天生偏高，本檢查改用較寬鬆門檻（≤55% 優、≤70% 普通）。")
     items: List[Dict] = []
 
     def add(group, label, value, status, note):
@@ -228,12 +236,12 @@ def build_quality(code: str) -> Dict:
         v = sum(r["value"] for r in roe[-4:])
         add("獲利能力", "ROE（近四季合計）", f"{v:.1f}%", band(v, 15, 8), "近四季單季 ROE 相加，≥15% 優、8~15% 普通、<8% 偏弱")
     gm = _mrows(ind, "gross")
-    if gm and gm[-1].get("yoy_pp") is not None:
+    if not fin and gm and gm[-1].get("yoy_pp") is not None:
         r = gm[-1]
         add("獲利能力", f"毛利率 {r['period']}", f"{r['value']:.1f}%（同比 {r['yoy_pp']:+.1f}pt）",
             band(r["yoy_pp"], 0, -2), "與去年同季比：持平或上升為佳，下滑超過 2 個百分點偏弱")
     om = _mrows(ind, "op")
-    if om:
+    if om and not fin:
         r = om[-1]
         add("獲利能力", f"營業利益率 {r['period']}", f"{r['value']:.1f}%",
             "bad" if r["value"] <= 0 else band(r["value"], 10, 3), "本業賺錢能力，≥10% 優、虧損為差")
@@ -256,21 +264,22 @@ def build_quality(code: str) -> Dict:
         r = rv[-1]
         add("成長動能", f"單季營收同比 {r['period']}", f"{r['value']:.1f} 億（{r['yoy']:+.1f}%）", band(r["yoy"], 10, 0), "與去年同季相比")
     dr = _mrows(ind, "debt_ratio")
-    if dr:
+    if dr and not fin:
         v = dr[-1]["value"]
-        add("財務結構", "負債比率", f"{v:.1f}%", band(v, 40, 60, higher=False), "總負債 ÷ 總資產，≤40% 穩健、>60% 偏高（金融業天生偏高，請另行判讀）")
+        lo, hi = (55, 70) if cons else (40, 60)
+        add("財務結構", "負債比率", f"{v:.1f}%", band(v, lo, hi, higher=False), f"總負債 ÷ 總資產，≤{lo}% 穩健、>{hi}% 偏高")
     cr = _mrows(ind, "current_ratio")
-    if cr:
+    if cr and not fin:
         v = cr[-1]["value"]
         add("財務結構", "流動比率", f"{v:.0f}%", band(v, 200, 120), "流動資產 ÷ 流動負債，≥200% 短期償債無虞")
     ocf, ni = _mrows(ind, "ocf"), _mrows(ind, "net_income")
-    if len(ocf) >= 4 and len(ni) >= 4:
+    if not fin and len(ocf) >= 4 and len(ni) >= 4:
         o = sum(r["value"] for r in ocf[-4:]); n = sum(r["value"] for r in ni[-4:])
         if n > 0:
             add("現金流品質", "營業現金流 ÷ 淨利（近四季）", f"{o / n * 100:.0f}%", band(o / n * 100, 100, 60),
                 "≥100% 代表賺的是真金白銀；偏低要留意應收帳款或存貨堆積")
     fc = _mrows(ind, "fcf")
-    if len(fc) >= 4:
+    if not fin and len(fc) >= 4:
         v = sum(r["value"] for r in fc[-4:])
         add("現金流品質", "自由現金流（近四季合計）", f"{v:,.1f} 億", "good" if v > 0 else "bad", "營業現金流扣掉資本支出後，公司真正可自由運用的錢")
     try:
@@ -286,5 +295,6 @@ def build_quality(code: str) -> Dict:
         pass
     n = len(items)
     score = round(sum(1 if i["status"] == "good" else 0.5 if i["status"] == "warn" else 0 for i in items) / n * 100) if n else None
-    return {"ok": n > 0, "score": score, "n": n, "items": items, "date": ind.get("date"), "stale": ind.get("stale"),
+    return {"ok": n > 0, "score": score, "n": n, "items": items, "notes": notes, "industry": industry or None,
+            "date": ind.get("date"), "stale": ind.get("stale"),
             "grade": None if score is None else "優" if score >= 75 else "中" if score >= 50 else "弱"}
