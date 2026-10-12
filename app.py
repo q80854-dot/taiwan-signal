@@ -1873,18 +1873,25 @@ def api_instrument(ticker: str):
         out["board_holding"] = company_info.get_board_holding(code)
     except Exception as e:
         out["board_holding"] = None; out["board_holding_error"] = str(e)
-    try:   # 財務指標時間序列：月營收年增率（近 24 月）＋季毛利率／營益率（近 12 季），皆取自已累積的 DB 歷史
+    try:   # 財務指標時間序列：月營收年增率＋季毛利率／營益率，皆取自本系統自官方 TWSE 綜合損益表解析、已累積的 DB 歷史。
+        # ★ 2026-10-12：FinMind 衍生財務比率（EPS/ROE/ROA/淨利率/流動比率/股東權益比率/自由現金流）在未能確認
+        # FinMind 綜合損益表 type 欄位實際名稱前，用別名比對會對到錯誤科目、算出錯誤數字（使用者回報廣達毛利率、
+        # 股東權益比率等明顯錯誤）。「寧可沒有，也不要錯」——本批先停用 FinMind 衍生財務比率，只保留自有驗證資料；
+        # 待以實際 API 回應核對欄位、並用已知個股（如廣達毛利率約個位數）驗證無誤後再重新開啟。
         from state_store import store as _stfs
-        _fs = {"revenue": _stfs.get_monthly_revenue_series(code, 24),
-               "margin": _stfs.get_quarterly_margin_series(code, 12)}
-        try:   # FinMind（選用）：補齊 EPS／淨利率／ROE／ROA／流動比率／股東權益比率 等完整季度歷史
-            import finmind
-            _fm = finmind.financial_indicators(code)
-            if _fm:
-                _fs["finmind"] = _fm
-        except Exception as _e:
-            logger.warning(f"finmind {code}: {_e}")
-        out["fin_series"] = _fs
+        # 月營收年增率：優先用 DB 歷史，並補上「當期」最新一筆（避免近一兩個月還沒進歷史表而斷掉）
+        rev = _stfs.get_monthly_revenue_series(code, 24)
+        try:   # 補上最新一兩期：當期月營收是民國「資料年月」(如 '11509')，轉成 'YYYY-MM' 才能接在歷史序列後
+            cur = out.get("monthly_revenue") or {}
+            cp, cy = str(cur.get("period") or ""), cur.get("yoy_pct")
+            if cp.isdigit() and len(cp) >= 5 and cy is not None:
+                iso = f"{int(cp[:-2]) + 1911}-{cp[-2:]}"
+                if not rev or rev[-1]["period"] != iso:
+                    rev = rev + [{"period": iso, "yoy_pct": cy, "mom_pct": cur.get("mom_pct")}]
+        except Exception:
+            pass
+        out["fin_series"] = {"revenue": rev,
+                             "margin": _stfs.get_quarterly_margin_series(code, 12)}
     except Exception as e:
         out["fin_series"] = None; out["fin_series_error"] = str(e)
     try:   # 個股新聞（FinMind，選用）
