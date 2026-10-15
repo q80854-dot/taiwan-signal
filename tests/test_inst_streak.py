@@ -50,3 +50,29 @@ def test_streak_is_cached(client, monkeypatch):
     _day("2026-10-06", AAA=(100, 0))               # 快取期間內新增資料不會立刻反映
     b = client.get("/api/market/inst-streak").get_json()
     assert a["latest"] == b["latest"]
+
+
+# ── 全體法人資金流向（市場整體，T86 加總）──
+def test_market_inst_flow_aggregates(client, monkeypatch):
+    app_module._INST_FLOW_CACHE["v"] = None
+    import data_fetcher
+    monkeypatch.setattr(data_fetcher, "fetch_foreign_total_flow", lambda: {}, raising=False)
+    # 當日全市場：外資 +300、投信 +5；total_net=三大法人合計 → 自營商 = total-外資-投信
+    _day("2026-10-01", AAA=(100, 0), BBB=(200, 5))     # f=300, tr=5, total=305 → dealer=0
+    _day("2026-10-02", AAA=(-50, 0), BBB=(10, 20))     # f=-40, tr=20, total=-20 → dealer=0
+    j = client.get("/api/market/inst-flow").get_json()
+    assert j["latest_date"] == "2026-10-02"
+    days = {r["date"]: r for r in j["days"]}
+    assert days["2026-10-01"]["foreign"] == 300 and days["2026-10-01"]["trust"] == 5
+    assert days["2026-10-01"]["total"] == 305 and days["2026-10-01"]["dealer"] == 0
+    # headline 近 5 日加總（此處共 2 天）：外資 300-40=260
+    assert j["headline"]["foreign"]["sum5"] == 260
+    assert j["headline"]["foreign"]["d1"] == -40        # 最新一日（新到舊第一筆）
+
+
+def test_market_inst_flow_empty(client, monkeypatch):
+    app_module._INST_FLOW_CACHE["v"] = None
+    import data_fetcher
+    monkeypatch.setattr(data_fetcher, "fetch_foreign_total_flow", lambda: {}, raising=False)
+    j = client.get("/api/market/inst-flow").get_json()
+    assert j["days"] == [] and j["latest_date"] is None

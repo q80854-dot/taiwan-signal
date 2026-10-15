@@ -1304,6 +1304,52 @@ def api_market_inst_rank():
         return jsonify({"error": str(e)}), 500
 
 
+import threading as _th
+_INST_FLOW_CACHE = {"t": 0, "v": None, "lock": _th.Lock()}
+
+
+@app.route("/api/market/inst-flow")
+def api_market_inst_flow():
+    """全體法人資金流向（像股市同學會）：全市場（上市）三大法人逐日淨買賣超加總。
+    資料來源為我們每日累積的 T86 全市場逐股明細，於此依交易日加總，單位為「張」，
+    不另外推估金額（避免與價格換算產生的誤差）。另附最新一日 BFI82U 官方外資
+    買賣『金額』作為對照（金額與張數本就是兩種口徑，分開標示、不混用）。"""
+    import time as _t
+    _c = _INST_FLOW_CACHE
+    if _c["v"] is not None and _t.time() - _c["t"] < 300:
+        return jsonify(_c["v"])
+    with _c["lock"]:
+        if _c["v"] is not None and _t.time() - _c["t"] < 300:
+            return jsonify(_c["v"])
+        try:
+            from state_store import store
+            days = store.get_market_inst_flow(limit=60)   # 新到舊
+            def _sum(key, n):
+                return sum(d[key] for d in days[:n]) if days else 0
+            headline = {
+                "foreign": {"d1": days[0]["foreign"] if days else 0, "sum5": _sum("foreign", 5), "sum20": _sum("foreign", 20)},
+                "trust":   {"d1": days[0]["trust"] if days else 0,   "sum5": _sum("trust", 5),   "sum20": _sum("trust", 20)},
+                "dealer":  {"d1": days[0]["dealer"] if days else 0,  "sum5": _sum("dealer", 5),  "sum20": _sum("dealer", 20)},
+                "total":   {"d1": days[0]["total"] if days else 0,   "sum5": _sum("total", 5),   "sum20": _sum("total", 20)},
+            }
+            # 官方 BFI82U 外資買賣金額（最新一日，金額口徑；僅作對照）
+            foreign_amt = None
+            try:
+                from data_fetcher import fetch_foreign_total_flow
+                ft = fetch_foreign_total_flow() or {}
+                if ft.get("net_buy_twd") is not None:
+                    foreign_amt = {"date": ft.get("date"), "net_buy_twd": ft.get("net_buy_twd")}
+            except Exception:
+                pass
+            resp = {"days": days, "headline": headline, "latest_date": days[0]["date"] if days else None,
+                    "n_days": len(days), "foreign_amount": foreign_amt,
+                    "source": "證交所 T86 全市場（上市）三大法人買賣超，依交易日加總（單位：張）"}
+            _c["v"] = resp; _c["t"] = _t.time()
+            return jsonify(resp)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/market/inst-streak")
 def api_market_inst_streak():
     """外資／投信連續買超、賣超排行（依累積的多日資料計算；僅上市、不含 ETF）。"""
