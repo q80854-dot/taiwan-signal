@@ -241,11 +241,99 @@ def _pf(x) -> Optional[float]:
         return None
 
 
+# ★ 2026-10-15：openapi.twse.com.tw 從 Render 常連線逾時（STOCK_DAY_ALL 15s timeout），
+# 導致「上市日行情」整個抓不到、排行榜與總覽的上市漲跌幅／成交金額／成交量全空。
+# 備援改用 www.twse.com.tw 的報表端點（與 T86／BFI82U／MI_QFIIS 同一家族，已證實從 Render 可連）。
+TWSE_LIST_URL_WWW = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?response=json"
+
+
 def _fetch_twse_list() -> List[Dict]:
+    """上市全市場日行情：先打 openapi；拿不到（逾時／非 200／空）就用 www 報表端點備援。"""
+    stocks = _twse_list_openapi()
+    if stocks:
+        return stocks
+    logger.warning("_fetch_twse_list: openapi 取不到上市日行情，改用 www.twse.com.tw 報表端點備援")
+    return _twse_list_from_report()
+
+
+def _twse_list_from_report() -> List[Dict]:
+    """備援來源：www.twse.com.tw STOCK_DAY_ALL 報表（{stat,date,fields,data}）。
+    以 fields 動態定位欄位（容忍欄序調整）；結構不如預期就回空，讓呼叫端沿用既有快取、
+    不顯示錯誤資料（寧可沒有也不要錯）。"""
+    import re as _re
     try:
-        r = requests.get(TWSE_LIST_URL, headers=HEADERS, timeout=15)
+        r = requests.get(TWSE_LIST_URL_WWW, headers=HEADERS, timeout=(5, 25))
         if r.status_code != 200:
-            logger.warning(f"_fetch_twse_list: HTTP {r.status_code} - {r.text[:200]}")
+            logger.warning(f"_twse_list_from_report: HTTP {r.status_code}")
+            return []
+        d = r.json()
+        if d.get("stat") != "OK":
+            return []
+        fields = d.get("fields") or []
+        rows = d.get("data") or []
+        if not fields or not rows:
+            return []
+        def col(*subs):
+            for i, f in enumerate(fields):
+                if any(s in str(f) for s in subs):
+                    return i
+            return None
+        ci_code = col("證券代號", "代號"); ci_name = col("證券名稱", "名稱")
+        ci_vol = col("成交股數"); ci_open = col("開盤價"); ci_high = col("最高價")
+        ci_low = col("最低價"); ci_close = col("收盤價")
+        ci_sign = col("漲跌(+/-)", "漲跌("); ci_diff = col("漲跌價差", "價差")
+        if ci_code is None or ci_name is None or ci_close is None:
+            logger.warning("_twse_list_from_report: 欄位結構不符，放棄（保留既有快取）")
+            return []
+        iso = None
+        dd = str(d.get("date", "")).strip()
+        if len(dd) == 8 and dd.isdigit():               # 報表頂層 date 為西元 YYYYMMDD
+            iso = f"{dd[:4]}-{dd[4:6]}-{dd[6:]}"
+        def cell(row, i):
+            return row[i] if (i is not None and i < len(row)) else None
+        stocks = []
+        for row in rows:
+            code = str(cell(row, ci_code) or "").strip(); name = str(cell(row, ci_name) or "").strip()
+            if not code or not name or not _is_valid_code(code): continue
+            if code in BLACKLIST_CODES: continue
+            if any(kw in name for kw in BLACKLIST_KEYWORDS): continue
+            close = _pf(cell(row, ci_close))
+            if close is None: continue
+            try:
+                vol = float(str(cell(row, ci_vol) or 0).replace(",", "") or 0)
+            except Exception:
+                vol = 0
+            # 漲跌(+/-) 欄常是 HTML（<p ...>+</p> / <p ...>-</p> / X 表持平）；漲跌價差為絕對值
+            chg = None
+            sign_raw, diff_raw = cell(row, ci_sign), cell(row, ci_diff)
+            if diff_raw is not None:
+                try:
+                    diff = float(str(diff_raw).replace(",", "").strip() or 0)
+                except Exception:
+                    diff = None
+                if diff is not None:
+                    sign_txt = _re.sub(r"<[^>]+>", "", str(sign_raw or "")).strip()
+                    chg = 0.0 if diff == 0 else (-diff if sign_txt.startswith("-") else diff)
+            chg_pct = round(chg / (close - chg) * 100, 2) if (chg is not None and close - chg > 0) else None
+            stocks.append({
+                "code": code, "ticker": f"{code}.TW", "name": name, "market": "TSE",
+                "close": close, "open": _pf(cell(row, ci_open)), "high": _pf(cell(row, ci_high)),
+                "low": _pf(cell(row, ci_low)), "volume_lots": round(vol / 1000, 0),
+                "change": chg, "change_pct": chg_pct, "sector": "", "is_etf": _is_etf_code(code),
+                "size_cat": "", "scan_priority": 9, "quote_date": iso,
+            })
+        logger.info(f"TWSE（www 報表備援）：{len(stocks)} 檔（{iso}）")
+        return stocks
+    except Exception as e:
+        logger.error(f"_twse_list_from_report: {e}"); return []
+
+
+def _twse_list_openapi() -> List[Dict]:
+    try:
+        # 連線 5s／讀取 8s：openapi 這台從 Render 常逾時，縮短等待讓 www 備援更快接手
+        r = requests.get(TWSE_LIST_URL, headers=HEADERS, timeout=(5, 8))
+        if r.status_code != 200:
+            logger.warning(f"_twse_list_openapi: HTTP {r.status_code} - {r.text[:200]}")
             return []
         stocks = []
         for item in r.json():
@@ -274,7 +362,7 @@ def _fetch_twse_list() -> List[Dict]:
         logger.info(f"TWSE: {len(stocks)} 檔")
         return stocks
     except Exception as e:
-        logger.error(f"_fetch_twse_list: {e}"); return []
+        logger.error(f"_twse_list_openapi: {e}"); return []
 
 def _fetch_tpex_list() -> List[Dict]:
     try:
