@@ -448,16 +448,20 @@ def setup_scheduler():
     scheduler.add_job(job_freshness_poll, CronTrigger(hour="0-13", minute="*/20", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll_offhours", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(lambda: __import__("freshness").log_summary(force=True), "date",
                       run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=150), id="freshness_boot_log", replace_existing=True)
-    scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True)
+    scheduler.add_job(job_revenue_watch, CronTrigger(day="1-15", hour="8-23", minute="*/10", timezone=TZ_TAIPEI), id="revenue_watch", replace_existing=True, misfire_grace_time=600, coalesce=True, max_instances=1)
     scheduler.add_job(job_news_watch, CronTrigger(hour="8-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="news_watch", replace_existing=True)
-    scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True)
+    scheduler.add_job(job_refresh_universe, CronTrigger(hour=16, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe", replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     # ★ 新增：2026-09-18——見 job_pre_scan_restart() 說明，在每日掃描前主動
     # 重啟一次 worker、重置記憶體基準，預防跟 2026-09-03/2026-09-18 同一種
     # 掃描到一半被 Render 平台強制重啟、訊號整批遺失的問題。
     scheduler.add_job(job_pre_scan_restart, CronTrigger(hour=16, minute=15, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="pre_scan_restart",  replace_existing=True)
-    scheduler.add_job(job_daily_scan,       CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="daily_scan",       replace_existing=True)
-    scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True)
-    scheduler.add_job(job_collect_inst, CronTrigger(hour="17,19", minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="collect_inst", replace_existing=True)
+    # ★ 2026-10-15：盤後關鍵排程補上 misfire_grace_time／coalesce／max_instances。
+    # 原本這些工作沒有設定，APScheduler 預設 misfire_grace_time=1 秒——若觸發當下 worker 正忙
+    # （長請求、掃描中）或正在重啟（16:15 會主動重啟一次），這次觸發會被「丟棄」而非延後執行，
+    # 造成當天盤後資料／掃描整個沒跑。設定寬限 1 小時後，稍晚也會補跑，不再因為剛好卡住就整天漏掉。
+    scheduler.add_job(job_daily_scan,       CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="daily_scan",       replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
+    scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
+    scheduler.add_job(job_collect_inst, CronTrigger(hour="17,19", minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="collect_inst", replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     scheduler.add_job(lambda: logger.debug("❤️ 心跳"), "interval", hours=1, id="heartbeat")
     scheduler.start()
     logger.info("✅ 排程器已啟動")
@@ -1343,7 +1347,7 @@ def api_market_inst_flow():
                 pass
             resp = {"days": days, "headline": headline, "latest_date": days[0]["date"] if days else None,
                     "n_days": len(days), "foreign_amount": foreign_amt,
-                    "source": "證交所 T86 全市場（上市）三大法人買賣超，依交易日加總（單位：張）"}
+                    "source": "證交所 T86 全市場（上市）三大法人買賣超，依交易日加總（單位：張）。自營商含外資自營商（＝合計−外資−投信）"}
             _c["v"] = resp; _c["t"] = _t.time()
             return jsonify(resp)
         except Exception as e:
@@ -1700,8 +1704,8 @@ def _long_history(t):
     if c and _t.time() - c[0] < 1800:
         return c[1]
     try:
-        import yfinance as yf
-        h = yf.Ticker(t).history(period="5y", interval="1d", auto_adjust=True)
+        from data_fetcher import _yf_history
+        h = _yf_history(t, period="5y", interval="1d", auto_adjust=True)
         if h is None or h.empty:
             return None
         h = h.dropna(subset=["Open", "High", "Low", "Close"])
@@ -1805,7 +1809,10 @@ def api_instrument(ticker: str):
         else:
             out["indicators"] = None
         try:
-            out["ohlcv_long"] = _fut_long.result(timeout=45)
+            # ★ 2026-10-15：原本等最多 45 秒，Yahoo 若變慢或回 401（偶發）會把整個個股研究頁
+            # 拖到二十幾秒、前端等不到就中斷（production 實測 /api/instruments 499）。5 年長歷史只用於
+            # K 線圖，拿不到時前端會自動退回一年日線，所以這裡縮短等待上限，確保整頁能快速回應。
+            out["ohlcv_long"] = _fut_long.result(timeout=12)
         except Exception as _e:
             logger.warning(f"ohlcv_long {t}: {_e}"); out["ohlcv_long"] = None
         try:
@@ -1865,7 +1872,7 @@ def api_instrument(ticker: str):
                            "sum5": {k: sum((x[k] or 0) for x in seq[:5]) for k in ("foreign", "trust", "dealer", "total")},
                            "sum20": {k: sum((x[k] or 0) for x in seq) for k in ("foreign", "trust", "dealer", "total")},
                            "streak": {k: _streak(k) for k in ("foreign", "trust")},
-                           "source": "證交所 T86 三大法人買賣超日報（僅上市；單位：張）"}
+                           "source": "證交所 T86 三大法人買賣超日報（僅上市；單位：張）。自營商欄含外資自營商（＝合計−外資−投信）"}
     except Exception as e:
         out["inst_error"] = str(e)
     try:   # 同產業比較：同產業成交金額前 8 名（含本檔），附本益比／殖利率

@@ -20,6 +20,53 @@ try:
 except ImportError:
     YFINANCE_OK = False
 
+import time as _time_mod
+import threading as _threading_mod
+
+# ★ 2026-10-15 Yahoo 熔斷器：production 實測 Yahoo 偶發回 401（Invalid Crumb）或連線逾時，
+# yfinance 內部會反覆重試、每次卡數秒到數十秒，讓個股研究頁一路拖到二十幾秒、前端等不到就中斷。
+# 這裡在短時間內連續失敗時「跳過 Yahoo、直接用資料庫既有日K快取」，冷卻一段時間後再試一次。
+# 目的：來源暫時不穩時，頁面仍然快速回應且照常顯示（K線退回快取、其餘 DB 區塊完全不受影響），
+# 不會顯示錯誤數字——只是最新一根可能晚一點，freshness 會如實標示。
+_YF_CB = {"fails": 0, "until": 0.0, "lock": _threading_mod.Lock()}
+_YF_FAIL_THRESHOLD = 3          # 連續失敗幾次就跳閘
+_YF_COOLDOWN = 180              # 跳閘後冷卻秒數（之後放行一次探測）
+
+
+def yahoo_circuit_open() -> bool:
+    """熔斷是否開啟中（True＝目前跳過 Yahoo）。"""
+    return _time_mod.time() < _YF_CB["until"]
+
+
+def _yf_is_down_err(e) -> bool:
+    s = str(e).lower()
+    return any(k in s for k in ("401", "crumb", "unauthorized", "timed out", "timeout",
+                                "connection", "too many requests", "429"))
+
+
+def _yf_history(sym, **kwargs):
+    """包一層 yfinance history：熔斷開啟時直接回 None（呼叫端退回快取），
+    失敗達門檻即跳閘冷卻；成功則清零。回傳 DataFrame 或 None。"""
+    if not YFINANCE_OK:
+        return None
+    if yahoo_circuit_open():
+        return None
+    try:
+        h = yf.Ticker(sym).history(**kwargs)
+        if h is not None and not h.empty:
+            with _YF_CB["lock"]:
+                _YF_CB["fails"] = 0
+        return h
+    except Exception as e:
+        if _yf_is_down_err(e):
+            with _YF_CB["lock"]:
+                _YF_CB["fails"] += 1
+                if _YF_CB["fails"] >= _YF_FAIL_THRESHOLD:
+                    _YF_CB["until"] = _time_mod.time() + _YF_COOLDOWN
+                    _YF_CB["fails"] = 0
+                    logger.warning(f"Yahoo 連續失敗，熔斷 {_YF_COOLDOWN}s（改用資料庫日K快取）：{str(e)[:120]}")
+        raise
+
 import os
 from config import TIMEFRAMES, SYSTEM, CIRCUIT_BREAKER as CB, TW_MARKET_HOLIDAYS
 
@@ -712,13 +759,13 @@ def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
     else:
         try:
             if need_full:
-                h = yf.Ticker(ticker).history(period=tf["period"], interval=tf["interval"], auto_adjust=True)
+                h = _yf_history(ticker, period=tf["period"], interval=tf["interval"], auto_adjust=True)
             else:
                 # start 用「快取最後一天」當天（含）重抓，蓋掉可能因為盤中提早
                 # 抓取而不是定案收盤價/收盤K棒的那部分，其餘全部沿用快取，
                 # 不用重抓整段歷史。
                 _st = (datetime.strptime(last_date_only, "%Y-%m-%d") - timedelta(days=7 if tf_key != "weekly" else 21)).strftime("%Y-%m-%d")
-                h = yf.Ticker(ticker).history(start=_st, interval=tf["interval"], auto_adjust=True)
+                h = _yf_history(ticker, start=_st, interval=tf["interval"], auto_adjust=True)
                 # ★ 新增：還原價漂移防護——auto_adjust=True 的歷史價會在除權息日整段被重新調整，
                 # 增量更新只覆蓋最後一天，舊快取就會與新資料差一個固定比例（K線出現假跳空，
                 # 影響均線／ATR／停損）。以重疊的那一根為準：若新抓與快取同日收盤差>0.3%，整段重抓。
@@ -731,7 +778,9 @@ def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
                             k = cb.get("bar_date")
                             if k in nb and cb["close"] > 0 and abs(nb[k]["close"] / cb["close"] - 1) > 0.003:
                                 logger.warning(f"{ticker}/{tf_key} 還原價漂移 {cb['close']}→{nb[k]['close']}，整段重抓")
-                                h = yf.Ticker(ticker).history(period=tf["period"], interval=tf["interval"], auto_adjust=True)
+                                _h2 = _yf_history(ticker, period=tf["period"], interval=tf["interval"], auto_adjust=True)
+                                if _h2 is not None and not _h2.empty:
+                                    h = _h2
                 except Exception as _e:
                     logger.warning(f"{ticker} 漂移檢查失敗: {_e}")
             if h is not None and not h.empty:
@@ -984,25 +1033,39 @@ def collect_inst_daily(date_str: str, store) -> int:
 
 
 def backfill_inst_daily(store, want_days: int = 30, include_today: bool = True) -> Dict:
-    """往回補足最近 want_days 個『有資料的交易日』。已存在的日期略過；
-    每次請求間隔 3 秒，避免被 TWSE 限流。回傳 {added, have, tried}。"""
-    have = set(store.get_inst_dates(limit=120))
-    d = datetime.now(timezone.utc) + timedelta(hours=8)
-    added = tried = 0
-    got = len(have)
-    for _ in range(want_days * 2 + 10):                  # 往回最多看這麼多個日曆日（含假日）
-        if d.weekday() < 5:
+    """補齊最近 want_days 個『交易日』的三大法人資料，並回補任何中間缺漏的日子。
+
+    ★ 2026-10-15 修正（關鍵 bug）：原本以『目前資料庫共有幾天』(got=len(have)) 當作停止條件，
+    一旦累積滿 30 天，之後每天只會補「今天」一天就 break——代表任何一天當初沒抓到（TWSE 當晚擋、
+    服務在休眠、暫時性錯誤），那個「中間的洞」就永遠不會被回補，個股 20 日法人面板與全體法人資金流向
+    會留下永久缺口。改成：掃過最近 want_days 個『交易日』（跳過週末與國定假日），凡是資料庫裡沒有的
+    那一天就補抓，不再因為總數夠了就提早停止。已存在的日期略過；每次對外請求間隔 3 秒避免被限流。
+    回傳 {added, have, tried, gaps}（gaps＝視窗內過去交易日補抓後仍無資料的天數，供觀察）。"""
+    have = set(store.get_inst_dates(limit=180))
+    now_tpe = datetime.now(timezone.utc) + timedelta(hours=8)
+    today = now_tpe.date()
+    d = now_tpe
+    added = tried = examined = gaps = 0
+    for _ in range(want_days * 3 + 20):                 # 往回最多看這麼多個日曆日（含週末假日）
+        is_weekday = d.weekday() < 5
+        if is_weekday and not _is_tw_market_holiday(d):  # 只數「交易日」；跳過週末與國定假日
             iso = d.strftime("%Y-%m-%d")
-            if iso not in have and (include_today or d.date() < (datetime.now(timezone.utc) + timedelta(hours=8)).date()):
-                tried += 1
-                if collect_inst_daily(d.strftime("%Y%m%d"), store):
-                    added += 1; got += 1
-                time.sleep(3)
-            if got >= want_days:
-                break
+            is_today = d.date() == today
+            if not (is_today and not include_today):
+                examined += 1
+                if iso not in have:                      # 這個交易日還沒有資料 → 補抓（含中間的洞）
+                    tried += 1
+                    if collect_inst_daily(d.strftime("%Y%m%d"), store):
+                        added += 1; have.add(iso)
+                    elif not is_today:                   # 過去交易日補抓後仍無資料：記為缺口（下次仍會再試）
+                        gaps += 1
+                    time.sleep(3)
+                if examined >= want_days:
+                    break
         d -= timedelta(days=1)
-    logger.info(f"三大法人回補：新增 {added} 天（嘗試 {tried}，目前共 {got}）")
-    return {"added": added, "have": got, "tried": tried}
+    got = len(set(store.get_inst_dates(limit=180)))
+    logger.info(f"三大法人回補：新增 {added} 天（檢查 {examined} 個交易日、嘗試 {tried}、仍缺 {gaps}，目前共 {got}）")
+    return {"added": added, "have": got, "tried": tried, "gaps": gaps}
 
 
 def fetch_foreign_total_flow() -> Dict:
