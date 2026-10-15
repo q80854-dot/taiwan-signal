@@ -1689,7 +1689,7 @@ def api_screener():
 
 _long_hist_cache = {}
 from concurrent.futures import ThreadPoolExecutor as _TPE
-_INST_POOL = _TPE(max_workers=4)
+_INST_POOL = _TPE(max_workers=8)
 
 
 def _long_history(t):
@@ -1893,11 +1893,32 @@ def api_instrument(ticker: str):
                                      for x in top]}
     except Exception as e:
         out["peers_error"] = str(e)
-    try:   # 近期除權息（未來 60 天）
+    # ★ 2026-10-15 加速：以下各區塊是彼此獨立、各自對外抓取（除權息、公司概況、
+    # 外資持股、集保分散、董監持股、個股新聞）的 I/O，原本逐一串行等待，冷快取時
+    # 合計可達十餘秒。改成同時送進執行緒池並行抓取，再各自取回；任一失敗仍優雅降級、
+    # 不影響其他區塊，且不改變任何資料內容或正確性，只縮短等待時間。
+    def _ex_div():
         from calendar_events import get_ex_dividend
-        out["ex_dividend"] = [x for x in (get_ex_dividend(days=60).get("items") or []) if x.get("code") == code]
-    except Exception as e:
-        out["ex_dividend_error"] = str(e)
+        return [x for x in (get_ex_dividend(days=60).get("items") or []) if x.get("code") == code]
+    def _profile():
+        import company_info; return company_info.get_profile(code)
+    def _foreign():
+        import company_info; return company_info.get_foreign_holding(code)
+    def _disp():
+        import company_info; return company_info.get_dispersion(code)
+    def _board():
+        import company_info; return company_info.get_board_holding(code)
+    def _news():
+        import finmind; return finmind.news(code)
+    _jobs = {"ex_dividend": _ex_div, "company_profile": _profile, "foreign_holding": _foreign,
+             "dispersion": _disp, "board_holding": _board, "news_items": _news}
+    _futs = {k: _INST_POOL.submit(fn) for k, fn in _jobs.items()}
+    def _resolve(key, default=None):
+        try:
+            out[key] = _futs[key].result(timeout=30)
+        except Exception as e:
+            out[key] = default; out[key + "_error"] = str(e)
+    _resolve("ex_dividend", [])
     try:
         from fundamentals import fetch_margin_short_map
         out["margin"] = fetch_margin_short_map().get(code)
@@ -1910,26 +1931,11 @@ def api_instrument(ticker: str):
         out["material_news"] = []; out["material_news_error"] = str(e)
     # ★ 2026-10-11：個股研究延伸資料（使用者要求）——公司概況、外資（機構）持股比率、
     # 集保股權分散（大戶／散戶）、技術指標白話解讀。逐項優雅降級，缺就不顯示。
-    try:
-        import company_info
-        out["company_profile"] = company_info.get_profile(code)
-    except Exception as e:
-        out["company_profile"] = None; out["company_profile_error"] = str(e)
-    try:
-        import company_info
-        out["foreign_holding"] = company_info.get_foreign_holding(code)
-    except Exception as e:
-        out["foreign_holding"] = None; out["foreign_holding_error"] = str(e)
-    try:
-        import company_info
-        out["dispersion"] = company_info.get_dispersion(code)
-    except Exception as e:
-        out["dispersion"] = None; out["dispersion_error"] = str(e)
-    try:
-        import company_info
-        out["board_holding"] = company_info.get_board_holding(code)
-    except Exception as e:
-        out["board_holding"] = None; out["board_holding_error"] = str(e)
+    # （2026-10-15：以上四項與個股新聞已於前面並行送出，這裡只取回結果。）
+    _resolve("company_profile")
+    _resolve("foreign_holding")
+    _resolve("dispersion")
+    _resolve("board_holding")
     try:   # 財務指標時間序列：月營收年增率＋季毛利率／營益率，皆取自本系統自官方 TWSE 綜合損益表解析、已累積的 DB 歷史。
         # ★ 2026-10-12：FinMind 衍生財務比率（EPS/ROE/ROA/淨利率/流動比率/股東權益比率/自由現金流）在未能確認
         # FinMind 綜合損益表 type 欄位實際名稱前，用別名比對會對到錯誤科目、算出錯誤數字（使用者回報廣達毛利率、
@@ -1951,11 +1957,7 @@ def api_instrument(ticker: str):
                              "margin": _stfs.get_quarterly_margin_series(code, 12)}
     except Exception as e:
         out["fin_series"] = None; out["fin_series_error"] = str(e)
-    try:   # 個股新聞（FinMind，選用）
-        import finmind
-        out["news_items"] = finmind.news(code)
-    except Exception as e:
-        out["news_items"] = None; out["news_items_error"] = str(e)
+    _resolve("news_items")   # 個股新聞（FinMind，選用）；已於前面並行送出
     try:
         from indicators import interpret
         out["indicator_reading"] = interpret(out.get("indicators"))
