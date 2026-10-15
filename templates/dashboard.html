@@ -1546,6 +1546,8 @@ html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:v
       <div class="panel ovd"><div class="panel-head"><span class="panel-title">籌碼速覽</span><span class="mut" id="ovd-chip-date" style="margin-left:auto"></span></div><div class="panel-body" id="ovd-chip"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></div>
       <div class="panel ovd"><div class="panel-head"><span class="panel-title">產業熱度</span><span class="mut" style="margin-left:auto">平均漲跌幅</span></div><div class="panel-body" id="ovd-heat"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></div>
     </div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">全體法人資金流向（上市整體）</div></div>
+    <div class="panel"><div class="panel-body" id="ovd-inst-flow"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">最新訊號</div><div class="lnk" onclick="go('signals')">查看全部 →</div></div>
     <div class="grid2">
       <div class="panel">
@@ -1999,6 +2001,12 @@ html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:v
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-10-15</b></p>
+          <p><b>全體法人資金流向</b><br>・總覽的「市場儀表板」與個股研究頁新增「全體法人資金流向（上市整體）」：把全市場三大法人逐日買賣超加總，呈現外資／投信／自營商／合計的近 1 日與 5／20 日累計、20 日趨勢條與近 10 日明細。資料與個股頁同一來源（證交所 T86）加總，單位為張，不另推估金額以免誤差。</p>
+          <p><b>影子策略（策略學習）強化</b><br>・擴充搜集的特徵（連漲天數、收盤區間位置、量能趨勢、均線斜率、站上 20 日線天數等），全部由日線直接計算、不影響訊號，並納入大數據匯出供日後分析。<br>・學習報告新增出場原因分布、平均最大回撤、平均持有天數，以及相對大盤／產業強弱、突破前高、季節性等 12 個分析維度。</p>
+          <p><b>速度與穩定</b><br>・個股研究頁的除權息、公司概況、外資持股、集保分散、董監持股、新聞改為並行抓取，縮短等待；外部來源逐項優雅降級，單一來源慢或暫時失效不再拖垮整頁。</p>
+          <p><b>2026-10-11～10-12</b></p>
+          <p><b>個股研究大升級</b><br>・新增公司概況、董監事持股、外資及陸資持股比率、集保股權分散（大戶／散戶）、賣空數據、同產業比較、近期除權息、技術指標白話解讀與相關新聞。<br>・新增「財務指標」圖：月營收年增率（近 24 月）與季毛利率／營業利益率（近 12 季），資料取自公開資訊觀測站與證交所綜合損益表。<br>・資料正確性把關：對於無法以官方資料核對欄位的衍生財務比率，一律先不顯示（寧可沒有，也不要錯）；沒有資料的欄位直接隱藏，不再留空殼。</p>
           <p><b>2026-10-08</b></p>
           <p><b>會員與自選股</b><br>・新增 Google 登入（只用 Google 帳號驗證，網站不保存任何密碼；登入功能設定完成後才會出現登入按鈕）。<br>・「觀察清單」升級為「自選股」：登入後每人有自己的多組清單，可用代號或名稱搜尋加入，表格顯示成交價、漲跌、漲跌幅、成交量，並標示目前的訊號與處置／注意、暫停交易等狀態；點欄位標題可排序，每 60 秒自動更新。<br>・上櫃的處置股、注意股、變更交易、暫停交易名單已納入排除與市場總覽表格。<br>・新增「盤前掃描」：平日 08:20 先掃描一次全市場，與 16:30 的盤後掃描互補；盤前只推新訊號與簡短摘要。<br>・未登入首頁改版，公開顯示加權指數走勢；登入後才能使用站內資料。後台頁面（策略學習、系統檢查、資料稽核、系統診斷、回測、會員統計）只有站主看得到。<br>・登入資安加強：登入頻率限制、跨站請求檢查、可「登出所有裝置」、站主可停權會員，並記錄登入成功與失敗（IP 只存雜湊）。</p>
           <p><b>2026-10-07</b></p>
@@ -2767,9 +2775,9 @@ function instExtraHtml(d){
   h+=_newsHtml(d);
   return h;
 }
-// 全體法人資金流向（上市整體）——非個股，載入後填入 #mkt-inst-flow。
-async function loadMarketInstFlow(){
-  const el=document.getElementById('mkt-inst-flow');if(!el)return;
+// 全體法人資金流向（上市整體）——非個股，載入後填入指定容器（預設 #mkt-inst-flow）。
+async function loadMarketInstFlow(targetId){
+  const el=document.getElementById(targetId||'mkt-inst-flow');if(!el)return;
   try{
     const d=await(await fetch('/api/market/inst-flow',{cache:'no-store'})).json();
     if(d.error||!d.days||!d.days.length){el.innerHTML='<div class="empty">尚未累積足夠的全市場三大法人資料（系統每日收盤後累積，約需 1 個交易日起）</div>';return;}
@@ -4877,6 +4885,7 @@ async function fetchOverviewDash(){
       <div><dt>外資現貨買賣超</dt><dd style="color:${fv==null?'var(--t3)':_col(fv)}">${fv==null?'—':_sg(fv/1e8,1)}<small style="font-size:11px;color:var(--t3);margin-left:3px">億</small></dd></div></dl>`);
     setEl('ovd-chip-date',t.date?`期貨 ${t.date}・大台等效`:'');
   }catch(e){setHtml('ovd-chip','<div class="empty" style="padding:18px">載入失敗，稍後自動重試</div>');}
+  try{loadMarketInstFlow('ovd-inst-flow');}catch(e){}
 }
 function updateStatusBar(){
   const tw=new Date(Date.now()+8*3600e3),h=tw.getUTCHours()*60+tw.getUTCMinutes(),wd=tw.getUTCDay(),open=wd>=1&&wd<=5&&h>=540&&h<=810;
