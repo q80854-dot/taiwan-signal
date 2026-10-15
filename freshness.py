@@ -25,8 +25,13 @@ DATASETS = [
     ("inst", "三大法人個股買賣超", "證交所 T86", "16:30"),
     ("taifex", "期交所三大法人期貨／選擇權", "期交所 OpenAPI（網站 CSV 備援）", "15:30"),
     ("margin", "融資餘額", "證交所 MI_MARGN", "21:30"),
+    ("foreign_holding", "外資持股比率", "證交所 MI_QFIIS", "18:00"),
     ("scan", "每日訊號掃描", "本系統（16:30 盤後掃描）", "17:30"),
 ]
+# 註（2026-10-15）：估值(BWIBBU)與月營收不納入此「每日」新鮮度面板——
+# 月營收是「每月」公布（非每日交易日），估值 map 不帶可靠的單日日期，硬塞進以
+# 交易日為基準的面板會產生錯誤的「落後」判斷。兩者已各自以 12 小時 TTL ＋
+# stale-while-revalidate（月營收另有 MOPS 補登）維持新鮮，不在此面板顯示。
 
 
 def now_tpe() -> datetime:
@@ -110,6 +115,13 @@ def current_dates() -> Dict[str, Optional[str]]:
     except Exception:
         out["margin"] = None
     try:
+        import company_info
+        ent = company_info._cache.get("qfiis")
+        mp = (ent or {}).get("data") or {}
+        out["foreign_holding"] = _iso(next((v.get("date") for v in mp.values() if v.get("date")), None))
+    except Exception:
+        out["foreign_holding"] = None
+    try:
         from scanner import scanner
         at = scanner.get_status().get("last_scan_at")
         if at:
@@ -159,7 +171,7 @@ def job_poll() -> Dict:
         if late("inst"):
             from data_fetcher import collect_inst_daily
             from state_store import store
-            n = collect_inst_daily(st["inst"]["expected"].replace("-", ""), store)
+            n, _st_inst = collect_inst_daily(st["inst"]["expected"].replace("-", ""), store)
             did.append(f"inst({n})")
             if n:
                 import data_fetcher as df
@@ -189,6 +201,14 @@ def job_poll() -> Dict:
             did.append("margin")
     except Exception as e:
         logger.warning(f"freshness margin: {e}")
+    try:
+        if late("foreign_holding"):
+            import company_info
+            company_info._cache.pop("qfiis", None)      # 清掉當日快取，強制重建外資持股比率 map
+            company_info.get_foreign_holding("2330")
+            did.append("foreign_holding")
+    except Exception as e:
+        logger.warning(f"freshness foreign_holding: {e}")
     if did:
         try:
             import protect

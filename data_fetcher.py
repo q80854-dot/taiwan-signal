@@ -79,45 +79,6 @@ HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 # 擋掉的 TWSE/TPEX 官方網頁爬蟲。這是需要金鑰的商用 API，走的是完全不同的
 # 網路路徑/驗證方式，不會有「Render 雲端 IP 被反爬蟲擋掉」這種問題。
 # 金鑰已確認在 Render 環境變數設定且有效（/api/diagnostics 驗證過）。
-_fugle_index_discovery_done = False
-
-def _fugle_discover_indices() -> None:
-    """
-    ★ 除錯用：2026-08-31——第一版猜測的指數代碼「TAIEX」「TPEx」被富果 API
-    回 404（代碼不存在），只有 /stock/intraday/quote/{symbol} 這個端點本身是對的，
-    symbolId 猜錯了。這裡呼叫富果的 tickers 列表端點（?type=INDEX）各查一次
-    上市(TSE)/上櫃(OTC) 的指數清單，把回傳的真實 symbolId 印進 log，
-    只在程序啟動後執行一次，用來從正式環境紀錄找出正確代碼，
-    找到後應該把結果直接寫死進 _fetch_fugle_index 的呼叫端，並移除這段除錯碼。
-    """
-    global _fugle_index_discovery_done
-    if _fugle_index_discovery_done or not FUGLE_API_KEY:
-        return
-    _fugle_index_discovery_done = True
-    # market=OTC 查回 0 筆，代表富果的「指數」清單不是用股票市場別(TSE/OTC)分類，
-    # 這裡改成：market=TSE 撈全部 185 筆，用關鍵字「櫃」「上櫃」「OTC」篩出候選項；
-    # 同時也試著完全不帶 market 參數，看是否能撈到更完整/不同的清單。
-    for label, params in (("TSE", {"market": "TSE", "type": "INDEX"}),
-                           ("OTC", {"market": "OTC", "type": "INDEX"}),
-                           ("no_market", {"type": "INDEX"})):
-        try:
-            r = requests.get(
-                f"{FUBON_PUBLIC_BASE}/stock/intraday/tickers",
-                headers={**HEADERS, "X-API-KEY": FUGLE_API_KEY},
-                params=params,
-                timeout=10,
-            )
-            if r.status_code == 200:
-                data = r.json().get("data", [])
-                matches = [{"symbol": it.get("symbol"), "name": it.get("name")}
-                           for it in data if any(k in (it.get("name") or "") for k in ("櫃", "OTC", "上櫃"))]
-                logger.info(f"Fugle 指數清單 {label}: 共{len(data)}筆，含「櫃」關鍵字={matches}")
-            else:
-                logger.warning(f"Fugle 指數清單 {label}: HTTP {r.status_code} - {r.text[:200]}")
-        except Exception as e:
-            logger.warning(f"Fugle 指數清單 {label}: {e}")
-
-
 def _fetch_fugle_index(symbol: str) -> Optional[Dict]:
     """富果 API 抓單一指數（TAIEX=加權指數 / TPEx=上櫃指數）"""
     if not FUGLE_API_KEY:
@@ -140,7 +101,6 @@ def _fetch_fugle_index(symbol: str) -> Optional[Dict]:
             logger.warning(f"Fugle {symbol}: HTTP 200 但無有效價格欄位 - {r.text[:200]}")
         else:
             logger.warning(f"Fugle {symbol}: HTTP {r.status_code} - {r.text[:200]}")
-            _fugle_discover_indices()
     except Exception as e:
         logger.warning(f"Fugle {symbol}: {e}")
     return None
@@ -301,52 +261,90 @@ def _fetch_twii() -> Optional[Dict]:
 # Gate」——先問「現在這個大盤環境允不允許放空」，答案不是的話，不管個股
 # 分數多高、ADX多強，都不放行，不讓個股層級的訊號把它救回來（分層 gate
 # 架構，避免市場環境判斷跟個股訊號判斷混在同一個加總分數裡互相稀釋）。
+def _twse_index_daily_closes(months: int = 5) -> list:
+    """用 TWSE 官方「加權指數歷史」MI_5MINS_HIST 取最近 months 個月的『每日收盤』
+    （不依賴 yfinance）。回傳依日期由舊到新的 float 收盤清單；失敗回 []。
+    欄位：row[0]=民國年月日、row[4]=收盤指數（與 analysis_foreign._taiex_month 同一來源與解析）。"""
+    out = {}
+    now = datetime.now(timezone.utc) + timedelta(hours=8)
+    y, m = now.year, now.month
+    for _ in range(months):
+        ym = f"{y:04d}{m:02d}"
+        url = f"https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date={ym}01&response=json"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=(5, 20))
+            if r.status_code == 200:
+                d = r.json()
+                if d.get("stat") == "OK":
+                    for row in d.get("data", []):
+                        try:
+                            parts = str(row[0]).split("/")
+                            iso = f"{int(parts[0]) + 1911:04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
+                            out[iso] = float(str(row[4]).replace(",", ""))
+                        except Exception:
+                            continue
+        except Exception as e:
+            logger.debug(f"_twse_index_daily_closes {ym}: {e}")
+        m -= 1
+        if m == 0:
+            m = 12; y -= 1
+    return [out[k] for k in sorted(out)]
+
+
+def _regime_from_closes(closes: list, source: str) -> Optional[Dict]:
+    """由一串由舊到新的指數日收盤算中期趨勢 regime。不足 65 根回 None。"""
+    if not closes or len(closes) < 65:
+        return None
+    ma20 = sum(closes[-20:]) / 20
+    ma60_now = sum(closes[-60:]) / 60
+    ma60_5ago = sum(closes[-65:-5]) / 60
+    ma60_slope_pct = round((ma60_now - ma60_5ago) / ma60_5ago * 100, 3) if ma60_5ago else 0.0
+    price = closes[-1]
+    bearish_regime = bool(price < ma60_now and ma60_slope_pct < 0 and ma20 < ma60_now)
+    bullish_regime = bool(price > ma60_now and ma60_slope_pct > 0 and ma20 > ma60_now)
+    trend = "bearish" if bearish_regime else "bullish" if bullish_regime else "neutral"
+    return {"available": True, "trend": trend, "ma20": round(ma20, 1), "ma60": round(ma60_now, 1),
+            "ma60_slope_pct": ma60_slope_pct, "price": round(price, 1),
+            "bearish_regime": bearish_regime, "source": source}
+
+
 def fetch_market_regime() -> Dict:
     """回傳大盤中期趨勢 regime，只依賴多日價格資料，不受單日漲跌影響：
     {"available": bool, "trend": "bullish"|"bearish"|"neutral"|"unknown",
      "ma20": float|None, "ma60": float|None, "ma60_slope_pct": float|None,
      "price": float|None, "bearish_regime": bool}
     bearish_regime 同時滿足「價格 < 60日均線」「60日均線斜率向下」
-    「20日均線 < 60日均線」三個條件才是 True——刻意要求三個條件都成立，
-    不是任一個，避免大盤只是短暫拉回、均線還沒真正走空就被誤判。
-    資料源（yfinance ^TWII）拿不到時，available=False、bearish_regime=False
-    （抓不到資料時，「不確定是不是空頭」不等於「確定是空頭」，跟這個專案
-    其他資料源失效時的保守原則一致：fail closed 對「放空」這個動作來說，
-    就是「不確定就不放空」，而不是照樣放行。）"""
+    「20日均線 < 60日均線」三個條件才是 True——刻意要求三個條件都成立。
+    ★ 2026-10-15：優先用 TWSE 官方加權指數日收盤計算（不依賴 yfinance），
+    Yahoo ^TWII 近期常回 401，原本一失效 regime 就一直 unknown、放空閘門等於永遠關閉。
+    官方拿不到才退回 yfinance；兩者都失敗才 available=False（保守：不確定就不放行放空）。"""
     if c := _cache_get("market_regime", 3600):
         return c
     unavailable = {"available": False, "trend": "unknown", "ma20": None, "ma60": None,
                    "ma60_slope_pct": None, "price": None, "bearish_regime": False,
                    "note": "大盤中期趨勢資料無法取得，保守起見視為不確定（不放行新放空訊號）"}
-    if not YFINANCE_OK:
-        return _cache_set("market_regime", unavailable)
+    # 來源一：TWSE 官方加權指數日收盤（優先；不依賴 Yahoo）
     try:
-        ticker = yf.Ticker("^TWII")
-        h = ticker.history(period="6mo", interval="1d")
-        if h is None or h.empty or len(h) < 65:
-            logger.warning("fetch_market_regime: TWII 歷史資料不足65根，regime 判定為 unknown")
-            return _cache_set("market_regime", unavailable)
-        closes = h["Close"].dropna()
-        ma20 = float(closes.tail(20).mean())
-        ma60_series = closes.tail(65).rolling(60).mean().dropna()
-        if len(ma60_series) < 6:
-            return _cache_set("market_regime", unavailable)
-        ma60 = float(ma60_series.iloc[-1])
-        ma60_5ago = float(ma60_series.iloc[-6])
-        ma60_slope_pct = round((ma60 - ma60_5ago) / ma60_5ago * 100, 3) if ma60_5ago else 0.0
-        price = float(closes.iloc[-1])
-        bearish_regime = bool(price < ma60 and ma60_slope_pct < 0 and ma20 < ma60)
-        bullish_regime = bool(price > ma60 and ma60_slope_pct > 0 and ma20 > ma60)
-        trend = "bearish" if bearish_regime else "bullish" if bullish_regime else "neutral"
-        result = {"available": True, "trend": trend, "ma20": round(ma20, 1), "ma60": round(ma60, 1),
-                  "ma60_slope_pct": ma60_slope_pct, "price": round(price, 1),
-                  "bearish_regime": bearish_regime}
-        logger.info(f"大盤中期趨勢 regime={trend} price={price:.0f} MA20={ma20:.0f} "
-                    f"MA60={ma60:.0f}({ma60_slope_pct:+.2f}%/5日)")
-        return _cache_set("market_regime", result)
+        res = _regime_from_closes(_twse_index_daily_closes(months=5), "twse_official")
+        if res:
+            logger.info(f"大盤中期趨勢（官方）regime={res['trend']} price={res['price']:.0f} "
+                        f"MA20={res['ma20']:.0f} MA60={res['ma60']:.0f}({res['ma60_slope_pct']:+.2f}%/5日)")
+            return _cache_set("market_regime", res)
     except Exception as e:
-        logger.warning(f"fetch_market_regime: {e}")
-        return _cache_set("market_regime", unavailable)
+        logger.warning(f"fetch_market_regime 官方來源: {e}")
+    # 來源二：yfinance ^TWII（備援；經熔斷器，Yahoo 故障時快速略過）
+    try:
+        h = _yf_history("^TWII", period="6mo", interval="1d")
+        if h is not None and not h.empty and len(h) >= 65:
+            closes = [float(x) for x in h["Close"].dropna()]
+            res = _regime_from_closes(closes, "yfinance")
+            if res:
+                logger.info(f"大盤中期趨勢（Yahoo）regime={res['trend']} price={res['price']:.0f}")
+                return _cache_set("market_regime", res)
+    except Exception as e:
+        logger.warning(f"fetch_market_regime yfinance: {e}")
+    logger.warning("fetch_market_regime: 官方與 Yahoo 皆取不到足夠指數歷史，regime=unknown")
+    return _cache_set("market_regime", unavailable)
 
 
 def _fetch_tpex() -> Optional[Dict]:
@@ -1023,13 +1021,16 @@ def fetch_institutional_flow(date_str=None) -> Dict:
         logger.error(f"inst_flow: 取不到三大法人資料（{_inst_meta['err']}），3 分鐘內不重試")
         return {}
 
-def collect_inst_daily(date_str: str, store) -> int:
-    """抓某一天的三大法人並存進資料庫。date_str=YYYYMMDD。非交易日（查無資料）回 0。"""
+def collect_inst_daily(date_str: str, store):
+    """抓某一天的三大法人並存進資料庫。date_str=YYYYMMDD。
+    回傳 (rows_added:int, status:str)；status ∈ ok / empty（該日查無資料，如假日）/ error（連線或解析失敗）。
+    ★ 2026-10-15：改成同時回傳狀態，讓回補能區分「假日本來就沒資料(empty)」與「TWSE 連線/解析失敗(error)」，
+    後者對『過去交易日』持續發生才值得告警與重試，不會把假日誤當成抓取失敗。"""
     res, st = _inst_try(date_str)
     if st != "ok" or not res:
-        return 0
+        return 0, st
     iso = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
-    return store.upsert_inst_daily(iso, res)
+    return store.upsert_inst_daily(iso, res), "ok"
 
 
 def backfill_inst_daily(store, want_days: int = 30, include_today: bool = True) -> Dict:
@@ -1045,7 +1046,8 @@ def backfill_inst_daily(store, want_days: int = 30, include_today: bool = True) 
     now_tpe = datetime.now(timezone.utc) + timedelta(hours=8)
     today = now_tpe.date()
     d = now_tpe
-    added = tried = examined = gaps = 0
+    added = tried = examined = gaps = errors = 0
+    error_days = []
     for _ in range(want_days * 3 + 20):                 # 往回最多看這麼多個日曆日（含週末假日）
         is_weekday = d.weekday() < 5
         if is_weekday and not _is_tw_market_holiday(d):  # 只數「交易日」；跳過週末與國定假日
@@ -1055,17 +1057,29 @@ def backfill_inst_daily(store, want_days: int = 30, include_today: bool = True) 
                 examined += 1
                 if iso not in have:                      # 這個交易日還沒有資料 → 補抓（含中間的洞）
                     tried += 1
-                    if collect_inst_daily(d.strftime("%Y%m%d"), store):
+                    n_added, st = collect_inst_daily(d.strftime("%Y%m%d"), store)
+                    if n_added:
                         added += 1; have.add(iso)
                     elif not is_today:                   # 過去交易日補抓後仍無資料：記為缺口（下次仍會再試）
                         gaps += 1
+                        if st == "error":                # 區分「TWSE 連線/解析失敗」與假日/無資料
+                            errors += 1; error_days.append(iso)
                     time.sleep(3)
                 if examined >= want_days:
                     break
         d -= timedelta(days=1)
     got = len(set(store.get_inst_dates(limit=180)))
-    logger.info(f"三大法人回補：新增 {added} 天（檢查 {examined} 個交易日、嘗試 {tried}、仍缺 {gaps}，目前共 {got}）")
-    return {"added": added, "have": got, "tried": tried, "gaps": gaps}
+    logger.info(f"三大法人回補：新增 {added} 天（檢查 {examined} 個交易日、嘗試 {tried}、仍缺 {gaps}、"
+                f"其中連線/解析失敗 {errors}，目前共 {got}）")
+    # 過去交易日多天抓取失敗（非假日）→ 主動告警，避免像以前一樣「無聲地」缺資料。
+    if errors >= 2:
+        try:
+            from telegram_bot import send_alert
+            send_alert(f"⚠️ 三大法人(T86)回補：過去 {errors} 個交易日連線/解析失敗（{'、'.join(error_days[:5])}），"
+                       f"可能 TWSE 擋 Render IP 或端點改版，請留意資料缺口。")
+        except Exception as _e:
+            logger.warning(f"backfill_inst_daily 告警失敗: {_e}")
+    return {"added": added, "have": got, "tried": tried, "gaps": gaps, "errors": errors}
 
 
 def fetch_foreign_total_flow() -> Dict:
@@ -1089,9 +1103,10 @@ def fetch_foreign_total_flow() -> Dict:
         foreign_row = next((row for row in rows if row[0].strip().startswith("外資及陸資")), None)
         if not foreign_row or len(foreign_row) < 4: return {}
         net_buy = int(foreign_row[3].replace(",","").replace("+",""))
+        # 註：BFI82U 的數字是「買賣差額金額（新台幣元）」。原本另外輸出的 net_buy_lots＝net_buy/1000
+        # 是把『金額』除以 1000 當『張』，口徑錯誤且無人使用，已移除以免日後誤用。
         return _cache_set("foreign_total", {
             "date": data.get("date",""), "net_buy_twd": net_buy,
-            "net_buy_lots": round(net_buy/1000,0),
             "signal": "strong_buy" if net_buy>50e8 else "buy" if net_buy>0 else "strong_sell" if net_buy<-50e8 else "sell"
         })
     except Exception as e:

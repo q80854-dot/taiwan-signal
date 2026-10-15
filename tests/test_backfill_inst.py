@@ -33,7 +33,7 @@ def test_backfill_fills_interior_gap(monkeypatch):
     def _fake_collect(ymd, store):
         iso = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}"
         attempted.append(iso)
-        return 1
+        return 1, "ok"
     monkeypatch.setattr(df, "collect_inst_daily", _fake_collect)
     res = df.backfill_inst_daily(_FakeStore(have), want_days=30)
     assert hole in attempted, f"中間缺漏的 {hole} 應該被回補，實際嘗試：{attempted}"
@@ -47,6 +47,6 @@ def test_backfill_no_gap_only_tries_missing(monkeypatch):
     have = wd[1:]
     attempted = []
     monkeypatch.setattr(df, "collect_inst_daily",
-                        lambda ymd, store: (attempted.append(f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}"), 1)[1])
+                        lambda ymd, store: (attempted.append(f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}"), (1, "ok"))[1])
     df.backfill_inst_daily(_FakeStore(have), want_days=30)
     assert attempted == [wd[0]], f"只有今天缺，應只補今天，實際：{attempted}"
