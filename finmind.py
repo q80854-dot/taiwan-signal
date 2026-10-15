@@ -53,20 +53,25 @@ def _token() -> str:
 
 
 def _fetch(dataset: str, data_id: str, start: str) -> List[dict]:
-    try:
-        headers = {}
-        tok = _token()
-        if tok:
-            headers["Authorization"] = f"Bearer {tok}"
-        r = requests.get(FINMIND_URL, params={"dataset": dataset, "data_id": data_id, "start_date": start},
-                         headers=headers, timeout=(5, 25))
-        if not r.ok:
-            return []
-        j = r.json()
-        return j.get("data") or []
-    except Exception as e:
-        logger.warning(f"finmind {dataset} {data_id}: {e}")
-        return []
+    tok = _token()
+    for mode in (["header", "param", "anon"] if tok else ["anon"]):      # token 放標頭被拒→放參數→最後才免登入
+        try:
+            headers = {"Authorization": f"Bearer {tok}"} if mode == "header" else {}
+            prm = {"dataset": dataset, "data_id": data_id, "start_date": start}
+            if mode == "param":
+                prm["token"] = tok
+            r = requests.get(FINMIND_URL, params=prm,
+                             headers=headers, timeout=(5, 25))
+            try:
+                j = r.json()
+            except Exception:
+                j = {}
+            if r.ok and j.get("status", 200) == 200:
+                return j.get("data") or []
+            logger.warning(f"finmind {dataset} {data_id}: HTTP {r.status_code} status {j.get('status')} {str(j.get('msg', ''))[:60]}")
+        except Exception as e:
+            logger.warning(f"finmind {dataset} {data_id}: {type(e).__name__}")
+    return []
 
 
 def _num(v):
@@ -131,6 +136,12 @@ def _decumulate(byd: Dict[str, Dict[str, float]], field: str) -> Dict[str, float
     return out
 
 
+def _single(byd: Dict[str, Dict[str, float]], field: str) -> Dict[str, float]:
+    """綜合損益表：FinMind 的 TaiwanStockFinancialStatements 本來就是「單季數」（2026-10-12 以台積電、鴻海實測：
+    台積電 2025 Q1~Q4 EPS 13.95／15.36／17.44／19.51，與官方單季一致），不可再相減。只有現金流量表才是年度累計。"""
+    return {d: byd[d][field] for d in sorted(byd) if field in byd[d]}
+
+
 def financial_indicators(code: str) -> Optional[dict]:
     """回傳各指標的季度序列：{metric: [{period, value}], ...}；未啟用或無資料回 None。"""
     if not enabled():
@@ -153,11 +164,11 @@ def financial_indicators(code: str) -> Optional[dict]:
 def _build(inc: Dict[str, Dict[str, float]], bs: Dict[str, Dict[str, float]],
            cf: Optional[Dict[str, Dict[str, float]]] = None) -> Optional[dict]:
     # 單季損益
-    rev_q = _decumulate(inc, "revenue")
-    gross_q = _decumulate(inc, "gross")
-    op_q = _decumulate(inc, "op_income")
-    net_q = _decumulate(inc, "net_income")
-    eps_q = _decumulate(inc, "eps")
+    rev_q = _single(inc, "revenue")
+    gross_q = _single(inc, "gross")
+    op_q = _single(inc, "op_income")
+    net_q = _single(inc, "net_income")
+    eps_q = _single(inc, "eps")
     out: Dict[str, List[dict]] = {}
 
     def series(dates_vals):

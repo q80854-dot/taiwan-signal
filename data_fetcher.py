@@ -816,6 +816,27 @@ def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
         "bar_count":     len(closes), "source": "ohlcv_cache",
     }
 
+def fill_from_finmind(ticker: str) -> int:
+    """使用者查個股時用：Yahoo／官方日 K 若還停在舊的一天，就用 FinMind 把最新交易日補進快取。
+    只在個股查詢呼叫（每次最多 1 次 FinMind 請求，15 分鐘快取），不放進全市場掃描，避免耗光額度。"""
+    try:
+        import finmind_data as finmind
+        from state_store import store
+        code = ticker.split(".")[0]
+        last = store.get_ohlcv_last_date(ticker, "daily")
+        if not last:
+            return 0
+        new = finmind.newer_bars(code, last)
+        if not new:
+            return 0
+        store.upsert_ohlcv_bars(ticker, "daily", new)
+        _cache_clear(f"ohlcv_{ticker}_daily")
+        logger.info(f"FinMind 補 K 線 {ticker}: +{len(new)} 根（至 {new[-1]['date']}）")
+        return len(new)
+    except Exception as e:
+        logger.warning(f"fill_from_finmind {ticker}: {e}")
+        return 0
+
 def fetch_ohlcv(ticker: str, tf_key: str = "daily") -> Optional[Dict]:
     cache_k = f"ohlcv_{ticker}_{tf_key}"
     if c := _cache_get(cache_k, _effective_ohlcv_ttl()):

@@ -244,8 +244,25 @@ def get_taifex(force: bool = False) -> Dict:
         if not force and _cache["v"] and time.time() - _cache["ts"] < ttl:
             return _cache["v"]
     v = merge_keep_last(fetch_taifex(), _cache["v"])
+    v = apply_finmind(v)
     with _lock:
         _cache["v"], _cache["ts"] = v, time.time()
+    return v
+
+
+def apply_finmind(v: Dict) -> Dict:
+    """期交所開放資料常比實際晚一個交易日更新。FinMind 的期貨三大法人若日期比較新，就用它的數字
+    （同樣換算成大台等效口數），並標記 source=finmind，前端會顯示來源；比較舊或抓失敗就維持原樣。"""
+    try:
+        import finmind_data as finmind
+        fm = finmind.futures_inst()
+        cur = ((v.get("futures") or {}).get("date")) or ""
+        if fm.get("ok") and fm.get("items") and fm["date"] > cur:
+            v["futures"] = {"date": fm["date"], "items": fm["items"], "source": "finmind"}
+            v["stale"] = [k for k in v.get("stale", []) if k != "futures"]
+            v["futures_source"] = f"FinMind（期交所開放資料目前只到 {cur or '無資料'}）"
+    except Exception as e:
+        logger.warning(f"taifex apply_finmind: {e}")
     return v
 
 
@@ -293,7 +310,7 @@ def summary(store=None) -> Dict:
         except Exception:
             pass
     fut, pcr = data.get("futures") or {}, data.get("pcr") or []
-    out = {"date": fut.get("date"), "errors": data.get("errors", []), "stale": data.get("stale", []), "items": fut.get("items", {}),
+    out = {"date": fut.get("date"), "source": fut.get("source") or "taifex", "errors": data.get("errors", []), "stale": data.get("stale", []), "items": fut.get("items", {}),
            "options": data.get("options"), "large": data.get("large"), "pcr": pcr[-1] if pcr else None}
     if len(pcr) >= 6:
         out["pcr_chg_5d"] = round(pcr[-1]["oi_ratio"] - pcr[-6]["oi_ratio"], 2)

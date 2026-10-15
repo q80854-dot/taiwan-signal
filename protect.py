@@ -29,9 +29,10 @@ _CACHE_TTL = {
     "/api/screener": 30, "/api/instruments/": 60, "/api/performance": 60, "/api/positions": 20,
     "/api/events": 20, "/api/news": 120, "/api/material_news": 120, "/api/fundamentals": 300,
     "/api/analysis": 120, "/api/fundamentals_radar": 300, "/api/quote/": 10,
+    "/api/finmind/market": 120, "/api/finmind/stock/": 300,
 }
 _HEAVY = ("/api/screener", "/api/instruments/", "/api/fundamentals", "/api/news", "/api/material_news",
-          "/api/market/inst-streak", "/api/market/inst-rank", "/api/analysis")
+          "/api/market/inst-streak", "/api/market/inst-rank", "/api/analysis", "/api/finmind/stock/")
 
 RATE_LIMIT = 240          # 每 IP 每分鐘（所有 /api、/auth）
 HEAVY_LIMIT = 40          # 每 IP 每分鐘（重端點）

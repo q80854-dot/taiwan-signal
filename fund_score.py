@@ -145,7 +145,7 @@ def _valuation(v: Optional[Dict]):
     return {"got": got, "max": mx, "tags": tags, "pe": pe, "pb": pb, "yield": y}
 
 
-def build_fundamental_profile(code: str) -> Dict:
+def build_fundamental_profile(code: str, deep: bool = False) -> Dict:
     from fundamentals import (fetch_monthly_revenue_map, fetch_valuation_map, get_profitability_quality)
     from state_store import store
     out = {"code": code, "score": None, "grade": None, "coverage": 0, "parts": {}, "tags": [], "missing": []}
@@ -183,6 +183,11 @@ def build_fundamental_profile(code: str) -> Dict:
         out["revenue"] = {k: rev.get(k) for k in ("period", "revenue", "revenue_ly", "cum_revenue", "yoy_pct", "mom_pct", "cum_yoy_pct")}
         out["name"] = rev.get("name")
     out["history"] = list(reversed(series))
+    if deep:
+        try:
+            out["quality"] = build_quality(code)
+        except Exception as e:
+            out["quality"] = {"ok": False, "error": type(e).__name__}
     return out
 
 
@@ -192,3 +197,104 @@ def fund_adjustment(profile: Dict, direction: str) -> int:
     if s is None or direction != "buy":
         return 0
     return 5 if s >= 80 else 3 if s >= 65 else 1 if s >= 50 else -3 if s >= 35 else -7 if s >= 20 else -12
+
+
+def _mrows(ind: Dict, key: str) -> List[Dict]:
+    for m in (ind or {}).get("metrics", []):
+        if m["key"] == key:
+            return m["rows"]
+    return []
+
+
+def build_quality(code: str) -> Dict:
+    """財務體質體檢（只給個股研究頁用，資料全來自 FinMind 財報原始科目；掃描全市場時不呼叫，避免耗盡額度）。
+    每項給 good/warn/bad，分數＝(good×1 ＋ warn×0.5) ÷ 有資料的項目數；缺資料的項目不算、不推估。"""
+    import finmind_data as fm
+    ind = fm.sec_indicators(code)
+    if not ind.get("ok"):
+        return {"ok": False, "error": ind.get("error") or "無財報資料"}
+    industry = ind.get("industry") or ""
+    fin = "金融" in industry or "保險" in industry          # 金融保險業：財報結構不同，毛利、流動比率、負債比率、現金流指標不適用
+    cons = "營造" in industry                                # 建材營造：預售屋合約負債使負債比率天生偏高
+    notes: List[str] = []
+    if fin:
+        notes.append("金融保險業的財報結構與一般公司不同，毛利率、營業利益率、負債比率、流動比率、現金流相關項目不適用；「營收」為含投資損益的淨收益，單季波動極大、同比不具意義，也不列入評分。")
+    if cons:
+        notes.append("建材營造業有預售屋合約負債，負債比率天生偏高，本檢查改用較寬鬆門檻（≤55% 優、≤70% 普通）。")
+    items: List[Dict] = []
+
+    def add(group, label, value, status, note):
+        items.append({"group": group, "label": label, "value": value, "status": status, "note": note})
+
+    def band(v, good, warn, higher=True):
+        if higher:
+            return "good" if v >= good else "warn" if v >= warn else "bad"
+        return "good" if v <= good else "warn" if v <= warn else "bad"
+
+    roe = _mrows(ind, "roe")
+    if len(roe) >= 4:
+        v = sum(r["value"] for r in roe[-4:])
+        add("獲利能力", "ROE（近四季合計）", f"{v:.1f}%", band(v, 15, 8), "近四季單季 ROE 相加，≥15% 優、8~15% 普通、<8% 偏弱")
+    gm = _mrows(ind, "gross")
+    if not fin and gm and gm[-1].get("yoy_pp") is not None:
+        r = gm[-1]
+        add("獲利能力", f"毛利率 {r['period']}", f"{r['value']:.1f}%（同比 {r['yoy_pp']:+.1f}pt）",
+            band(r["yoy_pp"], 0, -2), "與去年同季比：持平或上升為佳，下滑超過 2 個百分點偏弱")
+    om = _mrows(ind, "op")
+    if om and not fin:
+        r = om[-1]
+        add("獲利能力", f"營業利益率 {r['period']}", f"{r['value']:.1f}%",
+            "bad" if r["value"] <= 0 else band(r["value"], 10, 3), "本業賺錢能力，≥10% 優、虧損為差")
+    eps = _mrows(ind, "eps")
+    if eps and eps[-1].get("yoy") is not None:
+        r = eps[-1]
+        add("成長動能", f"單季 EPS 同比 {r['period']}", f"{r['value']:.2f} 元（{r['yoy']:+.1f}%）",
+            band(r["yoy"], 10, 0), "與去年同季相比")
+    streak = 0
+    for r in reversed(eps):
+        if r.get("yoy") is not None and r["yoy"] > 0:
+            streak += 1
+        else:
+            break
+    if eps and any(r.get("yoy") is not None for r in eps):
+        add("成長動能", "EPS 連續同比成長", f"{streak} 季", "good" if streak >= 4 else "warn" if streak >= 2 else "bad",
+            "連續幾季 EPS 高於去年同季")
+    rv = _mrows(ind, "revenue")
+    if not fin and rv and rv[-1].get("yoy") is not None:
+        r = rv[-1]
+        add("成長動能", f"單季營收同比 {r['period']}", f"{r['value']:.1f} 億（{r['yoy']:+.1f}%）", band(r["yoy"], 10, 0), "與去年同季相比")
+    dr = _mrows(ind, "debt_ratio")
+    if dr and not fin:
+        v = dr[-1]["value"]
+        lo, hi = (55, 70) if cons else (40, 60)
+        add("財務結構", "負債比率", f"{v:.1f}%", band(v, lo, hi, higher=False), f"總負債 ÷ 總資產，≤{lo}% 穩健、>{hi}% 偏高")
+    cr = _mrows(ind, "current_ratio")
+    if cr and not fin:
+        v = cr[-1]["value"]
+        add("財務結構", "流動比率", f"{v:.0f}%", band(v, 200, 120), "流動資產 ÷ 流動負債，≥200% 短期償債無虞")
+    ocf, ni = _mrows(ind, "ocf"), _mrows(ind, "net_income")
+    if not fin and len(ocf) >= 4 and len(ni) >= 4:
+        o = sum(r["value"] for r in ocf[-4:]); n = sum(r["value"] for r in ni[-4:])
+        if n > 0:
+            add("現金流品質", "營業現金流 ÷ 淨利（近四季）", f"{o / n * 100:.0f}%", band(o / n * 100, 100, 60),
+                "≥100% 代表賺的是真金白銀；偏低要留意應收帳款或存貨堆積")
+    fc = _mrows(ind, "fcf")
+    if not fin and len(fc) >= 4:
+        v = sum(r["value"] for r in fc[-4:])
+        add("現金流品質", "自由現金流（近四季合計）", f"{v:,.1f} 億", "good" if v > 0 else "bad", "營業現金流扣掉資本支出後，公司真正可自由運用的錢")
+    try:
+        dv = fm.sec_dividend(code)
+        recs = dv.get("records") or []
+        if dv.get("ok") and recs:
+            yrs = sorted({r["period"] for r in recs if (r.get("cash") or 0) + (r.get("stock") or 0) > 0})
+            last = recs[-1]
+            add("股利", "近年配息", f"{len(yrs)}/{len({r['period'] for r in recs})} 年有配息；最近現金股利 {last['cash']:.2f} 元",
+                "good" if recs and len(yrs) == len({r['period'] for r in recs}) and len(yrs) >= 3 else "warn" if yrs else "bad",
+                "近幾年是否年年配息")
+    except Exception:
+        pass
+    n = len(items)
+    score = round(sum(1 if i["status"] == "good" else 0.5 if i["status"] == "warn" else 0 for i in items) / n * 100) if n else None
+    return {"ok": n > 0, "score": score, "n": n, "items": items, "notes": notes, "industry": industry or None,
+            "date": ind.get("date"), "stale": ind.get("stale"),
+            "grade": None if score is None else "優" if score >= 75 else "中" if score >= 50 else "弱"}
