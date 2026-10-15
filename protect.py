@@ -52,7 +52,11 @@ STATS = {"cache_hit": 0, "cache_miss": 0, "limited": 0, "busy": 0, "bad_param": 
 
 
 def _ip() -> str:
-    return (request.headers.get("CF-Connecting-IP") or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    # ★ 2026-10-15 資安稽核 M2：X-Forwarded-For 的「最左段」是用戶端可偽造的值，拿它當頻率
+    # 限制／封鎖的鍵會被輪換假 IP 繞過。改取「最右段」＝最接近應用的可信跳點（Render/代理
+    # 附加的真實來源）；有 Cloudflare 時仍以 CF-Connecting-IP 優先。與 admin_auth._ip() 一致。
+    xff = request.headers.get("X-Forwarded-For", "")
+    return (request.headers.get("CF-Connecting-IP") or (xff.split(",")[-1].strip() if xff else "")
             or request.remote_addr or "?")
 
 

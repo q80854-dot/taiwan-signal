@@ -4331,7 +4331,7 @@ async function fetchRadar(kind,btn){
     if(d.error)throw new Error(d.error);
     const pc=v=>v===null||v===undefined?'—':`<span style="color:${clr(v)}">${v>0?'+':''}${Number(v).toFixed(1)}%</span>`;
     tb.innerHTML=d.rows.length?d.rows.map(r=>`<tr style="cursor:pointer" onclick="goToInstrument('${r.code}')"><td>${r.code}${r.has_signal?'<i class="dot-sig" title="近 7 天也有技術訊號"></i>':''}</td><td><b style="color:var(--t1)">${safe(r.name)}</b></td><td>${safe(r.sector)}</td><td>${r.revenue_yi}</td><td>${pc(r.yoy)}</td><td>${pc(r.mom)}</td><td>${pc(r.cum_yoy)}</td><td>${safe(r.pe)}</td><td>${r.yield!==null&&r.yield!==undefined?r.yield+'%':'—'}</td><td>${r.score!==null?`<b>${r.score}</b>`:'—'}</td></tr>`).join(''):'<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">目前沒有符合條件的公司</td></tr>';
-  }catch(e){tb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+e.message+'</td></tr>';}
+  }catch(e){tb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+esc2(e.message)+'</td></tr>';}
 }
 let _auditTimer=null;
 async function fetchAudit(refresh){
@@ -4356,7 +4356,7 @@ async function fetchAudit(refresh){
       return `<tr style="cursor:pointer" onclick="goToInstrument('${i.code||''}')"><td><b style="color:var(--t1)">${safe(i.ticker)}</b></td><td>${safe(i.market||'')}</td><td>${i.compared??'—'}</td><td>${i.exact??'—'}</td><td style="color:${l[1]}"><b>${l[0]}</b></td><td>${i.vol_ratio_avg??'—'}</td><td style="white-space:normal;min-width:180px">${safe(i.note||'逐日開高低收皆與官方一致')}</td></tr>`}).join('');
     setHtml('audit-src',(d.sources||[]).map(x=>`<tr><td><b style="color:var(--t1)">${safe(x.name)}</b></td><td style="white-space:normal;min-width:150px">${safe(x.source)}</td><td style="white-space:normal;min-width:100px">${safe(x.update)}</td><td>${safe(x.coverage)}</td><td style="white-space:normal;min-width:220px">${safe(x.limits)}</td></tr>`).join(''));
     if(d.running)_auditTimer=setTimeout(()=>{if(document.getElementById('page-audit').classList.contains('on'))fetchAudit();},6000);
-  }catch(e){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+e.message+'</td></tr>';}
+  }catch(e){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+esc2(e.message)+'</td></tr>';}
 }
 
 const STI={ok:['✓','var(--t1)'],warn:['!','var(--warn)'],fail:['✕','var(--alert)'],info:['i','var(--t3)']};
@@ -4372,7 +4372,7 @@ async function fetchHealth(manual){
     setHtml('hl-sum',`<div style="font-family:var(--serif,'Noto Serif TC',serif);font-size:20px;font-weight:700;color:${V[1]}">${V[0]}</div><div style="font-size:12px;color:var(--t3);margin-top:4px">正常 ${h.counts.ok}　留意 ${h.counts.warn}　異常 ${h.counts.fail}　參考 ${h.counts.info}　・　${h.generated_at}（台北）</div>`);
     setHtml('hl-body',h.sections.map(sec=>`<div class="sec-label"><div class="bar"></div><div class="tx">${sec.title}</div></div><div class="panel card"><div class="panel-body" style="padding:6px 14px">${sec.items.map(chkRow).join('')}</div></div>`).join(''));
     setHtml('st-body',st.groups.map(g=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>${g.title}</span></div><div class="panel-body" style="padding:4px 14px">${g.items.map(x=>`<div class="kv" style="align-items:flex-start;gap:10px"><span style="flex:none;max-width:48%">${x.key}</span><span style="text-align:right;white-space:normal"><b>${x.value}</b>${x.note?`<br><small style="color:var(--t3);font-weight:400">${x.note}</small>`:''}</span></div>`).join('')}</div></div>`).join('')+`<div class="note-box">${st.note}</div>`);
-  }catch(e){if(e.message==='401'){adLock('登入已逾時，請重新登入。');}else setHtml('hl-sum','<div class="empty">健檢失敗：'+e.message+'</div>');}
+  }catch(e){if(e.message==='401'){adLock('登入已逾時，請重新登入。');}else setHtml('hl-sum','<div class="empty">健檢失敗：'+esc2(e.message)+'</div>');}
   if(b){b.disabled=false;b.textContent='立即健檢';}
 }
 function qcClose(){document.getElementById('qc-modal').classList.remove('on');}
@@ -4387,7 +4387,7 @@ async function qcRun(key){
       <div class="qc-v" style="border-color:${V[1]};color:${V[1]}"><b>${V[0]}</b><span>${V[2]}（異常 ${d.fail}、留意 ${d.warn}）</span></div>
       <div style="padding:2px 14px">${d.checks.map(chkRow).join('')}</div>
       <div style="font-size:10.5px;color:var(--t3);padding:8px 14px 14px">${d.note}　${d.generated_at}</div>`;
-  }catch(e){bx.innerHTML='<div class="empty" style="padding:30px">質檢失敗：'+e.message+'</div>';}
+  }catch(e){bx.innerHTML='<div class="empty" style="padding:30px">質檢失敗：'+esc2(e.message)+'</div>';}
 }
 
 const AD_KIND={candidate:'候選',rejected:'被擋下',control:'對照'};
@@ -4470,7 +4470,7 @@ async function fetchLearning(){
   }catch(e){
     document.getElementById('ad-gate').style.display='none';
     document.getElementById('ad-main').style.display='block';
-    setHtml('lr-find','<div class="empty">載入失敗：'+e.message+'</div>');
+    setHtml('lr-find','<div class="empty">載入失敗：'+esc2(e.message)+'</div>');
   }
 }
 function adRender(d,o){
@@ -4773,7 +4773,7 @@ async function runBacktest(){
         <thead><tr><th>方向</th><th>進場價</th><th>出場價</th><th>結果</th><th>股數</th><th>持有天數</th><th>損益(TWD)</th></tr></thead>
         <tbody>${tradesRows}</tbody>
       </table></div></div>`;
-  }catch(e){document.getElementById('bt-result').innerHTML=`<div class="empty">${e.message}</div>`;}
+  }catch(e){document.getElementById('bt-result').innerHTML=`<div class="empty">${esc2(e.message)}</div>`;}
 }
 async function runWalkForward(){
   if(!_btTicker)return;
@@ -4788,7 +4788,7 @@ async function runWalkForward(){
       <div class="kv"><span>穩定度</span><span>${d.stability}%（${d.n_windows} 期中勝率 ≥50% 的比例）</span></div>
       ${windows}
       <div style="font-size:10.5px;color:var(--t3);margin-top:8px">訓練期 ${d.train_bars} 根K棒、測試期 ${d.test_bars} 根K棒，逐期往前滾動。</div>`;
-  }catch(e){el.innerHTML=`<div class="empty">${e.message}</div>`;}
+  }catch(e){el.innerHTML=`<div class="empty">${esc2(e.message)}</div>`;}
 }
 
 // Render

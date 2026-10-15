@@ -722,8 +722,10 @@ _ERR_ALERT = {}               # path -> 上次告警時間（15 分鐘內同一�
 
 
 def _client_ip():
+    # ★ 2026-10-15 資安稽核 M2：改用可信的最右段（非用戶端可偽造的最左段）當頻率限制鍵。
+    xff = request.headers.get("X-Forwarded-For", "")
     return (request.headers.get("CF-Connecting-IP")
-            or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            or (xff.split(",")[-1].strip() if xff else "")
             or request.remote_addr or "?")
 
 
@@ -836,6 +838,7 @@ def api_admin_logout():
 
 
 @app.route("/api/learning")
+@members.owner_required
 @admin_auth.admin_required
 def api_learning():
     try:
@@ -846,6 +849,7 @@ def api_learning():
 
 
 @app.route("/api/admin/shadow")
+@members.owner_required
 @admin_auth.admin_required
 def api_admin_shadow():
     try:
@@ -1568,6 +1572,7 @@ def api_source_health():
 
 
 @app.route("/api/diagnostics/finmind")
+@members.owner_required
 def api_diag_finmind():
     """站主診斷：FinMind 財報三張表的實際欄位與最新一期原始列（供核對欄位、重新啟用財務比率）。
     路徑在 /api/diagnostics/ 之下，已由 members.gate 限站主存取。"""
@@ -1579,6 +1584,7 @@ def api_diag_finmind():
 
 
 @app.route("/api/diagnostics/finmind-inst")
+@members.owner_required
 def api_diag_finmind_inst():
     """站主診斷：FinMind 個股法人資料的實際機構名稱(name)與最新一期原始列，
     用來核對『外資／投信／自營商』名稱是否如預期（供放心採用上櫃個股法人）。"""
@@ -1631,6 +1637,7 @@ def api_finmind_status():
 
 
 @app.route("/api/db_stats")
+@members.owner_required
 def api_db_stats():
     """資料庫用量：各表筆數與大小、meta 各鍵大小、K 線覆蓋檔數與日期範圍（只有計數，不含內容）。"""
     from state_store import store, USE_PG

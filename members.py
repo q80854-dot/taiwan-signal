@@ -316,6 +316,18 @@ def login_required(f):
     return w
 
 
+def owner_required(f):
+    """★ 2026-10-15 資安稽核 L2/L4：站主專屬端點的縱深防禦，不只依賴 before_request 的
+    集中登入牆。登入啟用時非站主一律 403；登入未啟用＝單人模式，視為站主放行
+    （與 viewer_is_owner 一致）。"""
+    @wraps(f)
+    def w(*a, **k):
+        if not viewer_is_owner():
+            return _forbid()
+        return f(*a, **k)
+    return w
+
+
 def _set_cookie(resp, name, value, ttl):
     resp.set_cookie(name, value, max_age=ttl, httponly=True, secure=True, samesite="Lax", path="/")
 

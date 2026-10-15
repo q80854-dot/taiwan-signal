@@ -1,9 +1,13 @@
-gunicorn
-flask
-yfinance
-curl_cffi
-requests
-APScheduler
-pytz
-python-dotenv
-psycopg2-binary
+# 2026-10-15 資安稽核 M1：鎖定依賴版本，避免 Render 每次重建抓「當下最新版」而讓
+# 未經審查的上游（含遞移依賴的破壞性／惡意發布）直接進 production，並使建置可重現。
+# 下列 == 為本專案測試通過的版本；yfinance／curl_cffi／APScheduler 以主版本上限封頂
+# （特別是 APScheduler 4.x 為不相容的大改版），避免無預警的破壞性升級。
+gunicorn==26.2.0
+flask==3.1.3
+requests==2.34.2
+pytz==2026.5
+python-dotenv==1.2.3
+psycopg2-binary==2.9.13
+yfinance>=0.2.40,<1.0
+curl_cffi>=0.7,<1.0
+APScheduler>=3.10,<4.0
