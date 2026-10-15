@@ -90,3 +90,36 @@ def test_news_parse(monkeypatch):
 
 def test_build_empty_when_no_rows():
     assert FM._build({}, {}) is None
+
+
+# ── 三大法人（個股）：2026-10-15，補上櫃與上市備援顯示 ──
+def test_institutional_parse(monkeypatch):
+    monkeypatch.setenv("FINMIND_TOKEN", "x")
+    FM._cache.clear()
+    rows = [
+        {"date": "2026-10-14", "name": "Foreign_Investor", "buy": 5_000_000, "sell": 1_000_000},
+        {"date": "2026-10-14", "name": "Investment_Trust", "buy": 0, "sell": 500_000},
+        {"date": "2026-10-14", "name": "Dealer_self", "buy": 300_000, "sell": 200_000},
+        {"date": "2026-10-14", "name": "Dealer_Hedging", "buy": 50_000, "sell": 0},
+        {"date": "2026-10-14", "name": "Foreign_Dealer_Self", "buy": 0, "sell": 0},
+        {"date": "2026-10-13", "name": "Dealer_self", "buy": 100_000, "sell": 0},  # 無外資/投信 → 整天略過
+    ]
+    monkeypatch.setattr(FM, "_fetch", lambda ds, cid, start: rows)
+    out = FM.institutional("6488")
+    assert len(out) == 1 and out[0]["date"] == "2026-10-14"
+    r = out[0]
+    assert r["foreign"] == 4000 and r["trust"] == -500 and r["dealer"] == 150
+    assert r["total"] == 3650       # (4,000,000 - 500,000 + 150,000)/1000
+
+
+def test_institutional_unknown_names_skip(monkeypatch):
+    monkeypatch.setenv("FINMIND_TOKEN", "x")
+    FM._cache.clear()
+    rows = [{"date": "2026-10-14", "name": "SomethingElse", "buy": 1, "sell": 0}]
+    monkeypatch.setattr(FM, "_fetch", lambda ds, cid, start: rows)
+    assert FM.institutional("2330") is None     # 認不出機構名稱 → 不輸出（不臆測）
+
+
+def test_institutional_disabled_without_token(monkeypatch):
+    monkeypatch.delenv("FINMIND_TOKEN", raising=False)
+    assert FM.institutional("2330") is None
