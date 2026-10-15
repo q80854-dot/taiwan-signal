@@ -164,6 +164,8 @@ html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
 .panel-link:hover{color:var(--accent)}
 .panel-body{padding:18px 20px}
 .card{border:1px solid var(--line)}
+.mif-col{flex:1 1 0;min-width:0;display:flex;align-items:flex-end;justify-content:center;height:100%}
+.mif-bar{width:68%;max-width:16px;border-radius:2px 2px 0 0}
 /* Signal */
 .sig-card{background:var(--s1);border:1px solid var(--line);border-left:3px solid var(--up);padding:16px 18px;margin-bottom:1px}
 .sig-card.sell{border-left-color:var(--down)}
@@ -1743,7 +1745,7 @@ html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:v
 
       <div class="sec-label"><div class="bar"></div><div class="tx">學習結果</div></div>
       <div id="lr-note"></div>
-      <div class="panel card"><div class="panel-body" id="lr-edge"></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>組別</th><th>已結算</th><th>勝率</th><th>停損率</th><th>逾期</th><th>平均 R</th><th>10 日後平均 R</th><th>平均最大浮盈 R</th></tr></thead><tbody id="lr-groups"></tbody></table></div></div>
+      <div class="panel card"><div class="panel-body" id="lr-edge"></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>組別</th><th>已結算</th><th>勝率</th><th>停損率</th><th>逾期</th><th>平均 R</th><th>10 日後平均 R</th><th>平均最大浮盈 R</th><th>平均最大回撤 R</th><th>平均持有天數</th></tr></thead><tbody id="lr-groups"></tbody></table></div><div id="lr-exits" style="font-size:11px;color:var(--t3);padding:8px 14px"></div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">規則檢驗：被擋下的單後來怎麼了？</div></div>
       <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>被擋下的原因</th><th>方向</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>結論</th></tr></thead><tbody id="lr-rules"></tbody></table></div><div style="font-size:11px;color:var(--t3);padding:8px 14px">假想成交，已估列滑價、來回手續費＋證交稅與放空借券費（皆為估計值）；放空另有軋空與券源風險，實際結果可能更差。</div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">統計上站得住腳的發現</div></div>
@@ -2730,6 +2732,9 @@ function instExtraHtml(d){
   }else if((d.ticker||'').includes('.TWO')){
     h+=`<div class="sec-label"><div class="bar"></div><div class="tx">三大法人買賣超</div></div><div class="panel card"><div class="panel-body"><div class="empty">上櫃股票的三大法人逐日資料尚未接入（目前只有證交所 T86 上市資料）</div></div></div>`;
   }
+  // 全體法人資金流向（像股市同學會）：全市場整體三大法人逐日買賣超，非個股。非同步載入。
+  h+=`<div class="sec-label"><div class="bar"></div><div class="tx">全體法人資金流向（上市整體）</div></div>
+  <div class="panel card"><div class="panel-body" id="mkt-inst-flow"><div class="empty ld"><i class="spin"></i>載入全市場三大法人資金流向…</div></div></div>`;
   const P=d.peers;
   if(P&&P.rows&&P.rows.length>1){
     const n2=v=>v==null?'—':_fmtN(v,2);
@@ -2764,6 +2769,35 @@ function instExtraHtml(d){
   h+=_indicatorReadingHtml(d);
   h+=_newsHtml(d);
   return h;
+}
+// 全體法人資金流向（上市整體）——非個股，載入後填入 #mkt-inst-flow。
+async function loadMarketInstFlow(){
+  const el=document.getElementById('mkt-inst-flow');if(!el)return;
+  try{
+    const d=await(await fetch('/api/market/inst-flow',{cache:'no-store'})).json();
+    if(d.error||!d.days||!d.days.length){el.innerHTML='<div class="empty">尚未累積足夠的全市場三大法人資料（系統每日收盤後累積，約需 1 個交易日起）</div>';return;}
+    const H=d.headline||{},lots=v=>v==null?'—':`<span style="color:${_col(v)}">${_sg(v)}</span>`;
+    const leg=(lab,o,first)=>`<div class="kpi"${first?' style="border-left:none"':''}><div class="kpi-label">${lab}</div><div class="kpi-val" style="font-size:15px">${lots((o||{}).d1)}</div><div class="kpi-sub">5日 ${lots((o||{}).sum5)}／20日 ${lots((o||{}).sum20)}</div></div>`;
+    // 趨勢條：近 20 個交易日「三大法人合計」淨買賣超（張）。紅買超、綠賣超。
+    const recent=d.days.slice(0,20).reverse();
+    const mx=Math.max(1,...recent.map(x=>Math.abs(x.total)));
+    const bars=recent.map(x=>{const hpx=Math.max(3,Math.round(Math.abs(x.total)/mx*62));const up=x.total>=0;
+      return `<div class="mif-col" title="${x.date}｜合計 ${_sg(x.total)} 張"><div class="mif-bar" style="height:${hpx}px;background:${up?'var(--up)':'var(--down)'}"></div></div>`;}).join('');
+    const famt=d.foreign_amount&&d.foreign_amount.net_buy_twd!=null
+      ? `　外資買賣金額（官方 BFI82U，${safe(d.foreign_amount.date)}）<span style="color:${_col(d.foreign_amount.net_buy_twd)}">${_sg(d.foreign_amount.net_buy_twd/1e8,1)} 億</span>（金額口徑，與上方張數不同口徑）`
+      : '';
+    el.innerHTML=`
+      <div style="font-size:12px;color:var(--t2);margin-bottom:8px">全市場（上市）三大法人逐日淨買賣超加總，最新 ${safe(d.latest_date)}，單位：張（買超為正）。此為「整體市場」資金流向，非本檔個股。</div>
+      <div class="hero-row" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:10px">
+        ${leg('外資',H.foreign,true)}${leg('投信',H.trust)}${leg('自營商',H.dealer)}${leg('三大法人合計',H.total)}
+      </div>
+      <div class="mif-chart" style="display:flex;align-items:flex-end;gap:3px;height:72px;padding:4px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:8px">${bars}</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">近 ${recent.length} 個交易日「三大法人合計」淨買賣超（張）；<span style="color:var(--up)">買超</span>為正、<span style="color:var(--down)">賣超</span>為負（顏色同全站漲跌色）。</div>
+      <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>日期</th><th style="text-align:right">外資</th><th style="text-align:right">投信</th><th style="text-align:right">自營商</th><th style="text-align:right">合計</th></tr></thead><tbody>
+      ${d.days.slice(0,10).map(x=>`<tr><td>${safe(x.date)}</td><td style="text-align:right">${lots(x.foreign)}</td><td style="text-align:right">${lots(x.trust)}</td><td style="text-align:right">${lots(x.dealer)}</td><td style="text-align:right">${lots(x.total)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(d.source)}${famt}</div>`;
+  }catch(e){el.innerHTML='<div class="empty">載入失敗，稍後重試</div>';}
 }
 function _newsHtml(d){
   const N=d.news_items;if(!N||!N.length)return '';
@@ -3256,6 +3290,7 @@ function renderInstrument(d){
   try{loadFmStock(d.code);}catch(e){}
   try{klInit(d);}catch(e){console.error('kline',e);}
   try{finChartInit(d);}catch(e){console.error('fin',e);}
+  try{loadMarketInstFlow();}catch(e){}
   try{addInstEvents(d.code||(d.info&&d.info.code));}catch(e){}
 }
 
@@ -4447,7 +4482,13 @@ function adRender(d,o){
 
   setHtml('lr-note',d.note?`<div class="note-box" style="margin-bottom:10px">${d.note}</div>`:'');
   setHtml('lr-edge',`<div style="font-size:13.5px;line-height:1.8">${d.edge.text}</div>`);
-  setHtml('lr-groups',Object.entries(d.groups).map(([k,g])=>g.n?`<tr><td><b style="color:var(--t1)">${k}</b></td><td>${g.n}</td><td>${f(g.win_rate,'%')}</td><td>${f(g.stop_rate,'%')}</td><td>${g.expired}</td><td>${f(g.avg_r)}${g.t_vs0!==null&&g.t_vs0!==undefined?`<small style="color:var(--t3)"> (t=${g.t_vs0})</small>`:''}</td><td>${f(g.avg_r10)}${g.n_r10?`<small style="color:var(--t3)"> (n=${g.n_r10})</small>`:''}</td><td>${f(g.mfe)}</td></tr>`:`<tr><td><b style="color:var(--t1)">${k}</b></td><td colspan="7" style="color:var(--t3)">尚無已結算樣本</td></tr>`).join(''));
+  setHtml('lr-groups',Object.entries(d.groups).map(([k,g])=>g.n?`<tr><td><b style="color:var(--t1)">${k}</b></td><td>${g.n}</td><td>${f(g.win_rate,'%')}</td><td>${f(g.stop_rate,'%')}</td><td>${g.expired}</td><td>${f(g.avg_r)}${g.t_vs0!==null&&g.t_vs0!==undefined?`<small style="color:var(--t3)"> (t=${g.t_vs0})</small>`:''}</td><td>${f(g.avg_r10)}${g.n_r10?`<small style="color:var(--t3)"> (n=${g.n_r10})</small>`:''}</td><td>${f(g.mfe)}</td><td>${f(g.mae)}</td><td>${f(g.avg_bars_held)}</td></tr>`:`<tr><td><b style="color:var(--t1)">${k}</b></td><td colspan="9" style="color:var(--t3)">尚無已結算樣本</td></tr>`).join(''));
+  (function(){const EX={sl:'停損',tp1:'停利一',tp2:'停利二',tp3:'停利三',expired:'逾期平倉'};
+    const g=(d.groups||{})['候選（全部，含沒發出的）']; const ex=g&&g.exits;
+    if(ex&&Object.keys(ex).length){const tot=Object.values(ex).reduce((a,b)=>a+b,0)||1;
+      const parts=Object.keys(EX).filter(k=>ex[k]).map(k=>`${EX[k]} ${ex[k]}（${Math.round(ex[k]/tot*100)}%）`);
+      setHtml('lr-exits','候選出場原因分布：'+parts.join('、')+'。停利多半只到「停利一」代表後段目標偏遠、可檢討；停損占比過高則代表進場或停損設定需調整。');
+    }else setHtml('lr-exits','');})();
   const TN={loose:'var(--warn)',good:'var(--t1)',wait:'var(--t3)'};
   setHtml('lr-rules',(d.rules||[]).length?d.rules.map(r=>`<tr><td><b style="color:var(--t1)">${safe(r.label)}</b></td><td>${r.direction==='buy'?'多':'空'}</td><td>${r.n}</td><td>${f(r.win_rate,'%')}</td><td>${f(r.avg_r)}</td><td style="white-space:normal;min-width:220px;color:${TN[r.tone]||'var(--t3)'}">${safe(r.verdict)}</td></tr>`).join(''):'<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--t3)">被擋下的假想單還沒有結算結果（通常需要數個交易日）</td></tr>');
   setHtml('lr-find',d.findings.length?d.findings.map(x=>`<div class="chk"><span class="chk-i" style="color:${x.z>0?'var(--up)':'var(--down)'};border-color:currentColor">${x.z>0?'↑':'↓'}</span><div class="chk-b"><b>${x.dim}：${x.label}　<small style="font-weight:400;color:${x.level==='strong'?'var(--t1)':'var(--warn)'}">${x.level==='strong'?'較可靠（前後兩段時間一致）':'初步，需新樣本再驗證'}${x.consistent===false?'・前後兩段不一致':''}</small></b><span>勝率 ${x.win_rate}%　平均 R ${x.avg_r}${x.avg_r_lo!=null?`（95% CI ${x.avg_r_lo}~${x.avg_r_hi}）`:''}　n=${x.n}${x.p!=null?`　p=${x.p}`:''}</span></div></div>`).join('')+'<div style="font-size:11px;color:var(--t3);margin-top:8px">統計顯著不代表因果。已用交易日叢集拔靴＋Benjamini-Hochberg 控制偽發現率，但「初步」的發現仍只是線索，要等後續新樣本再次驗證才可調整策略。</div>':`<div class="empty">${d.reliable?`還沒有任何分組達到「樣本 ≥ ${p.min_n} 且統計顯著」的標準`:`累積的交易日還不到 ${p.min_days} 天，不列結論`}——這是正常的，系統每天都在累積。請勿在此之前憑少數幾筆結果調整策略。</div>`);

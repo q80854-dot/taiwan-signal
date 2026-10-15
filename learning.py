@@ -64,12 +64,23 @@ def _stats(rows):
     m, sd = _mean_sd(rs)
     r10 = [r["r10"] for r in rows if r.get("r10") is not None]
     mf = [r["mfe_r"] for r in rows if r.get("mfe_r") is not None]
+    ma = [r["mae_r"] for r in rows if r.get("mae_r") is not None]
+    bh = [r["bars_held"] for r in rows if r.get("bars_held") is not None]
     t = round(m / (sd / math.sqrt(len(rs))), 2) if len(rs) > 1 and sd > 0 else None
+    # 出場原因分布：了解停利目標是否務實（多半只到 tp1？還是常直接停損？）
+    exits = {}
+    for r in rows:
+        res = r.get("result")
+        if res:
+            exits[res] = exits.get(res, 0) + 1
     return {"n": n, "win": w, "loss": l, "expired": e,
             "win_rate": round(w / n * 100, 1), "stop_rate": round(l / n * 100, 1),
             "avg_r": round(m, 3) if rs else None, "t_vs0": t,
             "avg_r10": round(sum(r10) / len(r10), 3) if r10 else None, "n_r10": len(r10),
-            "mfe": round(sum(mf) / len(mf), 2) if mf else None}
+            "mfe": round(sum(mf) / len(mf), 2) if mf else None,
+            "mae": round(sum(ma) / len(ma), 2) if ma else None,
+            "avg_bars_held": round(sum(bh) / len(bh), 1) if bh else None,
+            "exits": exits}
 
 
 def _z(w1, n1, w2, n2):
@@ -201,6 +212,19 @@ def _dims():
         ("大盤情緒", lambda r: _band(_f(r, "sentiment"), [40, 60], ["偏弱<40", "中性", "偏強≥60"])),
         ("星期", lambda r: "一二三四五六日"[int(r["f"]["dow"])] if _f(r, "dow") is not None else None),
         ("市場", lambda r: "上櫃" if (r.get("ticker") or "").endswith(".TWO") else "上市"),
+        # ── 2026-10-15 新增分析維度（善用已搜集但先前未分析的特徵）──
+        ("相對大盤強弱(20日)", lambda r: _band(_f(r, "rs20"), [-5, 0, 5, 15], ["弱<-5%", "-5~0%", "0~5%", "5~15%", "強15%+"])),
+        ("相對產業強弱(20日)", lambda r: _band(_f(r, "sec_rel20"), [-5, 0, 5], ["落後<-5%", "-5~0%", "0~5%", "領先5%+"])),
+        ("突破前20日高", lambda r: _band(_f(r, "brk20"), [-5, 0, 3], ["遠低於<-5%", "-5~0%", "剛突破0~3%", "突破3%+"])),
+        ("20日線斜率", lambda r: _band(_f(r, "ma20_slope"), [-1, 0, 1, 3], ["下彎<-1%", "-1~0%", "0~1%", "1~3%", "陡升3%+"])),
+        ("5日線斜率", lambda r: _band(_f(r, "ma5_slope"), [-2, 0, 2, 5], ["下彎<-2%", "-2~0%", "0~2%", "2~5%", "陡升5%+"])),
+        ("連漲天數", lambda r: _band(_f(r, "up_days"), [0, 1, 3, 5], ["連跌", "0", "1~2", "3~4", "5+"])),
+        ("收盤區間位置", lambda r: _band(_f(r, "clv"), [33, 66], ["收低檔<33%", "收中段", "收高檔≥66%"])),
+        ("量能趨勢(5日)", lambda r: _band(_f(r, "vol_trend5"), [0.8, 1.2, 1.8], ["縮量<0.8", "0.8~1.2", "1.2~1.8", "爆量1.8+"])),
+        ("站上20日線天數", lambda r: _band(_f(r, "above20_days"), [1, 5, 20], ["跌破", "1~4", "5~19", "20+"])),
+        ("大盤型態", lambda r: _f(r, "regime")),
+        ("近期負面消息", lambda r: {0: "無", 1: "有"}.get(_f(r, "news_neg"))),
+        ("月份", lambda r: f"{int(r['f']['month'])}月" if _f(r, "month") is not None else None),
     ]
 
 

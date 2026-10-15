@@ -226,6 +226,36 @@ def snapshot(daily, ind=None, mtf=None, mkt=None, atr_val=None):
     if n >= 26:
         ma_now, ma_5 = sum(c[-20:]) / 20, sum(c[-25:-5]) / 20
         f["ma20_slope"] = _pct(ma_now, ma_5)           # 20 日均線 5 日斜率(%)：>0 向上
+    # ── 2026-10-15 新增搜集特徵（只記錄、不影響訊號；全部由已有的日K陣列直接算，無外部相依）──
+    if n >= 6:
+        f["dist_ma5"] = _pct(px, sum(c[-5:]) / 5)       # 距 5 日線(%)
+        ma5_now, ma5_3 = sum(c[-5:]) / 5, sum(c[-8:-3]) / 5
+        f["ma5_slope"] = _pct(ma5_now, ma5_3)           # 5 日線 3 日斜率(%)
+    if n >= 2:
+        up = 0                                          # 連續上漲（收盤高於前一日）天數；轉負記為負連跌
+        for i in range(n - 1, 0, -1):
+            if c[i] > c[i - 1]:
+                if up < 0: break
+                up += 1
+            elif c[i] < c[i - 1]:
+                if up > 0: break
+                up -= 1
+            else:
+                break
+        f["up_days"] = up
+    if h and l and px and (h[-1] - l[-1]) > 0:
+        f["clv"] = round((c[-1] - l[-1]) / (h[-1] - l[-1]) * 100, 1)  # 收盤在當日高低區間位置(%)：100=收最高
+    if len(v) >= 10:
+        a1 = sum(v[-5:]) / 5; a0 = sum(v[-10:-5]) / 5
+        if a0:
+            f["vol_trend5"] = round(a1 / a0, 2)         # 近 5 日均量 ÷ 前 5 日均量：>1 量增
+    if n >= 20:
+        ma20 = sum(c[-20:]) / 20                        # 連續站上 20 日線天數（趨勢持續性；此處用當前 MA20 近似）
+        ab = 0
+        for i in range(n - 1, max(-1, n - 61), -1):
+            if c[i] >= ma20: ab += 1
+            else: break
+        f["above20_days"] = ab
     ix = _index_rets()
     if ix:
         for k in (5, 20, 60):

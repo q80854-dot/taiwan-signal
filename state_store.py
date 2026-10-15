@@ -927,6 +927,29 @@ class StateStore:
             logger.warning(f"get_inst_since: {e}")
             return []
 
+    def get_market_inst_flow(self, limit: int = 60) -> List[Dict]:
+        """全體法人資金流向（像股市同學會）：把已累積的全市場（上市）T86 逐股
+        三大法人買賣超，依交易日加總成「整體市場」每日淨買賣超（單位：張）。
+        外資／投信直接加總；自營商＝三大法人合計 − 外資 − 投信（T86 的 total_net
+        本就是三大法人合計，所以這個減法與官方定義一致，不會產生臆測數字）。
+        回傳新到舊。n 為當日納入加總的個股數（資料完整度參考）。"""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    "SELECT trade_date, SUM(foreign_net) AS f, SUM(trust_net) AS tr, "
+                    "SUM(total_net) AS t, COUNT(*) AS n FROM inst_daily "
+                    "GROUP BY trade_date ORDER BY trade_date DESC LIMIT ?", (limit,)
+                ).fetchall()
+            out = []
+            for r in rows:
+                f = int(r["f"] or 0); tr = int(r["tr"] or 0); t = int(r["t"] or 0)
+                out.append({"date": r["trade_date"], "foreign": f, "trust": tr,
+                            "dealer": t - f - tr, "total": t, "n": int(r["n"] or 0)})
+            return out
+        except Exception as e:
+            logger.warning(f"get_market_inst_flow: {e}")
+            return []
+
     # ── 獲利品質（季報毛利率/營業利益率快照，用來算「趨勢」）──
     # ★ 新增：2026-09-28——使用者要求接「獲利品質」評分。TWSE OpenAPI 的季報
     # 端點（opendata/t187ap06_L_ci）每次只回傳「最新一期」數字，沒有歷史序列，

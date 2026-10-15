@@ -39,3 +39,29 @@ def test_bh_controls_family():
 
 def test_bh_all_significant():
     assert L._bh_reject([0.001, 0.002, 0.003], 0.10) == [True, True, True]
+
+
+# ── 2026-10-15 分析能力提升：出場原因分布、MAE、平均持有天數 ──
+def test_stats_exits_mae_and_hold():
+    rows = [
+        {"result": "tp1", "r_multiple": 1.0, "mae_r": -0.3, "bars_held": 4},
+        {"result": "tp2", "r_multiple": 2.0, "mae_r": -0.2, "bars_held": 6},
+        {"result": "sl",  "r_multiple": -1.0, "mae_r": -1.0, "bars_held": 2},
+        {"result": "expired", "r_multiple": 0.2, "mae_r": -0.5, "bars_held": 15},
+    ]
+    st = L._stats(rows)
+    assert st["n"] == 4 and st["win"] == 2 and st["loss"] == 1 and st["expired"] == 1
+    assert st["exits"] == {"tp1": 1, "tp2": 1, "sl": 1, "expired": 1}
+    assert st["mae"] == round((-0.3 - 0.2 - 1.0 - 0.5) / 4, 2)
+    assert st["avg_bars_held"] == round((4 + 6 + 2 + 15) / 4, 1)
+
+
+def test_stats_empty_safe():
+    st = L._stats([])
+    assert st == {"n": 0}
+
+
+def test_new_dims_present():
+    names = {name for name, _ in L._dims()}
+    for expect in ("相對大盤強弱(20日)", "連漲天數", "收盤區間位置", "量能趨勢(5日)", "大盤型態", "月份"):
+        assert expect in names

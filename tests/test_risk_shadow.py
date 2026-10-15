@@ -106,3 +106,34 @@ def test_calc_tw_pnl_slippage_and_short_borrow():
     # 借券費差額約等於 賣出腳價 × 年化 × (30-1)/365
     sell_leg = 110 * (1 - SLIPPAGE_RATE) * 1000
     assert abs((short_1d - short_30d) - sell_leg * SHORT_BORROW_ANNUAL * 29 / 365) < 1.0
+
+
+# ── 2026-10-15 搜集能力提升：snapshot 新增特徵（純由日K陣列計算，無外部相依）──
+def test_snapshot_new_collection_features():
+    import shadow
+    n = 30
+    closes = [100.0 + i for i in range(n)]                 # 嚴格遞增
+    highs = [c + 0.0 for c in closes]                       # 收在最高 → clv=100
+    lows = [c - 2.0 for c in closes]
+    opens = [c - 1.0 for c in closes]
+    vols = [1000 + i * 100 for i in range(n)]               # 量遞增 → vol_trend5>1
+    dates = [f"2026-09-{(i % 28) + 1:02d}" for i in range(n)]
+    daily = {"closes": closes, "highs": highs, "lows": lows, "opens": opens,
+             "volumes": vols, "dates": dates, "change_pct": 1.0}
+    f = shadow.snapshot(daily)
+    assert f["up_days"] == n - 1                             # 全程連漲
+    assert f["clv"] == 100.0                                 # 收最高
+    assert f["dist_ma5"] > 0 and f["ma5_slope"] > 0          # 站上並高於 5 日線、斜率向上
+    assert f["vol_trend5"] > 1                               # 近 5 日均量 > 前 5 日
+    assert f["above20_days"] >= 1                            # 近期站上 20 日線
+
+
+def test_snapshot_down_streak_negative():
+    import shadow
+    n = 12
+    closes = [200.0 - i for i in range(n)]                   # 嚴格遞減
+    daily = {"closes": closes, "highs": [c + 1 for c in closes], "lows": [c - 1 for c in closes],
+             "opens": closes[:], "volumes": [1000] * n,
+             "dates": [f"2026-09-{i + 1:02d}" for i in range(n)]}
+    f = shadow.snapshot(daily)
+    assert f["up_days"] == -(n - 1)                          # 連跌記為負
