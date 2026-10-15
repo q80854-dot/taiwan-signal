@@ -233,6 +233,104 @@ def schema_probe(code: str = "2382") -> dict:
     return out
 
 
+# ── 三大法人（個股逐日買賣超）：補上櫃(.TWO)個股，並在證交所 T86 失效時作為上市的備援顯示來源 ──
+# FinMind 資料集 TaiwanStockInstitutionalInvestorsBuySell：date / stock_id / buy / sell / name。
+# name 為機構別，相容英文代碼與中文名稱；買賣超(net)＝buy−sell（股），再換算成「張」。
+# 安全：只認得出的機構別才計入；若某日認不出「外資／投信」任一腿，該日直接略過（不臆測、不輸出錯誤數字）。
+_INST_NAME = {
+    "foreign":       ("Foreign_Investor", "Foreign_Investors", "外陸資", "外資及陸資", "外資"),
+    "foreign_dealer":("Foreign_Dealer_Self", "外資自營商"),
+    "trust":         ("Investment_Trust", "投信"),
+    "dealer_self":   ("Dealer_self", "Dealer_Self", "自營商(自行買賣)", "自營商自行買賣"),
+    "dealer_hedge":  ("Dealer_Hedging", "自營商(避險)", "自營商避險"),
+    "dealer_all":    ("Dealer",),            # 有些版本只給合併的自營商
+}
+
+
+def _inst_leg(name: str) -> Optional[str]:
+    n = str(name or "").strip()
+    for leg, names in _INST_NAME.items():
+        if n in names:
+            return leg
+    return None
+
+
+def _lots(shares) -> Optional[int]:
+    try:
+        s = float(shares)
+    except Exception:
+        return None
+    return int((abs(s) + 500) // 1000) * (1 if s >= 0 else -1)
+
+
+def institutional(code: str, days: int = 30) -> Optional[list]:
+    """個股近 days 日三大法人買賣超（張），新到舊：[{date,foreign,trust,dealer,total}]。
+    未啟用（無 token）或資料不足回 None。嚴格對應機構名稱，認不出就略過該日。"""
+    if not enabled():
+        return None
+    code = str(code).strip()
+    ck = f"inst:{code}"
+    with _lock:
+        ent = _cache.get(ck)
+        if ent and time.time() - ent["at"] < 3 * 3600:
+            return ent["data"]
+    start = time.strftime("%Y-%m-%d", time.localtime(time.time() - (days + 10) * 86400))
+    rows = _fetch("TaiwanStockInstitutionalInvestorsBuySell", code, start)
+    byd: Dict[str, Dict[str, float]] = {}
+    for r in rows:
+        d = r.get("date"); leg = _inst_leg(r.get("name"))
+        if not d or leg is None:
+            continue
+        net = None
+        if r.get("buy") is not None or r.get("sell") is not None:
+            try:
+                net = float(r.get("buy") or 0) - float(r.get("sell") or 0)
+            except Exception:
+                net = None
+        if net is None:
+            continue
+        byd.setdefault(d, {})[leg] = byd.setdefault(d, {}).get(leg, 0.0) + net
+    out = []
+    for d in sorted(byd, reverse=True):
+        legs = byd[d]
+        if "foreign" not in legs or "trust" not in legs:   # 認不出主要腿 → 略過該日（不臆測）
+            continue
+        foreign = legs.get("foreign", 0.0)
+        trust = legs.get("trust", 0.0)
+        dealer = legs.get("dealer_all")
+        if dealer is None:
+            dealer = legs.get("dealer_self", 0.0) + legs.get("dealer_hedge", 0.0)
+        total = foreign + legs.get("foreign_dealer", 0.0) + trust + dealer
+        row = {"date": str(d)[:10], "foreign": _lots(foreign), "trust": _lots(trust),
+               "dealer": _lots(dealer), "total": _lots(total)}
+        if any(v is None for v in row.values()):
+            continue
+        out.append(row)
+        if len(out) >= days:
+            break
+    if not out:
+        return None
+    with _lock:
+        _cache[ck] = {"at": time.time(), "data": out}
+    return out
+
+
+def institutional_probe(code: str = "2330") -> dict:
+    """診斷用（站主）：回傳 FinMind 個股法人資料的實際 name 值與最新一期原始列，
+    讓我們用真實回應核對機構名稱後再放心採用。"""
+    if not enabled():
+        return {"enabled": False, "note": "未設定 FINMIND_TOKEN"}
+    code = str(code).strip()
+    start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 20 * 86400))
+    rows = _fetch("TaiwanStockInstitutionalInvestorsBuySell", code, start)
+    names = sorted({str(r.get("name")) for r in rows if r.get("name") is not None})
+    latest = max((r.get("date") for r in rows if r.get("date")), default=None)
+    latest_rows = [r for r in rows if r.get("date") == latest]
+    return {"enabled": True, "code": code, "n_rows": len(rows), "latest_date": latest,
+            "distinct_names": names, "recognized": {n: _inst_leg(n) for n in names},
+            "latest_rows": latest_rows[:20]}
+
+
 def news(code: str, days: int = 14, limit: int = 10) -> Optional[list]:
     """個股近期新聞（FinMind TaiwanStockNews：date/title/source/link/description）。
     未啟用回 None；取最近 days 天、最新 limit 則。"""

@@ -2735,7 +2735,7 @@ function instExtraHtml(d){
       <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(I.source)}</div>
     </div></div>`;
   }else if((d.ticker||'').includes('.TWO')){
-    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">三大法人買賣超</div></div><div class="panel card"><div class="panel-body"><div class="empty">上櫃股票的三大法人逐日資料尚未接入（目前只有證交所 T86 上市資料）</div></div></div>`;
+    h+=`<div class="sec-label"><div class="bar"></div><div class="tx">三大法人買賣超</div></div><div class="panel card"><div class="panel-body"><div class="empty">暫時取不到這檔的三大法人逐日資料（上市來源為證交所 T86；上櫃與備援來源為 FinMind，需啟用且該檔有資料時才顯示）</div></div></div>`;
   }
   // 全體法人資金流向（像股市同學會）：全市場整體三大法人逐日買賣超，非個股。非同步載入。
   h+=`<div class="sec-label"><div class="bar"></div><div class="tx">全體法人資金流向（上市整體）</div></div>

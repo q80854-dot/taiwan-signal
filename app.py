@@ -1543,6 +1543,17 @@ def api_diag_finmind():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/diagnostics/finmind-inst")
+def api_diag_finmind_inst():
+    """站主診斷：FinMind 個股法人資料的實際機構名稱(name)與最新一期原始列，
+    用來核對『外資／投信／自營商』名稱是否如預期（供放心採用上櫃個股法人）。"""
+    try:
+        import finmind
+        return jsonify(finmind.institutional_probe(request.args.get("code", "2330")))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/taifex")
 def api_taifex():
     """期交所籌碼：外資／投信／自營商期貨未平倉（大台等效）、臺指選擇權、Put/Call 比、大額交易人。"""
@@ -1875,6 +1886,29 @@ def api_instrument(ticker: str):
                            "source": "證交所 T86 三大法人買賣超日報（僅上市；單位：張）。自營商欄含外資自營商（＝合計−外資−投信）"}
     except Exception as e:
         out["inst_error"] = str(e)
+    # ★ 2026-10-15：上櫃(.TWO)個股或上市但 DB 尚無該檔 T86 時，改用 FinMind 個股法人補上（需 FINMIND_TOKEN）。
+    # FinMind 同時涵蓋上市與上櫃；嚴格對應機構名稱，認不出就不輸出，確保不顯示錯誤數字。市場級「全體法人資金流向」
+    # 仍只用證交所 T86 加總（口徑單一），這裡只補「個股」研究頁的逐日買賣超。
+    try:
+        if not (out.get("inst") or {}).get("days"):
+            import finmind
+            fdays = finmind.institutional(code, days=20)
+            if fdays:
+                def _fstreak(k):
+                    n, sg = 0, 0
+                    for x in fdays:
+                        v = x[k] or 0
+                        if v == 0 or (sg and (v > 0) != (sg > 0)):
+                            break
+                        sg = sg or (1 if v > 0 else -1); n += 1
+                    return n * sg
+                out["inst"] = {"days": fdays, "latest_market_date": fdays[0]["date"],
+                               "sum5": {k: sum((x[k] or 0) for x in fdays[:5]) for k in ("foreign", "trust", "dealer", "total")},
+                               "sum20": {k: sum((x[k] or 0) for x in fdays) for k in ("foreign", "trust", "dealer", "total")},
+                               "streak": {k: _fstreak(k) for k in ("foreign", "trust")},
+                               "source": "FinMind 個股三大法人買賣超（單位：張；上市/上櫃皆有）"}
+    except Exception as e:
+        out.setdefault("inst_error", str(e))
     try:   # 同產業比較：同產業成交金額前 8 名（含本檔），附本益比／殖利率
         _inf = out.get("info") or {}
         sec = _inf.get("sector")
