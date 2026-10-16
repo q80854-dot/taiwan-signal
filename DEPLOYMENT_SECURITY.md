@@ -25,8 +25,8 @@
 
 ## 尚未完成的程式硬化
 
-- **CSP inline event handlers：** `dashboard.html` 尚有大量 inline handler，CSP 仍保留 `script-src-attr 'unsafe-inline'`。遷移為外部事件綁定／委派後，才能移除例外；需覆蓋動態產生的控制項並做瀏覽器回歸。
-- **完整依賴鎖：** `requirements.txt` 已鎖直接依賴，但未提供完整含 hash 的遞移 lock。須以部署使用的 Python 與 Linux 平台解析，讓 Render 與 CI 由同一 lock 安裝，再合併。
+- **CSP inline event handlers：** 157 個現有 handler 已改用 136 個精確 SHA-256 hash 白名單；移除了 `script-src-attr 'unsafe-inline'`。這是過渡方案，後續遷移為外部事件委派後可移除 `'unsafe-hashes'` 與 hash 清單。需在瀏覽器確認所有動態控制項互動正常。
+- **共享限流：** 尚未完成。現有應用程式計數為程序內狀態；多實例仍需可信入口限流或共享儲存。
 - **容量／攻擊測試：** 不在正式站執行壓測。只在隔離 staging 使用合成資料、硬性流量上限及監控，逐級測量並記錄版本與資源指標。
 
 ## 部署後驗證
@@ -37,3 +37,9 @@
 4. 驗證安全標頭與 CSP nonce；檢查瀏覽器 console 沒有因政策變更造成的功能錯誤。
 5. 確認平台／代理的限流實際生效；跨實例測試通過後，再記錄其限額、來源 IP 信任設定與故障處理。
 6. 完成 staging 驗證後才部署正式環境，並保留回復到前一版的路徑。
+
+## 依賴 lock 維護
+
+`requirements.in` 是直接依賴來源，`requirements.lock` 為 Python 3.12 解析的含 hash 遞移鎖；`requirements.txt` 使用 `--require-hashes` 引入鎖檔，因此 Render 的一般 `pip install -r requirements.txt` 也會驗證檔案 hash。CI 從同一入口安裝。
+
+更新時請在 Python 3.12 Linux 環境執行 `python -m pip install pip-tools==7.6.2`，接著執行 `pip-compile --generate-hashes --resolver=backtracking --output-file=requirements.lock requirements.in`；檢查 lock diff 後提交 `requirements.in`、`requirements.lock` 與 wrapper，並確認 CI 使用 `--require-hashes` 安裝成功。
