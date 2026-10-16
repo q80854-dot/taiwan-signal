@@ -762,7 +762,6 @@ app.after_request(members.scrub_private)   # 一般會員移除本金相關欄�
 # ★ 新增：2026-10-06（第 1 層地基）
 # ════════════════════════════════════════════════
 import time as _time
-from collections import deque as _deque
 
 _CSP = ("default-src 'self'; "
         "script-src 'self' 'nonce-{nonce}' https://cdnjs.cloudflare.com; "
@@ -771,48 +770,7 @@ _CSP = ("default-src 'self'; "
         "font-src https://fonts.gstatic.com data:; "
         "img-src 'self' data: blob:; connect-src 'self'; "
         "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'")
-_RATE = {}                    # ip -> 近 60 秒的請求時間
-_RATE_LIMIT = 300             # 每個 IP 每分鐘最多 300 次 /api 請求（網頁一次載入約 20 次）
 _ERR_ALERT = {}               # path -> 上次告警時間（15 分鐘內同一路徑只通知一次）
-
-
-def _client_ip():
-    # ★ 2026-10-15 資安稽核 M2：改用可信的最右段（非用戶端可偽造的最左段）當頻率限制鍵。
-    xff = request.headers.get("X-Forwarded-For", "")
-    return (request.headers.get("CF-Connecting-IP")
-            or (xff.split(",")[-1].strip() if xff else "")
-            or request.remote_addr or "?")
-
-
-@app.before_request
-def _rate_guard():
-    if not request.path.startswith("/api/"):
-        return None
-    now = _time.time()
-    ip = _client_ip()
-    q = _RATE.get(ip)
-    if q is None:
-        if len(_RATE) >= 5000:
-            for old_ip, old_q in list(_RATE.items()):
-                while old_q and now - old_q[0] > 60:
-                    old_q.popleft()
-                if not old_q:
-                    _RATE.pop(old_ip, None)
-            if len(_RATE) >= 5000:
-                r = jsonify({"error": "請求來源過多，請稍後再試"})
-                r.status_code = 429
-                r.headers["Retry-After"] = "30"
-                return r
-        q = _RATE[ip] = _deque()
-    while q and now - q[0] > 60:
-        q.popleft()
-    if len(q) >= _RATE_LIMIT:
-        r = jsonify({"error": "請求過於頻繁，請稍後再試"})
-        r.status_code = 429
-        r.headers["Retry-After"] = "30"
-        return r
-    q.append(now)
-    return None
 
 
 @app.after_request
