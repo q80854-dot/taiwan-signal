@@ -555,6 +555,34 @@ def _save_raw_to_db(payload):
         logger.warning(f"_save_raw_to_db: {e}")
 
 
+_market_alert_at = {"上市": 0.0, "上櫃": 0.0}
+
+
+def _alert_market_fetch_fail(market: str, kept: int):
+    """某市場日行情抓失敗、改用前次清單時發 Telegram 告警（每市場至多每 2 小時一次，避免洗版）。"""
+    try:
+        if time.time() - _market_alert_at.get(market, 0) < 7200:
+            return
+        _market_alert_at[market] = time.time()
+        from telegram_bot import send_alert
+        send_alert(f"⚠️ {market}日行情抓取失敗，已沿用前次清單 {kept} 檔（盤中以 MIS 官方即時價覆蓋）。請留意上游 TWSE/TPEX 是否持續異常。")
+    except Exception as e:
+        logger.warning(f"_alert_market_fetch_fail: {e}")
+
+
+def _read_raw_from_disk():
+    """安全讀取硬碟上的原始清單快取（讀不到回 None）；供單一市場抓失敗時沿用前次清單。"""
+    try:
+        if os.path.exists(RAW_CACHE_PATH):
+            with open(RAW_CACHE_PATH, "r", encoding="utf-8") as f:
+                p = json.load(f)
+            if isinstance(p, dict) and p.get("stocks"):
+                return p
+    except Exception as e:
+        logger.warning(f"_read_raw_from_disk: {e}")
+    return None
+
+
 def _load_raw_from_db():
     try:
         from state_store import store
@@ -647,6 +675,31 @@ def _get_raw_universe(force_refresh=False) -> Dict:
     logger.info("下載全市場原始品種清單（含上市+上櫃，未過濾）...")
     tse  = _fetch_twse_list()
     tpex = _fetch_tpex_list()
+
+    # ★ 2026-10-16 根因修復：上市（STOCK_DAY_ALL）或上櫃任一支抓失敗回空時，原本
+    # `all_stocks = [] + 另一市場` 仍非空，程式就「默默只用另一個市場」繼續跑，還把這份
+    # 缺一整個市場的清單覆蓋掉好快取——結果整個市場的股票全部「查無」、排行榜空白，
+    # 要等 24 小時或重啟才復原（這正是使用者回報「查無 2317、排行榜上市全空」的根因）。
+    # 修法：某市場抓不到時，用前一次清單（記憶體→硬碟→DB）把那個市場補回來（保留舊的
+    # quote_date，盤中 build_live_universe() 會用 MIS 官方即時價覆蓋，不會顯示過期價），
+    # 標記該市場為 stale 並告警；絕不讓一整個市場從清單裡消失。
+    tse_stale = otc_stale = False
+    if not tse or not tpex:
+        prior = _raw_mem_cache or _read_raw_from_disk() or _load_raw_from_db()
+        prior_stocks = (prior or {}).get("stocks") or []
+        if not tse:
+            kept = [s for s in prior_stocks if s.get("market") == "TSE"]
+            if kept:
+                tse, tse_stale = kept, True
+                logger.warning(f"上市日行情抓取失敗，沿用前次上市清單 {len(kept)} 檔（盤中以 MIS 官方即時價覆蓋）")
+                _alert_market_fetch_fail("上市", len(kept))
+        if not tpex:
+            kept = [s for s in prior_stocks if s.get("market") == "OTC"]
+            if kept:
+                tpex, otc_stale = kept, True
+                logger.warning(f"上櫃日行情抓取失敗，沿用前次上櫃清單 {len(kept)} 檔（盤中以 MIS 官方即時價覆蓋）")
+                _alert_market_fetch_fail("上櫃", len(kept))
+
     all_stocks = tse + tpex
 
     if not all_stocks:
@@ -702,6 +755,7 @@ def _get_raw_universe(force_refresh=False) -> Dict:
                "quote_trading_date": quote_trading_date,
                "tse_quote_date": tse_quote_date,
                "otc_quote_date": otc_quote_date,
+               "tse_stale": tse_stale, "otc_stale": otc_stale,
                "dates_mismatch": bool(tse_quote_date and otc_quote_date and tse_quote_date != otc_quote_date)}
     with open(RAW_CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
@@ -954,6 +1008,9 @@ def get_universe_data_meta() -> Dict:
         "tse_quote_date": raw.get("tse_quote_date"),
         "otc_quote_date": raw.get("otc_quote_date"),
         "dates_mismatch": raw.get("dates_mismatch", False),
+        # 某市場日行情抓取失敗、改用前次清單時標記（盤中仍以 MIS 官方即時價覆蓋，不會顯示過期價）
+        "tse_stale": raw.get("tse_stale", False),
+        "otc_stale": raw.get("otc_stale", False),
         "intraday": live_status(),
     }
 

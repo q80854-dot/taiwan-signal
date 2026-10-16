@@ -24,8 +24,52 @@ import requests
 logger = logging.getLogger(__name__)
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 _TTL = 24 * 3600
+_FALLBACK_TTL = 3600          # 以 DB 回退的資料只在記憶體快取 1 小時，額度一恢復就會重新抓最新
 _cache: Dict[str, dict] = {}
 _lock = threading.Lock()
+
+# ── 額度熔斷（2026-10-16）──────────────────────────────────────────────
+# FinMind 免費額度盤中很容易用完，回 HTTP 402「Requests reach the upper limit」。
+# 一旦打爆還繼續狂打，只會把封鎖拉得更長，且每次請求都卡滿逾時（個股頁曾因此慢到 22 秒）。
+# 作法：看到額度上限就開啟熔斷，冷卻期間所有 FinMind 呼叫直接略過（不連線），
+# 高階函式改回退資料庫最近一次的正確結果（季報/法人本就不是盤中會變的資料）。
+_cooldown_until = 0.0
+_COOLDOWN = 900               # 15 分鐘
+
+
+def circuit_open() -> bool:
+    """目前是否因額度上限而熔斷中。"""
+    return time.time() < _cooldown_until
+
+
+def _trip(secs: Optional[int] = None):
+    global _cooldown_until
+    _cooldown_until = time.time() + (secs or _COOLDOWN)
+    logger.warning(f"finmind：已達額度上限，熔斷 {int((secs or _COOLDOWN) / 60)} 分鐘，期間改用資料庫快取或略過")
+
+
+def _db_get(key: str):
+    try:
+        from state_store import store
+        return store.get_meta(key)
+    except Exception:
+        return None
+
+
+def _db_put(key: str, data):
+    try:
+        from state_store import store
+        store.set_meta(key, {"at": time.time(), "data": data})
+    except Exception as e:
+        logger.warning(f"finmind _db_put({key}): {e}")
+
+
+def _cache_fresh(ent) -> bool:
+    """記憶體快取是否仍新鮮：正常資料用 _TTL，DB 回退資料用較短的 _FALLBACK_TTL（好讓額度恢復後儘快重抓）。"""
+    if not ent:
+        return False
+    ttl = _FALLBACK_TTL if ent.get("fallback") else _TTL
+    return time.time() - ent["at"] < ttl
 
 # 科目別名（任一子字串命中即算；exclude 用來排除容易誤抓的近似科目）
 _ALIAS = {
@@ -52,7 +96,17 @@ def _token() -> str:
     return os.environ.get("FINMIND_TOKEN", "").strip()
 
 
+def _is_quota_err(status_code, j) -> bool:
+    """是否為額度／頻率上限錯誤：HTTP 402/429，或訊息含 upper limit / reach / limit。"""
+    if status_code in (402, 429):
+        return True
+    msg = str((j or {}).get("msg", "")).lower()
+    return ("upper limit" in msg) or ("reach" in msg and "limit" in msg) or ("too many" in msg)
+
+
 def _fetch(dataset: str, data_id: str, start: str) -> List[dict]:
+    if circuit_open():          # 熔斷中：直接略過，不連線（避免卡逾時、也避免把封鎖拉更長）
+        return []
     tok = _token()
     for mode in (["header", "param", "anon"] if tok else ["anon"]):      # token 放標頭被拒→放參數→最後才免登入
         try:
@@ -61,13 +115,16 @@ def _fetch(dataset: str, data_id: str, start: str) -> List[dict]:
             if mode == "param":
                 prm["token"] = tok
             r = requests.get(FINMIND_URL, params=prm,
-                             headers=headers, timeout=(5, 25))
+                             headers=headers, timeout=(5, 12))      # 讀取逾時由 25→12 秒，額度滿時不拖垮個股頁
             try:
                 j = r.json()
             except Exception:
                 j = {}
             if r.ok and j.get("status", 200) == 200:
                 return j.get("data") or []
+            if _is_quota_err(r.status_code, j):      # 額度上限 → 開熔斷、停止後續嘗試
+                _trip()
+                return []
             logger.warning(f"finmind {dataset} {data_id}: HTTP {r.status_code} status {j.get('status')} {str(j.get('msg', ''))[:60]}")
         except Exception as e:
             logger.warning(f"finmind {dataset} {data_id}: {type(e).__name__}")
@@ -149,15 +206,25 @@ def financial_indicators(code: str) -> Optional[dict]:
     code = str(code).strip()
     with _lock:
         ent = _cache.get(code)
-        if ent and time.time() - ent["at"] < _TTL:
+        if _cache_fresh(ent):
             return ent["data"]
+    dbkey = f"finmind_fin_{code}"
     start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 5 * 365 * 86400))
     inc = _pivot(_fetch("TaiwanStockFinancialStatements", code, start))
     bs = _pivot(_fetch("TaiwanStockBalanceSheet", code, start))
     cf = _pivot(_fetch("TaiwanStockCashFlowsStatement", code, start))
     data = _build(inc, bs, cf)
-    with _lock:
-        _cache[code] = {"at": time.time(), "data": data}
+    if data:
+        with _lock:
+            _cache[code] = {"at": time.time(), "data": data}
+        _db_put(dbkey, data)            # 持久化最近一次正確結果，供額度滿/連線失敗時回退
+        return data
+    # live 抓不到（熔斷中或上游失敗）→ 回退資料庫最近一次正確季報（季報非盤中變動，安全且符合「不要錯誤資訊」）
+    cached = _db_get(dbkey)
+    if cached and cached.get("data"):
+        with _lock:
+            _cache[code] = {"at": time.time(), "data": cached["data"], "fallback": True}
+        return cached["data"]
     return data
 
 
@@ -281,9 +348,11 @@ def institutional(code: str, days: int = 30) -> Optional[list]:
         return None
     code = str(code).strip()
     ck = f"inst:{code}"
+    dbkey = f"finmind_inst_{code}"
     with _lock:
         ent = _cache.get(ck)
-        if ent and time.time() - ent["at"] < 3 * 3600:
+        if ent and (ent.get("fallback") and time.time() - ent["at"] < _FALLBACK_TTL
+                    or not ent.get("fallback") and time.time() - ent["at"] < 3 * 3600):
             return ent["data"]
     start = time.strftime("%Y-%m-%d", time.localtime(time.time() - (days + 10) * 86400))
     rows = _fetch("TaiwanStockInstitutionalInvestorsBuySell", code, start)
@@ -320,9 +389,16 @@ def institutional(code: str, days: int = 30) -> Optional[list]:
         if len(out) >= days:
             break
     if not out:
+        # live 抓不到（熔斷中或上游失敗）→ 回退資料庫最近一次正確法人資料
+        cached = _db_get(dbkey)
+        if cached and cached.get("data"):
+            with _lock:
+                _cache[ck] = {"at": time.time(), "data": cached["data"], "fallback": True}
+            return cached["data"]
         return None
     with _lock:
         _cache[ck] = {"at": time.time(), "data": out}
+    _db_put(dbkey, out)
     return out
 
 

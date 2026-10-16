@@ -1393,6 +1393,64 @@ def api_market_inst_flow():
             return jsonify({"error": str(e)}), 500
 
 
+_INST_SECTOR_CACHE = {"t": 0, "v": None, "key": None, "lock": _th.Lock()}
+
+
+@app.route("/api/market/inst-flow-sectors")
+def api_market_inst_flow_sectors():
+    """法人資金流向板塊圖：把已累積的全市場（上市）T86 逐股三大法人買賣超，近 days 日
+    依「產業板塊」加總，看三大法人的錢流進／流出哪些板塊（單位：張）。
+    外資／投信直接加總；自營商＝三大法人合計 − 外資 − 投信（與 T86 定義一致，不臆測）。
+    產業分類取自官方上市產業別（查無分類者歸「其他」，不納入板塊圖，避免雜訊）。"""
+    import time as _t
+    try:
+        days = int(request.args.get("days", 5))
+    except Exception:
+        days = 5
+    days = max(1, min(days, 20))
+    _c = _INST_SECTOR_CACHE
+    if _c["v"] is not None and _c["key"] == days and _t.time() - _c["t"] < 300:
+        return jsonify(_c["v"])
+    with _c["lock"]:
+        if _c["v"] is not None and _c["key"] == days and _t.time() - _c["t"] < 300:
+            return jsonify(_c["v"])
+        try:
+            from state_store import store
+            from stock_universe import build_full_universe
+            dates = store.get_inst_dates(limit=days)      # 新到舊
+            if not dates:
+                resp = {"days": days, "dates": [], "latest_date": None, "unit": "張", "sectors": [],
+                        "note": "尚未累積足夠的三大法人（T86）資料"}
+                _c.update(t=_t.time(), v=resp, key=days)
+                return jsonify(resp)
+            min_date = min(dates)
+            rows = store.get_inst_since(min_date)
+            sect = {s["code"]: (s.get("sector") or "其他") for s in build_full_universe()}
+            agg = {}
+            for r in rows:
+                sec = sect.get(r["code"], "其他")
+                a = agg.setdefault(sec, {"foreign": 0, "trust": 0, "total": 0, "codes": set()})
+                a["foreign"] += int(r.get("foreign_net") or 0)
+                a["trust"] += int(r.get("trust_net") or 0)
+                a["total"] += int(r.get("total_net") or 0)
+                a["codes"].add(r["code"])
+            sectors = []
+            for sec, v in agg.items():
+                if sec == "其他" or len(v["codes"]) < 3:      # 分類不明或樣本太少不畫，避免誤導
+                    continue
+                sectors.append({"sector": sec, "foreign": v["foreign"], "trust": v["trust"],
+                                "dealer": v["total"] - v["foreign"] - v["trust"], "total": v["total"],
+                                "n": len(v["codes"])})
+            sectors.sort(key=lambda x: x["foreign"], reverse=True)   # 以外資淨額排序（主力資金流向）
+            resp = {"days": days, "dates": dates, "latest_date": dates[0], "unit": "張",
+                    "n_sectors": len(sectors), "sectors": sectors,
+                    "source": "證交所 T86 全市場（上市）三大法人買賣超，依產業板塊加總（單位：張）。產業別取自官方上市分類。"}
+            _c.update(t=_t.time(), v=resp, key=days)
+            return jsonify(resp)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/market/inst-streak")
 def api_market_inst_streak():
     """外資／投信連續買超、賣超排行（依累積的多日資料計算；僅上市、不含 ETF）。"""
@@ -2060,9 +2118,13 @@ def api_instrument(ticker: str):
     _jobs = {"ex_dividend": _ex_div, "company_profile": _profile, "foreign_holding": _foreign,
              "dispersion": _disp, "board_holding": _board, "news_items": _news}
     _futs = {k: _INST_POOL.submit(fn) for k, fn in _jobs.items()}
-    def _resolve(key, default=None):
+    # ★ 2026-10-16 加速：每個子區塊最多等 _SECT 秒就先回，不讓最慢的一塊（集保分散／
+    # 董監持股／外資持股這些較慢的官方端點）把整頁拖到 20 幾秒（手機 4G 常在載完前就逾時、
+    # 整頁空白）。逾時的區塊這次先留空，但背景執行緒會跑完並寫入快取，使用者下次打開就有了，
+    # 不會永久遺失資料（符合「不要錯誤資訊」：寧可這次先空、下次補上，也不顯示錯的）。
+    def _resolve(key, default=None, timeout=12):
         try:
-            out[key] = _futs[key].result(timeout=30)
+            out[key] = _futs[key].result(timeout=timeout)
         except Exception as e:
             out[key] = default; out[key + "_error"] = str(e)
     _resolve("ex_dividend", [])
