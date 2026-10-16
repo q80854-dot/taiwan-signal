@@ -557,7 +557,7 @@ def index():
         g.csp_nonce = nonce
         resp = send_from_directory(TEMPLATE_DIR, "dashboard.html")
         html = resp.get_data(as_text=True)
-        html = _re.sub(r"<script(?=\\s|>)", f'<script nonce="{nonce}"', html, flags=_re.I)
+        html = _re.sub(r"<script(?=\s|>)", f'<script nonce="{nonce}"', html, flags=_re.I)
         resp.set_data(html)
         return resp
     except Exception as e:
@@ -765,6 +765,7 @@ from collections import deque as _deque
 
 _CSP = ("default-src 'self'; "
         "script-src 'self' 'nonce-{nonce}' https://cdnjs.cloudflare.com; "
+        "script-src-attr 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com data:; "
         "img-src 'self' data: blob:; connect-src 'self'; "
