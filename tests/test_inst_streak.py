@@ -6,7 +6,6 @@ from state_store import store
 @pytest.fixture()
 def client(monkeypatch):
     app_module.app.config["TESTING"] = True
-    app_module._RATE.clear()
     app_module._INST_STREAK_CACHE["v"] = None
     with store._conn() as conn:
         conn.execute("DELETE FROM inst_daily")
