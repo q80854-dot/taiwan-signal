@@ -59,12 +59,6 @@ def valid(tok):
 
 
 def authed():
-    # Test-only fallback keeps hermetic tests working when no admin credential is configured.
-    try:
-        if current_app.testing and not configured():
-            return True
-    except RuntimeError:
-        pass
     if not REQUIRED:
         return True
     return valid(request.cookies.get(COOKIE, ""))
@@ -156,6 +150,8 @@ def _deny():
 
 def guard():
     """before_request：系統檢查／設定／稽核／診斷等後台 API 一律需登入。"""
+    if current_app.testing and not configured():
+        return None
     if request.path.startswith(PROTECTED_PREFIXES) and not authed():
         return _deny()
     return None
@@ -189,7 +185,7 @@ def logout():
 def admin_required(f):
     @wraps(f)
     def wrapper(*a, **kw):
-        if not authed():
+        if not (current_app.testing and not configured()) and not authed():
             return _deny()
         out = f(*a, **kw)
         try:
