@@ -4,7 +4,7 @@ app.py — Flask 主應用 v1.2
 """
 import sys, os, signal, logging, threading
 from datetime import datetime, timezone
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
 from config import SYSTEM, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
 
 logging.basicConfig(
@@ -23,6 +23,7 @@ except Exception as _e:
 
 # ★ 2026-10-06：日誌一律遮蔽 Telegram Bot Token（原本 Webhook 網址會連 token 一起寫進日誌）
 import re as _re
+import secrets as _secrets
 class _RedactFilter(logging.Filter):
     _pat = _re.compile(r"\d{8,}:[A-Za-z0-9_-]{30,}")
     def filter(self, record):
@@ -552,7 +553,13 @@ def setup_scheduler():
 def index():
     """★ 改用 send_from_directory，完全繞過 Jinja2 解析"""
     try:
-        return send_from_directory(TEMPLATE_DIR, "dashboard.html")
+        nonce = _secrets.token_urlsafe(18)
+        g.csp_nonce = nonce
+        resp = send_from_directory(TEMPLATE_DIR, "dashboard.html")
+        html = resp.get_data(as_text=True)
+        html = _re.sub(r"<script(?=\\s|>)", f'<script nonce="{nonce}"', html, flags=_re.I)
+        resp.set_data(html)
+        return resp
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
         return (
@@ -757,7 +764,7 @@ import time as _time
 from collections import deque as _deque
 
 _CSP = ("default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "script-src 'self' 'nonce-{nonce}' https://cdnjs.cloudflare.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com data:; "
         "img-src 'self' data: blob:; connect-src 'self'; "
@@ -783,8 +790,17 @@ def _rate_guard():
     ip = _client_ip()
     q = _RATE.get(ip)
     if q is None:
-        if len(_RATE) > 5000:
-            _RATE.clear()
+        if len(_RATE) >= 5000:
+            for old_ip, old_q in list(_RATE.items()):
+                while old_q and now - old_q[0] > 60:
+                    old_q.popleft()
+                if not old_q:
+                    _RATE.pop(old_ip, None)
+            if len(_RATE) >= 5000:
+                r = jsonify({"error": "請求來源過多，請稍後再試"})
+                r.status_code = 429
+                r.headers["Retry-After"] = "30"
+                return r
         q = _RATE[ip] = _deque()
     while q and now - q[0] > 60:
         q.popleft()
@@ -812,7 +828,7 @@ def _security_headers(resp):
         h["Cache-Control"] = "no-store"          # 帶登入狀態的回應不讓瀏覽器或中間代理快取
         h.pop("Server", None)
     if "text/html" in (resp.content_type or ""):
-        h.setdefault("Content-Security-Policy", _CSP)
+        h.setdefault("Content-Security-Policy", _CSP.replace("{nonce}", getattr(g, "csp_nonce", "")))
         # 應用殼（dashboard.html）每次都重新驗證，避免瀏覽器用 12 小時舊快取、部署後看不到新版
         h["Cache-Control"] = "no-cache"
     return resp
@@ -908,6 +924,7 @@ def api_admin_shadow():
 
 
 @app.route("/api/admin/shadow/export.csv")
+@members.owner_required
 @admin_auth.admin_required
 def api_admin_export():
     try:
