@@ -22,7 +22,10 @@ def cl(monkeypatch):
     monkeypatch.setenv("OWNER_EMAILS", "boss@example.com")
     members._ready["ok"] = False
     app_module.app.config["TESTING"] = True
-    app_module._RATE.clear()
+    protect._rate.clear()
+    protect._heavy_rate.clear()
+    protect._denies.clear()
+    protect._banned.clear()
     return app_module.app.test_client()
 
 
