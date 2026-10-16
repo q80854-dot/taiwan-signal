@@ -15,7 +15,7 @@ from flask import current_app, request, jsonify
 
 # 正式環境預設必須啟用後台登入；只有明確設定 ADMIN_AUTH_REQUIRED=0 才會關閉。
 # 設定 ADMIN_AUTH_REQUIRED=1 並提供至少 8 碼 ADMIN_PASSWORD，否則管理端點保持鎖定。
-REQUIRED = os.environ.get("ADMIN_AUTH_REQUIRED", "1") == "1
+REQUIRED = os.environ.get("ADMIN_AUTH_REQUIRED", "1") == "1"
 COOKIE = "ts_admin"
 TTL = 5 * 60    # 5 分鐘沒有動作就失效（每次後台請求/網頁心跳會順延）；且是『工作階段 cookie』，關閉瀏覽器就消失
 PROTECTED_PREFIXES = ('/api/health', '/api/settings', '/api/audit', '/api/diagnostics')
