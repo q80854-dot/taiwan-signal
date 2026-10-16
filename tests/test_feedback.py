@@ -18,7 +18,6 @@ def cl(monkeypatch):
     feedback._ready["ok"] = False
     monkeypatch.setattr(feedback, "_notify", lambda *a, **k: None)
     app_module.app.config["TESTING"] = True
-    app_module._RATE.clear()
     return app_module.app.test_client()
 
 
