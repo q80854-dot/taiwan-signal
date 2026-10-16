@@ -1080,6 +1080,11 @@ body{font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHe
 .rp-narr{line-height:1.85;font-size:14.5px;color:var(--t1);margin:14px 0 6px}
 .rp-narr p{margin:0 0 12px}
 .rp-narr .rp-h{font-weight:700;color:var(--accent);margin:16px 0 6px;font-size:14px;letter-spacing:.02em}
+.rp-news-item{padding:10px 0;border-bottom:1px solid var(--line);line-height:1.65}
+.rp-news-item:last-child{border-bottom:0}
+.rp-news-meta{font-size:11px;color:var(--t3);margin-bottom:3px}
+.rp-news-title{color:var(--t1);font-size:13px}
+.rp-news-flag{display:inline-block;margin-left:6px;color:var(--warn);font-size:11px}
 .rp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .rp-stat{border:1px solid var(--line);border-radius:var(--r,4px);padding:11px 13px;background:var(--s1)}
 .rp-k{font-size:11.5px;color:var(--t3);margin-bottom:5px}
@@ -2309,9 +2314,20 @@ async function fetchDailyReport(kind){
     ?`<span class="rp-badge rp-ai">AI 分析${r.model?'（'+esc(r.model)+'）':''}</span>`
     :`<span class="rp-badge rp-rule">規則式摘要</span>`;
   const miss=(r.missing&&r.missing.length)?`<div class="note-box" style="margin:10px 0">本次無法取得（已標暫無、未以舊值充數）：${r.missing.map(esc).join('、')}</div>`:'';
+  const news=f.news||[];
+  const newsBody=!f.news_source_ok
+    ?'<div class="empty">官方重大訊息來源讀取失敗，不能據此判定沒有公告。</div>'
+    :news.length?news.map(n=>`<div class="rp-news-item">
+        <div class="rp-news-meta">${esc(n.date)} ${esc(n.time)}　${esc(n.code)} ${esc(n.company)}</div>
+        <div class="rp-news-title">[${esc(n.id)}] ${esc(n.title)}${n.negative_keyword_match?'<span class="rp-news-flag">風險關鍵字命中，請核對原文</span>':''}</div>
+      </div>`).join('')
+      :'<div class="empty">官方來源可讀取，本次回傳資料中沒有公告標題。</div>';
+  const newsCard=`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><div class="bar"></div><span class="panel-title">消息面｜上市公司重大訊息</span></div>
+    <div class="panel-body"><div class="rp-news-meta">來源：TWSE OpenAPI（近期資料，僅涵蓋上市公司）・<a href="https://openapi.twse.com.tw/v1/opendata/t187ap04_L" target="_blank" rel="noopener noreferrer">查看官方資料</a></div>${newsBody}</div></div>`;
   box.innerHTML=`<div class="mast" style="grid-template-columns:1fr"><div class="say"><b>${esc(r.date)} ${kindZh}市場報告</b>
       <small>產生時間 ${esc(r.generated_at)}（台北）　${srcBadge}</small></div></div>
     <div class="rp-narr">${narr||'<p class="empty">暫無分析內容</p>'}</div>
+    ${newsCard}
     ${miss}
     <div class="sec-label"><div class="bar"></div><div class="tx">市場數據（來源：官方／yfinance，延遲資料）</div></div>
     ${cards}`;
