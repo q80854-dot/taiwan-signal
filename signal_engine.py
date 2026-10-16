@@ -9,7 +9,7 @@ from config import (
     SIGNAL_THRESHOLDS as THRESH, SWING_PARAMS,
     CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD,
     COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION,
-    MAX_RISK_PER_TRADE, ENABLE_SHORT_SIGNALS,
+    MAX_RISK_PER_TRADE, ENABLE_SHORT_SIGNALS, SHORT_EXECUTABLE,
     SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, SHORT_REQUIRE_WEEKLY_BEARISH,
 )
 
@@ -351,9 +351,15 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 # （跟 fetch_market_regime() 的 fail-closed 說明一致）。
                 logger.info(f"[{ticker}] 放空 Layer1 Market Regime Gate 未過：大盤中期趨勢資料不可用")
                 _rej("gate_regime"); return None
-            if not regime.get("bearish_regime"):
-                logger.info(f"[{ticker}] 放空 Layer1 Market Regime Gate 未過：大盤中期趨勢={regime.get('trend')}"
-                            f"（非明確中期空頭，不允許個股層級放空訊號蓋過大盤環境判斷）")
+            # ★ 修正：2026-10-16——使用者明確要求策略也要會做空（見 config.py
+            # SHORT_EXECUTABLE 上方說明）。原本要求「大盤必須是明確中期空頭」才
+            # 准放空，在多頭／盤整盤等於放空永遠發不出來，策略實務上只會做多。
+            # 這裡放寬為：只要大盤不是「明確中期多頭」就允許放空——個股本身走空
+            # 時（Layer2 週線偏空＋ADX 空方確認會把關），大盤中性／盤整也可以放空，
+            # 只在大盤明確多頭時才擋（不對著強多頭大盤逆勢放空）。
+            if regime.get("trend") == "bullish":
+                logger.info(f"[{ticker}] 放空 Layer1 Market Regime Gate 未過：大盤中期趨勢=bullish"
+                            f"（大盤明確多頭，不對著強多頭逆勢放空）")
                 _rej("gate_regime"); return None
             # 大盤單日急跌/急漲（shock）仍額外檢查一次：就算中期是空頭，
             # 如果今天大盤单日已經是極端反彈（情緒分數很高），也先觀望一天，
@@ -560,22 +566,19 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             "conditions_met":mtf["conditions_met"],"conditions_fail":mtf["conditions_fail"],
             "generated_at":datetime.now(timezone.utc).isoformat(),"expire_days":CB["signal_expire_days"],
             "result":"pending","pnl_twd":0,"status":"active",
-            # ★ 新增：2026-09-28——使用者要求親自詢問 ChatGPT/Perplexity 目前系統
-            # 還缺什麼，Perplexity 給的立即可部署建議：在完整的「資料三態化」
-            # 工程做完之前，先用一個很小的修補把放空訊號明確標成「研究版／
-            # 不可執行」，因為系統目前完全沒有借券可得性、借券費率、強制回補、
-            # 軋空風險這些做空真正需要的資料（見 fetch_market_regime() 附近
-            # 對放空的其他討論），而且新的收緊門檻本身也還沒經過回測驗證
-            # （見 config.py SHORT_SIGNAL_THRESH 上方說明）。這裡不是要阻止
-            # 系統產生放空訊號（使用者仍想看到這些訊號，用來觀察/研究），
-            # 而是讓 Telegram 推播明確告知使用者「這則不是跟做多同等級的
-            # 可執行建議」，不要在沒有這些資料前被當一般訊號直接下單。
-            "executable": direction != "sell",
+            # ★ 修正：2026-10-16——使用者明確要求「我的實際發出來的訊號也是要有
+            # 會做空的訊號」，不要為了勝率好看就只會做多。先前（2026-09-28）把
+            # 放空一律標成「研究版／不可執行」，等於實務上不會真的發放空訊號。
+            # 這裡改由 config.SHORT_EXECUTABLE 控制：預設 True，放空成為正式可
+            # 執行訊號、實際推播。保留 short_research_only_reason 這個欄位，但只在
+            # 放空被設為不可執行時（SHORT_EXECUTABLE=False）才帶值；可執行時為 None。
+            # 「系統目前沒有借券可得性／費率／強制回補／軋空風險資料」這點仍是事實，
+            # 改由 telegram_bot.py 以較輕量的放空風險提醒告知，不再謊稱不可執行。
+            "executable": True if direction != "sell" else SHORT_EXECUTABLE,
             "short_research_only_reason": (
-                "放空門檻(分數75/ADX方向確認/週線硬性偏空/大盤中期regime)尚未經過"
-                "真實成交資料回測驗證；且系統目前沒有借券可得性、借券費率、"
-                "強制回補日、軋空風險等做空必要資料"
-            ) if direction == "sell" else None,
+                "放空門檻尚未經過真實成交資料回測驗證；且系統目前沒有借券可得性、"
+                "借券費率、強制回補日、軋空風險等做空必要資料"
+            ) if (direction == "sell" and not SHORT_EXECUTABLE) else None,
         }
         logger.info(f"[{ticker}] ✅ {name} {direction} score={score}({grade}) SL={sl:.1f} TP1={tp_info['tp1']:.1f} shares={pos['shares']}")
         return signal

@@ -216,6 +216,9 @@ def _f(r, k):
 
 def _dims():
     return [
+        # ★ 新增：2026-10-16——使用者要求策略學習也要涵蓋做空，並能明確看到做空
+        # 的表現。放在最前面，讓做多 vs 做空的勝率／平均 R 直接並列比較。
+        ("方向", lambda r: {"buy": "做多", "sell": "做空"}.get(r.get("direction"))),
         ("分數", lambda r: _band(r.get("score"), [70, 75, 80, 85], ["65–69", "70–74", "75–79", "80–84", "85+"])),
         ("追高等級", lambda r: {"low": "低", "mid": "中", "high": "高"}.get(_f(r, "chase_level"))),
         ("基本面等級", lambda r: _f(r, "f_grade") or "未評分"),
