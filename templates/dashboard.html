@@ -1444,6 +1444,24 @@ html[data-theme=dark] .tag.blue{color:var(--t2)}
 
 /* ── 狀態小物：資料新鮮度、盤別 pill 改方形等寬 ── */
 html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:var(--mono);border-radius:2px;letter-spacing:.04em}
+
+/* ── 2026-10-16 總覽 KPI 卡精修（終端風，只動深色、只動總覽那排卡片）──
+   每張卡加一條頂部髮絲、主評分卡用琥珀強調並加一個終端式左上角標記；滑過時琥珀邊＋微亮，
+   讓五張原本一模一樣的卡有層次、可互動，但不破壞終端機識別。 */
+html[data-theme=dark] .kpis .kpi{position:relative;overflow:hidden;transition:border-color .14s ease,background .14s ease}
+html[data-theme=dark] .kpis .kpi::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;
+  background:linear-gradient(90deg,var(--line2),transparent 55%);opacity:.7}
+html[data-theme=dark] .kpis .kpi:hover{border-color:var(--brass)!important;background:var(--s2)!important;
+  box-shadow:inset 0 0 0 1px var(--term-glow)!important}
+html[data-theme=dark] .kpis .kpi.env{background:linear-gradient(180deg,var(--accent-soft),var(--s1) 46%)!important}
+html[data-theme=dark] .kpis .kpi.env::before{background:linear-gradient(90deg,var(--brass-lt),var(--brass) 30%,transparent 75%);opacity:1}
+/* 主評分卡左上角的終端式角標 */
+html[data-theme=dark] .kpis .kpi.env::after{content:"";position:absolute;left:8px;top:8px;width:9px;height:9px;
+  border-left:2px solid var(--brass);border-top:2px solid var(--brass);opacity:.85}
+html[data-theme=dark] .kpis .kpi.env .kpi-label{color:var(--brass)!important;letter-spacing:.08em}
+html[data-theme=dark] .kpis .kpi.env .kpi-val{color:var(--brass-lt)!important}   /* 主評分＝全頁焦點數字，琥珀點題 */
+html[data-theme=dark] .meter{background:#1b1e24;height:5px;border-radius:2px}
+html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var(--brass-lt))}
 </style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 </head>
