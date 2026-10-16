@@ -24,7 +24,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 _cache: Dict = {}
 _CACHE_TTL_SEC = 3600 * 12  # 月營收一個月才更新一次，12小時已經很保守
 
-_TTL_OVERRIDE = {"material_news_risk_map": 900, "material_news_fetch_ok": 900, "all_news_rows": 600}  # 重大訊息 10~15 分鐘更新
+_TTL_OVERRIDE = {"material_news_risk_map": 900, "material_news_fetch_ok": 900, "all_news_rows": 600, "all_news_rows_ok": 600}  # 重大訊息 10~15 分鐘更新
 
 def _cache_get(key):
     e = _cache.get(key)
@@ -1232,15 +1232,18 @@ def _fetch_material_news_map() -> tuple:
         return {}, False
 
 
-def fetch_all_news_rows() -> List[Dict]:
-    """上市公司「全部」重大訊息（不只負面關鍵字），10 分鐘快取。
-    供「我的持股／觀察清單／有效訊號」的即時公告提醒使用。"""
-    if (c := _cache_get("all_news_rows")) is not None:
-        return c
+def fetch_all_news_rows_with_status() -> tuple:
+    """上市公司全部重大訊息（不只負面關鍵字），10 分鐘快取。
+    回傳 (rows, source_ok)，讓報告能區分「查無近期公告」與「來源讀取失敗」。"""
+    cached = _cache_get("all_news_rows")
+    if cached is not None:
+        return cached, bool(_cache_get("all_news_rows_ok"))
     rows = []
+    ok = False
     try:
         r = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap04_L", headers=HEADERS, timeout=15)
         if r.status_code == 200:
+            ok = True
             for row in r.json():
                 code = (row.get("公司代號") or "").strip()
                 subject = (row.get("主旨") or "").strip()
@@ -1254,7 +1257,15 @@ def fetch_all_news_rows() -> List[Dict]:
             logger.warning(f"fetch_all_news_rows: HTTP {r.status_code}")
     except Exception as e:
         logger.warning(f"fetch_all_news_rows: {e}")
-    return _cache_set("all_news_rows", rows)
+    rows = _cache_set("all_news_rows", rows)
+    _cache_set("all_news_rows_ok", ok)
+    return rows, ok
+
+
+def fetch_all_news_rows() -> List[Dict]:
+    """相容既有呼叫端：回傳全部上市公司重大訊息列。"""
+    rows, _ = fetch_all_news_rows_with_status()
+    return rows
 
 
 def fetch_material_news_risk_map() -> Dict[str, List[Dict]]:
