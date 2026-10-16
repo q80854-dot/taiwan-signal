@@ -2003,6 +2003,10 @@ html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:v
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-10-16</b></p>
+          <p><b>上市資料修復（重要）</b><br>・修正根因：上市日行情（STOCK_DAY_ALL）抓取失敗時，整個上市市場會從清單裡消失，導致「查無個股（含 2317 等）」「排行榜上市全空」。現在單一市場抓失敗會自動沿用前次清單、盤中以證交所 MIS 官方即時價覆蓋，不再整個市場消失。</p>
+          <p><b>FinMind 額度韌性</b><br>・FinMind 免費額度盤中用完（HTTP 402）時，加入額度熔斷＋資料庫快取回退：財務指標、三大法人等區塊改顯示最近一次正確資料，而不是「暫時取不到」；季報/法人本就不是盤中會變動的資料，符合「不顯示錯誤資訊」。個股頁亦不再因此卡到 20 幾秒。</p>
+          <p><b>法人資金流向板塊圖</b><br>・「全體法人資金流向」新增板塊圖：外資近 5 日對各產業板塊的淨買賣超（張），一張圖看資金流進／流出哪些板塊，附外資／投信／自營商／合計明細表。</p>
           <p><b>2026-10-15</b></p>
           <p><b>全體法人資金流向</b><br>・總覽的「市場儀表板」與個股研究頁新增「全體法人資金流向（上市整體）」：把全市場三大法人逐日買賣超加總，呈現外資／投信／自營商／合計的近 1 日與 5／20 日累計、20 日趨勢條與近 10 日明細。資料與個股頁同一來源（證交所 T86）加總，單位為張，不另推估金額以免誤差。</p>
           <p><b>影子策略（策略學習）強化</b><br>・擴充搜集的特徵（連漲天數、收盤區間位置、量能趨勢、均線斜率、站上 20 日線天數等），全部由日線直接計算、不影響訊號，並納入大數據匯出供日後分析。<br>・學習報告新增出場原因分布、平均最大回撤、平均持有天數，以及相對大盤／產業強弱、突破前高、季節性等 12 個分析維度。</p>
@@ -2804,8 +2808,38 @@ async function loadMarketInstFlow(targetId){
       <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>日期</th><th style="text-align:right">外資</th><th style="text-align:right">投信</th><th style="text-align:right">自營商</th><th style="text-align:right">合計</th></tr></thead><tbody>
       ${d.days.slice(0,10).map(x=>`<tr><td>${safe(x.date)}</td><td style="text-align:right">${lots(x.foreign)}</td><td style="text-align:right">${lots(x.trust)}</td><td style="text-align:right">${lots(x.dealer)}</td><td style="text-align:right">${lots(x.total)}</td></tr>`).join('')}
       </tbody></table></div>
-      <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(d.source)}${famt}</div>`;
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(d.source)}${famt}</div>
+      <div id="${(targetId||'mkt-inst-flow')}-sec"></div>`;
+    try{ await loadInstFlowSectors((targetId||'mkt-inst-flow')+'-sec'); }catch(e){}
   }catch(e){el.innerHTML='<div class="empty">載入失敗，稍後重試</div>';}
+}
+// 法人資金流向板塊圖：三大法人（以外資為主力）近數日淨買賣超，依產業板塊加總，
+// 一張圖看錢流進／流出哪些板塊。紅＝買超（流入）、綠＝賣超（流出）。
+async function loadInstFlowSectors(targetId){
+  const el=document.getElementById(targetId);if(!el)return;
+  try{
+    const d=await(await fetch('/api/market/inst-flow-sectors?days=5',{cache:'no-store'})).json();
+    const S=(d&&d.sectors)||[];
+    if(d.error||!S.length){el.innerHTML='';return;}
+    const mx=Math.max(1,...S.map(x=>Math.abs(x.foreign)));
+    const rows=S.map(x=>{
+      const w=Math.round(Math.abs(x.foreign)/mx*50),up=x.foreign>=0;
+      const bar=`<span style="position:absolute;top:3px;bottom:3px;${up?`left:50%;width:${w}%`:`right:50%;width:${w}%`};background:${up?'var(--up)':'var(--down)'};border-radius:2px"></span>`;
+      return `<div style="display:flex;align-items:center;gap:8px;margin:3px 0">
+        <div style="flex:0 0 88px;font-size:12px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${safe(x.sector)}（${x.n} 檔）">${safe(x.sector)}</div>
+        <div style="flex:1;position:relative;height:18px;background:rgba(127,127,127,.08);border-radius:2px"><span style="position:absolute;left:50%;top:0;bottom:0;border-left:1px dashed var(--line)"></span>${bar}</div>
+        <div style="flex:0 0 72px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:${_col(x.foreign)}">${_sg(x.foreign)}</div>
+      </div>`;}).join('');
+    el.innerHTML=`<div class="sec-label" style="margin-top:14px"><div class="bar"></div><div class="tx">三大法人資金流向板塊（近 ${d.days} 日）</div></div>
+      <div class="panel card"><div class="panel-body">
+      <div style="font-size:12px;color:var(--t2);margin-bottom:8px">外資近 ${d.days} 個交易日對各產業板塊的淨買賣超（張），由大到小排序；<span style="color:var(--up)">紅＝買超（資金流入）</span>、<span style="color:var(--down)">綠＝賣超（流出）</span>。中線為零。</div>
+      ${rows}
+      <div style="overflow-x:auto;margin-top:10px"><table class="tbl"><thead><tr><th>板塊</th><th style="text-align:right">外資</th><th style="text-align:right">投信</th><th style="text-align:right">自營商</th><th style="text-align:right">合計</th><th style="text-align:right">檔數</th></tr></thead><tbody>
+      ${S.map(x=>`<tr><td>${safe(x.sector)}</td><td style="text-align:right;color:${_col(x.foreign)}">${_sg(x.foreign)}</td><td style="text-align:right;color:${_col(x.trust)}">${_sg(x.trust)}</td><td style="text-align:right;color:${_col(x.dealer)}">${_sg(x.dealer)}</td><td style="text-align:right;color:${_col(x.total)}">${_sg(x.total)}</td><td style="text-align:right;color:var(--t3)">${x.n}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(d.source)}</div>
+      </div></div>`;
+  }catch(e){el.innerHTML='';}
 }
 function _newsHtml(d){
   const N=d.news_items;if(!N||!N.length)return '';

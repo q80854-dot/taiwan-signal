@@ -123,3 +123,54 @@ def test_institutional_unknown_names_skip(monkeypatch):
 def test_institutional_disabled_without_token(monkeypatch):
     monkeypatch.delenv("FINMIND_TOKEN", raising=False)
     assert FM.institutional("2330") is None
+
+
+# ── 2026-10-16 額度熔斷 + DB 快取回退 ──
+def test_quota_err_detection():
+    assert FM._is_quota_err(402, {}) is True
+    assert FM._is_quota_err(429, {}) is True
+    assert FM._is_quota_err(200, {"msg": "Requests reach the upper limit"}) is True
+    assert FM._is_quota_err(200, {}) is False
+
+
+def test_circuit_open_short_circuits_fetch(monkeypatch):
+    called = []
+    monkeypatch.setattr(FM.requests, "get", lambda *a, **k: called.append(1))
+    monkeypatch.setattr(FM, "_cooldown_until", FM.time.time() + 100)
+    assert FM.circuit_open() is True
+    assert FM._fetch("X", "Y", "2020-01-01") == []   # 熔斷中直接回空
+    assert not called, "熔斷中不應真的連線"
+
+
+def test_fetch_trips_breaker_on_quota(monkeypatch):
+    monkeypatch.setattr(FM, "_cooldown_until", 0.0)
+    monkeypatch.delenv("FINMIND_TOKEN", raising=False)
+
+    class _R:
+        status_code = 402
+        def json(self): return {"status": 402, "msg": "Requests reach the upper limit"}
+        ok = False
+    monkeypatch.setattr(FM.requests, "get", lambda *a, **k: _R())
+    assert FM._fetch("X", "Y", "2020-01-01") == []
+    assert FM.circuit_open() is True       # 一看到額度上限就熔斷
+    monkeypatch.setattr(FM, "_cooldown_until", 0.0)   # 還原
+
+
+def test_financials_db_fallback_when_blocked(monkeypatch):
+    monkeypatch.setenv("FINMIND_TOKEN", "x")
+    FM._cache.clear()
+    monkeypatch.setattr(FM, "_cooldown_until", 0.0)
+    monkeypatch.setattr(FM, "_fetch", lambda ds, cid, start: [])     # live 全空（模擬額度滿）
+    saved = {"eps": [{"period": "2026Q2", "value": 12.3}]}
+    monkeypatch.setattr(FM, "_db_get", lambda k: {"at": FM.time.time(), "data": saved})
+    out = FM.financial_indicators("2330")
+    assert out == saved, "live 抓不到時應回退 DB 最近一次正確季報"
+
+
+def test_institutional_db_fallback_when_blocked(monkeypatch):
+    monkeypatch.setenv("FINMIND_TOKEN", "x")
+    FM._cache.clear()
+    monkeypatch.setattr(FM, "_fetch", lambda ds, cid, start: [])
+    saved = [{"date": "2026-10-15", "foreign": 100, "trust": 5, "dealer": 1, "total": 106}]
+    monkeypatch.setattr(FM, "_db_get", lambda k: {"at": FM.time.time(), "data": saved})
+    assert FM.institutional("2330") == saved
