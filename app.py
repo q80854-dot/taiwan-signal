@@ -767,6 +767,8 @@ def _security_headers(resp):
         h.pop("Server", None)
     if "text/html" in (resp.content_type or ""):
         h.setdefault("Content-Security-Policy", _CSP)
+        # 應用殼（dashboard.html）每次都重新驗證，避免瀏覽器用 12 小時舊快取、部署後看不到新版
+        h["Cache-Control"] = "no-cache"
     return resp
 
 
