@@ -51,10 +51,12 @@ _FIN_DAYS = 1500                              # 三張財報共用同一個查�
 TTL = {
     "TaiwanStockPrice": 900, "TaiwanStockPER": 3600, "TaiwanStockDayTrading": 1800,
     "TaiwanStockMarginPurchaseShortSale": 1800, "TaiwanStockInstitutionalInvestorsBuySell": 1800,
-    "TaiwanStockShareholding": 3600, "TaiwanStockSecuritiesLending": 3600,
-    "TaiwanStockMonthRevenue": 6 * 3600, "TaiwanStockFinancialStatements": 12 * 3600,
-    "TaiwanStockBalanceSheet": 12 * 3600, "TaiwanStockCashFlowsStatement": 12 * 3600,
-    "TaiwanStockDividend": 24 * 3600, "TaiwanStockInfo": 7 * 24 * 3600, "TaiwanStockNews": 900,
+    "TaiwanStockShareholding": 12 * 3600, "TaiwanStockSecuritiesLending": 3600,
+    # ★ 2026-10-16：季報/月營收/股利等慢變資料拉長 TTL，盤中直接吃昨晚快取、免再打 FinMind
+    # 額度（避免額度用完時季報變空白）。配合 _stable_start 的月初對齊，快取鍵整月穩定。
+    "TaiwanStockMonthRevenue": 2 * 24 * 3600, "TaiwanStockFinancialStatements": 3 * 24 * 3600,
+    "TaiwanStockBalanceSheet": 3 * 24 * 3600, "TaiwanStockCashFlowsStatement": 3 * 24 * 3600,
+    "TaiwanStockDividend": 7 * 24 * 3600, "TaiwanStockInfo": 7 * 24 * 3600, "TaiwanStockNews": 900,
     "TaiwanStockTotalInstitutionalInvestors": 900, "TaiwanStockTotalMarginPurchaseShortSale": 900,
     "TaiwanFuturesDaily": 600, "TaiwanFuturesInstitutionalInvestors": 600,
 }
@@ -152,12 +154,25 @@ def _prune():
         _cache.pop(k, None)
 
 
+def _stable_start(start: Optional[str], ttl: int) -> Optional[str]:
+    """★ 2026-10-16 根因修復：原本各 sec_* 都用 start=_day(-N)（今天往前推 N 天），
+    這個 start 每天都不一樣，而快取鍵包含 start，所以昨天存進 DB 的季報／月營收等
+    長 TTL 資料，今天用新的鍵永遠找不到 → 盤中額度用完時就變空白（使用者回報
+    『昨晚可、今日盤中不行』的真正原因）。這裡把長 TTL（季報/月營收/股利/估值等）
+    的 start 對齊到月初，讓快取鍵在整個月內穩定、可重用昨天抓到的資料；短 TTL
+    （當日行情/新聞等本就要新）維持不變。"""
+    if not start or ttl < 6 * 3600 or len(start) < 10:
+        return start
+    return start[:8] + "01"           # YYYY-MM-DD → YYYY-MM-01
+
+
 def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = None,
            end: Optional[str] = None, ttl: Optional[int] = None, force: bool = False) -> Dict:
     """→ {rows, ok, stale, fetched_at, error}。永遠回傳 dict，不丟例外。"""
     global _blocked_until, _token_bad_until, _auth_mode
-    key = (dataset, data_id, start, end)
     ttl = TTL.get(dataset, 900) if ttl is None else ttl
+    start = _stable_start(start, ttl)        # 長 TTL 對齊月初，讓快取鍵不隨日期漂移
+    key = (dataset, data_id, start, end)
     _load_block_once()
     c = _cache.get(key)
     if c is None:

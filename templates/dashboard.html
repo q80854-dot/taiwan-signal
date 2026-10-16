@@ -99,6 +99,14 @@ html.force-desktop .ticker-item{min-width:150px!important}
 html.force-desktop .hero-row{grid-template-columns:1.3fr 2fr!important}
 html.force-desktop .kpi-strip{grid-template-columns:repeat(4,1fr)!important}
 #view-toggle-btn{white-space:nowrap}
+/* ★ 2026-10-16：手動版型切換的「回到自動」浮動鈕。只有在使用者強制套用了手機版/電腦版時才出現，
+   position:fixed 永遠停在視窗右下角、z-index 極高，就算在手機上誤切成電腦版（整頁變寬、需橫向捲動、
+   原切換鈕被擠出畫面）也點得到，一鍵還原成「照螢幕自動判斷」。 */
+#view-auto-btn{position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:9999;
+  display:none;align-items:center;gap:6px;padding:11px 16px;border-radius:999px;cursor:pointer;
+  font-size:13px;font-weight:600;line-height:1;border:1px solid var(--line);
+  background:var(--ink);color:#fff;box-shadow:0 6px 24px rgba(10,10,12,.28)}
+html.force-mobile #view-auto-btn,html.force-desktop #view-auto-btn{display:inline-flex!important}
 .logo{padding:22px 20px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
 .logo-mark{width:26px;height:26px;background:var(--navy);flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:800}
 .logo-nm{font-size:14px;font-weight:800;color:var(--t1);letter-spacing:.2px;line-height:1.25}
@@ -2003,6 +2011,10 @@ html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:v
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-10-16（下午）</b></p>
+          <p><b>FinMind 深度分析盤中不再變空白</b><br>・修正根因：季報／月營收等慢變資料的快取鍵會隨「查詢起始日」每天漂移，導致昨晚抓到的資料今天找不到、盤中額度用完就整片空白（深度分析、財報體質體檢等）。改為把起始日對齊月初、拉長快取時效，盤中直接沿用最近一次正確資料。</p>
+          <p><b>版型切換可一鍵還原</b><br>・手機／電腦版手動切換後，右下角固定顯示「↩ 回到自動版型」浮動鈕；就算在手機上誤切成電腦版（畫面變寬、原切換鈕被擠出畫面），也能一鍵清除、恢復照螢幕自動判斷。</p>
+          <p><b>個股研究精簡</b><br>・「全體法人資金流向」改為只放在「總覽」頁，個股研究頁不再重複顯示。</p>
           <p><b>2026-10-16</b></p>
           <p><b>上市資料修復（重要）</b><br>・修正根因：上市日行情（STOCK_DAY_ALL）從主機端常逾時，整個上市市場會從清單裡消失，導致「查無個股（含 2317 等）」「排行榜上市全空」「法人板塊圖空白」。現在新增第三段備援：以估值端點（BWIBBU_ALL，實測可達）取得上市代號、再用證交所 MIS 官方報價補價（盤中即時、盤後定案），確保上市市場不再消失；並在快取缺一整個市場時自動強制重抓、自我修復。</p>
           <p><b>FinMind 額度韌性</b><br>・FinMind 免費額度盤中用完（HTTP 402）時，加入額度熔斷＋資料庫快取回退：財務指標、三大法人等區塊改顯示最近一次正確資料，而不是「暫時取不到」；季報/法人本就不是盤中會變動的資料，符合「不顯示錯誤資訊」。個股頁亦不再因此卡到 20 幾秒。</p>
@@ -2744,9 +2756,7 @@ function instExtraHtml(d){
   }else if((d.ticker||'').includes('.TWO')){
     h+=`<div class="sec-label"><div class="bar"></div><div class="tx">三大法人買賣超</div></div><div class="panel card"><div class="panel-body"><div class="empty">暫時取不到這檔的三大法人逐日資料（上市來源為證交所 T86；上櫃與備援來源為 FinMind，需啟用且該檔有資料時才顯示）</div></div></div>`;
   }
-  // 全體法人資金流向（像股市同學會）：全市場整體三大法人逐日買賣超，非個股。非同步載入。
-  h+=`<div class="sec-label"><div class="bar"></div><div class="tx">全體法人資金流向（上市整體）</div></div>
-  <div class="panel card"><div class="panel-body" id="mkt-inst-flow"><div class="empty ld"><i class="spin"></i>載入全市場三大法人資金流向…</div></div></div>`;
+  // 2026-10-16：全體法人資金流向改只放在「總覽」頁，個股研究頁不再重複顯示（使用者要求）。
   const P=d.peers;
   if(P&&P.rows&&P.rows.length>1){
     const n2=v=>v==null?'—':_fmtN(v,2);
@@ -3332,7 +3342,6 @@ function renderInstrument(d){
   try{loadFmStock(d.code);}catch(e){}
   try{klInit(d);}catch(e){console.error('kline',e);}
   try{finChartInit(d);}catch(e){console.error('fin',e);}
-  try{loadMarketInstFlow();}catch(e){}
   try{addInstEvents(d.code||(d.info&&d.info.code));}catch(e){}
 }
 
@@ -4317,6 +4326,19 @@ function toggleTheme(){
 function toggleViewMode(){
   applyForcedMode(effectiveViewMode()==='mobile'?'desktop':'mobile');
 }
+// 「回到自動版型」浮動鈕：只在強制套用版型時出現（CSS 控制），一鍵清除強制、恢復照螢幕自動判斷。
+function resetViewMode(){applyForcedMode(null);}
+(function mountAutoBtn(){
+  try{
+    if(document.getElementById('view-auto-btn'))return;
+    const b=document.createElement('button');
+    b.id='view-auto-btn';b.type='button';b.textContent='↩ 回到自動版型';
+    b.title='清除手動的手機版／電腦版設定，恢復照螢幕寬度自動判斷';
+    b.setAttribute('aria-label','回到自動版型');
+    b.addEventListener('click',resetViewMode);
+    (document.body||document.documentElement).appendChild(b);
+  }catch(e){}
+})();
 (function initViewMode(){
   let saved=null;
   try{saved=localStorage.getItem('dashViewMode');}catch(e){}

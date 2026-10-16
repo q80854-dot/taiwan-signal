@@ -255,3 +255,42 @@ def test_persistent_cache_survives_restart_and_quota_block(monkeypatch, _mem_sto
     c = fm.fm_get("TaiwanStockPrice", "2330", "2026-10-01", force=True)
     assert c["ok"] and c["stale"] and c["rows"] == a["rows"]
     assert float(_mem_store["fm:blocked_until"]) > time.time()
+
+
+# ── 2026-10-16 快取鍵穩定化：長 TTL 的 start 對齊月初，讓昨天抓的季報今天還找得到 ──
+def test_stable_start_snaps_long_ttl_to_month():
+    import finmind_data as FD
+    # 長 TTL（季報 3 天）→ start 對齊到月初，整月同一把鍵
+    assert FD._stable_start("2026-10-16", 3 * 24 * 3600) == "2026-10-01"
+    assert FD._stable_start("2026-10-31", 3 * 24 * 3600) == "2026-10-01"
+    # 短 TTL（當日行情 900 秒）→ 不動，維持逐日新鮮
+    assert FD._stable_start("2026-10-16", 900) == "2026-10-16"
+    assert FD._stable_start(None, 3 * 24 * 3600) is None
+
+
+def test_fm_get_cache_key_stable_across_days(monkeypatch):
+    import finmind_data as FD
+    FD._cache.clear()
+    calls = []
+
+    class _R:
+        status_code = 200
+        def __init__(self, data): self._d = {"status": 200, "data": data}
+        def json(self): return self._d
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append(params.get("start_date"))
+        return _R([{"date": "2026-09-30", "type": "EPS", "value": 9.1}])
+
+    monkeypatch.setattr(FD.requests, "get", fake_get)
+    monkeypatch.setattr(FD, "budget_left", lambda: 100)
+    monkeypatch.setattr(FD, "_persist_save", lambda *a, **k: None)
+    monkeypatch.setattr(FD, "_persist_load", lambda key: None)
+    # 第一天抓（start=今天-100 天，會被對齊到月初）
+    r1 = FD.fm_get("TaiwanStockFinancialStatements", "2330", "2026-10-16")
+    # 「隔天」用不同的原始 start，但對齊後同月 → 命中記憶體快取、不再打 API
+    n0 = len(calls)
+    r2 = FD.fm_get("TaiwanStockFinancialStatements", "2330", "2026-10-25")
+    assert r1["ok"] and r2["ok"]
+    assert len(calls) == n0, "同月的季報查詢應命中快取、不重打 FinMind"
+    assert calls[0] == "2026-10-01"      # 送給 API 的 start 也已對齊月初
