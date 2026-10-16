@@ -556,6 +556,7 @@ def index():
         nonce = _secrets.token_urlsafe(18)
         g.csp_nonce = nonce
         resp = send_from_directory(TEMPLATE_DIR, "dashboard.html")
+        resp.direct_passthrough = False
         html = resp.get_data(as_text=True)
         html = _re.sub(r"<script(?=\s|>)", f'<script nonce="{nonce}"', html, flags=_re.I)
         resp.set_data(html)
