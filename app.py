@@ -4,7 +4,7 @@ app.py — Flask 主應用 v1.2
 """
 import sys, os, signal, logging, threading
 from datetime import datetime, timezone
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from config import SYSTEM, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
 
 logging.basicConfig(
@@ -23,7 +23,6 @@ except Exception as _e:
 
 # ★ 2026-10-06：日誌一律遮蔽 Telegram Bot Token（原本 Webhook 網址會連 token 一起寫進日誌）
 import re as _re
-import secrets as _secrets
 class _RedactFilter(logging.Filter):
     _pat = _re.compile(r"\d{8,}:[A-Za-z0-9_-]{30,}")
     def filter(self, record):
@@ -553,14 +552,7 @@ def setup_scheduler():
 def index():
     """★ 改用 send_from_directory，完全繞過 Jinja2 解析"""
     try:
-        nonce = _secrets.token_urlsafe(18)
-        g.csp_nonce = nonce
-        resp = send_from_directory(TEMPLATE_DIR, "dashboard.html")
-        resp.direct_passthrough = False
-        html = resp.get_data(as_text=True)
-        html = _re.sub(r"<script(?=\s|>)", f'<script nonce="{nonce}"', html, flags=_re.I)
-        resp.set_data(html)
-        return resp
+        return send_from_directory(TEMPLATE_DIR, "dashboard.html")
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
         return (
@@ -762,15 +754,47 @@ app.after_request(members.scrub_private)   # 一般會員移除本金相關欄�
 # ★ 新增：2026-10-06（第 1 層地基）
 # ════════════════════════════════════════════════
 import time as _time
+from collections import deque as _deque
 
 _CSP = ("default-src 'self'; "
-        "script-src 'self' 'nonce-{nonce}' https://cdnjs.cloudflare.com; "
-        "script-src-attr 'unsafe-hashes' 'sha256-14REp4YUbMPkI7dbY1/B+AJCmxKy+YW6q8fpLd9xHCM=' 'sha256-h/qNatTsml2N7mhNFiEzgy1PNLz1Fcv+4xxMt2GIipw=' 'sha256-rlvHDN4R0YOHdybBbVIpDW2lbQcDMEgv2uG5UyAKdhs=' 'sha256-VQV7LETnJjg7tfqIshFcnAdAGwY5yvZJEfT19iBwoHg=' 'sha256-62Z5XXhGpLyV9/F1NqKrpScVnbEa9CecU6GbT/ZrMcs=' 'sha256-pwxSIgjqBtzXtI9CxKV41fjChcTFMmF8Ftf6wmL1wkA=' 'sha256-s7LwD1k959CtmKQ8SiFcxCUPNU7plh8gW+bJwWHdUuM=' 'sha256-+qyyeW6i44KptfpkOkdi1NOLHAZJoT9sicDrmUHlKdM=' 'sha256-dDFHB39OvQrIRfOJrdTEUcomEQmaxsqhFSU+D+1NeD4=' 'sha256-fULty/5arFMOj8mjDcgm7dLxAfKL0KhT1HSork783B4=' 'sha256-VDYOypPfjqhrIyV80yJdvYROD6ZPAqbUIzoILzVod/U=' 'sha256-hy+Ec5xLoaOZ5SSjkgVnPK0hftPekOVSAniM1a9Ja+E=' 'sha256-ChLF6vH/dbKqS/BOckH4GxUtA0d+9ShAq9L1u0gFtfc=' 'sha256-fdW9RKIce0HQ3tW8FAy5DvEWkXutjWb9J4w39u98ibY=' 'sha256-CV0gDhGxUmAPuBdQSvAzaWmLDM+VDFHpIRci9RaJ92M=' 'sha256-ScuL0d5IU/X7fNjG5XUPsEGDbdW/db9CgxkB43Noos8=' 'sha256-Eb3ohTCABSf29s8SIkr/nIM+XyXFSj/O35NSpdqAhJY=' 'sha256-P4jFvLis7MU6O2s+1144h/UCfjrLFupngOGFFa+SeXY=' 'sha256-gvMI36OrNoODUFDaBFBkAGQlMFh9FVaMlzxqIYp/SCo=' 'sha256-M6SUXnCQvwlutqm1AoYaQltNuS9LnPh2NC3eMjvPdi4=' 'sha256-nSbeEfg2P/2A69eTwM+VNdW0dtmJyQTDHABPGikfeKM=' 'sha256-UI7h7X7hJIIMS/rVrWlWkRVScstZfUib7vZL8suXuhw=' 'sha256-xb5B749vwqQTWrua8SjsvCt+RaYthMrqGBMic60/BGs=' 'sha256-q2aCl/waSnv/RIZYK0EFSDFtRyrZ7yrSzoYEXwiGRbw=' 'sha256-03CiNkNkLEUK1KLJ/c2PP51xXuzuOyqojSzFVFtTp0U=' 'sha256-WCpukuwwarH3lQGAi/SobAcRE2QRBK1eMoLt3dCI3fQ=' 'sha256-MZsxyxbDW8TION5kD1JPxyYftFeof2/ryUePQgUnmb0=' 'sha256-fJz45oDqt/IprsUkCT3Ix2C3naVQxUTIwthL0iUhx74=' 'sha256-rxywrwNyJ2Z5RIVD+KRrw2ioZu5NL67by7oi3mNrBW8=' 'sha256-nTB5IIJNVl/dibnT0Su9/twSli/DJPvShBVxmDQPMns=' 'sha256-FHSR9CBatR916DTZe7eN7LaOKNVneQi0tOOATimJ6pU=' 'sha256-d+jz/WwlA7jAI4lJqRBEQl4mKLonLPMq2qWm6ex14Yo=' 'sha256-cgTvzVx01lGS7xZsx5mL1gUFwFbmBXUnoOPH73lL0xo=' 'sha256-pWgeMyvigNHhS4Oe1a49Ut7/WHEvutag/oft1N4sgQ0=' 'sha256-5J8QIN0uHa3X4+TaUpRKBKn3pljcpBNl9MhDpDECP+U=' 'sha256-u+kRRnKIw1sDLPWGWUHpSUimSPR8vcusrXMreZxq3dk=' 'sha256-lYAHx/eNb9sjYCySW6h0EOsp/twpYv8ti5k+igXRKgs=' 'sha256-PmaFKDooukGIKEuS1K+jSV3JXzfo52U6D5mtglVvf14=' 'sha256-mha6Imwg3MkjH2I/j2uPugcXT6QJOyvP12P/4yov4xA=' 'sha256-aFjiI2kBa8mVsWG2/lhYjJm1oEcNa52gJ3Dai3GycXk=' 'sha256-Ke8MOTpeu4yE5R6l7bd1gvXEnLe75J03BDuogb2C5M0=' 'sha256-6oW6AcgIuBrKRnh2PlCtdJ7bY7g+MoJxxqgHPx8dpJw=' 'sha256-G+5twBIwVTFRVO3d9YUN07qqElqzLq0fln5whb6suJY=' 'sha256-zJMDbHSG49n0IrkeUVUlcAMHRM1o21RqEjyGQqISU4E=' 'sha256-UVpFnZHQvrXcG69LZjYLxep1qIylruvPNlgUvMAOAfI=' 'sha256-LAFeGZH7bsoG6qy3sLAd6eTfA+jSwjphfTD8tKPi3no=' 'sha256-iui/Mhk0NSD9VHrZCc2NRxEkJlZNLizrRlCs4yGocWU=' 'sha256-BY6Il4pooPnSdgonUraYL45NWYIU9wCJDD9lMpCwQEY=' 'sha256-0gVNPdIMAT34RVROxLC1D9suZkF1aQz/2BiuOcDhs6s=' 'sha256-hSB6oD1IjCeETpJl0Xn9SsfAxhT9OHmLhtPfXdB3IlU=' 'sha256-LcBhzR+07umauMgLLvV82l7G4jBvwNXNYXYDDcGRFHM=' 'sha256-Ly7lnm/3klsaC8MYKL2bBPjHtb5hpZIdHNo5O9yA0lo=' 'sha256-PaHDdVBSSyP0CSBHZEmwhuWyY09zxgY05qz7PgAzN8c=' 'sha256-HBtDmbyzfKAg+/C7igLg0vepIjf5M1u7H7uB31nlB7U=' 'sha256-tuZn7O/EBqlXY+RSLOt0FO7FSgiowmbjg9TpcFS0xog=' 'sha256-TGSW6eF+ZJhuE4v48RShTH3wVYgokuAXZREmG3PIYWo=' 'sha256-c/vm7SFxfosfy4BT5mH//xhVv2plfjygnsBwHjkjaqY=' 'sha256-/DmRKajn8FPkdPDeXoyNGH1psiqyekq2WYscpky25vI=' 'sha256-mA1enApYmfpl7TCt+Zkh0/b0PALzeUQVSFvWn0SpySA=' 'sha256-pR7aXBIwYQ+jle9W+TrBKIgQo2pqF3wf0ivPUc9FZTE=' 'sha256-2K2IusoyuDn9F2scBAQYDcwoTA5VI30Ya4k1OnYoCuk=' 'sha256-H2ZeRYs2WbMUGL9CW1wwuFkvCtVRDk+h8jGgQbqqdBU=' 'sha256-HHSNKFxxOLzH78MDFEuA7arilf93MlxvrPPoFiGWnvM=' 'sha256-Sx+RXO+WXni7oeKPqn+Ehy3dj9LcvS6HqH6Ofcx19J0=' 'sha256-jpu8NfWRTk4oKTE9EkAPbXCb+/d/E1YUG7DQEogIXfU=' 'sha256-MwL6+prkAkNvQS7Ssb9YNTHIMJuYGtlhqSKEh++X47E=' 'sha256-rZTCyVILmBbnrThb1UdGpYkoT9/pw8RnPQdmIaA9gIw=' 'sha256-bqih1UPGB5Y0LFBaY2TLCWo/PWRMoHhMwJgUFXSe4s0=' 'sha256-HWcSpFAP+wohtqhYLxIDRCc25kO8j9JnRMDni/VuU8k=' 'sha256-RoekmFNQmAVFxWm7Dzx4ztcDvYR0N+DNc6PsYTGcvdk=' 'sha256-KKuVd/d+uZV3BX5wN4fb0GhJVuyjguO0frGYbRKUl9c=' 'sha256-E83ElCrjt/Tg2oOajTuZx1cPDcIeH0poLD2T62YP50g=' 'sha256-OxoHZsCsIDpx1JVTDbA+MumH0Rn5ayW3Q4GXLVz3hLg=' 'sha256-72SREfCIYRNFvZVvqt4DSkdHE3byLxuKdCsA6AR/Fyo=' 'sha256-eL3jM7DZe54vFYWPPtJnn2cAH8DBAa8oypWf2Stkq+4=' 'sha256-QeMChLY9o981ofyO+VJyUumBLVrwgMyqB46caGuERz4=' 'sha256-N00knY6+FhCOJhduXaD/Jxziy3K0mdvKiIz95SKpGm8=' 'sha256-OEfw2hYYwjfXphTaJohm9Yi0glcZmaTcjHhWaxkypl8=' 'sha256-/I5And44joy3DIAeibkWDzWMDf4HEC6f2A51URMr6LM=' 'sha256-F0auOSYuN8irizw0ARxSlZO91sukr2AOrWm5qV1cZVw=' 'sha256-Pi9YAdayOJgWnx+mXXZoVT5UHTzwaudtA1V08IHBpFc=' 'sha256-tGkc6qoNUfjDqqaC8LCL8Wku91PwSP5dLnOeGGuov9M=' 'sha256-bn3g8dGiOioq2RFZ1bU3BNqIGKlgoBfPN96SUFBL4jU=' 'sha256-dvp+GVtyZnwq1VmEywOo9TDQE9DIbPKNycfsj3QPuRQ=' 'sha256-E9lW9Y2CfppalnCpibxBrdhT6AhIgmxfmtkhM881XNY=' 'sha256-oM8+ANaB4ljKVsP7QM92cyKxJBGmJJxWecYPNeagtDc=' 'sha256-Rc/ZDN//gVxBqYeE5Z6rKIiuglJX6YxThXdAlTlFy64=' 'sha256-dQtgDHBA/FozPCrunw9Um1LjtVK/Hr3s07D+nq/Hf3k=' 'sha256-IimVIahWlPgDx69ZRFw9F9U/WIEWWWZwOPW12ht7zEY=' 'sha256-SW3FfJfLJO6CJlUXIkBB+1PPp/wYK4Fb1o/3JWEo2Ts=' 'sha256-MKc7/g9g/a4Y5Gz3/KdRdf+bZ2SNjOAZoy2PM3tUnrk=' 'sha256-LHPAllD9W2WG/0FKU5rlhRjMzEDnB2VTStsUifyttPs=' 'sha256-7pMrrZH5ebFU4lQU5s2f/jkYVmzoFlhL1kquDnsSRyE=' 'sha256-xTssFhC3EiLa8TW9xBOaSJuYlBhomA71VGd2ISVgi0g=' 'sha256-VGQt0Bj9Inki2Zb6nhU0x1nMsLLY7a5znZgm//JcLB8=' 'sha256-vkc/XH/SMCEmgtW76TqnfkGniSTmspNextitC84HTi0=' 'sha256-6pyIHuF6tKxtSUP3oLGqvEvMUHmnAhH5dNU3ldzh/ms=' 'sha256-JTJ0eWnO/VnU5Ph+kp23DkCYHKpXm1gaSTFEXrq6EGc=' 'sha256-JwoMlujWOoPVbtr3/PzPTzQbRJt644Cohh5yVMTnZtI=' 'sha256-wyLKlQ+dE66cYMin+y+3d3+Yz5kNOPOfe91+6G80Nkk=' 'sha256-1tLdrkyIfcEt7Q0qpEYhpEW0c5z3fLpME3e4PMw15+0=' 'sha256-1/nWqaQhmVHk6o7875ZZjw+8bP+1rjdl79yRaKJUuN8=' 'sha256-ujm7C52dnJy0OQq/r9DFS/Q5MM/bCQkk/GQ5xQba8Rg=' 'sha256-8lt+BAU+CXi6jafHhudNwtvjDvnvuDHUTCf87JwoEco=' 'sha256-t3HtaF9VH9NXWu3GYepGM52x6jnKHAtVGI1XNjqa1cQ=' 'sha256-WhRA98vUO0RBkKpJ6wDhbV1WQw8eaSm5wpmKoczViqc=' 'sha256-SY9HzXG9lrpqHyTPUGKR8PT+e6+Lv6vjGdTHzDDiv1o=' 'sha256-Z+co99MnLRFOfKWN0XamcN2v7lPIOhqQX7A6FVv8tf0=' 'sha256-4ewPd6bBbZXX73P/Wf8KAEjRcG8GUOUZUjAWdr0BKm0=' 'sha256-1M2rV95CTr8cyTHnYiCNEjw0MzZgHbrFMdzOVuZ0ZNQ=' 'sha256-0ujvWmTgImc3CD58lggWQeG8FbR2/n+WB/8VdDrjsJU=' 'sha256-oSuioCCjSoSAwZKM90C63QzmHnjTNWiWkH5Lc+sy+TQ=' 'sha256-+R6N1rFXfnUBSaybmyI/kc7v9JSqcj6sWMzv955ssfU=' 'sha256-qjyl97tlrCLHgxrOIthSA104bAoq/72TXflltiix6KQ=' 'sha256-9u85PK4O406N5x33d4Qzs+oUSEemv/2Zr2QCg1rAwlc=' 'sha256-hMbDctK1Kt+FjLFbpxUv5XJuukiJFWS6I8gzzYqjRFg=' 'sha256-cwPror8N/Ds4hiaerviPOQ1rJd1zjNrEPnNZvr5x7Z8=' 'sha256-KVC7R4bNZj5H6D8qUtbw8Nf1lqety9ZN2eBXatYdWwA=' 'sha256-L2K7TlAHB+eDCAFQKyQ2+WUxTCmHnG2jU0SdecoEUe8=' 'sha256-oatjmi0BRND4rzYvUJSQgprPZVLOVKG9Lvz6AA/BeMg=' 'sha256-D5WhvlYTaV3FIQz33A1twG4MQBsi6/oyV+mBs8PDlLc=' 'sha256-7TQfwd5alGGszJgFCUwOvO9Ioz9fGdDyQFEvgCYUd7g=' 'sha256-Y2lntBs/gxsfiowP3QC97jTOTGj+pSUuFkidWIEuUFU=' 'sha256-DFh2OyHssod2zPV+xrBLQBSKmX0XPsouI8VT092l5bk=' 'sha256-KVkGyTZgww8ICR4+lZn77zR3aLfs5WgwYL0HUx77dJw=' 'sha256-o3rEfVLDlY7PMqc6KG8qYryJ1Cci3++utKB1ITFI9Og=' 'sha256-FmuVD4TwWCe9iExgJb3Vfo83GUWjVMVUTSz0FSGQPDs=' 'sha256-HGioLf2/I+w0Om0AaJOKOYytbimwaMSTkja2F0czLyQ=' 'sha256-XEdo9ldgwhHS3UMGf0NbduikfCVZONaNo20pHTA/KuQ=' 'sha256-5freOO9ljfCSREb6hA8qoY17400MfZoFIWtTVSnuGXs=' 'sha256-MxNJuUx0n2khZCAnPIpmUtQkatrF+I3knzAXiHsW2a0=' 'sha256-H0ZnJtZn+YLeMyNc2ehaAaCW+yFfCMKxtm/bM+x58M4=' 'sha256-oYb6PkkAXYbP7Ep58C2uWvYyCZVGoa75FQXHPjgkDWM=' 'sha256-Up+8l/rnV10u+IpP2mZqu7cmV1fInvCRL3OjNok6Rmg=' 'sha256-znu4Nz66Lno92yVnSU2l4cUcajTbBnpUg2dt4/FASmI=' 'sha256-oP2jS/IsbgIO8jpLrVTq5TghkB7Y56Nrk0qu/LNC1Gc='; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com data:; "
         "img-src 'self' data: blob:; connect-src 'self'; "
         "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'")
+_RATE = {}                    # ip -> 近 60 秒的請求時間
+_RATE_LIMIT = 300             # 每個 IP 每分鐘最多 300 次 /api 請求（網頁一次載入約 20 次）
 _ERR_ALERT = {}               # path -> 上次告警時間（15 分鐘內同一路徑只通知一次）
+
+
+def _client_ip():
+    # ★ 2026-10-15 資安稽核 M2：改用可信的最右段（非用戶端可偽造的最左段）當頻率限制鍵。
+    xff = request.headers.get("X-Forwarded-For", "")
+    return (request.headers.get("CF-Connecting-IP")
+            or (xff.split(",")[-1].strip() if xff else "")
+            or request.remote_addr or "?")
+
+
+@app.before_request
+def _rate_guard():
+    if not request.path.startswith("/api/"):
+        return None
+    now = _time.time()
+    ip = _client_ip()
+    q = _RATE.get(ip)
+    if q is None:
+        if len(_RATE) > 5000:
+            _RATE.clear()
+        q = _RATE[ip] = _deque()
+    while q and now - q[0] > 60:
+        q.popleft()
+    if len(q) >= _RATE_LIMIT:
+        r = jsonify({"error": "請求過於頻繁，請稍後再試"})
+        r.status_code = 429
+        r.headers["Retry-After"] = "30"
+        return r
+    q.append(now)
+    return None
 
 
 @app.after_request
@@ -788,7 +812,7 @@ def _security_headers(resp):
         h["Cache-Control"] = "no-store"          # 帶登入狀態的回應不讓瀏覽器或中間代理快取
         h.pop("Server", None)
     if "text/html" in (resp.content_type or ""):
-        h.setdefault("Content-Security-Policy", _CSP.replace("{nonce}", getattr(g, "csp_nonce", "")))
+        h.setdefault("Content-Security-Policy", _CSP)
         # 應用殼（dashboard.html）每次都重新驗證，避免瀏覽器用 12 小時舊快取、部署後看不到新版
         h["Cache-Control"] = "no-cache"
     return resp
@@ -884,7 +908,6 @@ def api_admin_shadow():
 
 
 @app.route("/api/admin/shadow/export.csv")
-@members.owner_required
 @admin_auth.admin_required
 def api_admin_export():
     try:
