@@ -68,11 +68,25 @@ def test_private_api_fails_closed_when_login_is_unconfigured(monkeypatch):
         app_module.app.config["TESTING"] = was_testing
 
 
-def test_index_script_csp_uses_nonce_without_unsafe_inline(monkeypatch):
+def test_index_script_csp_uses_nonce_and_scopes_inline_handlers():
+    was_testing = app_module.app.config.get("TESTING", False)
     app_module.app.config["TESTING"] = True
-    response = app_module.app.test_client().get("/")
+    try:
+        response = app_module.app.test_client().get("/")
+    finally:
+        app_module.app.config["TESTING"] = was_testing
     csp = response.headers["Content-Security-Policy"]
-    script_policy = next(part for part in csp.split(";") if part.strip().startswith("script-src"))
+    script_policy = next(part for part in csp.split(";") if part.strip().startswith("script-src "))
+    attr_policy = next(part for part in csp.split(";") if part.strip().startswith("script-src-attr"))
     assert "'unsafe-inline'" not in script_policy
     assert "'nonce-" in script_policy
+    assert "'unsafe-inline'" in attr_policy
     assert b'<script nonce="' in response.data
+
+
+def test_chartjs_cdn_resource_has_subresource_integrity():
+    response = app_module.app.test_client().get("/")
+    html = response.get_data(as_text=True)
+    assert 'chart.umd.js" integrity="sha512-' in html
+    assert 'crossorigin="anonymous"' in html
+    assert 'referrerpolicy="no-referrer"' in html
