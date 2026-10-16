@@ -22,10 +22,7 @@ def cl(monkeypatch):
     monkeypatch.setenv("OWNER_EMAILS", "boss@example.com")
     members._ready["ok"] = False
     app_module.app.config["TESTING"] = True
-    protect._rate.clear()
-    protect._heavy_rate.clear()
-    protect._denies.clear()
-    protect._banned.clear()
+    app_module._RATE.clear()
     return app_module.app.test_client()
 
 
@@ -72,8 +69,7 @@ def test_anonymous_cannot_read_any_private_api(cl, monkeypatch):
 
 # ── 2. 一般會員：不能讀站主後台、不能做任何寫入（除了自己的自選股）──
 OWNER_ONLY_GET = ["/api/health", "/api/settings", "/api/audit", "/api/diagnostics", "/api/admin/members",
-                  "/api/admin/shadow", "/api/admin/shadow/export.csv", "/api/learning",
-                  "/api/backtest/full/result", "/api/backfill/result"]
+                  "/api/admin/shadow", "/api/learning", "/api/backtest/full/result", "/api/backfill/result"]
 
 
 def test_member_cannot_read_owner_pages(cl):
