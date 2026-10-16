@@ -137,3 +137,35 @@ def test_snapshot_down_streak_negative():
              "dates": [f"2026-09-{i + 1:02d}" for i in range(n)]}
     f = shadow.snapshot(daily)
     assert f["up_days"] == -(n - 1)                          # 連跌記為負
+
+
+def test_shadow_simulate_new_metrics():
+    """新增的每筆模擬欄位：r1/r20、mae_bars/mfe_bars、tp1_before_sl。"""
+    import shadow
+    row = {"entry": 100.0, "stop": 90.0, "direction": "buy", "bar_date": "2026-10-01",
+           "tp1": 120.0, "tp2": 140.0, "tp3": 160.0}
+    # 進場 100（隔日開盤），之後走高到 125（第3根摸到 tp1=120）
+    bars = [{"bar_date": "2026-10-01", "open": 99, "high": 101, "low": 98, "close": 100}]
+    seq = [(100, 108, 99, 105), (105, 118, 104, 115), (115, 126, 112, 124)]
+    for i, (o, h, l, c) in enumerate(seq, start=2):
+        bars.append({"bar_date": f"2026-10-{i:02d}", "open": o, "high": h, "low": l, "close": c})
+    sim = shadow._simulate(row, bars, expire_days=15)
+    assert sim["result"] == "tp1"
+    # risk=10（100-90）；r1=隔日收盤105 → (105-100)/10 = +0.5R
+    assert sim["r1"] == 0.5
+    assert sim["mfe_bars"] is not None and sim["mae_bars"] is not None
+    assert sim["tp1_before_sl"] == 1          # 先到 tp1、沒碰停損
+
+
+def test_shadow_snapshot_new_features():
+    """擴充搜集的特徵（純由日K算）：52週位置、均線多頭排列、K棒實體、量能 z。"""
+    import shadow
+    n = 260
+    closes = [100 + i * 0.3 for i in range(n)]          # 穩定上升 → 均線完全多頭、接近高點
+    daily = {"closes": closes, "highs": [c + 1 for c in closes], "lows": [c - 1 for c in closes],
+             "opens": [c - 0.5 for c in closes], "volumes": [1000 + (i % 7) * 10 for i in range(n)],
+             "dates": [f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(n)], "change_pct": 0.3}
+    f = shadow.snapshot(daily)
+    assert f.get("ma_stack") == 3                        # 5>10>20>60 全成立
+    assert f.get("pos52") is not None and f["pos52"] > 90
+    assert "body_pct" in f and "maxdd20" in f and "turnover_m" in f

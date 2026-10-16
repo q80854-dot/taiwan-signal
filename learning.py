@@ -73,6 +73,24 @@ def _stats(rows):
         res = r.get("result")
         if res:
             exits[res] = exits.get(res, 0) + 1
+    # ── 2026-10-16 更詳細的績效指標（皆由已結算的 R 計算）──
+    wins_r = [r["r_multiple"] for r in rows if r.get("result") in WIN and r.get("r_multiple") is not None]
+    loss_r = [r["r_multiple"] for r in rows if r.get("result") == "sl" and r.get("r_multiple") is not None]
+    gross_win = sum(x for x in rs if x > 0)
+    gross_loss = -sum(x for x in rs if x < 0)
+    avg_win = sum(wins_r) / len(wins_r) if wins_r else None
+    avg_loss = sum(loss_r) / len(loss_r) if loss_r else None
+    profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 1e-9 else (None if gross_win == 0 else 99.9)
+    payoff = round(abs(avg_win / avg_loss), 2) if (avg_win is not None and avg_loss not in (None, 0)) else None
+    sharpe = round(m / sd, 2) if sd > 0 else None        # 每筆 R 的夏普式比值（期望值÷波動）
+    # 最長連敗（依日期序，停損或 R<0 視為敗）
+    mcl = cur = 0
+    for r in rows:
+        rv = r.get("r_multiple")
+        loss_flag = r.get("result") == "sl" or (rv is not None and rv < 0)
+        cur = cur + 1 if loss_flag else 0
+        mcl = max(mcl, cur)
+    tbs = [r["tp1_before_sl"] for r in rows if r.get("tp1_before_sl") is not None]
     return {"n": n, "win": w, "loss": l, "expired": e,
             "win_rate": round(w / n * 100, 1), "stop_rate": round(l / n * 100, 1),
             "avg_r": round(m, 3) if rs else None, "t_vs0": t,
@@ -80,7 +98,14 @@ def _stats(rows):
             "mfe": round(sum(mf) / len(mf), 2) if mf else None,
             "mae": round(sum(ma) / len(ma), 2) if ma else None,
             "avg_bars_held": round(sum(bh) / len(bh), 1) if bh else None,
-            "exits": exits}
+            "exits": exits,
+            "profit_factor": profit_factor, "payoff": payoff, "sharpe": sharpe,
+            "avg_win_r": round(avg_win, 2) if avg_win is not None else None,
+            "avg_loss_r": round(avg_loss, 2) if avg_loss is not None else None,
+            "best_r": round(max(rs), 2) if rs else None, "worst_r": round(min(rs), 2) if rs else None,
+            "total_r": round(sum(rs), 1) if rs else None,
+            "max_consec_loss": mcl,
+            "tp1_before_sl_rate": round(sum(tbs) / len(tbs) * 100, 1) if tbs else None}
 
 
 def _z(w1, n1, w2, n2):
@@ -224,6 +249,13 @@ def _dims():
         ("站上20日線天數", lambda r: _band(_f(r, "above20_days"), [1, 5, 20], ["跌破", "1~4", "5~19", "20+"])),
         ("大盤型態", lambda r: _f(r, "regime")),
         ("近期負面消息", lambda r: {0: "無", 1: "有"}.get(_f(r, "news_neg"))),
+        # ── 2026-10-16 新增維度（善用本次擴充搜集的特徵）──
+        ("52週區間位置", lambda r: _band(_f(r, "pos52"), [25, 50, 75, 90], ["底部<25%", "25~50%", "50~75%", "75~90%", "高檔90%+"])),
+        ("均線多頭排列", lambda r: {0: "全空", 1: "弱", 2: "中", 3: "完全多頭"}.get(_f(r, "ma_stack"))),
+        ("近20日最大回檔", lambda r: _band(_f(r, "maxdd20"), [-15, -10, -5], ["深<-15%", "-15~-10%", "-10~-5%", "淺>-5%"])),
+        ("年化波動(60日)", lambda r: _band(_f(r, "vol60_ann"), [25, 40, 60], ["低<25%", "25~40%", "40~60%", "高60%+"])),
+        ("今日量能 z 分數", lambda r: _band(_f(r, "vol_z20"), [0, 1, 2], ["低於均量", "0~1", "1~2", "爆量2σ+"])),
+        ("今日 K 棒實體", lambda r: _band(_f(r, "body_pct"), [25, 50, 75], ["十字<25%", "25~50%", "50~75%", "長實體75%+"])),
         ("月份", lambda r: f"{int(r['f']['month'])}月" if _f(r, "month") is not None else None),
     ]
 
@@ -267,6 +299,70 @@ def _rules(rej_closed, cand_closed):
     return out
 
 
+def _max_dd(path):
+    """累積 R 路徑的最大回撤（≤0，以 R 為單位）。"""
+    peak = cum = dd = 0.0
+    for r in path:
+        cum += r; peak = max(peak, cum); dd = min(dd, cum - peak)
+    return dd
+
+
+def _mc_equity(rows, n_sims=2000, seed=BOOT_SEED):
+    """大數據蒙地卡羅：把已結算的每筆淨 R 當母體，重抽 N 次組成未來同筆數的權益曲線，
+    得到『總 R、獲利機率、最大回撤、最長連敗』的分布——比單一歷史曲線更能看清策略的運氣區間與風險。"""
+    rs = _rl([r for r in rows if r.get("result")])
+    n = len(rs)
+    if n < MIN_N:
+        return {"ready": False, "n": n, "need": MIN_N}
+    rng = random.Random(seed)
+    finals, dds, streaks = [], [], []
+    for _ in range(n_sims):
+        path = [rs[rng.randrange(n)] for _ in range(n)]
+        finals.append(sum(path)); dds.append(_max_dd(path))
+        s = c = 0
+        for r in path:
+            c = c + 1 if r < 0 else 0
+            s = max(s, c)
+        streaks.append(s)
+    finals.sort(); dds.sort(); streaks.sort()
+    q = lambda a, p: a[min(len(a) - 1, int(p * len(a)))]
+    return {"ready": True, "n": n, "n_sims": n_sims,
+            "per_trade_r": round(sum(rs) / n, 3),
+            "total_r_med": round(q(finals, .5), 1), "total_r_lo": round(q(finals, .05), 1),
+            "total_r_hi": round(q(finals, .95), 1),
+            "prob_profit": round(sum(1 for x in finals if x > 0) / len(finals) * 100, 1),
+            "maxdd_med": round(q(dds, .5), 1), "maxdd_worst5": round(q(dds, .05), 1),
+            "streak_med": q(streaks, .5), "streak_worst5": q(streaks, .95)}
+
+
+def _equity_curve(rows, cap=300):
+    """已結算候選依訊號日累積的淨 R 權益曲線（供前端畫圖）。"""
+    cl = [r for r in rows if r.get("status") == "closed" and r.get("r_multiple") is not None]
+    cl.sort(key=lambda r: (r["bar_date"], r.get("id", 0)))
+    cum, pts = 0.0, []
+    for r in cl:
+        cum += r["r_multiple"]; pts.append({"date": r["bar_date"], "cum_r": round(cum, 2)})
+    if len(pts) > cap:
+        step = len(pts) // cap + 1
+        pts = [p for i, p in enumerate(pts) if i % step == 0 or i == len(pts) - 1]
+    return pts
+
+
+def _monthly(rows):
+    """逐月績效（已結算）：筆數、平均 R、勝率、累積 R。"""
+    by = {}
+    for r in rows:
+        if r.get("r_multiple") is None:
+            continue
+        by.setdefault(r["bar_date"][:7], []).append(r)
+    out = []
+    for m in sorted(by):
+        st = _stats(by[m])
+        out.append({"month": m, "n": st["n"], "avg_r": st["avg_r"],
+                    "win_rate": st["win_rate"], "total_r": st["total_r"]})
+    return out
+
+
 def build_report():
     rows = _rows()
     cand = [r for r in rows if r["kind"] == "candidate"]
@@ -289,6 +385,7 @@ def build_report():
         "groups": {"候選（全部，含沒發出的）": _stats(cc), "實際發出": _stats(sent), "對照組（隨機做多）": _stats(kc),
                    "被規則擋下（假想）": _stats(rc)},
         "dimensions": [], "findings": [], "rules": _rules(rc, cc),
+        "montecarlo": _mc_equity(cc), "equity_curve": _equity_curve(cc), "monthly": _monthly(cc),
     }
     reliable = closed_days >= MIN_DAYS
     out["reliable"] = reliable

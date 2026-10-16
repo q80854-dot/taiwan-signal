@@ -104,6 +104,12 @@ def ensure_table():
         from state_store import store
         with store._conn() as conn:
             conn.executescript(_ddl())
+        # 2026-10-16：新增更細的每筆模擬欄位（舊表以 ALTER TABLE 遷移，PG／SQLite 皆防呆）
+        for col in ("r1", "r20", "mae_bars", "mfe_bars", "tp1_before_sl"):
+            try:
+                store._migrate_add_column("shadow_signals", col, "REAL" if col in ("r1", "r20") else "INTEGER")
+            except Exception as e:
+                logger.debug(f"shadow migrate {col}: {e}")
         _ready = True
 
 
@@ -256,6 +262,47 @@ def snapshot(daily, ind=None, mtf=None, mkt=None, atr_val=None):
             if c[i] >= ma20: ab += 1
             else: break
         f["above20_days"] = ab
+    # ── 2026-10-16 擴充搜集（全部純由日K計算、無外部相依；只記錄、不影響訊號分數）──
+    if n >= 2:
+        f["ret1"] = _pct(px, c[-2])                              # 當日報酬
+    if n > 120:
+        f["ret120"] = _pct(px, c[-121])                         # 近半年動能
+    if n >= 10:
+        f["dist_ma10"] = _pct(px, sum(c[-10:]) / 10)
+    if n >= 120:
+        f["dist_ma120"] = _pct(px, sum(c[-120:]) / 120)
+    if h and l and len(h) >= 250 and len(l) >= 250:
+        hi52, lo52 = max(h[-250:]), min(l[-250:])
+        if hi52 > lo52:
+            f["pos52"] = round((px - lo52) / (hi52 - lo52) * 100, 1)   # 52週區間位置：0=最低、100=最高
+    if h and l and o and (h[-1] - l[-1]) > 0:                    # K 棒解剖（今日實體／上下影線占比）
+        rng = h[-1] - l[-1]
+        f["body_pct"] = round(abs(c[-1] - o[-1]) / rng * 100, 1)
+        f["uwick_pct"] = round((h[-1] - max(c[-1], o[-1])) / rng * 100, 1)
+        f["lwick_pct"] = round((min(c[-1], o[-1]) - l[-1]) / rng * 100, 1)
+    if n >= 60:                                                 # 均線多頭排列強度（5>10>20>60 各成立 +1，0~3）
+        ma5, ma10, ma20_, ma60 = (sum(c[-k:]) / k for k in (5, 10, 20, 60))
+        f["ma_stack"] = int(ma5 > ma10) + int(ma10 > ma20_) + int(ma20_ > ma60)
+    if n >= 21:                                                 # 近 20 日最大回檔(%)
+        seg = c[-21:]; peak = seg[0]; dd = 0.0
+        for p in seg:
+            peak = max(peak, p)
+            if peak:
+                dd = min(dd, (p / peak - 1) * 100)
+        f["maxdd20"] = round(dd, 2)
+    if n >= 61:                                                 # 60 日年化波動(%)
+        rr = [(c[i] / c[i - 1] - 1) for i in range(n - 60, n) if c[i - 1]]
+        if len(rr) > 10:
+            mu = sum(rr) / len(rr)
+            sd = (sum((x - mu) ** 2 for x in rr) / (len(rr) - 1)) ** 0.5
+            f["vol60_ann"] = round(sd * (252 ** 0.5) * 100, 1)
+    if len(v) >= 21:                                            # 今日量相對近 20 日的 z 分數
+        vv = v[-21:-1]; mu = sum(vv) / len(vv)
+        sd = (sum((x - mu) ** 2 for x in vv) / (len(vv) - 1)) ** 0.5 if len(vv) > 1 else 0
+        if sd:
+            f["vol_z20"] = round((v[-1] - mu) / sd, 2)
+    if v and px:
+        f["turnover_m"] = round(px * v[-1] / 1e6, 1)            # 成交值（百萬元，流動性）
     ix = _index_rets()
     if ix:
         for k in (5, 20, 60):
@@ -645,7 +692,8 @@ def _simulate(row, bars, expire_days):
     sgn = 1 if buy else -1
     after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
     out = {"result": None, "exit_price": None, "exit_date": None, "bars_held": len(after),
-           "mfe": None, "mae": None, "gap": None, "r5": None, "r10": None}
+           "mfe": None, "mae": None, "gap": None, "r1": None, "r5": None, "r10": None, "r20": None,
+           "mae_bars": None, "mfe_bars": None, "tp1_before_sl": None}
     if not after:
         return out
     # ★ 修正：2026-10-09——實際進場價改用「訊號日後第一根 K 棒的開盤價」，與實盤 scanner.
@@ -655,21 +703,32 @@ def _simulate(row, bars, expire_days):
     entry = after[0].get("open") or planned_entry
     out["entry_fill"] = entry
     out["gap"] = round((after[0]["open"] / planned_entry - 1) * 100, 2) if after[0].get("open") else None
+    out["r1"] = round(sgn * (after[0]["close"] - entry) / risk, 3)
     if len(after) >= 5:
         out["r5"] = round(sgn * (after[4]["close"] - entry) / risk, 3)
     if len(after) >= 10:
         out["r10"] = round(sgn * (after[9]["close"] - entry) / risk, 3)
+    if len(after) >= 20:
+        out["r20"] = round(sgn * (after[19]["close"] - entry) / risk, 3)
     mfe, mae = -9e9, 9e9
+    mfe_i = mae_i = tp1_i = sl_i = None    # 第一次觸及最佳/最差/到 tp1/到停損的「第幾根」K 棒（1 起算）
     for i, b in enumerate(after):
         hi, lo, op = b["high"], b["low"], b.get("open")
         fav = sgn * ((hi if buy else lo) - entry) / risk
         adv = sgn * ((lo if buy else hi) - entry) / risk
-        mfe, mae = max(mfe, fav), min(mae, adv)
+        if fav > mfe:
+            mfe, mfe_i = fav, i + 1
+        if adv < mae:
+            mae, mae_i = adv, i + 1
         sl_hit = lo <= stop if buy else hi >= stop
         t3 = row.get("tp3"); t2 = row.get("tp2"); t1 = row.get("tp1")
         h3 = bool(t3) and ((hi >= t3) if buy else (lo <= t3))
         h2 = bool(t2) and ((hi >= t2) if buy else (lo <= t2))
         h1 = bool(t1) and ((hi >= t1) if buy else (lo <= t1))
+        if h1 and tp1_i is None:
+            tp1_i = i + 1
+        if sl_hit and sl_i is None:
+            sl_i = i + 1
         if not (sl_hit or h1 or h2 or h3):
             continue
         if sl_hit:
@@ -682,6 +741,11 @@ def _simulate(row, bars, expire_days):
         out.update(result=res, exit_price=px, exit_date=b["bar_date"][:10], bars_held=i + 1)
         break
     out["mfe"], out["mae"] = round(mfe, 3), round(mae, 3)
+    out["mfe_bars"], out["mae_bars"] = mfe_i, mae_i
+    if tp1_i is not None:                      # 有沒有「先摸到第一停利、才碰停損」——正向代表進場點時機佳
+        out["tp1_before_sl"] = int(sl_i is None or tp1_i <= sl_i)
+    elif sl_i is not None:
+        out["tp1_before_sl"] = 0
     if out["result"] is None:
         try:
             age = (datetime.now(TPE).replace(tzinfo=None) - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days
@@ -772,8 +836,9 @@ def resolve_pending(max_rows=8000):
             sim = _simulate(r2, bars, expire_days)
             if not sim:
                 continue
-            new = {"gap_pct": sim["gap"], "r5": sim["r5"], "r10": sim["r10"], "mfe_r": sim["mfe"],
-                   "mae_r": sim["mae"], "bars_held": sim["bars_held"]}
+            new = {"gap_pct": sim["gap"], "r1": sim["r1"], "r5": sim["r5"], "r10": sim["r10"], "r20": sim["r20"],
+                   "mfe_r": sim["mfe"], "mae_r": sim["mae"], "bars_held": sim["bars_held"],
+                   "mae_bars": sim["mae_bars"], "mfe_bars": sim["mfe_bars"], "tp1_before_sl": sim["tp1_before_sl"]}
             newly_closed = row["status"] == "pending" and sim["result"]
             changed = newly_closed or any(not _same(row.get(k), v) for k, v in new.items())
             if not changed:
@@ -952,14 +1017,30 @@ def export_csv(kind=None, status=None):
         parsed.append(f)
         for k in f:
             keys[k] = keys.get(k, 0) + 1
-    fkeys = [k for k, _ in sorted(keys.items(), key=lambda z: -z[1])][:150]
+    fkeys = [k for k, _ in sorted(keys.items(), key=lambda z: -z[1])][:500]   # 2026-10-16：上限 150→500，幾乎匯出全部特徵
     base = ["id", "bar_date", "ticker", "code", "name", "kind", "direction", "score", "entry", "stop", "tp1", "tp2",
             "tp3", "size_cat", "sector", "sent", "status", "result", "exit_price", "exit_date", "r_multiple", "mfe_r",
-            "mae_r", "bars_held", "gap_pct", "r5", "r10", "created_at"]
+            "mae_r", "bars_held", "gap_pct", "r1", "r5", "r10", "r20", "mae_bars", "mfe_bars", "tp1_before_sl", "created_at"]
+    # 2026-10-16：加上離線分析常用的衍生欄位，省得每次自己算
+    WIN = ("tp1", "tp2", "tp3")
+    derived = ["win", "is_stop", "hold_days", "reject_reason"]
+    def _derive(x, f):
+        res = x.get("result")
+        win = 1 if res in WIN else (0 if res == "sl" else "")
+        is_stop = 1 if res == "sl" else 0
+        hold = ""
+        try:
+            if x.get("exit_date") and x.get("bar_date"):
+                hold = (datetime.strptime(x["exit_date"][:10], "%Y-%m-%d")
+                        - datetime.strptime(x["bar_date"][:10], "%Y-%m-%d")).days
+        except Exception:
+            hold = ""
+        rej = REASONS.get(f.get("reject"), f.get("reject")) if f.get("reject") else ""
+        return [win, is_stop, hold, rej]
     out = io.StringIO()
     out.write("﻿")
     w = csv.writer(out)
-    w.writerow(base + ["f_" + k for k in fkeys])
+    w.writerow(base + derived + ["f_" + k for k in fkeys])
     for x, f in zip(rows, parsed):
-        w.writerow([x.get(k) for k in base] + [f.get(k) for k in fkeys])
+        w.writerow([x.get(k) for k in base] + _derive(x, f) + [f.get(k) for k in fkeys])
     return out.getvalue(), len(rows)
