@@ -14,7 +14,6 @@ def cl(monkeypatch):
     monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "secret-for-test")
     members._ready["ok"] = False
     app_module.app.config["TESTING"] = True
-    app_module._RATE.clear()
     import stock_universe as su
     uni = [{"code": "2330", "name": "台積電", "market": "TSE", "close": 1000.0, "change_pct": 1.0, "volume_lots": 5000, "sector": "半導體業"},
            {"code": "6488", "name": "環球晶", "market": "OTC", "close": 500.0, "change_pct": -2.0, "volume_lots": 800, "sector": "半導體業"}]
