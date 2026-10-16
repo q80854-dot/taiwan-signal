@@ -368,7 +368,7 @@ def _forbid():
 def _login_bypass_allowed() -> bool:
     """只允許測試或明確的開發環境略過登入牆，正式環境不能由 REQUIRE_LOGIN=0 降級。"""
     env = os.environ.get("APP_ENV", "").strip().lower()
-    return bool(current_app.testing or (env in ("development", "test") and os.environ.get("REQUIRE_LOGIN", "1").strip() == "0"))
+    return bool((current_app.testing and not enabled()) or (env in ("development", "test") and os.environ.get("REQUIRE_LOGIN", "1").strip() == "0"))
 
 
 def gate():
