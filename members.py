@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import requests
-from flask import Blueprint, jsonify, redirect, request
+from flask import Blueprint, current_app, jsonify, redirect, request
 
 logger = logging.getLogger(__name__)
 bp = Blueprint("members", __name__)
@@ -263,8 +263,10 @@ _AUTH_RATE: dict = {}
 
 
 def _ip() -> str:
-    return (request.headers.get("CF-Connecting-IP") or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-            or request.remote_addr or "?")
+    # Match protect.py/admin_auth.py: use the rightmost proxy-added hop, not the client-controlled leftmost XFF value.
+    xff = request.headers.get("X-Forwarded-For", "")
+    forwarded = xff.split(",")[-1].strip() if xff else ""
+    return request.headers.get("CF-Connecting-IP") or forwarded or request.remote_addr or "?"
 
 
 def _ip_hash() -> str:
@@ -277,8 +279,16 @@ def auth_rate_ok(limit: int = 30, window: int = 600) -> bool:
     now = time.time()
     k = _ip()
     q = [t for t in _AUTH_RATE.get(k, []) if now - t < window]
-    if len(_AUTH_RATE) > 5000:
-        _AUTH_RATE.clear()
+    if k not in _AUTH_RATE and len(_AUTH_RATE) >= 5000:
+        # Remove expired keys without resetting live limits. Refuse new keys if still full.
+        for key, times in list(_AUTH_RATE.items()):
+            live = [t for t in times if now - t < window]
+            if live:
+                _AUTH_RATE[key] = live
+            else:
+                _AUTH_RATE.pop(key, None)
+        if len(_AUTH_RATE) >= 5000:
+            return False
     if len(q) >= limit:
         _AUTH_RATE[k] = q
         return False
@@ -355,28 +365,48 @@ def _forbid():
     return r
 
 
+def _login_bypass_allowed() -> bool:
+    """只允許測試或明確的開發環境略過登入牆，正式環境不能由 REQUIRE_LOGIN=0 降級。"""
+    env = os.environ.get("APP_ENV", "").strip().lower()
+    return bool(current_app.testing or (env in ("development", "test") and os.environ.get("REQUIRE_LOGIN", "1").strip() == "0"))
+
+
 def gate():
-    """before_request：登入功能已啟用時，/api/* 需 Google 登入（或後台管理員已登入）才能存取。
-    登入功能未設定時完全不鎖；環境變數 REQUIRE_LOGIN=0 可暫時關閉登入牆。"""
+    """登入牆：正式環境的私有 API 一律需 Google 或已登入的管理員憑證；設定缺漏時 fail closed。"""
     try:
-        if not enabled():
-            return None
         p = request.path
-        # CSRF 第二道防線：會改變資料的請求若帶有 Origin，必須與本站相同（SameSite=Lax 之外再擋一層）
+        # CSRF 第二道防線：會改變資料的請求若帶有 Origin，必須與本站相同。
         if request.method not in ("GET", "HEAD", "OPTIONS") and (p.startswith("/api/") or p.startswith("/auth/")):
             og = request.headers.get("Origin")
             if og and urllib.parse.urlparse(og).netloc != request.host:
                 return _forbid()
-        if os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
-            return None
         if not p.startswith("/api/") or p.startswith(_OPEN_PATHS):
             return None
+        if _login_bypass_allowed():
+            return None
+        if os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
+            r = jsonify({"error": "正式環境不可關閉登入保護", "login_required": True})
+            r.status_code = 503
+            r.headers["Cache-Control"] = "no-store"
+            return r
+
+        if not enabled():
+            try:
+                import admin_auth
+                if admin_auth.REQUIRED and admin_auth.authed():
+                    return None
+            except Exception:
+                pass
+            r = jsonify({"error": "登入服務尚未設定，私有 API 已鎖定", "login_required": True})
+            r.status_code = 503
+            r.headers["Cache-Control"] = "no-store"
+            return r
+
         m = current_member()
         if m:
             if is_owner(m):
                 return None
-            # 一般會員（任何 Google 帳號都能註冊）：只能讀資料與管理自己的自選股，
-            # 不能觸發掃描／回測／回填、不能改共用設定或看後台資料。
+            # 一般會員只能讀資料與管理自己的自選股。
             if request.method not in ("GET", "HEAD", "OPTIONS"):
                 if not (p.startswith("/api/my/") or p == "/api/me"):
                     return _forbid()
@@ -385,7 +415,7 @@ def gate():
             return None
         try:
             import admin_auth
-            if admin_auth.REQUIRED and admin_auth.authed():   # 後台密碼有設定、且已登入後台才放行
+            if admin_auth.REQUIRED and admin_auth.authed():
                 return None
         except Exception:
             pass
@@ -395,14 +425,19 @@ def gate():
         return r
     except Exception as e:
         logger.warning(f"gate: {e}")
-        return None
+        r = jsonify({"error": "登入保護暫時無法驗證", "login_required": True})
+        r.status_code = 503
+        r.headers["Cache-Control"] = "no-store"
+        return r
 
 
 def viewer_is_owner() -> bool:
-    """目前這個請求是不是站主（登入功能沒開＝單人使用，視為站主）。"""
+    """只有已驗證站主或隔離開發／測試環境可視為站主；正式環境設定缺漏時拒絕授權。"""
     try:
-        if not enabled() or os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
+        if _login_bypass_allowed():
             return True
+        if not enabled() or os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
+            return False
         return is_owner(current_member())
     except Exception:
         return False
