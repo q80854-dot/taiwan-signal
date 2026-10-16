@@ -101,6 +101,48 @@ def job_morning_brief():
         send_morning_brief(fetch_market_overview())
     except Exception as e: logger.error(f"job_morning_brief: {e}")
 
+# ★ 新增：2026-10-16——使用者要求每日盤前（08:45 前發佈）／盤後（21:30 後發佈）
+# 的詳細市場報告，含美股、原油、匯率、利率等國際數據＋台股盤後，發佈在網頁上。
+# 盤前報告排 08:35（早於使用者要求的 08:45），盤後排 21:35（晚於 21:30），國定
+# 假日照常產生（國際市場與美股在台股休市日仍有行情，報告仍有價值）。報告內容與
+# 發佈邏輯見 reports.py。
+def job_premarket_report():
+    logger.info("⏰ 盤前市場報告")
+    try:
+        import reports
+        reports.build_report("premarket")
+    except Exception as e:
+        logger.error(f"job_premarket_report: {e}", exc_info=True)
+
+def job_postmarket_report():
+    logger.info("⏰ 盤後市場報告")
+    try:
+        import reports
+        reports.build_report("postmarket")
+    except Exception as e:
+        logger.error(f"job_postmarket_report: {e}", exc_info=True)
+
+def job_report_boot_catchup():
+    """部署／重啟後的補發：若今天某份報告的排程時間已過、但 DB 裡還沒有今天這份
+    報告，就補產生一次（以日期為 key，重啟多次也只會產生一次，不會重複花 AI 成本）。"""
+    try:
+        import reports, json as _j
+        from state_store import store
+        now = datetime.now(TZ_TAIPEI)
+        today = now.strftime("%Y-%m-%d")
+        mins = now.hour * 60 + now.minute
+        plan = [("premarket", 8 * 60 + 35), ("postmarket", 21 * 60 + 35)]
+        for kind, sched in plan:
+            if mins < sched:
+                continue
+            raw = store.get_meta(f"report_{kind}_{today}", "")
+            if raw:
+                continue
+            logger.info(f"⏰ 報告補發：{kind}（{today} 排程時間已過但尚無報告）")
+            reports.build_report(kind)
+    except Exception as e:
+        logger.error(f"job_report_boot_catchup: {e}", exc_info=True)
+
 def job_premarket_cache_refresh():
     # ★ 新增：2026-09-24——見 data_fetcher.premarket_cache_refresh() 說明。
     # 排在 08:00（早於 09:00 開盤、晚於前一天收盤資料在 yfinance 定案的時間），
@@ -455,6 +497,9 @@ def setup_scheduler():
     scheduler.add_job(job_premarket_cache_refresh, CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="premarket_cache_refresh", replace_existing=True)
     scheduler.add_job(job_premarket_scan,   CronTrigger(hour=8,  minute=20, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="premarket_scan",   replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_morning_brief,    CronTrigger(hour=8,  minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="morning_brief",    replace_existing=True)
+    # ★ 新增：2026-10-16——每日盤前報告 08:35（早於 08:45）、盤後報告 21:35（晚於 21:30），見 job_*_report()
+    scheduler.add_job(job_premarket_report,  CronTrigger(hour=8,  minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="premarket_report",  replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=1800)
+    scheduler.add_job(job_postmarket_report, CronTrigger(hour=21, minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="postmarket_report", replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=1800)
     # ★ 新增：2026-09-16——盤中安全網，查已追蹤訊號是否到價，見 job_intraday_check() 說明。
     # ★ 調整：2026-09-19——使用者反映盤中只查4次（10/11/12/13點整）太少、涵蓋不到
     # 9:00-10:00開盤這一小時、也涵蓋不到13:00-13:30收盤前這半小時，而且兩次檢查
@@ -472,6 +517,7 @@ def setup_scheduler():
     scheduler.add_job(job_finmind_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="finmind_warm_boot", replace_existing=True)
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
+    scheduler.add_job(job_report_boot_catchup, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=120), id="report_boot_catchup", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "interval", minutes=20, id="warm_instrument", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     # 2026-10-08：各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）。
@@ -1567,6 +1613,39 @@ def api_public_pulse():
                         "session": sess.get("session"), "session_zh": sess.get("session_zh")})
     except Exception:
         return jsonify({"ok": False})
+
+
+# ★ 新增：2026-10-16——每日盤前／盤後市場報告（登入後可看，見 reports.py）。
+@app.route("/api/report/<kind>")
+@members.login_required
+def api_report(kind):
+    if kind not in ("premarket", "postmarket"):
+        return jsonify({"error": "unknown report"}), 404
+    try:
+        import reports
+        rep = reports.get_report(kind)
+        if not rep:
+            return jsonify({"ok": False, "report": None,
+                            "msg": "報告尚未產生（盤前約每日 08:35、盤後約 21:35 自動產生）"})
+        return jsonify({"ok": True, "report": rep})
+    except Exception as e:
+        logger.error(f"api_report({kind}): {e}", exc_info=True)
+        return jsonify({"ok": False, "error": "報告載入失敗"}), 500
+
+
+@app.route("/api/report/<kind>/rebuild", methods=["POST"])
+@members.owner_required
+def api_report_rebuild(kind):
+    """站主專用：立即重建報告（不必等排程），方便驗證與補發。"""
+    if kind not in ("premarket", "postmarket"):
+        return jsonify({"error": "unknown report"}), 404
+    try:
+        import reports
+        rep = reports.build_report(kind)
+        return jsonify({"ok": True, "report": rep})
+    except Exception as e:
+        logger.error(f"api_report_rebuild({kind}): {e}", exc_info=True)
+        return jsonify({"ok": False, "error": "報告重建失敗"}), 500
 
 
 @app.route("/api/intraday/overview")
