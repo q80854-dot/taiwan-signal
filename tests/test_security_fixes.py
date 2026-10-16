@@ -77,7 +77,9 @@ def test_index_script_csp_uses_nonce_and_scopes_inline_handlers():
     attr_policy = next(part for part in csp.split(";") if part.strip().startswith("script-src-attr"))
     assert "'unsafe-inline'" not in script_policy
     assert "'nonce-" in script_policy
-    assert "'unsafe-inline'" in attr_policy
+    assert "'unsafe-inline'" not in attr_policy
+    assert "'unsafe-hashes'" in attr_policy
+    assert attr_policy.count("'sha256-") == 136
     assert b'<script nonce="' in response.data
 
 
