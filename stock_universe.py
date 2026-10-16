@@ -248,12 +248,84 @@ TWSE_LIST_URL_WWW = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?r
 
 
 def _fetch_twse_list() -> List[Dict]:
-    """上市全市場日行情：先打 openapi；拿不到（逾時／非 200／空）就用 www 報表端點備援。"""
+    """上市全市場日行情：openapi STOCK_DAY_ALL → www 報表 → 『估值代號＋MIS 官方報價』三段備援。
+    （2026-10-16：線上實測 STOCK_DAY_ALL 從 Render 常逾時，但同端點的 BWIBBU_ALL 與證交所 MIS
+    都可達，所以最後一段用 BWIBBU_ALL 取上市代號、MIS 補價，確保上市市場不會整個消失。）"""
     stocks = _twse_list_openapi()
     if stocks:
         return stocks
     logger.warning("_fetch_twse_list: openapi 取不到上市日行情，改用 www.twse.com.tw 報表端點備援")
-    return _twse_list_from_report()
+    stocks = _twse_list_from_report()
+    if stocks:
+        return stocks
+    logger.warning("_fetch_twse_list: www 報表也取不到，改用『估值代號(BWIBBU_ALL)＋證交所 MIS 官方報價』建上市清單")
+    return _twse_list_from_mis()
+
+
+def _twse_codes_from_valuation() -> Dict[str, str]:
+    """上市代號→名稱，來源 BWIBBU_ALL（與估值面同端點，線上實測從 Render 可達）。
+    用於 STOCK_DAY_ALL／www 報表都失效時，仍能取得完整上市代號清單。"""
+    try:
+        r = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL",
+                         headers=HEADERS, timeout=(5, 12))
+        if r.status_code != 200:
+            logger.warning(f"_twse_codes_from_valuation: HTTP {r.status_code}")
+            return {}
+        out = {}
+        for row in r.json():
+            code = str(row.get("Code") or "").strip()
+            name = str(row.get("Name") or "").strip()
+            if not code or not _is_valid_code(code):
+                continue
+            if code in BLACKLIST_CODES:
+                continue
+            if name and any(kw in name for kw in BLACKLIST_KEYWORDS):
+                continue
+            out[code] = name or code
+        return out
+    except Exception as e:
+        logger.warning(f"_twse_codes_from_valuation: {e}")
+        return {}
+
+
+def _twse_list_from_mis() -> List[Dict]:
+    """最後備援：以 BWIBBU_ALL 取得上市代號，再用證交所 MIS 官方報價補價（盤中即時、盤後定案，
+    MIS 線上實測從 Render 可達）。讓上市在清單裡不消失，排行榜／個股查詢／法人板塊圖都能恢復。
+    價格取不到者略過（不臆測、不寫壞資料）。"""
+    codes = _twse_codes_from_valuation()
+    if not codes:
+        return []
+    try:
+        import realtime
+        quotes = realtime.fetch_mis([(c, "TSE") for c in codes])
+    except Exception as e:
+        logger.warning(f"_twse_list_from_mis: MIS 取價失敗 {e}")
+        return []
+    out = []
+    for code, name in codes.items():
+        q = quotes.get(code)
+        if not q:
+            continue
+        price = q.get("price") or q.get("prev_close")
+        try:
+            price = float(price) if price is not None else None
+        except Exception:
+            price = None
+        if not price or price <= 0:
+            continue
+        prev = q.get("prev_close")
+        traded = bool(q.get("price"))               # 今日有成交才算漲跌幅；只有昨收則留空
+        chg = round(price - prev, 4) if (prev and traded) else None
+        chg_pct = round((price / prev - 1) * 100, 2) if (prev and traded and prev > 0) else None
+        out.append({
+            "code": code, "ticker": f"{code}.TW", "name": name or code, "market": "TSE",
+            "close": price, "open": q.get("open"), "high": q.get("high"), "low": q.get("low"),
+            "volume_lots": round(float(q.get("volume_lots") or 0)),
+            "change": chg, "change_pct": chg_pct, "sector": "", "is_etf": _is_etf_code(code),
+            "size_cat": "", "scan_priority": 9, "quote_date": q.get("date"),
+        })
+    logger.info(f"上市清單（估值代號＋MIS 官方報價備援）：{len(out)} 檔")
+    return out
 
 
 def _twse_list_from_report() -> List[Dict]:
@@ -262,7 +334,7 @@ def _twse_list_from_report() -> List[Dict]:
     不顯示錯誤資料（寧可沒有也不要錯）。"""
     import re as _re
     try:
-        r = requests.get(TWSE_LIST_URL_WWW, headers=HEADERS, timeout=(5, 25))
+        r = requests.get(TWSE_LIST_URL_WWW, headers=HEADERS, timeout=(5, 12))
         if r.status_code != 200:
             logger.warning(f"_twse_list_from_report: HTTP {r.status_code}")
             return []
@@ -623,6 +695,23 @@ def _date_stale(raw, now=None) -> bool:
         return False
 
 
+def _market_coverage_bad(raw) -> bool:
+    """快取裡缺一整個市場（上市或上櫃）就視為壞掉、要重抓。
+    （2026-10-16 根因：STOCK_DAY_ALL 失效時曾把『只有上櫃』的半套清單寫進 DB，之後因日期判斷
+    不過期而一直沿用，上市整個消失。這裡偵測缺市場就強制重抓，但距上次抓取 <10 分鐘不重試，
+    避免上游全掛時每個請求都重抓。）"""
+    try:
+        stocks = raw.get("stocks") or []
+        if not stocks:
+            return True
+        mk = {s.get("market") for s in stocks}
+        if "TSE" in mk and "OTC" in mk:
+            return False
+        return time.time() - raw.get("fetched_at", 0) > 600
+    except Exception:
+        return False
+
+
 def refresh_if_date_stale() -> bool:
     """排程用：官方日行情日期過期就強制重抓。回傳是否有重抓。"""
     raw = _raw_mem_cache or _load_raw_from_db()
@@ -649,7 +738,7 @@ def _get_raw_universe(force_refresh=False) -> Dict:
 
     if not force_refresh and not os.path.exists(RAW_CACHE_PATH):
         _p = _load_raw_from_db()
-        if _p and time.time() - _p.get("fetched_at", 0) < CACHE_TTL and not _date_stale(_p):
+        if _p and time.time() - _p.get("fetched_at", 0) < CACHE_TTL and not _date_stale(_p) and not _market_coverage_bad(_p):
             try:
                 with open(RAW_CACHE_PATH, "w", encoding="utf-8") as f:
                     json.dump(_p, f, ensure_ascii=False)
@@ -665,12 +754,15 @@ def _get_raw_universe(force_refresh=False) -> Dict:
         else:
             with open(RAW_CACHE_PATH, "r", encoding="utf-8") as f:
                 _c = json.load(f)
-        if not _date_stale(_c):
+        if not _date_stale(_c) and not _market_coverage_bad(_c):
             if _c is not _raw_mem_cache:
                 logger.info("使用快取原始品種清單")
                 _raw_mem_cache, _raw_mem_cache_at = _c, time.time()
             return _c
-        logger.info("官方日行情的資料日期已過期，重新下載")
+        if _market_coverage_bad(_c):
+            logger.warning("快取缺一整個市場（上市或上櫃），強制重新下載")
+        else:
+            logger.info("官方日行情的資料日期已過期，重新下載")
 
     logger.info("下載全市場原始品種清單（含上市+上櫃，未過濾）...")
     tse  = _fetch_twse_list()
