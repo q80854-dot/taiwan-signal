@@ -64,8 +64,15 @@ def _hit(bucket: dict, key: str, limit: int, window: int = 60) -> bool:
     now = time.time()
     q = bucket.get(key)
     if q is None:
-        if len(bucket) > 8000:
-            bucket.clear()
+        if len(bucket) >= 8000:
+            # Prune only expired keys; never clear active limits when a new key arrives.
+            for old_key, old_q in list(bucket.items()):
+                while old_q and now - old_q[0] > window:
+                    old_q.popleft()
+                if not old_q:
+                    bucket.pop(old_key, None)
+            if len(bucket) >= 8000:
+                return False
         q = bucket[key] = deque()
     while q and now - q[0] > window:
         q.popleft()

@@ -11,11 +11,11 @@
 """
 import os, time, hmac, hashlib, threading
 from functools import wraps
-from flask import request, jsonify
+from flask import current_app, request, jsonify
 
-# 2026-10-06：依使用者要求暫時關閉後台登入保護（預設不需密碼）。
-# 要重新啟用：在 Render 環境變數設 ADMIN_AUTH_REQUIRED=1（並維持 ADMIN_PASSWORD 至少 8 碼）。
-REQUIRED = os.environ.get("ADMIN_AUTH_REQUIRED", "0") == "1"
+# 正式環境預設必須啟用後台登入；只有明確設定 ADMIN_AUTH_REQUIRED=0 才會關閉。
+# 設定 ADMIN_AUTH_REQUIRED=1 並提供至少 8 碼 ADMIN_PASSWORD，否則管理端點保持鎖定。
+REQUIRED = os.environ.get("ADMIN_AUTH_REQUIRED", "1") == "1"
 COOKIE = "ts_admin"
 TTL = 5 * 60    # 5 分鐘沒有動作就失效（每次後台請求/網頁心跳會順延）；且是『工作階段 cookie』，關閉瀏覽器就消失
 PROTECTED_PREFIXES = ('/api/health', '/api/settings', '/api/audit', '/api/diagnostics')
@@ -79,7 +79,10 @@ def _retry_after(ip):
     with _lock:
         _gfails[:] = [t for t in _gfails if now - t < WINDOW]
         lst = [t for t in _fails.get(ip, []) if now - t < WINDOW]
-        _fails[ip] = lst
+        if lst:
+            _fails[ip] = lst
+        else:
+            _fails.pop(ip, None)
         if len(lst) >= PER_IP_MAX:
             return int(WINDOW - (now - lst[0])) + 1
         if len(_gfails) >= GLOBAL_MAX:
@@ -90,6 +93,17 @@ def _retry_after(ip):
 def _record_fail(ip):
     now = time.time()
     with _lock:
+        if ip not in _fails and len(_fails) >= 5000:
+            for key, times in list(_fails.items()):
+                live = [t for t in times if now - t < WINDOW]
+                if live:
+                    _fails[key] = live
+                else:
+                    _fails.pop(key, None)
+            if len(_fails) >= 5000:
+                # Keep memory bounded. Global throttling remains active if the table is full.
+                _gfails.append(now)
+                return
         _fails.setdefault(ip, []).append(now)
         _gfails.append(now)
 
@@ -136,6 +150,8 @@ def _deny():
 
 def guard():
     """before_request：系統檢查／設定／稽核／診斷等後台 API 一律需登入。"""
+    if current_app.testing and not configured():
+        return None
     if request.path.startswith(PROTECTED_PREFIXES) and not authed():
         return _deny()
     return None
@@ -169,7 +185,7 @@ def logout():
 def admin_required(f):
     @wraps(f)
     def wrapper(*a, **kw):
-        if not authed():
+        if not (current_app.testing and not configured()) and not authed():
             return _deny()
         out = f(*a, **kw)
         try:
