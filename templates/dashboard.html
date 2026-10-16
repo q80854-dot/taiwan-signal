@@ -1769,11 +1769,17 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
         <a class="btn" href="/api/admin/shadow/export.csv?kind=rejected">只要被擋下</a>
         <a class="btn" href="/api/admin/shadow/export.csv?kind=control">只要對照</a>
         <a class="btn" href="/api/admin/shadow/export.csv?status=closed">只要已結算</a>
-        <div style="font-size:11px;color:var(--t3);width:100%">每筆含進出場、結果、R 值，以及當時的 60 多個特徵欄位（欄位名稱前綴 f_）。</div></div></div>
+        <div style="font-size:11px;color:var(--t3);width:100%">每筆含進出場、結果、多時點 R 值（r1/r5/r10/r20）、最大浮盈/回撤與其到達第幾根、是否先到停利、勝敗旗標、持有天數、被擋原因，以及當時的 80＋ 個特徵欄位（前綴 f_，上限已放寬到 500）。</div></div></div>
 
       <div class="sec-label"><div class="bar"></div><div class="tx">學習結果</div></div>
       <div id="lr-note"></div>
-      <div class="panel card"><div class="panel-body" id="lr-edge"></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>組別</th><th>已結算</th><th>勝率</th><th>停損率</th><th>逾期</th><th>平均 R</th><th>10 日後平均 R</th><th>平均最大浮盈 R</th><th>平均最大回撤 R</th><th>平均持有天數</th></tr></thead><tbody id="lr-groups"></tbody></table></div><div id="lr-exits" style="font-size:11px;color:var(--t3);padding:8px 14px"></div></div>
+      <div class="panel card"><div class="panel-body" id="lr-edge"></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>組別</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>獲利因子</th><th>盈虧比</th><th>夏普</th><th>最長連敗</th><th>平均最大浮盈 R</th><th>平均最大回撤 R</th><th>平均持有天數</th><th>累積 R</th></tr></thead><tbody id="lr-groups"></tbody></table></div><div id="lr-exits" style="font-size:11px;color:var(--t3);padding:8px 14px"></div></div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">大數據蒙地卡羅模擬</div></div>
+      <div class="panel card"><div class="panel-body"><div id="lr-mc"></div>
+        <div style="font-size:12px;color:var(--t2);margin:12px 0 6px">權益曲線（已結算候選，累積淨 R）</div>
+        <canvas id="lr-equity" height="150" style="width:100%;display:block"></canvas></div></div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">逐月績效</div></div>
+      <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>月份</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>累積 R</th></tr></thead><tbody id="lr-monthly"></tbody></table></div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">規則檢驗：被擋下的單後來怎麼了？</div></div>
       <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>被擋下的原因</th><th>方向</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>結論</th></tr></thead><tbody id="lr-rules"></tbody></table></div><div style="font-size:11px;color:var(--t3);padding:8px 14px">假想成交，已估列滑價、來回手續費＋證交稅與放空借券費（皆為估計值）；放空另有軋空與券源風險，實際結果可能更差。</div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">統計上站得住腳的發現</div></div>
@@ -2029,6 +2035,11 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-10-16（策略學習升級）</b></p>
+          <p><b>資料收集更廣</b><br>・每筆影子訊號新增 14 項由日K直接算的特徵：52週區間位置、均線多頭排列強度、K棒實體/上下影線、近20日最大回檔、60日年化波動、量能 z 分數、成交值、近半年動能、當日/5/10/120日均線距離等（只記錄、不影響訊號）。</p>
+          <p><b>大數據蒙地卡羅模擬</b><br>・策略學習新增蒙地卡羅模擬：以已結算的淨 R 為母體重抽 2,000 次，估出每筆期望值、獲利機率、總報酬 5~95% 區間、最大回撤與最長連敗的分布；並畫出累積淨 R 權益曲線、逐月績效表。</p>
+          <p><b>學習內容更詳細</b><br>・各群組新增獲利因子、盈虧比、夏普式比值、最長連敗、累積 R；新增 6 個分析維度（52週位置、均線排列、最大回檔、年化波動、量能 z、K棒實體）。每筆模擬多記錄 r1/r20、最大浮盈/回撤到達第幾根、是否先到停利。</p>
+          <p><b>匯出更詳細</b><br>・CSV 特徵上限 150→500，加上多時點 R、路徑指標、勝敗旗標、持有天數、被擋原因等衍生欄位。</p>
           <p><b>2026-10-16（下午）</b></p>
           <p><b>FinMind 深度分析盤中不再變空白</b><br>・修正根因：季報／月營收等慢變資料的快取鍵會隨「查詢起始日」每天漂移，導致昨晚抓到的資料今天找不到、盤中額度用完就整片空白（深度分析、財報體質體檢等）。改為把起始日對齊月初、拉長快取時效，盤中直接沿用最近一次正確資料。</p>
           <p><b>版型切換可一鍵還原</b><br>・手機／電腦版手動切換後，右下角固定顯示「↩ 回到自動版型」浮動鈕；就算在手機上誤切成電腦版（畫面變寬、原切換鈕被擠出畫面），也能一鍵清除、恢復照螢幕自動判斷。</p>
@@ -4547,6 +4558,40 @@ async function fetchLearning(){
     setHtml('lr-find','<div class="empty">載入失敗：'+esc2(e.message)+'</div>');
   }
 }
+function renderMonteCarlo(d){
+  const f=(v,u='')=>v===null||v===undefined?'—':v+u;
+  const mc=d.montecarlo||{},mcEl=document.getElementById('lr-mc');
+  if(mcEl){
+    if(!mc.ready){mcEl.innerHTML=`<div class="empty">已結算樣本 ${mc.n||0} 筆，需至少 ${mc.need||30} 筆才能跑蒙地卡羅模擬（系統每天累積中）</div>`;}
+    else{
+      const card=(lab,val,sub,col)=>`<div class="kpi" style="border:1px solid var(--line);border-radius:8px;padding:12px 14px"><div class="kpi-label">${lab}</div><div class="kpi-val" style="font-size:22px;color:${col||'var(--t1)'}">${val}</div><div class="kpi-sub">${sub||''}</div></div>`;
+      mcEl.innerHTML=`<div style="font-size:12px;color:var(--t2);margin-bottom:10px">以 ${mc.n} 筆已結算的淨 R 為母體、重抽 ${mc.n_sims} 次，模擬「未來同筆數」的結果分布（固定種子、可重現）：</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+        ${card('每筆期望值',f(mc.per_trade_r)+' R','單筆平均淨 R')}
+        ${card('獲利機率',mc.prob_profit+'%','模擬結束為正報酬的比例',mc.prob_profit>=50?'var(--up)':'var(--down)')}
+        ${card('總報酬（中位）',f(mc.total_r_med)+' R',`5~95%：${f(mc.total_r_lo)} ~ ${f(mc.total_r_hi)} R`)}
+        ${card('最大回撤（中位）',f(mc.maxdd_med)+' R',`最壞 5%：${f(mc.maxdd_worst5)} R`,'var(--down)')}
+        ${card('最長連敗（中位）',mc.streak_med+' 筆',`最壞 5%：${mc.streak_worst5} 筆`)}
+      </div>`;
+    }
+  }
+  drawEquity(d.equity_curve||[]);
+  const mo=d.monthly||[];
+  setHtml('lr-monthly',mo.length?mo.map(m=>`<tr><td>${safe(m.month)}</td><td>${m.n}</td><td>${f(m.win_rate,'%')}</td><td>${f(m.avg_r)}</td><td style="color:${(m.total_r||0)>=0?'var(--up)':'var(--down)'}">${f(m.total_r)}</td></tr>`).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--t3);padding:16px">尚無已結算資料</td></tr>');
+}
+function drawEquity(pts){
+  const c=document.getElementById('lr-equity');if(!c)return;
+  const dpr=Math.min(devicePixelRatio||1,2),W=c.clientWidth||600,H=150;
+  c.width=W*dpr;c.height=H*dpr;const g=c.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
+  if(!pts||pts.length<2){g.fillStyle=_cv('--t3');g.font='12px sans-serif';g.fillText('尚無足夠已結算資料',10,24);return;}
+  const ys=pts.map(p=>p.cum_r);let mn=Math.min(0,...ys),mx=Math.max(0,...ys);if(mx===mn)mx=mn+1;
+  const X=i=>i/(pts.length-1)*(W-8)+4,Y=v=>H-10-(v-mn)/(mx-mn)*(H-20);
+  g.strokeStyle=_cv('--line2');g.lineWidth=1;g.beginPath();g.moveTo(4,Y(0));g.lineTo(W-4,Y(0));g.stroke();
+  const col=ys[ys.length-1]>=0?_cv('--up'):_cv('--down');
+  g.beginPath();g.moveTo(X(0),Y(ys[0]));for(let i=1;i<pts.length;i++)g.lineTo(X(i),Y(ys[i]));
+  g.strokeStyle=col;g.lineWidth=2;g.lineJoin='round';g.stroke();
+  g.lineTo(X(pts.length-1),Y(0));g.lineTo(X(0),Y(0));g.closePath();g.globalAlpha=.12;g.fillStyle=col;g.fill();g.globalAlpha=1;
+}
 function adRender(d,o){
   const p=d.progress,f=(v,u='')=>v===null||v===undefined?'—':v+u;
   setEl('ad-stamp','資料更新 '+d.generated_at+'（台北）');
@@ -4564,7 +4609,8 @@ function adRender(d,o){
 
   setHtml('lr-note',d.note?`<div class="note-box" style="margin-bottom:10px">${d.note}</div>`:'');
   setHtml('lr-edge',`<div style="font-size:13.5px;line-height:1.8">${d.edge.text}</div>`);
-  setHtml('lr-groups',Object.entries(d.groups).map(([k,g])=>g.n?`<tr><td><b style="color:var(--t1)">${k}</b></td><td>${g.n}</td><td>${f(g.win_rate,'%')}</td><td>${f(g.stop_rate,'%')}</td><td>${g.expired}</td><td>${f(g.avg_r)}${g.t_vs0!==null&&g.t_vs0!==undefined?`<small style="color:var(--t3)"> (t=${g.t_vs0})</small>`:''}</td><td>${f(g.avg_r10)}${g.n_r10?`<small style="color:var(--t3)"> (n=${g.n_r10})</small>`:''}</td><td>${f(g.mfe)}</td><td>${f(g.mae)}</td><td>${f(g.avg_bars_held)}</td></tr>`:`<tr><td><b style="color:var(--t1)">${k}</b></td><td colspan="9" style="color:var(--t3)">尚無已結算樣本</td></tr>`).join(''));
+  setHtml('lr-groups',Object.entries(d.groups).map(([k,g])=>g.n?`<tr><td><b style="color:var(--t1)">${k}</b></td><td>${g.n}</td><td>${f(g.win_rate,'%')}</td><td>${f(g.avg_r)}${g.t_vs0!==null&&g.t_vs0!==undefined?`<small style="color:var(--t3)"> (t=${g.t_vs0})</small>`:''}</td><td>${f(g.profit_factor)}</td><td>${f(g.payoff)}</td><td>${f(g.sharpe)}</td><td>${g.max_consec_loss!=null?g.max_consec_loss:'—'}</td><td>${f(g.mfe)}</td><td>${f(g.mae)}</td><td>${f(g.avg_bars_held)}</td><td style="color:${(g.total_r||0)>=0?'var(--up)':'var(--down)'}">${f(g.total_r)}</td></tr>`:`<tr><td><b style="color:var(--t1)">${k}</b></td><td colspan="11" style="color:var(--t3)">尚無已結算樣本</td></tr>`).join(''));
+  renderMonteCarlo(d);
   (function(){const EX={sl:'停損',tp1:'停利一',tp2:'停利二',tp3:'停利三',expired:'逾期平倉'};
     const g=(d.groups||{})['候選（全部，含沒發出的）']; const ex=g&&g.exits;
     if(ex&&Object.keys(ex).length){const tot=Object.values(ex).reduce((a,b)=>a+b,0)||1;

@@ -65,3 +65,40 @@ def test_new_dims_present():
     names = {name for name, _ in L._dims()}
     for expect in ("相對大盤強弱(20日)", "連漲天數", "收盤區間位置", "量能趨勢(5日)", "大盤型態", "月份"):
         assert expect in names
+
+
+# ── 2026-10-16 更詳細的統計 + 大數據蒙地卡羅 ──
+def _closed(rs):
+    return [{"bar_date": f"2026-10-{1 + i // 5:02d}", "status": "closed", "id": i,
+             "result": ("tp1" if r > 0 else "sl"), "r_multiple": r} for i, r in enumerate(rs)]
+
+
+def test_stats_extra_metrics():
+    rows = _closed([2.0, 2.0, -1.0, -1.0, 2.0, -1.0])     # 3 勝(各+2R)、3 敗(各-1R)
+    st = L._stats(rows)
+    assert st["profit_factor"] == 2.0                      # 6 / 3
+    assert st["payoff"] == 2.0                             # 2 / 1
+    assert st["avg_win_r"] == 2.0 and st["avg_loss_r"] == -1.0
+    assert st["best_r"] == 2.0 and st["worst_r"] == -1.0
+    assert st["max_consec_loss"] == 2
+
+
+def test_montecarlo_positive_edge_mostly_profits():
+    rows = _closed([1.0] * 40 + [-0.5] * 20)              # 明顯正期望值
+    mc = L._mc_equity(rows, n_sims=500)
+    assert mc["ready"] is True and mc["n"] == 60
+    assert mc["prob_profit"] > 95 and mc["total_r_med"] > 0
+    assert mc["maxdd_med"] <= 0
+
+
+def test_montecarlo_needs_min_sample():
+    mc = L._mc_equity(_closed([1.0] * 5), n_sims=100)
+    assert mc["ready"] is False
+
+
+def test_equity_curve_and_monthly():
+    rows = _closed([1.0, -0.5, 1.0, 1.0])
+    eq = L._equity_curve(rows)
+    assert eq[-1]["cum_r"] == 2.5                          # 1 -0.5 +1 +1
+    mo = L._monthly(rows)
+    assert mo and mo[0]["month"] == "2026-10" and mo[0]["n"] == 4
