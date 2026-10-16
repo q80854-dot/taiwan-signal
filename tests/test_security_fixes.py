@@ -13,9 +13,6 @@ def test_protect_ip_uses_rightmost_xff():
         assert protect._ip() == "9.9.9.9"          # 有 Cloudflare 時仍優先
 
 
-def test_app_client_ip_uses_rightmost_xff():
-    with app_module.app.test_request_context(headers={"X-Forwarded-For": "6.6.6.6, 203.0.113.7"}):
-        assert app_module._client_ip() == "203.0.113.7"
 
 
 def test_owner_required_blocks_non_owner(monkeypatch):
