@@ -1070,6 +1070,23 @@ body{font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHe
 /* 頂列 */
 .top{height:56px!important;background:var(--s1)!important;border-bottom:1px solid var(--line)!important;box-shadow:none!important;padding:0 24px!important}
 #page-title{font-size:17px;font-weight:600;color:var(--t1)}
+/* 每日報告（盤前／盤後） */
+.rp-tabbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:0}
+.rp-tab{border:0;background:transparent;font:inherit;font-size:14px;font-weight:600;color:var(--t3);padding:10px 16px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.rp-tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.rp-badge{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:3px;margin-left:8px;vertical-align:1px}
+.rp-badge.rp-ai{background:rgba(79,158,255,.14);color:#4d9eff}
+.rp-badge.rp-rule{background:var(--s3);color:var(--t2)}
+.rp-narr{line-height:1.85;font-size:14.5px;color:var(--t1);margin:14px 0 6px}
+.rp-narr p{margin:0 0 12px}
+.rp-narr .rp-h{font-weight:700;color:var(--accent);margin:16px 0 6px;font-size:14px;letter-spacing:.02em}
+.rp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.rp-stat{border:1px solid var(--line);border-radius:var(--r,4px);padding:11px 13px;background:var(--s1)}
+.rp-k{font-size:11.5px;color:var(--t3);margin-bottom:5px}
+.rp-v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--t1)}
+.rp-v.rp-na{color:var(--t3);font-size:14px;font-weight:500}
+.rp-c{font-size:12px;font-variant-numeric:tabular-nums;margin-top:2px;min-height:16px}
+@media(max-width:700px){.rp-grid{grid-template-columns:repeat(2,1fr)}}
 .top-l{font-weight:600!important}
 .btn{border-radius:6px!important;height:34px;padding:0 14px!important;font-size:13px!important;font-weight:500!important;letter-spacing:0!important;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2)!important;background:var(--s1)!important;color:var(--t1)!important}
 .btn:hover{background:var(--s2)!important}
@@ -1488,7 +1505,7 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
   <div class="nav" onclick="go('rank')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="nl">排行榜</span></div>
   <div class="nav" onclick="go('market')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/></svg><span class="nl">市場環境</span></div>
   <div class="nav" onclick="go('instrument')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v4M7 17v4M17 6v3M17 15v4"/><rect x="5" y="7" width="4" height="10" rx="1"/><rect x="15" y="9" width="4" height="6" rx="1"/></svg><span class="nl">個股研究</span></div>
-  <div class="nav" onclick="go('report')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg><span class="nl">盤後報告</span></div>
+  <div class="nav" onclick="go('report')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg><span class="nl">每日報告</span></div>
   <div class="nav" onclick="go('news')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4h4l6 4V6L7 10z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg><span class="nl">重大訊息公告</span> <span class="nbadge" id="news-count-badge">0</span></div>
   <div class="nav" onclick="go('freshness')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg><span class="nl">資料更新狀態</span> <span class="nbadge" id="fr-late-badge"></span></div>
   <div class="nav-g">風控與績效</div>
@@ -1927,14 +1944,23 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
   </div></div>
 
   <div class="page" id="page-report"><div class="pad">
-    <div class="mast" id="rp-mast" style="grid-template-columns:1fr"><div class="say" id="rp-say">載入中…</div></div>
-    <div class="sec-label"><div class="bar"></div><div class="tx">市場概況</div></div>
-    <div class="kpi-strip" id="rp-kpi" style="grid-template-columns:repeat(4,1fr)"></div>
-    <div class="sec-label"><div class="bar"></div><div class="tx">強弱產業</div></div>
-    <div class="grid2"><div class="panel"><div class="panel-head"><div class="bar" style="background:var(--up)"></div><span class="panel-title">領漲產業</span></div><div id="rp-top" class="panel-body"></div></div>
-      <div class="panel"><div class="panel-head"><div class="bar" style="background:var(--down)"></div><span class="panel-title">落後產業</span></div><div id="rp-bot" class="panel-body"></div></div></div>
-    <div class="sec-label"><div class="bar"></div><div class="tx">今日訊號與持倉</div></div>
-    <div class="panel card"><div class="panel-body" id="rp-sig"></div></div>
+    <div class="rp-tabbar">
+      <button id="rp-tab-premarket" class="rp-tab" onclick="rpTab('premarket')">盤前報告</button>
+      <button id="rp-tab-postmarket" class="rp-tab on" onclick="rpTab('postmarket')">盤後報告</button>
+      <button class="btn own-only" style="margin-left:auto" onclick="rpRebuild()">立即重新產生</button>
+    </div>
+    <!-- 新：每日詳細市場報告（國際盤勢／原油／利率匯率／台股＋AI 分析） -->
+    <div id="rp-detail"><div class="empty">載入中…</div></div>
+    <!-- 盤後附帶的台股產業與訊號摘要（沿用既有資料） -->
+    <div id="rp-legacy" hidden>
+      <div class="sec-label"><div class="bar"></div><div class="tx">台股市場概況</div></div>
+      <div class="kpi-strip" id="rp-kpi" style="grid-template-columns:repeat(4,1fr)"></div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">台股產業強弱</div></div>
+      <div class="grid2"><div class="panel"><div class="panel-head"><div class="bar" style="background:var(--up)"></div><span class="panel-title">領漲產業</span></div><div id="rp-top" class="panel-body"></div></div>
+        <div class="panel"><div class="panel-head"><div class="bar" style="background:var(--down)"></div><span class="panel-title">落後產業</span></div><div id="rp-bot" class="panel-body"></div></div></div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">今日訊號與持倉</div></div>
+      <div class="panel card"><div class="panel-body" id="rp-sig"></div></div>
+    </div>
     <div class="note-box" style="margin-top:14px" id="rp-note"></div>
   </div></div>
 
@@ -2216,7 +2242,7 @@ refreshMktStatus();setInterval(refreshMktStatus,60000);
 
 // Nav
 const PAGE_META={"feedback":["關於","回報錯誤、資料問題或功能建議，處理進度會顯示在這裡"],"fbadmin":["工具","會員回報的問題與處理狀態（站主）"],"signals": ["交易", "每日盤後掃描產生的多空訊號，附進場、停損、停利與追高風險"], "positions": ["交易", "追蹤中的訊號部位：R 倍數、離停損距離、持有天數與移動停損建議"], "watchlist": ["交易", "你的自選股清單與報價，訊號與風險狀態一併標示"], "events": ["交易", "訊號、風險事件與系統通知"], "marketoverview": ["市場", "大盤指數、市場廣度、期交所籌碼、漲跌家數與產業排行"], "rank": ["市場", "漲跌幅、成交金額、三大法人買賣超排行與產業熱度"], "market": ["市場", "大盤環境評分、各類股建議與掃描股票池概況"], "instrument": ["市場", "個股 K 線、技術指標、籌碼、基本面與同產業比較"], "report": ["市場", "每日盤後重點整理"], "news": ["市場", "上市公司重大訊息公告，命中風險關鍵字者特別標示"], "freshness": ["市場", "每一項資料目前的日期、應有日期與來源"], "risk": ["風控與績效", "持倉風險、產業集中度與總風險金額"], "autopsy": ["風控與績效", "逐筆檢討停損出場的原因，找出可改善的條件"], "history": ["風控與績效", "所有已發出訊號的完整紀錄與結果"], "perf": ["風控與績效", "勝率、損益、最大回撤與資金曲線"], "radar": ["研究", "用月營收與估值找出基本面轉強的公司"], "learning": ["研究", "策略參數學習與影子追蹤（站主）"], "audit": ["研究", "資料來源稽核與品質檢查（站主）"], "backtest": ["工具", "單檔與全市場歷史回測（站主）"], "health": ["工具", "系統健康狀態與設定（站主）"], "diag": ["工具", "系統診斷資訊（站主）"], "members": ["工具", "會員數、登入紀錄與帳號管理（站主）"], "guide": ["關於", "系統功能與操作說明"], "method": ["關於", "訊號方法論、資料來源與風險聲明"]};
-const TITLES={feedback:'問題回報',fbadmin:'回報管理',freshness:'資料更新狀態',learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'盤後報告',backtest:'回測',diag:'系統診斷',members:'會員統計'};
+const TITLES={feedback:'問題回報',fbadmin:'回報管理',freshness:'資料更新狀態',learning:'策略學習',health:'系統檢查與設定',audit:'資料稽核',radar:'基本面雷達',positions:'持倉追蹤',autopsy:'停損解剖',events:'通知中心',overview:'總覽',signals:'今日訊號',watchlist:'自選股',history:'交易歷史',perf:'績效分析',market:'市場環境',news:'重大訊息公告',instrument:'個股研究',marketoverview:'市場總覽',rank:'排行榜',method:'方法論與風險聲明',guide:'使用說明',risk:'風險管理',report:'每日報告',backtest:'回測',diag:'系統診斷',members:'會員統計'};
 let _marketOverviewLoaded=false;
 async function fetchCalendar(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
@@ -2246,25 +2272,67 @@ async function fetchRisk(){
     document.getElementById('risk-pos').innerHTML=ps.length?ps.map(p=>{const r=p.r_now;return `<tr><td>${esc(p.code)} ${esc(p.name)}</td><td>${esc(p.sector)||'—'}</td><td>${p.last!=null?(+p.last).toFixed(2):'—'}</td><td>${p.stop!=null?(+p.stop).toFixed(2):'—'}</td><td>${p.cushion_pct!=null?p.cushion_pct.toFixed(1)+'%':'—'}</td><td style="color:${r>=0?'var(--up)':'var(--down)'};font-weight:700">${r==null?'—':(r>=0?'+':'')+r.toFixed(2)+'R'}</td><td>${f0(p.risk_twd)}</td></tr>`}).join(''):'<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">目前沒有持倉</td></tr>';
   }catch(e){document.getElementById('risk-kpi').innerHTML='<div class="empty">載入失敗</div>';}
 }
+// ★ 2026-10-16：每日詳細市場報告（盤前／盤後，含美股／原油／匯率／利率＋AI 分析）
+window._rpKind=window._rpKind||'postmarket';
+function rpTab(kind){
+  window._rpKind=kind;
+  document.getElementById('rp-tab-premarket').classList.toggle('on',kind==='premarket');
+  document.getElementById('rp-tab-postmarket').classList.toggle('on',kind==='postmarket');
+  const lg=document.getElementById('rp-legacy'); if(lg)lg.hidden=(kind!=='postmarket');
+  fetchDailyReport(kind);
+  if(kind==='postmarket')fetchReport();
+}
+async function rpRebuild(){
+  const kind=window._rpKind;
+  const d=document.getElementById('rp-detail');if(d)d.innerHTML='<div class="empty">重新產生中，請稍候…</div>';
+  try{await fetch('/api/report/'+kind+'/rebuild',{method:'POST',headers:TS_H});}catch(e){}
+  fetchDailyReport(kind);if(kind==='postmarket')fetchReport();
+}
+async function fetchDailyReport(kind){
+  const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
+  const box=document.getElementById('rp-detail');if(!box)return;
+  let d;try{d=await fetch('/api/report/'+kind,{cache:'no-store'}).then(r=>r.json());}catch(e){box.innerHTML='<div class="empty">報告載入失敗</div>';return;}
+  if(!d||!d.ok||!d.report){box.innerHTML='<div class="empty">'+esc((d&&d.msg)||'報告尚未產生')+'</div>';return;}
+  const r=d.report,f=r.facts||{},kindZh=kind==='premarket'?'盤前':'盤後';
+  // 數據卡：每個 section 一塊，紅漲綠跌（台股慣例）
+  const col=c=>c==null?'var(--t3)':(c>=0?'var(--up)':'var(--down)');
+  const card=(sec)=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><div class="bar"></div><span class="panel-title">${esc(sec.title)}</span></div>
+    <div class="panel-body"><div class="rp-grid">${(sec.items||[]).map(it=>`<div class="rp-stat"><div class="rp-k">${esc(it.label)}</div><div class="rp-v${it.value==='暫無'?' rp-na':''}">${esc(it.value)}</div>${it.chg?`<div class="rp-c" style="color:${col(it.raw_chg)}">${esc(it.chg)}</div>`:'<div class="rp-c"></div>'}</div>`).join('')}</div></div></div>`;
+  const cards=(f.sections||[]).map(card).join('');
+  // 分析敘述：把【標題】轉成小標，其餘為段落（全程 escape，避免注入）
+  const narr=(r.narrative||'').split('\n').filter(x=>x.trim()).map(line=>{
+    const m=line.match(/^【(.+?)】(.*)$/);
+    if(m)return `<div class="rp-h">${esc(m[1])}</div>`+(m[2].trim()?`<p>${esc(m[2].trim())}</p>`:'');
+    return `<p>${esc(line)}</p>`;
+  }).join('');
+  const srcBadge=r.narrative_source==='ai'
+    ?`<span class="rp-badge rp-ai">AI 分析${r.model?'（'+esc(r.model)+'）':''}</span>`
+    :`<span class="rp-badge rp-rule">規則式摘要</span>`;
+  const miss=(r.missing&&r.missing.length)?`<div class="note-box" style="margin:10px 0">本次無法取得（已標暫無、未以舊值充數）：${r.missing.map(esc).join('、')}</div>`:'';
+  box.innerHTML=`<div class="mast" style="grid-template-columns:1fr"><div class="say"><b>${esc(r.date)} ${kindZh}市場報告</b>
+      <small>產生時間 ${esc(r.generated_at)}（台北）　${srcBadge}</small></div></div>
+    <div class="rp-narr">${narr||'<p class="empty">暫無分析內容</p>'}</div>
+    ${miss}
+    <div class="sec-label"><div class="bar"></div><div class="tx">市場數據（來源：官方／yfinance，延遲資料）</div></div>
+    ${cards}`;
+}
 async function fetchReport(){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
   try{
     const [st,br,sc,ps]=await Promise.all([fetch('/api/state').then(r=>r.json()),fetch('/api/market/breadth').then(r=>r.json()).catch(()=>({})),fetch('/api/market/sectors').then(r=>r.json()).catch(()=>({})),fetch('/api/positions').then(r=>r.json()).catch(()=>({}))]);
     const mo=st.market_overview||{},fn=(mo.foreign&&mo.foreign.net_buy_twd)||0,sigs=st.active_signals||[],open=ps.open||[];
-    const tw=mo.twii||mo.taiex||{};
-    document.getElementById('rp-say').innerHTML=`<b>${new Date().toLocaleDateString('zh-TW',{timeZone:'Asia/Taipei',year:'numeric',month:'long',day:'numeric'})}</b> 盤後報告<small>市場情緒 ${esc(st.sentiment_score)}（${esc(st.sentiment_zh)}）；外資${fn>=0?'買超':'賣超'} ${Math.abs(fn/1e8).toFixed(0)} 億；今日 ${sigs.length} 檔訊號，持倉 ${open.length} 檔。</small>`;
     const adv=br.advancers,dec=br.decliners;
-    document.getElementById('rp-kpi').innerHTML=[
+    const kpi=document.getElementById('rp-kpi');if(kpi)kpi.innerHTML=[
       ['市場情緒',esc(st.sentiment_score),esc(st.sentiment_zh)],['外資買賣超',(fn>=0?'+':'−')+Math.abs(fn/1e8).toFixed(0)+' 億','外資及陸資（不含自營）'],
       ['上漲／下跌家數',adv!=null?adv+' / '+dec:'—',br.date?('官方 '+esc(br.date)):''],['漲停／跌停',br.limit_up!=null?br.limit_up+' / '+br.limit_down:'—','']
     ].map(k=>`<div class="kpi"><div class="kpi-label">${k[0]}</div><div class="kpi-val">${k[1]}</div><div class="kpi-sub">${k[2]}</div></div>`).join('');
     const secs=(sc.sectors||[]).filter(x=>x.n>=8&&x.sector!=='其他'),row=x=>`<div class="kv"><span>${esc(x.sector)}（${x.n}）</span><span style="color:${x.avg_change_pct>=0?'var(--up)':'var(--down)'}">${x.avg_change_pct>=0?'+':''}${x.avg_change_pct}%</span></div>`;
-    document.getElementById('rp-top').innerHTML=secs.slice(0,5).map(row).join('')||'<div class="empty">無資料</div>';
-    document.getElementById('rp-bot').innerHTML=secs.slice(-5).reverse().map(row).join('')||'<div class="empty">無資料</div>';
-    document.getElementById('rp-sig').innerHTML=(sigs.length?'<div style="margin-bottom:10px"><b>今日訊號</b></div>'+sigs.map(s=>`<div class="kv"><span>${esc(s.code||'')} ${esc(s.name||'')}　${s.direction==='sell'?'做空':'做多'}</span><span>評分 ${esc(s.score)}　進場 ${esc(s.entry_price||s.entry||'')}</span></div>`).join(''):'<div style="color:var(--t3)">今日沒有新訊號</div>')+
+    const rt=document.getElementById('rp-top');if(rt)rt.innerHTML=secs.slice(0,5).map(row).join('')||'<div class="empty">無資料</div>';
+    const rb=document.getElementById('rp-bot');if(rb)rb.innerHTML=secs.slice(-5).reverse().map(row).join('')||'<div class="empty">無資料</div>';
+    const rsig=document.getElementById('rp-sig');if(rsig)rsig.innerHTML=(sigs.length?'<div style="margin-bottom:10px"><b>今日訊號</b></div>'+sigs.map(s=>`<div class="kv"><span>${esc(s.code||'')} ${esc(s.name||'')}　${s.direction==='sell'?'做空':'做多'}</span><span>評分 ${esc(s.score)}　進場 ${esc(s.entry_price||s.entry||'')}</span></div>`).join(''):'<div style="color:var(--t3)">今日沒有新訊號</div>')+
       (open.length?'<div style="margin:16px 0 10px"><b>持倉</b></div>'+open.map(p=>`<div class="kv"><span>${esc(p.code)} ${esc(p.name)}</span><span style="color:${(p.r_now||0)>=0?'var(--up)':'var(--down)'}">${p.r_now==null?'—':(p.r_now>=0?'+':'')+p.r_now.toFixed(2)+'R'}</span></div>`).join(''):'');
-    document.getElementById('rp-note').textContent='本報告由系統根據公開資料自動彙整，僅供研究參考，不構成投資建議。官方統計常晚一天公布，日期以卡片標示為準。';
-  }catch(e){document.getElementById('rp-say').textContent='載入失敗';}
+    const note=document.getElementById('rp-note');if(note)note.textContent='本報告由系統根據公開資料自動彙整，僅供研究參考，不構成投資建議。官方統計常晚一天公布，日期以卡片標示為準。';
+  }catch(e){}
 }
 async function addInstEvents(code){
   try{
@@ -2384,7 +2452,7 @@ function go(id){
   if(id==='learning')fetchLearning();
   if(id==='positions')fetchPositions();
   if(id==='risk')fetchRisk();
-  if(id==='report')fetchReport();
+  if(id==='report')rpTab(window._rpKind||'postmarket');
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
   if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}

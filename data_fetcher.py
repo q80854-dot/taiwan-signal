@@ -617,6 +617,61 @@ def fetch_market_index() -> Dict:
 
 
 # ════════════════════════════════════════════════
+# 全球市場數據（供每日盤前／盤後報告使用）
+# ════════════════════════════════════════════════
+# ★ 新增：2026-10-16——使用者要求每日盤前（08:45前）／盤後（21:30後）的詳細
+# 報告，需要美股、原油、匯率、利率等國際市場數據。fetch_market_index() 已經
+# 抓了加權/櫃買/VIX/美元指數/S&P500/那斯達克/黃金/BTC，這裡再補上報告需要的
+# 道瓊、費半、WTI/布蘭特原油、美債10年殖利率、美元/台幣，全部走 _fetch_yf_single
+# （經 Yahoo 熔斷器；抓不到就標 source="error"，不編造數字，守住「不要資訊錯誤」）。
+# 每個項目都附 asof 時間戳，讓報告能顯示「這個數字是什麼時候的」。
+_GLOBAL_EXTRA = [
+    ("dow",    "^DJI",      (5000, 100000)),
+    ("sox",    "^SOX",      (500, 100000)),
+    ("wti",    "CL=F",      (1, 300)),
+    ("brent",  "BZ=F",      (1, 300)),
+    ("us10y",  "^TNX",      (0.1, 25)),      # ^TNX = 10年殖利率 x10（例如 42.3 代表 4.23%）
+    ("usdtwd", "TWD=X",     (20, 40)),
+]
+
+def fetch_global_markets(force: bool = False) -> Dict:
+    """彙整每日報告需要的全球市場數據。回傳 {key: {price, prev, chg, chg_pt, source, asof}}。
+    key：twii, tpex, sp500, nasdaq, dow, sox, vix, dxy, us10y, wti, brent, gold, btc, usdtwd。
+    抓不到的項目 source=="error"（不省略、不編造），讓報告能明確標「暫無」。"""
+    if not force:
+        if c := _cache_get("global_markets", 600):
+            return c
+    now_iso = datetime.now(timezone.utc).isoformat()
+    out: Dict = {}
+    # 1) 沿用 fetch_market_index()（含自己的 300 秒快取）已抓好的部分
+    idx = {}
+    try:
+        idx = fetch_market_index() or {}
+    except Exception as e:
+        logger.warning(f"fetch_global_markets: fetch_market_index 失敗 {e}")
+    for k in ("twii", "tpex", "sp500", "nasdaq", "vix", "dxy", "gold", "btc"):
+        v = idx.get(k)
+        if isinstance(v, dict) and v.get("price"):
+            out[k] = {**v, "asof": v.get("asof", now_iso)}
+    # 2) 補上報告專用的額外國際標的
+    for key, sym, rng in _GLOBAL_EXTRA:
+        try:
+            r = _fetch_yf_single(sym, rng)
+        except Exception as e:
+            logger.warning(f"fetch_global_markets {key}({sym}): {e}")
+            r = None
+        if r and r.get("price"):
+            if key == "us10y":   # ^TNX 回報的是殖利率 x10，轉成百分比
+                r = {**r, "price": round(r["price"] / 10, 3),
+                     "prev": round(r.get("prev", 0) / 10, 3),
+                     "chg_pt": round(r.get("chg_pt", 0) / 10, 3)}
+            out[key] = {**r, "asof": now_iso}
+        else:
+            out[key] = {"price": None, "source": "error", "asof": now_iso}
+    return _cache_set("global_markets", out)
+
+
+# ════════════════════════════════════════════════
 # K線
 # ════════════════════════════════════════════════
 def _tw_trading_hours_now() -> bool:

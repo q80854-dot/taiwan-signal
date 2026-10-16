@@ -11,3 +11,6 @@ psycopg2-binary==2.9.13
 yfinance>=0.2.40,<1.0
 curl_cffi>=0.7,<1.0
 APScheduler>=3.10,<4.0
+# 每日盤前／盤後報告的 AI 分析（混合模式）。沒設 ANTHROPIC_API_KEY 時報告會自動
+# 退回規則式摘要，不呼叫此套件；列在這裡是為了在有金鑰時可用。
+anthropic>=0.40,<2.0
