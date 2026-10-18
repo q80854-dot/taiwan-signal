@@ -80,8 +80,10 @@ import re as _re
 
 
 def _gemini_once(model: str, system: str, user: str, max_tokens: int, timeout: int):
-    """回傳 (text, retry_model)。text 有值＝成功；retry_model 有值＝模型已淘汰、
-    Google 在錯誤訊息裡建議改用的新模型名（供自動重試一次）。"""
+    """回傳 (text, retry_model, transient)。
+      - text 有值＝成功。
+      - retry_model 有值＝模型已淘汰、Google 在錯誤訊息裡建議改用的新模型名。
+      - transient=True＝暫時性錯誤（429 配額/509 過載/5xx），可退避後重試。"""
     import requests
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     body = {
@@ -92,29 +94,41 @@ def _gemini_once(model: str, system: str, user: str, max_tokens: int, timeout: i
     r = requests.post(url, params={"key": _key("gemini")}, json=body, timeout=timeout)
     if r.status_code != 200:
         logger.warning(f"gemini HTTP {r.status_code}: {r.text[:200]}")
-        # 模型被淘汰時 Google 會在訊息裡建議新模型（例如「use models/gemini-3.8-flash」），
-        # 解析出來自動重試一次，避免日後改版就默默掉回規則式。
+        # 模型被淘汰時 Google 會在訊息裡建議新模型（例如「use models/gemini-3.8-flash」）。
         m = _re.search(r"use models/([A-Za-z0-9.\-]+)", r.text or "")
         if r.status_code == 404 and m and m.group(1) != model:
-            return None, m.group(1)
-        return None, None
+            return None, m.group(1), False
+        # 429=配額、503=模型過載、500/502/504=暫時性服務錯誤 → 退避後重試
+        transient = r.status_code in (429, 500, 502, 503, 504)
+        return None, None, transient
     data = r.json()
     cands = data.get("candidates") or []
     if not cands:
         logger.warning(f"gemini 無 candidates（可能被安全過濾）：{str(data)[:200]}")
-        return None, None
+        return None, None, False
     parts = (cands[0].get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts).strip()
-    return (text or None), None
+    return (text or None), None, False
 
 
 def _gemini(system: str, user: str, max_tokens: int, timeout: int) -> str | None:
+    import time
     model = _model("gemini")
-    text, retry_model = _gemini_once(model, system, user, max_tokens, timeout)
-    if text is None and retry_model:
-        logger.info(f"gemini 模型 {model} 已淘汰，改用 Google 建議的 {retry_model} 重試")
-        text, _ = _gemini_once(retry_model, system, user, max_tokens, timeout)
-    return text
+    for attempt in range(4):
+        text, retry_model, transient = _gemini_once(model, system, user, max_tokens, timeout)
+        if text is not None:
+            return text
+        if retry_model and retry_model != model:
+            logger.info(f"gemini 模型 {model} 已淘汰，改用 Google 建議的 {retry_model} 重試")
+            model = retry_model
+            continue
+        if transient and attempt < 3:
+            delay = 2 * (attempt + 1)   # 2s, 4s, 6s 退避
+            logger.info(f"gemini 暫時性錯誤，{delay}s 後重試（第 {attempt + 1} 次）")
+            time.sleep(delay)
+            continue
+        return None
+    return None
 
 
 # ── Groq（免費，OpenAI 相容）──────────────────────────

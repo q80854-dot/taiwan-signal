@@ -139,6 +139,30 @@ def test_gemini_retries_on_retired_model(monkeypatch):
     assert out == "【測試】新模型回傳。" and calls["n"] == 2  # 第一次 404、第二次用建議模型成功
 
 
+def test_gemini_retries_on_transient_503(monkeypatch):
+    import llm, importlib, time
+    importlib.reload(llm)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.setattr(time, "sleep", lambda *_: None)  # 不要真的等
+    calls = {"n": 0}
+
+    class R:
+        def __init__(self, code, payload=None, text=""):
+            self.status_code = code; self._p = payload or {}; self.text = text
+        def json(self): return self._p
+
+    def fake_post(url, params=None, json=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return R(503, text='{"error":{"code":503,"message":"The model is overloaded. Please try again later."}}')
+        return R(200, {"candidates": [{"content": {"parts": [{"text": "【測試】重試後成功。"}]}}]})
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+    out = llm.complete("sys", "user", 100)
+    assert out == "【測試】重試後成功。" and calls["n"] == 2
+
+
 def test_rule_narrative_has_summary_and_watch(reports):
     f = reports._collect_facts("postmarket")
     text = reports._rule_narrative("postmarket", f)
