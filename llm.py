@@ -19,7 +19,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODELS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-3.8-flash",
     "groq": "llama-3.3-70b-versatile",
     "anthropic": "claude-opus-5-5",
 }
@@ -76,9 +76,13 @@ def complete(system: str, user: str, max_tokens: int = 4000, timeout: int = 60) 
 
 
 # ── Google Gemini（免費）──────────────────────────────
-def _gemini(system: str, user: str, max_tokens: int, timeout: int) -> str | None:
+import re as _re
+
+
+def _gemini_once(model: str, system: str, user: str, max_tokens: int, timeout: int):
+    """回傳 (text, retry_model)。text 有值＝成功；retry_model 有值＝模型已淘汰、
+    Google 在錯誤訊息裡建議改用的新模型名（供自動重試一次）。"""
     import requests
-    model = _model("gemini")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
@@ -88,15 +92,29 @@ def _gemini(system: str, user: str, max_tokens: int, timeout: int) -> str | None
     r = requests.post(url, params={"key": _key("gemini")}, json=body, timeout=timeout)
     if r.status_code != 200:
         logger.warning(f"gemini HTTP {r.status_code}: {r.text[:200]}")
-        return None
+        # 模型被淘汰時 Google 會在訊息裡建議新模型（例如「use models/gemini-3.8-flash」），
+        # 解析出來自動重試一次，避免日後改版就默默掉回規則式。
+        m = _re.search(r"use models/([A-Za-z0-9.\-]+)", r.text or "")
+        if r.status_code == 404 and m and m.group(1) != model:
+            return None, m.group(1)
+        return None, None
     data = r.json()
     cands = data.get("candidates") or []
     if not cands:
         logger.warning(f"gemini 無 candidates（可能被安全過濾）：{str(data)[:200]}")
-        return None
+        return None, None
     parts = (cands[0].get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts).strip()
-    return text or None
+    return (text or None), None
+
+
+def _gemini(system: str, user: str, max_tokens: int, timeout: int) -> str | None:
+    model = _model("gemini")
+    text, retry_model = _gemini_once(model, system, user, max_tokens, timeout)
+    if text is None and retry_model:
+        logger.info(f"gemini 模型 {model} 已淘汰，改用 Google 建議的 {retry_model} 重試")
+        text, _ = _gemini_once(retry_model, system, user, max_tokens, timeout)
+    return text
 
 
 # ── Groq（免費，OpenAI 相容）──────────────────────────
