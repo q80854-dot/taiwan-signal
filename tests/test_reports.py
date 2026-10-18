@@ -116,6 +116,29 @@ def test_llm_provider_resolution(monkeypatch):
     assert llm.provider_name() == "groq"
 
 
+def test_gemini_retries_on_retired_model(monkeypatch):
+    import llm, importlib
+    importlib.reload(llm)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.0-flash")  # 已淘汰
+    calls = {"n": 0}
+
+    class R:
+        def __init__(self, code, payload=None, text=""):
+            self.status_code = code; self._p = payload or {}; self.text = text
+        def json(self): return self._p
+
+    def fake_post(url, params=None, json=None, timeout=None):
+        calls["n"] += 1
+        if "gemini-2.0-flash" in url:
+            return R(404, text='{"error":{"message":"This model models/gemini-2.0-flash is no longer available. Please update your code to use models/gemini-3.8-flash"}}')
+        return R(200, {"candidates": [{"content": {"parts": [{"text": "【測試】新模型回傳。"}]}}]})
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+    out = llm.complete("sys", "user", 100)
+    assert out == "【測試】新模型回傳。" and calls["n"] == 2  # 第一次 404、第二次用建議模型成功
+
+
 def test_rule_narrative_has_summary_and_watch(reports):
     f = reports._collect_facts("postmarket")
     text = reports._rule_narrative("postmarket", f)
