@@ -42,7 +42,8 @@ def _fake_global(**over):
 
 @pytest.fixture
 def reports(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
     import reports as rp
     importlib.reload(rp)
     import data_fetcher as df
@@ -99,6 +100,26 @@ def test_build_and_get_report_rule_mode(reports):
     assert got and got["date"] == rep["date"]
     # 存了以日期為 key 的版本（供 boot catch-up 判斷今天是否已產生）
     assert any(k.startswith("report_postmarket_2") for k in store.m)
+
+
+def test_llm_provider_resolution(monkeypatch):
+    import llm, importlib
+    importlib.reload(llm)
+    for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    assert llm.provider_name() is None and llm.available() is False
+    monkeypatch.setenv("GROQ_API_KEY", "x")
+    assert llm.provider_name() == "groq"
+    monkeypatch.setenv("GEMINI_API_KEY", "y")   # 免費的優先序：gemini 在 groq 之前
+    assert llm.provider_name() == "gemini"
+    monkeypatch.setenv("LLM_PROVIDER", "groq")  # 可強制指定
+    assert llm.provider_name() == "groq"
+
+
+def test_rule_narrative_has_summary_and_watch(reports):
+    f = reports._collect_facts("postmarket")
+    text = reports._rule_narrative("postmarket", f)
+    assert "今日重點摘要" in text and "後市觀察與風險" in text and "消息面" in text
 
 
 def test_news_collected_into_facts(reports):
