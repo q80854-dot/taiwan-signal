@@ -169,6 +169,18 @@ def test_rule_narrative_has_summary_and_watch(reports):
     assert "今日重點摘要" in text and "後市觀察與風險" in text and "消息面" in text
 
 
+def test_breadth_from_snapshot(reports, monkeypatch):
+    import state_store
+    monkeypatch.setattr(state_store.store, "get_meta",
+                        lambda k, default=None: ({"breadth": {"advancers": 612, "decliners": 318, "limit_up": 7, "limit_down": 2}}
+                                                 if k == "intraday_snapshot" else default))
+    f = reports._collect_facts("postmarket")
+    tw = [it["label"] for it in f["sections"][-1]["items"]]
+    assert "上漲／下跌家數" in tw and "漲停／跌停家數" in tw
+    txt = reports._facts_as_text(f)
+    assert "612 / 318" in txt
+
+
 def test_news_collected_into_facts(reports):
     f = reports._collect_facts("premarket")
     assert f.get("news") and len(f["news"]) == 2
