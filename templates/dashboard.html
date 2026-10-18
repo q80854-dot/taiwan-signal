@@ -2511,7 +2511,42 @@ async function fetchInstrument(){
     const d=await(await fetch('/api/instruments/'+encodeURIComponent(ticker),{cache:'no-store'})).json();
     if(d.error){el.innerHTML=`<div class="empty">${d.error}</div>`;return;}
     renderInstrument(d);
+    mountStockAIReport(d.code);
   }catch(e){el.innerHTML='<div class="empty">查詢失敗，請稍後再試</div>';}
+}
+// ★ 2026-10-16：個股 AI 財報／基本面整理
+function _rpNarrHtml(text){
+  const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
+  return (text||'').split('\n').filter(x=>x.trim()).map(line=>{
+    const m=line.match(/^【(.+?)】(.*)$/);
+    if(m)return `<div class="rp-h">${esc(m[1])}</div>`+(m[2].trim()?`<p>${esc(m[2].trim())}</p>`:'');
+    return `<p>${esc(line)}</p>`;
+  }).join('');
+}
+function mountStockAIReport(code){
+  const el=document.getElementById('inst-result');if(!el||!code)return;
+  const wrap=document.createElement('div');wrap.className='panel card';wrap.style.marginTop='14px';
+  wrap.innerHTML=`<div class="panel-head"><div class="bar" style="background:#4d9eff"></div><span class="panel-title">AI 財報整理（基本面深度解讀）</span>
+    <button class="btn" id="inst-ai-btn" style="margin-left:auto" onclick="loadStockReport('${code}',true)">產生 AI 財報整理</button></div>
+    <div class="panel-body" id="inst-ai-body"><div class="empty">尚未產生。點右上『產生 AI 財報整理』，由 AI 根據本頁的月營收、獲利、估值與公告做整合分析。</div></div>`;
+  el.appendChild(wrap);
+  loadStockReport(code,false);
+}
+async function loadStockReport(code,build){
+  const body=document.getElementById('inst-ai-body'),btn=document.getElementById('inst-ai-btn');
+  if(!body)return;
+  if(build){body.innerHTML='<div class="empty ld"><i class="spin"></i>AI 整理中，約 10–30 秒…</div>';if(btn)btn.disabled=true;}
+  let d;try{d=await fetch('/api/stock_report/'+code+(build?'?build=1':''),{cache:'no-store'}).then(r=>r.json());}
+  catch(e){if(build)body.innerHTML='<div class="empty">產生失敗，請稍後再試</div>';if(btn)btn.disabled=false;return;}
+  if(btn)btn.disabled=false;
+  if(!d||!d.ok||!d.report){if(build)body.innerHTML='<div class="empty">'+((d&&d.msg)||'產生失敗')+'</div>';return;}
+  const r=d.report,esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
+  const badge=r.narrative_source==='ai'?`<span class="rp-badge rp-ai">AI 分析${r.model?'（'+esc(r.model)+'）':''}</span>`:'<span class="rp-badge rp-rule">規則式摘要</span>';
+  const miss=(r.missing&&r.missing.length)?`<div class="note-box" style="margin:8px 0">本次無法取得（已標示、未編造）：${r.missing.map(esc).join('、')}</div>`:'';
+  body.innerHTML=`<div style="font-size:11.5px;color:var(--t3);margin-bottom:8px">產生時間 ${esc(r.generated_at)}（台北）　${badge}</div>
+    <div class="rp-narr">${_rpNarrHtml(r.narrative)}</div>${miss}
+    <div style="margin-top:8px"><button class="btn" onclick="loadStockReport('${code}',true)">重新產生</button></div>`;
+  if(btn)btn.textContent='重新產生';
 }
 
 

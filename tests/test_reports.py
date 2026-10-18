@@ -49,6 +49,11 @@ def reports(monkeypatch):
     monkeypatch.setattr(df, "fetch_global_markets", lambda force=False: _fake_global())
     monkeypatch.setattr(df, "fetch_market_overview", lambda: {
         "foreign": {"net_buy_twd": 18_200_000_000}, "sentiment_score": 62, "sentiment_zh": "偏多"})
+    import fundamentals as fd
+    monkeypatch.setattr(fd, "fetch_all_news_rows", lambda: [
+        {"code": "2330", "name": "台積電", "subject": "公告法說會訊息", "date": "20261016", "time": "100000", "negative": False},
+        {"code": "6666", "name": "某公司", "subject": "本公司受重大訴訟", "date": "20261016", "time": "090000", "negative": True},
+    ])
     return rp
 
 
@@ -94,6 +99,32 @@ def test_build_and_get_report_rule_mode(reports):
     assert got and got["date"] == rep["date"]
     # 存了以日期為 key 的版本（供 boot catch-up 判斷今天是否已產生）
     assert any(k.startswith("report_postmarket_2") for k in store.m)
+
+
+def test_news_collected_into_facts(reports):
+    f = reports._collect_facts("premarket")
+    assert f.get("news") and len(f["news"]) == 2
+    assert f["news"][0]["negative"] is True   # 負面優先露出
+    txt = reports._facts_as_text(f)
+    assert "重大訊息" in txt and "重大訴訟" in txt
+
+
+def test_build_stock_report_rule_mode(reports, monkeypatch):
+    import fundamentals as fd
+    monkeypatch.setattr(fd, "fetch_valuation_map", lambda: {"2330": {"pe": 20.1, "pb": 5.2, "yield_pct": 1.8}})
+    monkeypatch.setattr(fd, "fetch_monthly_revenue_map", lambda: {"2330": {"period": "202609", "yoy_pct": 12.3, "mom_pct": 2.1, "cum_yoy_pct": 15.0}})
+    monkeypatch.setattr(fd, "get_profitability_quality", lambda c: {"period": "2026Q2", "gross_margin_pct": 54.0, "operating_margin_pct": 42.0})
+    import sys, types
+    stub = types.ModuleType("stock_universe")
+    stub.get_stock_info_any = lambda t: {"name": "台積電", "sector": "半導體", "market": "上市", "close": 1085, "change_pct": 1.4} if t.startswith("2330") else None
+    monkeypatch.setitem(sys.modules, "stock_universe", stub)
+    store = _FakeStore()
+    rep = reports.build_stock_report("2330", store=store)
+    assert rep["narrative_source"] == "rule" and rep["code"] == "2330"
+    assert "月營收" in rep["fields"] and "估值面" in rep["fields"]
+    assert "12.3" in rep["narrative"] or "12" in rep["narrative"]
+    got = reports.get_stock_report("2330", store=store)
+    assert got and got["code"] == "2330"
 
 
 def test_global_markets_us10y_scaled(monkeypatch):

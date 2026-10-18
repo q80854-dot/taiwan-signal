@@ -1648,6 +1648,29 @@ def api_report_rebuild(kind):
         return jsonify({"ok": False, "error": "報告重建失敗"}), 500
 
 
+# ★ 新增：2026-10-16——個股 AI 財報／基本面整理（登入可看）。預設回傳今天已產生
+# 的快取；帶 ?build=1 時即時產生一次（會呼叫 AI，當日快取避免重複花成本）。路徑刻意
+# 不放在 /api/instruments/ 之下，避免 protect.first_guard 的代號格式檢查把帶子路徑的
+# 網址誤判成格式錯誤而在登入檢查前先回 400。
+@app.route("/api/stock_report/<code>")
+@members.login_required
+def api_stock_report(code):
+    code = (code.split(".")[0] or "").strip()
+    if not code.isdigit():
+        return jsonify({"ok": False, "error": "代號格式不正確"}), 400
+    try:
+        import reports
+        rep = reports.get_stock_report(code)
+        if not rep and request.args.get("build") == "1":
+            rep = reports.build_stock_report(code)
+        if not rep:
+            return jsonify({"ok": False, "report": None, "msg": "尚未產生，點『產生 AI 財報整理』即可"})
+        return jsonify({"ok": True, "report": rep})
+    except Exception as e:
+        logger.error(f"api_stock_report({code}): {e}", exc_info=True)
+        return jsonify({"ok": False, "error": "財報整理產生失敗"}), 500
+
+
 @app.route("/api/intraday/overview")
 def api_intraday_overview():
     """盤中市場總覽：指數、漲跌家數、漲跌停家數，皆來自最近一次官方即時快照；超過 10 分鐘就標示過期。"""
