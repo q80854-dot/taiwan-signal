@@ -49,6 +49,32 @@ def _num(v, nd=2):
         return "—"
 
 
+def _collect_news(limit: int = 14) -> list:
+    """盤面消息面：當日上市公司重大訊息公告（官方 TWSE t187ap04_L，真實資料）。
+    取最新的若干則，負面關鍵字優先露出，供 AI 整理成『消息面』分析。"""
+    try:
+        import fundamentals
+        rows = fundamentals.fetch_all_news_rows() or []
+    except Exception as e:
+        logger.warning(f"reports._collect_news: {e}")
+        return []
+    rows = sorted(rows, key=lambda r: (r.get("date", ""), r.get("time", "")), reverse=True)
+    neg = [r for r in rows if r.get("negative")]
+    rest = [r for r in rows if not r.get("negative")]
+    picked, seen = [], set()
+    for r in (neg + rest):
+        k = (r.get("code"), r.get("subject"))
+        if k in seen:
+            continue
+        seen.add(k)
+        picked.append({"code": r.get("code", ""), "name": r.get("name", ""),
+                       "subject": r.get("subject", ""), "negative": bool(r.get("negative")),
+                       "date": r.get("date", ""), "time": r.get("time", "")})
+        if len(picked) >= limit:
+            break
+    return picked
+
+
 def _collect_facts(kind: str) -> dict:
     """蒐集報告所需的已驗證數字。回傳結構化 dict（含每項來源）。"""
     import data_fetcher as df
@@ -107,6 +133,7 @@ def _collect_facts(kind: str) -> dict:
     ]
     facts["missing"] = [it["label"] for s in facts["sections"] for it in s["items"]
                         if it.get("source") == "error" or it.get("value") == "暫無"]
+    facts["news"] = _collect_news()
     return facts
 
 
@@ -122,6 +149,13 @@ def _facts_as_text(facts: dict) -> str:
             lines.append(f"  - {it['label']}：{it['value']}{chg}")
     if facts.get("missing"):
         lines.append(f"（本次無法取得、不得提及具體數字的項目：{'、'.join(facts['missing'])}）")
+    news = facts.get("news") or []
+    if news:
+        lines.append("")
+        lines.append("【今日重大訊息公告（官方，可作為消息面依據；僅能依這些標題，不得擴充未提及的細節）】")
+        for n in news:
+            tag = "（負面）" if n.get("negative") else ""
+            lines.append(f"  - {n.get('code','')} {n.get('name','')}：{n.get('subject','')}{tag}")
     return "\n".join(lines)
 
 
@@ -151,20 +185,27 @@ def _ai_narrative(kind: str, facts: dict) -> str | None:
             ("這是『盤後』報告（台北時間晚上發佈），重點在今天台股盤後數字的解讀，"
              "並結合最新的國際市場數據，展望後市。")
     user_msg = (
-        f"請撰寫今天的台股{label}市場分析報告。{scope}\n\n"
-        f"以下是今天蒐集到、已驗證的市場數據（只能用這些數字）：\n\n"
+        f"請撰寫今天的台股{label}市場深度分析報告。{scope}\n\n"
+        f"以下是今天蒐集到、已驗證的市場數據與消息（你只能根據這些內容撰寫，"
+        f"不得引用任何沒有提供的數字、事件或新聞）：\n\n"
         f"{_facts_as_text(facts)}\n\n"
-        "請用以下結構撰寫（每段都要有實質分析，不要只是複述數字）：\n"
-        "【國際盤勢】綜合美股四大指數、費半的表現與背後意義。\n"
-        "【原油與商品】原油、黃金等走勢與其隱含的通膨／避險訊號。\n"
-        "【利率與匯率】美債殖利率、美元指數、美元/台幣對資金面的影響。\n"
-        "【台股解讀】結合上述國際環境與台股盤後數字（指數、外資、情緒）做整體解讀。\n"
-        "【後市觀察】點出接下來值得留意的方向（不得捏造未提供的事件或數據）。\n"
-        "每段 2-4 句，務必只根據上面提供的數字。"
+        "請寫出一份『有觀點、有脈絡、讀起來像專業投顧晨報／收盤報告』的詳細分析，"
+        "而不是把數字再唸一次。用以下結構，每段都要把數字之間的關聯、因果與對台股的意涵講清楚：\n\n"
+        "【今日重點摘要】3-5 句，先講今天最關鍵的 2-3 件事與整體基調（偏多／偏空／中性）。\n"
+        "【國際股市】美股四大指數與費半：解讀強弱輪動、科技股氛圍，以及對台股電子權值的連動意義。\n"
+        "【原油與商品】原油、黃金、比特幣：解讀其反映的通膨、避險或風險偏好訊號。\n"
+        "【利率與匯率】美債10年殖利率、美元指數、美元/台幣：解讀資金面鬆緊、外資匯入匯出壓力與對台股的影響。\n"
+        "【台股解讀】結合上述國際環境與台股盤後數字（指數、外資買賣超、市場情緒），"
+        "判斷台股目前所處的位置與多空力道。\n"
+        "【消息面】挑出上面『重大訊息公告』中較值得注意的幾則（特別是負面或影響較大的），"
+        "說明其可能的意涵；若今日沒有特別重大的，就如實說明今日公告以例行性為主。\n"
+        "【後市觀察與風險】列出 3-5 個接下來值得留意的方向或風險（例如待觀察的技術位置、"
+        "資金面變化、國際事件的後續），但不得捏造任何未提供的具體事件或數據。\n\n"
+        "語氣專業、邏輯清楚、段落之間要有連貫性。務必全程只根據上面提供的內容，不要自己補數字。"
     )
     try:
         client = anthropic.Anthropic()
-        kwargs = dict(model=_MODEL, max_tokens=4000,
+        kwargs = dict(model=_MODEL, max_tokens=6000,
                       system=_SYSTEM,
                       messages=[{"role": "user", "content": user_msg}])
         # effort 僅新世代模型支援；舊模型忽略即可（用 try 包住）
@@ -294,4 +335,169 @@ def get_report(kind: str, store=None) -> dict | None:
         return json.loads(raw)
     except Exception as e:
         logger.warning(f"get_report({kind}): {e}")
+        return None
+
+
+# ────────────────────────────────────────────────
+# 個股 AI 財報／基本面整理
+# ────────────────────────────────────────────────
+def _collect_stock_facts(code: str) -> dict:
+    """蒐集單一個股的已驗證基本面資料（估值、月營收、獲利能力、公司概況、消息面）。
+    全部來自既有的官方資料抓取；抓不到的欄位省略或標示未提供，不編造。"""
+    f = {"code": code, "name": "", "fields": {}, "news": []}
+
+    def g(fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception as e:
+            logger.warning(f"_collect_stock_facts {getattr(fn,'__name__',fn)}({code}): {e}")
+            return None
+
+    try:
+        from stock_universe import get_stock_info_any
+        info = get_stock_info_any(code + ".TW") or get_stock_info_any(code + ".TWO") or {}
+    except Exception:
+        info = {}
+    f["name"] = info.get("name", "") or ""
+    if info:
+        f["fields"]["基本資料"] = {k: info.get(k) for k in ("name", "sector", "market", "close", "change_pct") if info.get(k) is not None}
+
+    import fundamentals as fd
+    val = g(lambda: fd.fetch_valuation_map().get(code)) or {}
+    if val:
+        f["fields"]["估值面"] = {k: val.get(k) for k in ("pe", "pb", "yield_pct") if val.get(k) is not None}
+    rev = g(lambda: fd.fetch_monthly_revenue_map().get(code)) or {}
+    if rev:
+        f["fields"]["月營收"] = {k: rev.get(k) for k in ("period", "yoy_pct", "mom_pct", "cum_yoy_pct") if rev.get(k) is not None}
+    pq = g(fd.get_profitability_quality, code) or {}
+    if pq:
+        f["fields"]["獲利能力（季）"] = {k: pq.get(k) for k in
+            ("period", "gross_margin_pct", "operating_margin_pct", "gross_margin_chg", "operating_margin_chg") if pq.get(k) is not None}
+    prof = g(lambda: __import__("company_info").get_profile(code)) or {}
+    if isinstance(prof, dict) and prof:
+        keep = {k: prof.get(k) for k in ("industry", "capital", "chairman", "business", "listing_date", "established") if prof.get(k)}
+        if keep:
+            f["fields"]["公司概況"] = keep
+    try:
+        rows = fd.fetch_all_news_rows() or []
+        f["news"] = [{"subject": r.get("subject", ""), "date": r.get("date", ""), "negative": bool(r.get("negative"))}
+                     for r in rows if r.get("code") == code][:8]
+    except Exception:
+        f["news"] = []
+    f["missing"] = [k for k in ("估值面", "月營收", "獲利能力（季）") if k not in f["fields"]]
+    return f
+
+
+def _stock_facts_text(f: dict) -> str:
+    lines = [f"股票：{f.get('code','')} {f.get('name','')}"]
+    for sec, kv in f.get("fields", {}).items():
+        lines.append(f"【{sec}】")
+        for k, v in kv.items():
+            lines.append(f"  - {k}：{v}")
+    if f.get("news"):
+        lines.append("【近期重大訊息公告（官方）】")
+        for n in f["news"]:
+            lines.append(f"  - {n.get('date','')} {n.get('subject','')}{'（負面）' if n.get('negative') else ''}")
+    if f.get("missing"):
+        lines.append(f"（本次無法取得、不得提及具體數字的項目：{'、'.join(f['missing'])}）")
+    return "\n".join(lines)
+
+
+_STOCK_SYSTEM = (
+    "你是一位嚴謹的台股基本面分析師。鐵律：只能根據使用者提供的『已驗證數字與公告』撰寫，"
+    "絕對不可編造、推估或引用任何沒有提供的財務數字、價格、事件或新聞；標示為『未提供』的項目"
+    "不要給具體數值。用繁體中文、專業好讀，客觀分析，不給買賣建議。"
+)
+
+
+def _stock_ai_narrative(f: dict) -> str | None:
+    if not _has_api_key():
+        return None
+    try:
+        import anthropic
+    except Exception:
+        return None
+    user_msg = (
+        f"請為這檔台股撰寫一份『AI 財報／基本面整理』，整合下列已驗證資料做深度解讀"
+        f"（只能用這些內容，不得補充未提供的數字或事件）：\n\n{_stock_facts_text(f)}\n\n"
+        "請用以下結構，每段都要有分析而非複述：\n"
+        "【公司概況】所屬產業與營運定位（依提供資料）。\n"
+        "【營收動能】依月營收年增／月增／累計年增，判斷成長趨勢與是否為一次性。\n"
+        "【獲利能力】依單季毛利率／營業利益率及其季變化，判斷獲利體質與趨勢。\n"
+        "【評價水位】依本益比／股價淨值比／殖利率，判斷目前評價是偏高、合理或偏低。\n"
+        "【消息面】整理近期重大訊息公告的意涵（特別是負面者）；若無則說明以例行公告為主。\n"
+        "【綜合評估與觀察重點】歸納基本面強弱與 3-5 個後續值得追蹤的重點（不得捏造）。\n"
+        "語氣專業、邏輯連貫，全程只根據提供的內容。"
+    )
+    try:
+        client = anthropic.Anthropic()
+        kwargs = dict(model=_MODEL, max_tokens=5000, system=_STOCK_SYSTEM,
+                      messages=[{"role": "user", "content": user_msg}])
+        try:
+            resp = client.messages.create(output_config={"effort": _EFFORT}, **kwargs)
+        except Exception:
+            resp = client.messages.create(**kwargs)
+        if getattr(resp, "stop_reason", None) == "refusal":
+            return None
+        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
+        return text or None
+    except Exception as e:
+        logger.warning(f"_stock_ai_narrative({f.get('code')}): {e}")
+        return None
+
+
+def build_stock_report(code: str, store=None) -> dict:
+    """產生單一個股的 AI 財報整理，當日快取於 DB（避免重複花 AI 成本）。"""
+    if store is None:
+        from state_store import store as _store
+        store = _store
+    now = datetime.now(TZ8)
+    date_str = now.strftime("%Y-%m-%d")
+    f = _collect_stock_facts(code)
+    narrative = _stock_ai_narrative(f)
+    source = "ai"
+    if not narrative:
+        source = "rule"
+        parts = [f"（本段為規則式摘要；數字皆取自官方來源，未經 AI 潤飾）"]
+        kv = f.get("fields", {})
+        if "月營收" in kv:
+            r = kv["月營收"]
+            parts.append(f"【營收動能】最新月營收期間 {r.get('period','')}，單月年增 {r.get('yoy_pct')}%、"
+                         f"月增 {r.get('mom_pct')}%、累計年增 {r.get('cum_yoy_pct')}%。")
+        if "獲利能力（季）" in kv:
+            q = kv["獲利能力（季）"]
+            parts.append(f"【獲利能力】{q.get('period','')} 毛利率 {q.get('gross_margin_pct')}%、"
+                         f"營業利益率 {q.get('operating_margin_pct')}%。")
+        if "估值面" in kv:
+            val = kv["估值面"]
+            parts.append(f"【評價水位】本益比 {val.get('pe')}、股價淨值比 {val.get('pb')}、殖利率 {val.get('yield_pct')}%。")
+        if f.get("news"):
+            parts.append("【消息面】近期公告：" + "；".join(n.get("subject", "") for n in f["news"][:3]) + "。")
+        if f.get("missing"):
+            parts.append(f"【資料缺漏】本次無法取得：{'、'.join(f['missing'])}。")
+        narrative = "\n".join(parts)
+    report = {
+        "code": code, "name": f.get("name", ""), "date": date_str,
+        "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "fields": f.get("fields", {}), "news": f.get("news", []),
+        "narrative": narrative, "narrative_source": source,
+        "model": (_MODEL if source == "ai" else None), "missing": f.get("missing", []),
+    }
+    try:
+        store.set_meta(f"stock_report_{code}_{date_str}", json.dumps(report, ensure_ascii=False))
+    except Exception as e:
+        logger.warning(f"build_stock_report 存檔失敗: {e}")
+    return report
+
+
+def get_stock_report(code: str, store=None) -> dict | None:
+    """回傳今天已產生的個股報告（若有），否則 None（由呼叫端決定是否即時產生）。"""
+    if store is None:
+        from state_store import store as _store
+        store = _store
+    date_str = datetime.now(TZ8).strftime("%Y-%m-%d")
+    try:
+        raw = store.get_meta(f"stock_report_{code}_{date_str}", "")
+        return json.loads(raw) if raw else None
+    except Exception:
         return None
