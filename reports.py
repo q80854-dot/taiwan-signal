@@ -22,14 +22,19 @@ logger = logging.getLogger(__name__)
 
 TZ8 = timezone(timedelta(hours=8))
 
-# Claude API 設定：預設用 Claude Opus 5.5（最強），可用環境變數改成較省成本的
-# 模型（例如 claude-sonnet-5-5 / claude-haiku-5-5）。沒有金鑰就走規則式。
-_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5").strip() or "claude-opus-5-5"
-_EFFORT = os.environ.get("REPORT_AI_EFFORT", "medium").strip() or "medium"
+# ★ 修正：2026-10-18——使用者不想被 ANTHROPIC_API_KEY 綁住。AI 分析改走 llm.py 的
+# 多供應商介面：免費的 Gemini／Groq 擇一（有設金鑰就用），都沒設時自動退回規則式
+# 摘要。模型標籤改用 llm.provider_name()（例如 gemini/groq/anthropic）。
 
 
 def _has_api_key() -> bool:
-    return bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip())
+    import llm
+    return llm.available()
+
+
+def _provider() -> str | None:
+    import llm
+    return llm.provider_name()
 
 
 # ────────────────────────────────────────────────
@@ -174,11 +179,7 @@ _SYSTEM = (
 def _ai_narrative(kind: str, facts: dict) -> str | None:
     if not _has_api_key():
         return None
-    try:
-        import anthropic
-    except Exception as e:
-        logger.warning(f"reports._ai_narrative: anthropic 套件不可用 {e}")
-        return None
+    import llm
     label = "盤前" if kind == "premarket" else "盤後"
     scope = ("這是『盤前』報告（台北時間早上發佈），重點在隔夜美股、原油、匯率、利率的變化，"
              "以及它們對今天台股開盤可能的影響。") if kind == "premarket" else \
@@ -203,24 +204,7 @@ def _ai_narrative(kind: str, facts: dict) -> str | None:
         "資金面變化、國際事件的後續），但不得捏造任何未提供的具體事件或數據。\n\n"
         "語氣專業、邏輯清楚、段落之間要有連貫性。務必全程只根據上面提供的內容，不要自己補數字。"
     )
-    try:
-        client = anthropic.Anthropic()
-        kwargs = dict(model=_MODEL, max_tokens=6000,
-                      system=_SYSTEM,
-                      messages=[{"role": "user", "content": user_msg}])
-        # effort 僅新世代模型支援；舊模型忽略即可（用 try 包住）
-        try:
-            resp = client.messages.create(output_config={"effort": _EFFORT}, **kwargs)
-        except Exception:
-            resp = client.messages.create(**kwargs)
-        if getattr(resp, "stop_reason", None) == "refusal":
-            logger.warning("reports._ai_narrative: 模型拒答，退回規則式")
-            return None
-        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
-        return text or None
-    except Exception as e:
-        logger.warning(f"reports._ai_narrative: Claude API 失敗，退回規則式 {e}")
-        return None
+    return llm.complete(_SYSTEM, user_msg, max_tokens=6000)
 
 
 # ────────────────────────────────────────────────
@@ -250,16 +234,46 @@ def _find(facts, label):
 
 def _rule_narrative(kind: str, facts: dict) -> str:
     label = "盤前" if kind == "premarket" else "盤後"
-    out = [f"（本段為規則式自動摘要；數字皆取自官方／市場即時來源，未經 AI 潤飾）"]
     sp = _find(facts, "標普 500"); sox = _find(facts, "費城半導體")
-    if sp and sp.get("raw_chg") is not None:
-        out.append(f"【國際盤勢】標普 500 {sp['value']}（{sp['chg']}），{_trend_word(sp['raw_chg'])}；"
-                   + (f"費半 {sox['chg']}，{_trend_word(sox.get('raw_chg'))}。" if sox and sox.get('raw_chg') is not None else "費半資料本次暫無。"))
     wti = _find(facts, "WTI 原油"); gold = _find(facts, "黃金")
-    if wti and wti.get("raw_chg") is not None:
-        out.append(f"【原油與商品】WTI 原油 {wti['value']}（{wti['chg']}），{_trend_word(wti['raw_chg'])}；"
-                   + (f"黃金 {gold['value']}（{gold['chg']}）。" if gold and gold.get('raw') is not None else "黃金資料本次暫無。"))
     us10 = _find(facts, "美債10年殖利率"); dxy = _find(facts, "美元指數"); fx = _find(facts, "美元/台幣")
+    vix = _find(facts, "VIX 波動率")
+    twii = _find(facts, "加權指數"); foreign = _find(facts, "外資買賣超"); sent = _find(facts, "市場情緒分數")
+    out = ["（本段為規則式自動摘要；數字皆取自官方／市場即時來源，未經 AI 潤飾）"]
+
+    # 今日重點摘要：以美股、外資、情緒合成一個整體基調
+    tone = 0
+    if sp and sp.get("raw_chg") is not None:
+        tone += 1 if sp["raw_chg"] > 0.2 else -1 if sp["raw_chg"] < -0.2 else 0
+    if foreign and foreign.get("raw") is not None:
+        tone += 1 if foreign["raw"] > 0 else -1
+    if sent and sent.get("raw") is not None:
+        tone += 1 if sent["raw"] >= 60 else -1 if sent["raw"] < 40 else 0
+    tone_zh = "偏多" if tone >= 2 else "偏空" if tone <= -2 else "中性偏多" if tone == 1 else "中性偏空" if tone == -1 else "中性"
+    bits = []
+    if sp and sp.get("raw_chg") is not None:
+        bits.append(f"隔夜美股{_trend_word(sp['raw_chg'])}")
+    if foreign and foreign.get("raw") is not None:
+        bits.append(f"外資{'買超' if foreign['raw']>=0 else '賣超'} {abs(foreign['raw']):,.0f} 億")
+    if sent and sent.get("raw") is not None:
+        bits.append(f"市場情緒 {sent['value']}")
+    out.append(f"【今日重點摘要】綜合研判今日台股盤面基調偏向「{tone_zh}」。" +
+               ("主要觀察：" + "、".join(bits) + "。" if bits else ""))
+
+    if sp and sp.get("raw_chg") is not None:
+        s = (f"【國際股市】標普 500 {sp['value']}（{sp['chg']}），{_trend_word(sp['raw_chg'])}；"
+             + (f"費半 {sox['chg']}，{_trend_word(sox.get('raw_chg'))}，" if sox and sox.get('raw_chg') is not None else ""))
+        if sox and sox.get("raw_chg") is not None:
+            s += ("半導體走強通常有利台股電子權值。" if sox["raw_chg"] > 0.5 else
+                  "半導體走弱，台股電子權值恐承壓。" if sox["raw_chg"] < -0.5 else "對台股電子股連動中性。")
+        out.append(s)
+    if wti and wti.get("raw_chg") is not None:
+        s = f"【原油與商品】WTI 原油 {wti['value']}（{wti['chg']}），{_trend_word(wti['raw_chg'])}；"
+        if gold and gold.get("raw") is not None:
+            s += f"黃金 {gold['value']}（{gold['chg']}）。"
+        s += ("油價走高可能加重通膨疑慮。" if wti["raw_chg"] > 1.5 else
+              "油價回落有助緩解通膨壓力。" if wti["raw_chg"] < -1.5 else "")
+        out.append(s)
     seg = []
     if us10 and us10.get("raw") is not None:
         seg.append(f"美債10年殖利率 {us10['value']}")
@@ -268,8 +282,12 @@ def _rule_narrative(kind: str, facts: dict) -> str:
     if fx and fx.get("raw") is not None:
         seg.append(f"美元/台幣 {fx['value']}")
     if seg:
-        out.append("【利率與匯率】" + "、".join(seg) + "。")
-    twii = _find(facts, "加權指數"); foreign = _find(facts, "外資買賣超"); sent = _find(facts, "市場情緒分數")
+        s = "【利率與匯率】" + "、".join(seg) + "。"
+        if dxy and dxy.get("raw_chg") is not None and dxy["raw_chg"] > 0.3:
+            s += "美元走強，須留意外資匯出與新台幣貶值壓力。"
+        elif dxy and dxy.get("raw_chg") is not None and dxy["raw_chg"] < -0.3:
+            s += "美元走弱，資金面對台股相對友善。"
+        out.append(s)
     seg2 = []
     if twii and twii.get("raw") is not None:
         seg2.append(f"加權指數 {twii['value']}（{twii['chg']}），{_trend_word(twii.get('raw_chg'))}")
@@ -279,6 +297,32 @@ def _rule_narrative(kind: str, facts: dict) -> str:
         seg2.append(f"市場情緒分數 {sent['value']}")
     if seg2:
         out.append(f"【台股{label}解讀】" + "；".join(seg2) + "。")
+
+    # 消息面：列出今日重大訊息公告
+    news = facts.get("news") or []
+    if news:
+        neg = [n for n in news if n.get("negative")]
+        lines = ["【消息面】今日重大訊息公告摘要（官方）："]
+        for n in news[:6]:
+            lines.append(f"・{n.get('code','')} {n.get('name','')}：{n.get('subject','')}{'（負面）' if n.get('negative') else ''}")
+        if neg:
+            lines.append(f"其中 {len(neg)} 則屬負面性質，相關個股與族群宜留意。")
+        out.append("\n".join(lines))
+
+    # 後市觀察：由規則推出的提醒
+    watch = []
+    if vix and vix.get("raw") is not None and vix["raw"] >= 25:
+        watch.append(f"VIX {vix['value']} 偏高，市場波動加大、追高宜謹慎")
+    if foreign and foreign.get("raw") is not None and foreign["raw"] < 0:
+        watch.append("外資呈賣超，資金面偏空，留意權值股賣壓")
+    if sent and sent.get("raw") is not None and sent["raw"] < 40:
+        watch.append("市場情緒偏弱，部位控管宜保守、減少同向重押")
+    if us10 and us10.get("raw") is not None and us10["raw"] >= 4.5:
+        watch.append(f"美債殖利率 {us10['value']} 偏高，對成長股評價構成壓力")
+    if not watch:
+        watch.append("目前市場數據未出現明顯極端訊號，延續上述基調觀察即可")
+    out.append("【後市觀察與風險】" + "；".join(watch) + "。")
+
     if facts.get("missing"):
         out.append(f"【資料缺漏】本次無法取得：{'、'.join(facts['missing'])}（寧可標示暫無，也不以舊值或推估值充數）。")
     return "\n".join(out)
@@ -312,7 +356,7 @@ def build_report(kind: str, store=None) -> dict:
         "facts": facts,
         "narrative": narrative,
         "narrative_source": narrative_source,
-        "model": (_MODEL if narrative_source == "ai" else None),
+        "model": (_provider() if narrative_source == "ai" else None),
         "missing": facts.get("missing", []),
     }
     try:
@@ -413,10 +457,7 @@ _STOCK_SYSTEM = (
 def _stock_ai_narrative(f: dict) -> str | None:
     if not _has_api_key():
         return None
-    try:
-        import anthropic
-    except Exception:
-        return None
+    import llm
     user_msg = (
         f"請為這檔台股撰寫一份『AI 財報／基本面整理』，整合下列已驗證資料做深度解讀"
         f"（只能用這些內容，不得補充未提供的數字或事件）：\n\n{_stock_facts_text(f)}\n\n"
@@ -429,21 +470,7 @@ def _stock_ai_narrative(f: dict) -> str | None:
         "【綜合評估與觀察重點】歸納基本面強弱與 3-5 個後續值得追蹤的重點（不得捏造）。\n"
         "語氣專業、邏輯連貫，全程只根據提供的內容。"
     )
-    try:
-        client = anthropic.Anthropic()
-        kwargs = dict(model=_MODEL, max_tokens=5000, system=_STOCK_SYSTEM,
-                      messages=[{"role": "user", "content": user_msg}])
-        try:
-            resp = client.messages.create(output_config={"effort": _EFFORT}, **kwargs)
-        except Exception:
-            resp = client.messages.create(**kwargs)
-        if getattr(resp, "stop_reason", None) == "refusal":
-            return None
-        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
-        return text or None
-    except Exception as e:
-        logger.warning(f"_stock_ai_narrative({f.get('code')}): {e}")
-        return None
+    return llm.complete(_STOCK_SYSTEM, user_msg, max_tokens=5000)
 
 
 def build_stock_report(code: str, store=None) -> dict:
@@ -481,7 +508,7 @@ def build_stock_report(code: str, store=None) -> dict:
         "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
         "fields": f.get("fields", {}), "news": f.get("news", []),
         "narrative": narrative, "narrative_source": source,
-        "model": (_MODEL if source == "ai" else None), "missing": f.get("missing", []),
+        "model": (_provider() if source == "ai" else None), "missing": f.get("missing", []),
     }
     try:
         store.set_meta(f"stock_report_{code}_{date_str}", json.dumps(report, ensure_ascii=False))
