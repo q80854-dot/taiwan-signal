@@ -195,15 +195,16 @@ def test_build_stock_report_rule_mode(reports, monkeypatch):
     assert got and got["code"] == "2330"
 
 
-def test_global_markets_us10y_scaled(monkeypatch):
+def test_global_markets_us10y_as_percent(monkeypatch):
     import data_fetcher as df
     importlib.reload(df)
     monkeypatch.setattr(df, "fetch_market_index", lambda: {})
     def fake_single(sym, rng=None):
         if sym == "^TNX":
-            return {"price": 42.3, "prev": 42.0, "chg": 0.7, "chg_pt": 0.3, "source": "yfinance"}
+            # yfinance 的 ^TNX 直接回傳百分比（例如 5.10 代表 5.10%），不再除以 10
+            return {"price": 5.10, "prev": 5.08, "chg": 0.4, "chg_pt": 0.02, "source": "yfinance"}
         return None
     monkeypatch.setattr(df, "_fetch_yf_single", fake_single)
     df._cache_clear("global_markets") if hasattr(df, "_cache_clear") else None
     g = df.fetch_global_markets(force=True)
-    assert abs(g["us10y"]["price"] - 4.23) < 0.001  # 42.3 / 10
+    assert abs(g["us10y"]["price"] - 5.10) < 0.001  # 不換算，直接顯示 5.10%

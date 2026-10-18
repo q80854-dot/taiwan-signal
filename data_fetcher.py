@@ -630,7 +630,7 @@ _GLOBAL_EXTRA = [
     ("sox",    "^SOX",      (500, 100000)),
     ("wti",    "CL=F",      (1, 300)),
     ("brent",  "BZ=F",      (1, 300)),
-    ("us10y",  "^TNX",      (0.1, 25)),      # ^TNX = 10年殖利率 x10（例如 42.3 代表 4.23%）
+    ("us10y",  "^TNX",      (0.1, 25)),      # yfinance 的 ^TNX 直接回傳殖利率百分比（例如 5.10 代表 5.10%），不需再換算
     ("usdtwd", "TWD=X",     (20, 40)),
 ]
 
@@ -661,10 +661,10 @@ def fetch_global_markets(force: bool = False) -> Dict:
             logger.warning(f"fetch_global_markets {key}({sym}): {e}")
             r = None
         if r and r.get("price"):
-            if key == "us10y":   # ^TNX 回報的是殖利率 x10，轉成百分比
-                r = {**r, "price": round(r["price"] / 10, 3),
-                     "prev": round(r.get("prev", 0) / 10, 3),
-                     "chg_pt": round(r.get("chg_pt", 0) / 10, 3)}
+            # ★ 修正：2026-10-18——yfinance 的 ^TNX 其實直接回傳殖利率百分比（約 4~5），
+            # 先前誤以為是 x10（CBOE 指數慣例）而再除以 10，導致報告顯示 0.510% 這種
+            # 明顯錯誤的值。移除換算；若哪天真的回傳 x10 的值（>25），上面 valid_range
+            # (0.1,25) 會直接擋掉並標成「暫無」，不會顯示錯誤數字（守住「不要資訊錯誤」）。
             out[key] = {**r, "asof": now_iso}
         else:
             out[key] = {"price": None, "source": "error", "asof": now_iso}
