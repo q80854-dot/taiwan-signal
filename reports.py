@@ -129,6 +129,20 @@ def _collect_facts(kind: str) -> dict:
     if sent is not None:
         tw.append({"label": "市場情緒分數", "value": f"{sent}（{ov.get('sentiment_zh','')}）",
                    "chg": "", "raw": sent, "raw_chg": None, "source": "derived"})
+    # 市場廣度：直接讀已快取的盤中快照（store meta），零網路、零 FinMind 額度。
+    try:
+        from state_store import store as _store
+        br = (_store.get_meta("intraday_snapshot") or {}).get("breadth") or {}
+        adv, dec = br.get("advancers"), br.get("decliners")
+        if adv is not None and dec is not None:
+            tw.append({"label": "上漲／下跌家數", "value": f"{adv} / {dec}", "chg": "",
+                       "raw": None, "raw_chg": None, "source": "snapshot"})
+        lu, ld = br.get("limit_up"), br.get("limit_down")
+        if lu is not None and ld is not None:
+            tw.append({"label": "漲停／跌停家數", "value": f"{lu} / {ld}", "chg": "",
+                       "raw": None, "raw_chg": None, "source": "snapshot"})
+    except Exception as e:
+        logger.warning(f"reports._collect_facts breadth: {e}")
 
     facts["sections"] = [
         {"id": "us", "title": "美股四大指數", "items": us},
@@ -138,7 +152,7 @@ def _collect_facts(kind: str) -> dict:
     ]
     facts["missing"] = [it["label"] for s in facts["sections"] for it in s["items"]
                         if it.get("source") == "error" or it.get("value") == "暫無"]
-    facts["news"] = _collect_news()
+    facts["news"] = _collect_news(20)
     return facts
 
 
@@ -295,6 +309,9 @@ def _rule_narrative(kind: str, facts: dict) -> str:
         seg2.append(f"外資{('買超' if foreign['raw']>=0 else '賣超')} {abs(foreign['raw']):,.0f} 億")
     if sent and sent.get("raw") is not None:
         seg2.append(f"市場情緒分數 {sent['value']}")
+    adv = _find(facts, "上漲／下跌家數")
+    if adv and adv.get("value"):
+        seg2.append(f"上漲／下跌家數 {adv['value']}")
     if seg2:
         out.append(f"【台股{label}解讀】" + "；".join(seg2) + "。")
 
