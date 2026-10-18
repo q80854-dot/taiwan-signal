@@ -91,7 +91,12 @@ def _gemini_once(model: str, system: str, user: str, max_tokens: int, timeout: i
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.4},
     }
-    r = requests.post(url, params={"key": _key("gemini")}, json=body, timeout=timeout)
+    try:
+        r = requests.post(url, params={"key": _key("gemini")}, json=body, timeout=timeout)
+    except (requests.Timeout, requests.ConnectionError) as e:
+        # 免費版 Gemini 偶爾很慢／連線逾時 → 當暫時性錯誤重試（逾時本身已經等很久，不再額外退避）
+        logger.warning(f"gemini 連線逾時/中斷，當暫時性重試：{str(e)[:120]}")
+        return None, None, "timeout"
     if r.status_code != 200:
         logger.warning(f"gemini HTTP {r.status_code}: {r.text[:200]}")
         # 模型被淘汰時 Google 會在訊息裡建議新模型（例如「use models/gemini-3.8-flash」）。
@@ -99,7 +104,7 @@ def _gemini_once(model: str, system: str, user: str, max_tokens: int, timeout: i
         if r.status_code == 404 and m and m.group(1) != model:
             return None, m.group(1), False
         # 429=配額、503=模型過載、500/502/504=暫時性服務錯誤 → 退避後重試
-        transient = r.status_code in (429, 500, 502, 503, 504)
+        transient = "http" if r.status_code in (429, 500, 502, 503, 504) else False
         return None, None, transient
     data = r.json()
     cands = data.get("candidates") or []
@@ -113,8 +118,11 @@ def _gemini_once(model: str, system: str, user: str, max_tokens: int, timeout: i
 
 def _gemini(system: str, user: str, max_tokens: int, timeout: int) -> str | None:
     import time
+    # 免費版 Gemini 有時很慢，給足讀取時間（至少 90 秒）
+    timeout = max(timeout, 90)
     model = _model("gemini")
-    for attempt in range(4):
+    # 最多嘗試 3 次，避免手動重產時使用者等太久（逾時不額外退避、HTTP 暫時性才退避）
+    for attempt in range(3):
         text, retry_model, transient = _gemini_once(model, system, user, max_tokens, timeout)
         if text is not None:
             return text
@@ -122,10 +130,10 @@ def _gemini(system: str, user: str, max_tokens: int, timeout: int) -> str | None
             logger.info(f"gemini 模型 {model} 已淘汰，改用 Google 建議的 {retry_model} 重試")
             model = retry_model
             continue
-        if transient and attempt < 3:
-            delay = 2 * (attempt + 1)   # 2s, 4s, 6s 退避
-            logger.info(f"gemini 暫時性錯誤，{delay}s 後重試（第 {attempt + 1} 次）")
-            time.sleep(delay)
+        if transient and attempt < 2:
+            if transient == "http":
+                time.sleep(2 * (attempt + 1))   # HTTP 429/5xx 退避 2s/4s
+            logger.info(f"gemini 暫時性錯誤（{transient}），重試（第 {attempt + 1} 次）")
             continue
         return None
     return None

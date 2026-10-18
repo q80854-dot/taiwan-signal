@@ -163,6 +163,29 @@ def test_gemini_retries_on_transient_503(monkeypatch):
     assert out == "【測試】重試後成功。" and calls["n"] == 2
 
 
+def test_gemini_retries_on_read_timeout(monkeypatch):
+    import llm, importlib, time, requests
+    importlib.reload(llm)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.setattr(time, "sleep", lambda *_: None)
+    calls = {"n": 0}
+
+    class R:
+        status_code = 200
+        text = ""
+        def json(self): return {"candidates": [{"content": {"parts": [{"text": "【測試】逾時後重試成功。"}]}}]}
+
+    def fake_post(url, params=None, json=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise requests.Timeout("read timed out")
+        return R()
+    monkeypatch.setattr(requests, "post", fake_post)
+    out = llm.complete("sys", "user", 100)
+    assert out == "【測試】逾時後重試成功。" and calls["n"] == 2
+
+
 def test_rule_narrative_has_summary_and_watch(reports):
     f = reports._collect_facts("postmarket")
     text = reports._rule_narrative("postmarket", f)

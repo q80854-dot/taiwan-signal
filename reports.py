@@ -218,7 +218,7 @@ def _ai_narrative(kind: str, facts: dict) -> str | None:
         "資金面變化、國際事件的後續），但不得捏造任何未提供的具體事件或數據。\n\n"
         "語氣專業、邏輯清楚、段落之間要有連貫性。務必全程只根據上面提供的內容，不要自己補數字。"
     )
-    return llm.complete(_SYSTEM, user_msg, max_tokens=6000)
+    return llm.complete(_SYSTEM, user_msg, max_tokens=4000)
 
 
 # ────────────────────────────────────────────────
@@ -487,7 +487,7 @@ def _stock_ai_narrative(f: dict) -> str | None:
         "【綜合評估與觀察重點】歸納基本面強弱與 3-5 個後續值得追蹤的重點（不得捏造）。\n"
         "語氣專業、邏輯連貫，全程只根據提供的內容。"
     )
-    return llm.complete(_STOCK_SYSTEM, user_msg, max_tokens=5000)
+    return llm.complete(_STOCK_SYSTEM, user_msg, max_tokens=4000)
 
 
 def build_stock_report(code: str, store=None) -> dict:

@@ -1077,16 +1077,26 @@ body{font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHe
 .rp-badge{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:3px;margin-left:8px;vertical-align:1px}
 .rp-badge.rp-ai{background:rgba(79,158,255,.14);color:#4d9eff}
 .rp-badge.rp-rule{background:var(--s3);color:var(--t2)}
-.rp-narr{line-height:1.85;font-size:14.5px;color:var(--t1);margin:14px 0 6px}
-.rp-narr p{margin:0 0 12px}
-.rp-narr .rp-h{font-weight:700;color:var(--accent);margin:16px 0 6px;font-size:14px;letter-spacing:.02em}
+/* 每日報告：把 AI／規則式敘述排版成像一份正式報告，不再是一整片無層次的段落 */
+.rp-narr{line-height:1.9;font-size:14.5px;color:var(--t1);margin:16px 0 6px;max-width:68ch}
+.rp-narr p{margin:0 0 13px;text-align:justify}
+.rp-narr p:first-child{color:var(--t1)}
+/* 首段（通常是重點摘要）稍微放大、加一條左側色帶，當作報告的導言 */
+.rp-narr>.rp-lead{font-size:15px;line-height:1.85;color:var(--t1);background:var(--s1);
+  border-left:3px solid var(--accent);border-radius:0 var(--r,4px) var(--r,4px) 0;padding:12px 15px;margin:0 0 16px}
+/* 【小標】→ 帶項目符號的區段標題，上方有細分隔線，層次清楚 */
+.rp-narr .rp-h{display:flex;align-items:center;gap:8px;font-weight:700;color:var(--t1);
+  margin:22px 0 9px;padding-top:14px;border-top:1px solid var(--line);font-size:13.5px;letter-spacing:.03em}
+.rp-narr .rp-h:first-child{border-top:0;padding-top:0;margin-top:4px}
+.rp-narr .rp-h::before{content:"";flex:0 0 auto;width:4px;height:15px;border-radius:2px;background:var(--accent)}
 .rp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.rp-stat{border:1px solid var(--line);border-radius:var(--r,4px);padding:11px 13px;background:var(--s1)}
-.rp-k{font-size:11.5px;color:var(--t3);margin-bottom:5px}
-.rp-v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--t1)}
+.rp-stat{border:1px solid var(--line);border-radius:var(--r,4px);padding:12px 14px;background:var(--s1);transition:border-color .15s,background .15s}
+.rp-stat:hover{border-color:var(--line2);background:var(--s2)}
+.rp-k{font-size:11.5px;color:var(--t3);margin-bottom:6px;letter-spacing:.02em}
+.rp-v{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--t1);line-height:1.15}
 .rp-v.rp-na{color:var(--t3);font-size:14px;font-weight:500}
-.rp-c{font-size:12px;font-variant-numeric:tabular-nums;margin-top:2px;min-height:16px}
-@media(max-width:700px){.rp-grid{grid-template-columns:repeat(2,1fr)}}
+.rp-c{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:3px;min-height:16px}
+@media(max-width:700px){.rp-grid{grid-template-columns:repeat(2,1fr)}.rp-narr{max-width:none}.rp-narr p{text-align:left}}
 .top-l{font-weight:600!important}
 .btn{border-radius:6px!important;height:34px;padding:0 14px!important;font-size:13px!important;font-weight:500!important;letter-spacing:0!important;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2)!important;background:var(--s1)!important;color:var(--t1)!important}
 .btn:hover{background:var(--s2)!important}
@@ -2299,12 +2309,8 @@ async function fetchDailyReport(kind){
   const card=(sec)=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><div class="bar"></div><span class="panel-title">${esc(sec.title)}</span></div>
     <div class="panel-body"><div class="rp-grid">${(sec.items||[]).map(it=>`<div class="rp-stat"><div class="rp-k">${esc(it.label)}</div><div class="rp-v${it.value==='暫無'?' rp-na':''}">${esc(it.value)}</div>${it.chg?`<div class="rp-c" style="color:${col(it.raw_chg)}">${esc(it.chg)}</div>`:'<div class="rp-c"></div>'}</div>`).join('')}</div></div></div>`;
   const cards=(f.sections||[]).map(card).join('');
-  // 分析敘述：把【標題】轉成小標，其餘為段落（全程 escape，避免注入）
-  const narr=(r.narrative||'').split('\n').filter(x=>x.trim()).map(line=>{
-    const m=line.match(/^【(.+?)】(.*)$/);
-    if(m)return `<div class="rp-h">${esc(m[1])}</div>`+(m[2].trim()?`<p>${esc(m[2].trim())}</p>`:'');
-    return `<p>${esc(line)}</p>`;
-  }).join('');
+  // 分析敘述：把【標題】轉成小標、導言強調，其餘為段落（_rpNarrHtml 全程 escape，避免注入）
+  const narr=_rpNarrHtml(r.narrative);
   const srcBadge=r.narrative_source==='ai'
     ?`<span class="rp-badge rp-ai">AI 分析${r.model?'（'+esc(r.model)+'）':''}</span>`
     :`<span class="rp-badge rp-rule">規則式摘要</span>`;
@@ -2517,10 +2523,13 @@ async function fetchInstrument(){
 // ★ 2026-10-16：個股 AI 財報／基本面整理
 function _rpNarrHtml(text){
   const esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
+  // 把【小標】轉成區段標題、其餘為段落；開頭在第一個小標之前的段落當「導言」強調顯示。
+  let ledeDone=false,seenH=false;
+  const para=t=>{const c=(!seenH&&!ledeDone)?' class="rp-lead"':'';if(!seenH&&!ledeDone)ledeDone=true;return `<p${c}>${esc(t)}</p>`;};
   return (text||'').split('\n').filter(x=>x.trim()).map(line=>{
     const m=line.match(/^【(.+?)】(.*)$/);
-    if(m)return `<div class="rp-h">${esc(m[1])}</div>`+(m[2].trim()?`<p>${esc(m[2].trim())}</p>`:'');
-    return `<p>${esc(line)}</p>`;
+    if(m){seenH=true;ledeDone=true;return `<div class="rp-h">${esc(m[1])}</div>`+(m[2].trim()?`<p>${esc(m[2].trim())}</p>`:'');}
+    return para(line);
   }).join('');
 }
 function mountStockAIReport(code){
