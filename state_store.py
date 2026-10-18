@@ -15,13 +15,60 @@ state_store.py — 資料庫管理 v2.0（SQLite / Postgres 雙後端）
 兩種模式下對外的方法簽章、回傳格式完全一致，app.py/scanner.py 等呼叫端
 不需要跟著修改。
 """
-import sqlite3, json, logging, os
+import sqlite3, json, logging, os, re
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional, Any
 from config import SYSTEM
 
 logger = logging.getLogger(__name__)
+
+# ★ 修正：2026-10-18——交易紀錄顯示「外資買超 +52,829,071張」：數字是「股」卻標成「張」。
+# 根因：T86 的單位換算（股→張，÷1000）是 2026-10-10 才合併上線（見 data_fetcher._inst_try
+# 的 2026-10-06 單位修正說明），在那之前產生、存進資料庫的訊號 inst_signal 字串就把「股」
+# 直接標成「張」，這些歷史字串無法重新推導，只能在「顯示當下」校正。
+# 這裡只做『顯示時』的非破壞性校正（不改寫資料庫），且用兩道彼此獨立、都不會誤傷正確資料
+# 的判準，才改（÷1000 剛好反轉當初缺少的換算，數值精準還原）：
+#   (1) 產生時間早於 2026-10-10（修正合併日）＝一定是舊格式 → 一律校正，大小不限；
+#   (2) 單一個股單日外資買賣超在「張」的量級，實務上不可能達到 30 萬張（＝3 億股），
+#       凡 |數字| ≥ 300,000 必為「股」被標成「張」→ 校正（涵蓋合併當天邊界的漏網者）。
+# 兩道都不會把正確的「張」數字誤判（正確值永遠 < 30 萬張，且 2026-10-10 以後已正確換算）。
+_INST_UNIT_FIX_DATE = "2026-10-10"       # T86 股→張換算合併上線日（之前的訊號字串為舊格式）
+_INST_LOTS_IMPOSSIBLE = 300_000          # 單一個股單日外資買賣超「張」的物理上限（保守值）
+_INST_NUM_RE = re.compile(r"([+-]?)(\d[\d,]*)\s*張")
+
+
+def _lots_round(shares: int) -> int:
+    """股數換算成張（四捨五入、正負對稱），與 data_fetcher._lots 一致。"""
+    return int((abs(shares) + 500) // 1000) * (1 if shares >= 0 else -1)
+
+
+def normalize_legacy_inst_signal(sig: Dict) -> Dict:
+    """把舊格式（股被標成張）的 inst_signal 字串在顯示時校正為正確的「張」。
+    就地修改並回傳同一個 dict；非 dict 或無需校正時原樣回傳。"""
+    try:
+        txt = sig.get("inst_signal") or ""
+        if "張" not in txt:
+            return sig
+        gen = sig.get("generated_at") or ""
+        legacy_by_date = bool(gen) and gen < _INST_UNIT_FIX_DATE
+
+        def _repl(m):
+            sign, digits = m.group(1), m.group(2)
+            val = int(digits.replace(",", ""))
+            if sign == "-":
+                val = -val
+            if not (legacy_by_date or abs(val) >= _INST_LOTS_IMPOSSIBLE):
+                return m.group(0)                      # 正確資料：不動
+            fixed = _lots_round(val)
+            return f"{fixed:+,}張"                      # 還原成張（保留正負號與千分位）
+
+        new_txt = _INST_NUM_RE.sub(_repl, txt)
+        if new_txt != txt:
+            sig["inst_signal"] = new_txt
+    except Exception as e:
+        logger.warning(f"normalize_legacy_inst_signal 失敗（原樣顯示）：{e}")
+    return sig
 DB_PATH = SYSTEM["db_path"]
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
@@ -334,7 +381,7 @@ class StateStore:
                     "SELECT * FROM signals WHERE generated_at>=? ORDER BY generated_at DESC LIMIT ?",
                     (cutoff,limit)
                 ).fetchall()
-            return [dict(r) for r in rows]
+            return [normalize_legacy_inst_signal(dict(r)) for r in rows]
         except Exception as e:
             logger.error(f"get_recent_signals: {e}"); return []
 
@@ -358,7 +405,7 @@ class StateStore:
                     "SELECT * FROM signals WHERE status='closed' ORDER BY closed_at DESC LIMIT ?",
                     (limit,)
                 ).fetchall()
-            return [dict(r) for r in rows]
+            return [normalize_legacy_inst_signal(dict(r)) for r in rows]
         except Exception as e:
             logger.error(f"get_closed_trades: {e}"); return []
 

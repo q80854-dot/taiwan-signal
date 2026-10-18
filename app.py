@@ -569,7 +569,7 @@ def _db_today_signals():
     """記憶體清單為空（剛重啟/部署）時，從資料庫還原最近一個訊號日的訊號，確保網頁與 TG 一致。"""
     try:
         import json as _j
-        from state_store import store
+        from state_store import store, normalize_legacy_inst_signal
         rows = store.get_recent_signals(limit=60, days_back=7)
         if not rows: return []
         day = (rows[0].get("generated_at") or "")[:10]
@@ -579,7 +579,9 @@ def _db_today_signals():
             try: d = _j.loads(r.get("raw_json") or "{}")
             except Exception: d = {}
             d.update({k: r.get(k) for k in ("id","ticker","code","name","direction","score","grade","entry_price","stop_loss","tp1","tp2","tp3","sl_pct","status","result","generated_at") if r.get(k) is not None})
-            out.append(d)
+            # inst_signal 取自 raw_json（上面的欄位同步清單不含它），這裡同樣做舊單位校正，
+            # 否則 2026-10-10 換算修正之前產生的訊號卡會顯示「股」量級的數字卻標成「張」。
+            out.append(normalize_legacy_inst_signal(d))
         return out
     except Exception as e:
         logger.warning(f"_db_today_signals: {e}"); return []
