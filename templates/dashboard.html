@@ -805,6 +805,12 @@ html[data-theme=dark] .mw-add input{background:var(--s2)}
 .mem-k b{display:block;font-size:24px;font-variant-numeric:tabular-nums}.mem-k span{font-size:12px;color:var(--t2)}
 .mem-k.warn b{color:var(--up)}
 .mem-tbl td,.mem-tbl th{white-space:nowrap}
+.mem-2col{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+@media(max-width:760px){.mem-2col{grid-template-columns:1fr}}
+.mem-hours{display:flex;align-items:flex-end;gap:3px;height:110px;padding:4px 0}
+.mem-hours .mh-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+.mem-hours .mh-bar{width:100%;max-width:14px;min-height:2px;background:var(--navy);border-radius:2px 2px 0 0;opacity:.85}
+.mem-hours .mh-col span{font-size:9.5px;color:var(--t3);margin-top:3px;height:12px}
 </style>
 <style id="skin-pro">
 /* ═══ skin-pro：統一視覺（卡片式、單一無襯線字體、台股紅漲綠跌） ═══ */
@@ -2131,7 +2137,15 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
   <div class="page" id="page-members">
     <div class="pad">
     <div id="mem-kpi" class="mem-kpi"></div>
-    <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">近 30 天登入次數</span></div><div class="panel-body" id="mem-chart"></div></div>
+    <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">近 60 天登入次數與新增會員</span></div><div class="panel-body" id="mem-chart"></div></div>
+    <div class="mem-2col" style="margin-top:14px">
+      <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">熱門自選股（最多會員加入）</span></div><div style="overflow-x:auto" id="mem-popular"></div></div>
+      <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">登入時段分佈（台北）</span></div><div class="panel-body" id="mem-hours"></div></div>
+    </div>
+    <div class="mem-2col" style="margin-top:14px">
+      <div class="panel card"><div class="panel-head"><div class="bar" style="background:var(--alert)"></div><span class="panel-title">登入失敗原因（近 60 天）</span></div><div class="panel-body" id="mem-fails"></div></div>
+      <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">自選股使用與裝置分佈</span></div><div class="panel-body" id="mem-usage"></div></div>
+    </div>
     <div class="panel card" style="margin-top:14px"><div class="panel-head"><div class="bar"></div><span class="panel-title">會員名單</span></div><div style="overflow-x:auto" id="mem-table"></div></div>
     <div class="panel card" style="margin-top:14px"><div class="panel-head"><div class="bar" style="background:var(--alert)"></div><span class="panel-title">最近登入紀錄（含失敗）</span></div><div style="overflow-x:auto" id="mem-events"></div></div>
     <div class="mut" style="margin-top:8px">登入紀錄只保留 90 天；IP 只存單向雜湊的前 8 碼，不保存原始 IP。停權的會員無法再登入，現有登入也會立刻失效。</div>
@@ -4108,10 +4122,27 @@ async function loadMembersPage(){
   let d;try{const r=await fetch('/api/admin/members',{cache:'no-store'});if(!r.ok)throw 0;d=await r.json();}
   catch(e){document.getElementById('mem-kpi').innerHTML='<div class="empty">會員統計載入失敗（需要站主身分登入）</div>';return;}
   const k=(v,l,w)=>`<div class="mem-k${w?' warn':''}"><b>${v}</b><span>${l}</span></div>`;
-  document.getElementById('mem-kpi').innerHTML=k(d.total,'會員總數')+k(d.new_today,'今日新增')+k(d.new_7d,'近 7 天新增')+k(d.active_today,'今日登入人數')+k(d.active_7d,'7 天內活躍')+k(d.active_30d,'30 天內活躍')+k(d.watch_total,'自選股總檔數')+k(d.fails_24h,'24 小時登入失敗',d.fails_24h>0)+k(d.disabled,'已停權');
-  const S=d.series,mx=Math.max(1,...S.map(x=>x.ok+x.fail)),W=720,H=140,bw=W/S.length;
-  document.getElementById('mem-chart').innerHTML=`<svg viewBox="0 0 ${W} ${H+22}" width="100%" role="img" aria-label="近30天登入次數">${S.map((x,i)=>{const h=x.ok/mx*H,f=x.fail/mx*H;return `<rect x="${(i*bw+2).toFixed(1)}" y="${(H-h).toFixed(1)}" width="${(bw-4).toFixed(1)}" height="${h.toFixed(1)}" fill="var(--navy)" opacity=".85"><title>${x.d}：成功 ${x.ok}、失敗 ${x.fail}</title></rect>`+(f?`<rect x="${(i*bw+2).toFixed(1)}" y="${(H-h-f).toFixed(1)}" width="${(bw-4).toFixed(1)}" height="${f.toFixed(1)}" fill="var(--up)"/>`:'');}).join('')}<text x="0" y="${H+16}" font-size="11" fill="var(--t3)">${S[0].d}</text><text x="${W}" y="${H+16}" font-size="11" fill="var(--t3)" text-anchor="end">${S[S.length-1].d}</text></svg><div class="mut">深色＝成功登入，紅色＝失敗；最高一天 ${mx} 次。</div>`;
-  document.getElementById('mem-table').innerHTML=`<table class="tbl mem-tbl"><thead><tr><th>名稱</th><th>Email</th><th>加入日</th><th>最後登入</th><th class="r">登入次數</th><th class="r">自選股</th><th>狀態</th><th></th></tr></thead><tbody>${d.members.map(m=>`<tr><td>${esc2(m.name||'—')}${m.owner?' <span class="pill">站主</span>':''}</td><td>${esc2(m.email)}</td><td>${esc2(m.created)}</td><td>${esc2(m.last_login)}</td><td class="num r">${m.logins}</td><td class="num r">${m.watch}</td><td>${m.disabled?'<span class="pill warn">已停權</span>':'正常'}</td><td>${m.owner?'':`<button class="btn" data-s="${escA(m.sub)}" data-d="${m.disabled?0:1}" onclick="memberToggle(this)">${m.disabled?'恢復':'停權'}</button>`}</td></tr>`).join('')||'<tr><td colspan="8" class="mut" style="padding:14px">尚無會員</td></tr>'}</tbody></table>`;
+  document.getElementById('mem-kpi').innerHTML=k(d.total,'會員總數')+k(d.new_today,'今日新增')+k(d.new_7d,'近 7 天新增')+k(d.new_30d,'近 30 天新增')+k(d.active_today,'今日登入人數')+k(d.active_7d,'7 天內活躍')+k(d.active_30d,'30 天內活躍')+k(d.watch_total,'自選股總檔數')+k(d.watch_users,'有自選股人數')+k(d.watch_avg,'平均檔數/人')+k(d.groups_total,'自選股分組數')+k(d.fails_24h,'24 小時登入失敗',d.fails_24h>0)+k(d.disabled,'已停權');
+  // 登入次數（堆疊）＋新增會員（折線）近 60 天
+  const S=d.series,mx=Math.max(1,...S.map(x=>x.ok+x.fail)),nmx=Math.max(1,...S.map(x=>x.new||0)),W=720,H=140,bw=W/S.length;
+  const nl=S.map((x,i)=>`${i?'L':'M'}${(i*bw+bw/2).toFixed(1)} ${(H-(x.new||0)/nmx*H).toFixed(1)}`).join(' ');
+  document.getElementById('mem-chart').innerHTML=`<svg viewBox="0 0 ${W} ${H+22}" width="100%" role="img" aria-label="近60天登入與新增">${S.map((x,i)=>{const h=x.ok/mx*H,f=x.fail/mx*H;return `<rect x="${(i*bw+1).toFixed(1)}" y="${(H-h).toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${h.toFixed(1)}" fill="var(--navy)" opacity=".85"><title>${x.d}：成功 ${x.ok}、失敗 ${x.fail}、新增 ${x.new||0}</title></rect>`+(f?`<rect x="${(i*bw+1).toFixed(1)}" y="${(H-h-f).toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${f.toFixed(1)}" fill="var(--up)"/>`:'');}).join('')}<path d="${nl}" fill="none" stroke="var(--accent)" stroke-width="1.8"/><text x="0" y="${H+16}" font-size="11" fill="var(--t3)">${S[0].d}</text><text x="${W}" y="${H+16}" font-size="11" fill="var(--t3)" text-anchor="end">${S[S.length-1].d}</text></svg><div class="mut">深色＝成功登入、紅色＝失敗（最高一天 ${mx} 次）；<span style="color:var(--accent)">藍線＝當日新增會員</span>（最高 ${nmx} 人）。</div>`;
+  // 熱門自選股
+  const P=d.popular_watch||[];
+  document.getElementById('mem-popular').innerHTML=P.length?`<table class="tbl mem-tbl"><thead><tr><th class="r">#</th><th>代號</th><th>名稱</th><th class="r">加入會員數</th></tr></thead><tbody>${P.map((x,i)=>`<tr><td class="num r">${i+1}</td><td class="num">${esc2(x.code)}</td><td>${esc2(x.name||'—')}</td><td class="num r">${x.members}</td></tr>`).join('')}</tbody></table>`:'<div class="empty" style="padding:14px">尚無自選股資料</div>';
+  // 登入時段分佈（24 格柱狀）
+  const Hh=d.login_hours||[],hmx=Math.max(1,...Hh);
+  document.getElementById('mem-hours').innerHTML=`<div class="mem-hours">${Hh.map((n,h)=>`<div class="mh-col" title="${h}:00　${n} 次"><div class="mh-bar" style="height:${(n/hmx*100).toFixed(0)}%"></div><span>${h%6===0?h:''}</span></div>`).join('')}</div><div class="mut">顯示近 60 天各時段（台北 0–23 時）成功登入次數，看會員大多什麼時候上線。</div>`;
+  // 登入失敗原因
+  const FR=d.fail_reasons||[];
+  document.getElementById('mem-fails').innerHTML=FR.length?FR.map(x=>`<div class="kv"><span>${esc2(x.reason)}</span><span style="color:var(--alert);font-weight:600">${x.n}</span></div>`).join(''):'<div class="empty" style="padding:10px">近 60 天沒有登入失敗</div>';
+  // 自選股使用與裝置分佈
+  const dv=d.devices||{mobile:0,desktop:0},dt=dv.mobile+dv.desktop||1;
+  document.getElementById('mem-usage').innerHTML=`<div class="kv"><span>有建立自選股的人數</span><span>${d.watch_users} / ${d.total}（未建立 ${d.watch_none}）</span></div>`
+    +`<div class="kv"><span>平均每人檔數</span><span>${d.watch_avg}　最多 ${d.watch_max} 檔</span></div>`
+    +`<div class="kv"><span>自選股分組總數</span><span>${d.groups_total}</span></div>`
+    +`<div class="kv"><span>登入裝置（近 60 天）</span><span>手機 ${dv.mobile}（${Math.round(dv.mobile/dt*100)}%）・桌機 ${dv.desktop}（${Math.round(dv.desktop/dt*100)}%）</span></div>`;
+  document.getElementById('mem-table').innerHTML=`<table class="tbl mem-tbl"><thead><tr><th>名稱</th><th>Email</th><th>加入日</th><th>最後登入</th><th class="r">登入次數</th><th class="r">自選股</th><th class="r">分組</th><th>狀態</th><th></th></tr></thead><tbody>${d.members.map(m=>`<tr><td>${esc2(m.name||'—')}${m.owner?' <span class="pill">站主</span>':''}</td><td>${esc2(m.email)}</td><td>${esc2(m.created)}</td><td>${esc2(m.last_login)}</td><td class="num r">${m.logins}</td><td class="num r">${m.watch}</td><td class="num r">${m.groups||0}</td><td>${m.disabled?'<span class="pill warn">已停權</span>':'正常'}</td><td>${m.owner?'':`<button class="btn" data-s="${escA(m.sub)}" data-d="${m.disabled?0:1}" onclick="memberToggle(this)">${m.disabled?'恢復':'停權'}</button>`}</td></tr>`).join('')||'<tr><td colspan="9" class="mut" style="padding:14px">尚無會員</td></tr>'}</tbody></table>`;
   document.getElementById('mem-events').innerHTML=`<table class="tbl mem-tbl"><thead><tr><th>時間</th><th>結果</th><th>Email</th><th>原因</th><th>來源（雜湊）</th><th>瀏覽器</th></tr></thead><tbody>${d.events.map(e=>`<tr><td>${esc2(new Date(e.at).toLocaleString('zh-TW',{hour12:false}))}</td><td>${e.ok?'成功':'<span class="pill warn">失敗</span>'}</td><td>${esc2(e.email||'—')}</td><td>${esc2(e.reason)}</td><td>${esc2(e.ip)}</td><td>${esc2(e.ua)}</td></tr>`).join('')||'<tr><td colspan="6" class="mut" style="padding:14px">近 30 天沒有登入紀錄</td></tr>'}</tbody></table>`;
 }
 async function memberToggle(b){

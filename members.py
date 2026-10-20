@@ -553,32 +553,61 @@ def _tw_date(iso: str) -> str:
         return ""
 
 
+def _tw_hour(iso: str):
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=8))).hour
+    except Exception:
+        return None
+
+
 def member_stats() -> dict:
     ensure_tables()
     now = datetime.now(timezone(timedelta(hours=8)))
     today = now.strftime("%Y-%m-%d")
-    days = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(29, -1, -1)]
+    N_SERIES = 60                                             # 時間序列拉長到 60 天（登入紀錄保留 90 天，資料足夠）
+    days = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(N_SERIES - 1, -1, -1)]
+    d7 = (now - timedelta(days=6)).strftime("%Y-%m-%d")       # 近 7 天（含今天）
+    d30 = (now - timedelta(days=29)).strftime("%Y-%m-%d")     # 近 30 天（含今天）
     with _store()._conn() as conn:
         ms = [dict(r) for r in conn.execute("SELECT sub, email, name, created_at, last_login FROM members").fetchall()]
         st = {r["sub"]: dict(r) for r in conn.execute("SELECT sub, disabled, login_count FROM member_status").fetchall()}
         wc = {r["sub"]: r["n"] for r in conn.execute("SELECT sub, COUNT(*) AS n FROM member_watch GROUP BY sub").fetchall()}
-        cut = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        gc = {r["sub"]: r["n"] for r in conn.execute("SELECT sub, COUNT(*) AS n FROM member_groups GROUP BY sub").fetchall()}
+        # 熱門自選股：被最多「不同會員」加入的代號前 20（名稱取任一筆既有名稱）
+        pop = [{"code": r["code"], "name": r["name"] or "", "members": r["n"]}
+               for r in conn.execute(
+                   "SELECT code, MAX(name) AS name, COUNT(DISTINCT sub) AS n FROM member_watch "
+                   "GROUP BY code ORDER BY n DESC, code LIMIT 20").fetchall()]
+        cut = (datetime.now(timezone.utc) - timedelta(days=N_SERIES)).isoformat()
         ev = [dict(r) for r in conn.execute("SELECT at, sub, email, ok, reason, ip_hash, ua FROM login_events WHERE at >= ? ORDER BY at DESC", (cut,)).fetchall()]
     for m in ms:
         m["created_day"], m["last_day"] = _tw_date(m.get("created_at") or ""), _tw_date(m.get("last_login") or "")
-    def cnt(key, since):
-        return sum(1 for m in ms if m[key] and m[key] >= since)
-    d7, d30 = days[-7], days[0]
     ok_by_day, fail_by_day = {d: 0 for d in days}, {d: 0 for d in days}
+    new_by_day = {d: 0 for d in days}
+    for m in ms:
+        if m["created_day"] in new_by_day:
+            new_by_day[m["created_day"]] += 1
+    hours = [0] * 24
+    fail_reasons: dict = {}
+    dev = {"mobile": 0, "desktop": 0}
     for e in ev:
         d = _tw_date(e["at"])
         if d in ok_by_day:
             (ok_by_day if e["ok"] else fail_by_day)[d] += 1
+        if e["ok"]:
+            h = _tw_hour(e["at"])
+            if h is not None:
+                hours[h] += 1
+            dev["mobile" if re.search(r"Mobi|Android|iPhone|iPad", e.get("ua") or "") else "desktop"] += 1
+        else:
+            r = e.get("reason") or "未註明"
+            fail_reasons[r] = fail_reasons.get(r, 0) + 1
     fails24 = sum(1 for e in ev if not e["ok"] and e["at"] >= (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
     rows = [{"name": m.get("name") or "", "email": m.get("email") or "", "created": m["created_day"], "last_login": m["last_day"],
-             "logins": (st.get(m["sub"]) or {}).get("login_count", 0), "watch": wc.get(m["sub"], 0),
+             "logins": (st.get(m["sub"]) or {}).get("login_count", 0), "watch": wc.get(m["sub"], 0), "groups": gc.get(m["sub"], 0),
              "disabled": bool((st.get(m["sub"]) or {}).get("disabled")), "sub": m["sub"], "owner": is_owner(m)}
             for m in sorted(ms, key=lambda x: x.get("last_login") or "", reverse=True)]
+    n_watchers = len(wc)
     return {
         "total": len(ms), "disabled": sum(1 for r in rows if r["disabled"]),
         "new_today": sum(1 for m in ms if m["created_day"] == today), "new_7d": sum(1 for m in ms if m["created_day"] >= d7),
@@ -586,9 +615,17 @@ def member_stats() -> dict:
         "active_today": sum(1 for m in ms if m["last_day"] == today), "active_7d": sum(1 for m in ms if m["last_day"] >= d7),
         "active_30d": sum(1 for m in ms if m["last_day"] >= d30),
         "watch_total": sum(wc.values()), "fails_24h": fails24,
-        "series": [{"d": d, "ok": ok_by_day[d], "fail": fail_by_day[d]} for d in days],
+        # 自選股使用分佈
+        "watch_users": n_watchers, "watch_none": len(ms) - n_watchers,
+        "watch_avg": round(sum(wc.values()) / n_watchers, 1) if n_watchers else 0,
+        "watch_max": max(wc.values()) if wc else 0, "groups_total": sum(gc.values()),
+        "popular_watch": pop,
+        "login_hours": hours,                                  # 24 格：各時段（台北）成功登入次數
+        "fail_reasons": sorted(({"reason": k, "n": v} for k, v in fail_reasons.items()), key=lambda x: -x["n"]),
+        "devices": dev,                                        # 近 60 天成功登入的裝置分佈（粗分手機／桌機）
+        "series": [{"d": d, "ok": ok_by_day[d], "fail": fail_by_day[d], "new": new_by_day[d]} for d in days],
         "members": rows,
-        "events": [{"at": e["at"], "email": e["email"], "ok": bool(e["ok"]), "reason": e["reason"], "ip": e["ip_hash"][:8], "ua": e["ua"][:60]} for e in ev[:60]],
+        "events": [{"at": e["at"], "email": e["email"], "ok": bool(e["ok"]), "reason": e["reason"], "ip": e["ip_hash"][:8], "ua": e["ua"][:60]} for e in ev[:120]],
     }
 
 
