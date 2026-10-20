@@ -221,10 +221,16 @@ def test_build_stock_report_rule_mode(reports, monkeypatch):
     stub = types.ModuleType("stock_universe")
     stub.get_stock_info_any = lambda t: {"name": "台積電", "sector": "半導體", "market": "上市", "close": 1085, "change_pct": 1.4} if t.startswith("2330") else None
     monkeypatch.setitem(sys.modules, "stock_universe", stub)
+    import finmind_data as fm
+    monkeypatch.setattr(fm, "sec_dividend", lambda c: {"ok": True, "summary": {
+        "latest_year": "2025", "latest_cash": 16.0, "latest_stock": 0.0,
+        "consecutive_cash": 7, "avg_cash_recent": 13.5, "avg_years": 5, "years_window": 8}})
     store = _FakeStore()
     rep = reports.build_stock_report("2330", store=store)
     assert rep["narrative_source"] == "rule" and rep["code"] == "2330"
     assert "月營收" in rep["fields"] and "估值面" in rep["fields"]
+    assert "股利政策" in rep["fields"] and rep["fields"]["股利政策"]["連續配息年數"] == 7
+    assert "股利政策" in rep["narrative"] and "連續配息 7 年" in rep["narrative"]
     assert "12.3" in rep["narrative"] or "12" in rep["narrative"]
     got = reports.get_stock_report("2330", store=store)
     assert got and got["code"] == "2330"

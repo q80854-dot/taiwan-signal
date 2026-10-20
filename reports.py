@@ -439,6 +439,24 @@ def _collect_stock_facts(code: str) -> dict:
         keep = {k: prof.get(k) for k in ("industry", "capital", "chairman", "business", "listing_date", "established") if prof.get(k)}
         if keep:
             f["fields"]["公司概況"] = keep
+    # 股利政策（配息）：取 FinMind 已彙整的摘要（連續配息年數、近年平均、最近配發）。
+    # FinMind 慢變資料快取 7 天，單檔報告為使用者點擊才產生、當日再快取，額度影響很小。
+    dv = g(lambda: __import__("finmind_data").sec_dividend(code)) or {}
+    s = (dv or {}).get("summary") or {} if isinstance(dv, dict) else {}
+    if s:
+        keep = {}
+        if s.get("latest_year"):
+            keep["最近配發年度"] = s["latest_year"]
+        if s.get("latest_cash") is not None:
+            keep["最近現金股利(元)"] = s["latest_cash"]
+        if s.get("latest_stock"):
+            keep["最近股票股利(元)"] = s["latest_stock"]
+        if s.get("consecutive_cash"):
+            keep["連續配息年數"] = s["consecutive_cash"]
+        if s.get("avg_cash_recent") is not None:
+            keep[f"近{s.get('avg_years')}年平均現金股利(元)"] = s["avg_cash_recent"]
+        if keep:
+            f["fields"]["股利政策"] = keep
     try:
         rows = fd.fetch_all_news_rows() or []
         f["news"] = [{"subject": r.get("subject", ""), "date": r.get("date", ""), "negative": bool(r.get("negative"))}
@@ -483,6 +501,8 @@ def _stock_ai_narrative(f: dict) -> str | None:
         "【營收動能】依月營收年增／月增／累計年增，判斷成長趨勢與是否為一次性。\n"
         "【獲利能力】依單季毛利率／營業利益率及其季變化，判斷獲利體質與趨勢。\n"
         "【評價水位】依本益比／股價淨值比／殖利率，判斷目前評價是偏高、合理或偏低。\n"
+        "【股利政策】依最近配發金額、連續配息年數、近年平均現金股利，判斷配息穩定度與股東回報"
+        "（連續配息年數越長越穩定；僅依提供數字，無資料則說明暫無）。\n"
         "【消息面】整理近期重大訊息公告的意涵（特別是負面者）；若無則說明以例行公告為主。\n"
         "【綜合評估與觀察重點】歸納基本面強弱與 3-5 個後續值得追蹤的重點（不得捏造）。\n"
         "語氣專業、邏輯連貫，全程只根據提供的內容。"
@@ -515,6 +535,19 @@ def build_stock_report(code: str, store=None) -> dict:
         if "估值面" in kv:
             val = kv["估值面"]
             parts.append(f"【評價水位】本益比 {val.get('pe')}、股價淨值比 {val.get('pb')}、殖利率 {val.get('yield_pct')}%。")
+        if "股利政策" in kv:
+            dvk = kv["股利政策"]
+            seg = [f"最近配發年度 {dvk['最近配發年度']}" if dvk.get("最近配發年度") else ""]
+            if dvk.get("最近現金股利(元)") is not None:
+                seg.append(f"現金股利 {dvk['最近現金股利(元)']} 元")
+            if dvk.get("最近股票股利(元)"):
+                seg.append(f"股票股利 {dvk['最近股票股利(元)']} 元")
+            if dvk.get("連續配息年數"):
+                seg.append(f"連續配息 {dvk['連續配息年數']} 年")
+            avg_k = next((k for k in dvk if k.startswith("近") and "平均現金股利" in k), None)
+            if avg_k:
+                seg.append(f"{avg_k.replace('(元)','')} {dvk[avg_k]} 元")
+            parts.append("【股利政策】" + "、".join(x for x in seg if x) + "。")
         if f.get("news"):
             parts.append("【消息面】近期公告：" + "；".join(n.get("subject", "") for n in f["news"][:3]) + "。")
         if f.get("missing"):
