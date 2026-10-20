@@ -1792,6 +1792,8 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
     <div class="panel card" style="margin-bottom:14px"><div class="panel-head"><span>一鍵系統健檢</span><button class="btn primary" id="hl-btn" onclick="fetchHealth(true)">立即健檢</button></div>
       <div class="panel-body" id="hl-sum"><div class="empty">載入中…</div></div></div>
     <div id="hl-body"></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">外部 API 用量（AI token、FinMind 額度、記憶體）</div><div class="lnk" onclick="loadUsagePanel()">重新整理</div></div>
+    <div id="usage-panel"><div class="empty">載入中…</div></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">目前生效的策略與風控設定（唯讀）</div></div>
     <div id="st-body"><div class="empty">載入中…</div></div>
     </div>
@@ -4639,6 +4641,32 @@ async function fetchHealth(manual){
     setHtml('st-body',st.groups.map(g=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>${g.title}</span></div><div class="panel-body" style="padding:4px 14px">${g.items.map(x=>`<div class="kv" style="align-items:flex-start;gap:10px"><span style="flex:none;max-width:48%">${x.key}</span><span style="text-align:right;white-space:normal"><b>${x.value}</b>${x.note?`<br><small style="color:var(--t3);font-weight:400">${x.note}</small>`:''}</span></div>`).join('')}</div></div>`).join('')+`<div class="note-box">${st.note}</div>`);
   }catch(e){if(e.message==='401'){adLock('登入已逾時，請重新登入。');}else setHtml('hl-sum','<div class="empty">健檢失敗：'+esc2(e.message)+'</div>');}
   if(b){b.disabled=false;b.textContent='立即健檢';}
+  loadUsagePanel();
+}
+async function loadUsagePanel(){
+  const el=document.getElementById('usage-panel');if(!el)return;
+  let d;try{d=await(await fetch('/api/usage',{cache:'no-store'})).json();}catch(e){el.innerHTML='<div class="empty">用量載入失敗</div>';return;}
+  const nf=n=>n==null?'0':Number(n).toLocaleString('zh-TW');
+  const L=d.llm||{},tot=L.total||{},tod=L.today||{};
+  const provs=[...new Set([...Object.keys(tot),...Object.keys(tod)])];
+  const pvName={gemini:'Gemini（免費）',groq:'Groq（免費）',anthropic:'Claude（付費）'};
+  let ai='';
+  if(provs.length){
+    ai=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>AI 供應商</th><th class="r">今日呼叫</th><th class="r">今日 token（進/出）</th><th class="r">累計呼叫</th><th class="r">累計 token（進/出）</th></tr></thead><tbody>`
+      +provs.map(p=>{const t=tot[p]||{},y=tod[p]||{};return `<tr><td><b>${esc2(pvName[p]||p)}</b>${L.provider===p?' <span class="pill">使用中</span>':''}</td>`
+        +`<td class="num r">${nf(y.calls)}</td><td class="num r">${nf(y.in)} / ${nf(y.out)}</td>`
+        +`<td class="num r">${nf(t.calls)}</td><td class="num r">${nf(t.in)} / ${nf(t.out)}　<small style="color:var(--t3)">共 ${nf((t.in||0)+(t.out||0))}</small></td></tr>`;}).join('')
+      +`</tbody></table></div>`;
+  }else{
+    ai=`<div class="empty" style="padding:12px">目前沒有 AI token 用量紀錄${L.available?'（已設定供應商，產生報告後開始累積）':'（未設定任何 AI 金鑰，報告走規則式，不耗 token）'}。</div>`;
+  }
+  const fm=d.finmind||{};
+  const fmHtml=`<div class="kv"><span>FinMind 財報額度</span><span>${fm.has_token?'已設 token（上限 '+nf(fm.hourly_limit)+' 次/時）':'未設 token（免費上限 '+nf(fm.hourly_limit||300)+' 次/時）'}　剩餘約 <b>${nf(fm.budget_left)}</b> 次</span></div>`
+    +(d.memory_rss_mb!=null?`<div class="kv"><span>本進程記憶體 RSS</span><span>${d.memory_rss_mb} MB</span></div>`:'')
+    +(L.last?`<div class="kv"><span>最近一次 AI 產生</span><span>${esc2((pvName[L.last.provider]||L.last.provider))}　${esc2(L.last.model||'')}　進 ${nf(L.last.in)}／出 ${nf(L.last.out)} token</span></div>`:'');
+  el.innerHTML=`<div class="panel card"><div class="panel-body">${ai}</div></div>`
+    +`<div class="panel card" style="margin-top:10px"><div class="panel-body">${fmHtml}</div></div>`
+    +`<div class="mut" style="margin-top:6px">AI token 用量自 2026-10-20 起累積（存於資料庫、不隨部署清空），只記 token 數與呼叫次數、不存內容。免費供應商（Gemini／Groq）token 不計費，此處供你掌握用量；FinMind 額度每小時自動回補。</div>`;
 }
 function qcClose(){document.getElementById('qc-modal').classList.remove('on');}
 async function qcRun(key){
