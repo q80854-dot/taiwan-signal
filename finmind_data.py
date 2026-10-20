@@ -598,8 +598,46 @@ def sec_cashflow(code: str) -> Dict:
     return out
 
 
+def _dividend_summary(rows: List[Dict]) -> Dict:
+    """從逐筆配息（可能一年多次：季配／半年配）彙整出股利政策摘要。
+    全部直接由 FinMind 原始金額加總，不跨期推估、不編造：
+      - 依『所屬年度』把現金／股票股利各自加總（季配公司一年多列要合併成全年）。
+      - consecutive_cash：由最近年度往前，連續『該年度有配現金股利』的年數。
+      - avg_cash_recent：近 avg_years 個『有配現金股利』年度的每年平均現金股利。"""
+    by_year: Dict[str, Dict[str, float]] = {}
+    for r in rows:
+        m = re.match(r"(\d{4})", str(r.get("period", "")))
+        if not m:
+            continue
+        agg = by_year.setdefault(m.group(1), {"cash": 0.0, "stock": 0.0})
+        agg["cash"] += r.get("cash") or 0
+        agg["stock"] += r.get("stock") or 0
+    if not by_year:
+        return {}
+    years = sorted(by_year)                       # 由舊到新
+    latest = years[-1]
+    consec = 0
+    for y in reversed(years):                     # 從最近年度往前數連續配現金的年數
+        if (by_year[y]["cash"] or 0) > 0:
+            consec += 1
+        else:
+            break
+    paid = [y for y in years if (by_year[y]["cash"] or 0) > 0]
+    recent = paid[-5:]
+    avg_cash = round(sum(by_year[y]["cash"] for y in recent) / len(recent), 2) if recent else None
+    return {
+        "latest_year": latest,
+        "latest_cash": round(by_year[latest]["cash"], 2),
+        "latest_stock": round(by_year[latest]["stock"], 2),
+        "consecutive_cash": consec,
+        "avg_cash_recent": avg_cash,
+        "avg_years": len(recent),
+        "years_window": len(years),
+    }
+
+
 def sec_dividend(code: str) -> Dict:
-    res = fm_get("TaiwanStockDividend", code, _day(-365 * 6))
+    res = fm_get("TaiwanStockDividend", code, _day(-365 * 8))
     rows = []
     for r in sorted(res["rows"], key=lambda x: x.get("date", "")):
         cash = (_f(r.get("CashEarningsDistribution")) or 0) + (_f(r.get("CashStatutorySurplus")) or 0)
@@ -610,7 +648,7 @@ def sec_dividend(code: str) -> Dict:
                      "pay": str(r.get("CashDividendPaymentDate") or "")[:10] or None})
     out = _sec(res, rows)
     if rows:
-        out.update({"records": rows[-8:]})
+        out.update({"records": rows[-8:], "summary": _dividend_summary(rows)})
     return out
 
 
@@ -854,6 +892,26 @@ def insights(p: Dict) -> List[Dict]:
     dt = p.get("daytrade") or {}
     if dt.get("ok") and dt["days"][-1].get("ratio") is not None and dt["days"][-1]["ratio"] >= 30:
         add("warn", f"當沖比率 {dt['days'][-1]['ratio']}%，短線投機氣氛濃，隔日波動容易放大。")
+    dv = p.get("dividend") or {}
+    s = dv.get("summary") or {}
+    if dv.get("ok") and s:
+        lc, ls = s.get("latest_cash") or 0, s.get("latest_stock") or 0
+        if lc > 0 or ls > 0:
+            bits = f"最近配發年度 {s.get('latest_year')}：現金股利 {lc} 元"
+            if ls > 0:
+                bits += f"、股票股利 {ls} 元"
+            add("info", bits + "。")
+        cc = s.get("consecutive_cash") or 0
+        avg_txt = (f"，近 {s.get('avg_years')} 年平均每年約 {s.get('avg_cash_recent')} 元"
+                   if s.get("avg_cash_recent") is not None else "")
+        if cc >= 5:
+            add("good", f"連續 {cc} 年配發現金股利，股利政策穩定{avg_txt}，適合存股／長線參考。")
+        elif cc >= 1:
+            add("info", f"連續 {cc} 年配發現金股利{avg_txt}。")
+        elif ls > 0:
+            add("info", "最近配發年度以股票股利為主、未配現金股利。")
+        else:
+            add("warn", "最近配發年度未配發現金股利。")
     return out
 
 

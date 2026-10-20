@@ -3279,8 +3279,15 @@ function fmStockHtml(p){
   h+=fmSec('財務體質');
   h+=fr.length?fmKv(fr):fmMiss('資產負債與現金流');
   const dv=p.dividend;
-  h+=fmSec('股利政策');
-  h+=(dv&&dv.ok)?fmTbl(['所屬期間','現金股利','股票股利','除息日','除權日'],dv.records.slice().reverse().map(x=>[fmE(x.period),fmN(x.cash,2),fmN(x.stock,2),fmE(x.ex_cash||'—'),fmE(x.ex_stock||'—')])):fmMiss('股利');
+  h+=fmSec('股利政策（配息）');
+  if(dv&&dv.ok){
+    const s=dv.summary||{},sm=[];
+    if(s.consecutive_cash)sm.push(['連續配息年數',`<b style="color:var(--up)">${s.consecutive_cash}</b> 年`]);
+    if(s.latest_year)sm.push(['最近配發年度',`${fmE(s.latest_year)}　現金 ${fmN(s.latest_cash,2)} 元${s.latest_stock?`　股票 ${fmN(s.latest_stock,2)} 元`:''}`]);
+    if(s.avg_cash_recent!=null)sm.push([`近 ${s.avg_years} 年平均現金股利`,`${fmN(s.avg_cash_recent,2)} 元`]);
+    if(sm.length)h+=fmKv(sm);
+    h+=fmTbl(['所屬期間','現金股利','股票股利','除息日','除權日'],dv.records.slice().reverse().map(x=>[fmE(x.period),fmN(x.cash,2),fmN(x.stock,2),fmE(x.ex_cash||'—'),fmE(x.ex_stock||'—')]));
+  }else h+=fmMiss('股利');
   const nw=p.news;
   h+=fmSec('近期新聞');
   h+=(nw&&nw.ok&&nw.items.length)?`<div class="panel card"><div class="panel-body">${nw.items.map(x=>`<div style="padding:7px 0;border-bottom:1px solid var(--line);font-size:13px;line-height:1.55">${x.link?`<a href="${fmE(x.link)}" target="_blank" rel="noopener noreferrer nofollow" style="color:var(--t1)">${fmE(x.title)}</a>`:fmE(x.title)}<div style="font-size:10.5px;color:var(--t3)">${fmE(x.date)}　${fmE(x.source)}</div></div>`).join('')}</div></div>`:fmMiss('新聞');
