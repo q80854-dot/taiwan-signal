@@ -224,8 +224,13 @@ def test_admin_member_stats_owner_only(cl):
     assert cl.get("/api/admin/members").status_code == 403           # 一般會員看不到
     _owner_login(cl)
     d = cl.get("/api/admin/members").get_json()
-    assert d["total"] >= 2 and len(d["series"]) == 30 and "members" in d and "events" in d
+    assert d["total"] >= 2 and len(d["series"]) == 60 and "members" in d and "events" in d
     assert d["active_today"] >= 1 and d["new_today"] >= 1
+    # 新增的統計面向都在，且型別正確
+    assert len(d["login_hours"]) == 24 and isinstance(d["popular_watch"], list)
+    assert "watch_users" in d and "watch_avg" in d and "groups_total" in d
+    assert isinstance(d["devices"], dict) and "mobile" in d["devices"]
+    assert all("new" in s for s in d["series"])
 
 
 def test_disable_member_and_logout_all(cl):
