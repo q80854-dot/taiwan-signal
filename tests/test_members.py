@@ -254,6 +254,49 @@ def test_disable_member_and_logout_all(cl):
     assert cl.post("/api/admin/members/status", json={"sub": owner_sub, "disabled": True}, headers=H).status_code == 400
 
 
+def test_member_suspend_logout_delete(cl):
+    import uuid
+    sub = "u-" + uuid.uuid4().hex[:8]
+    login(cl, sub)
+    assert cl.get("/api/me").get_json()["user"] is not None
+    _owner_login(cl)
+    # 暫時停權 7 天：期間內無法登入
+    assert cl.post("/api/admin/members/suspend", json={"sub": sub, "days": 7}, headers=H).status_code == 200
+    assert cl.post("/api/admin/members/suspend", json={"sub": sub, "days": 0}, headers=H).status_code == 400   # 天數需 1~365
+    cl.set_cookie(members.COOKIE, members.sign({"sub": sub, "exp": int(time.time()) + 3600, "v": 0}))
+    assert cl.get("/api/me").get_json()["user"] is None
+    # 到期自動恢復：把 disabled_until 設為過去，應視為未停權
+    assert members.effective_disabled({"disabled": 0, "disabled_until": "2000-01-01T00:00:00+00:00"}) is False
+    assert members.effective_disabled({"disabled": 0, "disabled_until": "2999-01-01T00:00:00+00:00"}) is True
+    # 恢復：清掉暫時停權
+    _owner_login(cl)
+    assert cl.post("/api/admin/members/status", json={"sub": sub, "disabled": False}, headers=H).status_code == 200
+    cl.set_cookie(members.COOKIE, members.sign({"sub": sub, "exp": int(time.time()) + 3600, "v": 0}))
+    assert cl.get("/api/me").get_json()["user"] is not None
+    # 強制登出（不封鎖）：sess_ver +1 → 舊 cookie 失效、帳號仍在
+    _owner_login(cl)
+    assert cl.post("/api/admin/members/logout", json={"sub": sub}, headers=H).status_code == 200
+    cl.set_cookie(members.COOKIE, members.sign({"sub": sub, "exp": int(time.time()) + 3600, "v": 0}))
+    assert cl.get("/api/me").get_json()["user"] is None
+    assert members.get_member(sub) is not None
+    # 永久刪除：會員與資料消失
+    _owner_login(cl)
+    cl.post("/api/my/watchlist", json={"code": "2330"}, headers=H)   # 站主自己的，不影響；確保端點可用
+    assert cl.post("/api/admin/members/delete", json={"sub": sub}, headers=H).status_code == 200
+    assert members.get_member(sub) is None
+
+
+def test_member_control_owner_only_and_owner_protected(cl):
+    login(cl)
+    # 一般會員不能用任何管控端點
+    for p in ("suspend", "logout", "delete"):
+        assert cl.post("/api/admin/members/" + p, json={"sub": "x"}, headers=H).status_code == 403
+    owner_sub = _owner_login(cl)
+    # 站主帳號不可暫停或刪除
+    assert cl.post("/api/admin/members/suspend", json={"sub": owner_sub, "days": 3}, headers=H).status_code == 400
+    assert cl.post("/api/admin/members/delete", json={"sub": owner_sub}, headers=H).status_code == 400
+
+
 def test_cross_origin_post_blocked(cl):
     login(cl)
     r = cl.post("/api/my/watchlist", json={"code": "2330"}, headers=dict(H, Origin="https://evil.example"))

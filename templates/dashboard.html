@@ -811,6 +811,9 @@ html[data-theme=dark] .mw-add input{background:var(--s2)}
 .mem-hours .mh-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
 .mem-hours .mh-bar{width:100%;max-width:14px;min-height:2px;background:var(--navy);border-radius:2px 2px 0 0;opacity:.85}
 .mem-hours .mh-col span{font-size:9.5px;color:var(--t3);margin-top:3px;height:12px}
+.mem-acts{display:flex;gap:6px;flex-wrap:wrap}
+.mem-acts .btn{height:30px!important;padding:0 10px!important;font-size:12px!important}
+.mem-acts .btn.danger{border-color:var(--up-line,#e3b0ac)!important;color:var(--up)!important;background:var(--up-soft,rgba(220,60,50,.08))!important}
 </style>
 <style id="skin-pro">
 /* ═══ skin-pro：統一視覺（卡片式、單一無襯線字體、台股紅漲綠跌） ═══ */
@@ -4142,7 +4145,15 @@ async function loadMembersPage(){
     +`<div class="kv"><span>平均每人檔數</span><span>${d.watch_avg}　最多 ${d.watch_max} 檔</span></div>`
     +`<div class="kv"><span>自選股分組總數</span><span>${d.groups_total}</span></div>`
     +`<div class="kv"><span>登入裝置（近 60 天）</span><span>手機 ${dv.mobile}（${Math.round(dv.mobile/dt*100)}%）・桌機 ${dv.desktop}（${Math.round(dv.desktop/dt*100)}%）</span></div>`;
-  document.getElementById('mem-table').innerHTML=`<table class="tbl mem-tbl"><thead><tr><th>名稱</th><th>Email</th><th>加入日</th><th>最後登入</th><th class="r">登入次數</th><th class="r">自選股</th><th class="r">分組</th><th>狀態</th><th></th></tr></thead><tbody>${d.members.map(m=>`<tr><td>${esc2(m.name||'—')}${m.owner?' <span class="pill">站主</span>':''}</td><td>${esc2(m.email)}</td><td>${esc2(m.created)}</td><td>${esc2(m.last_login)}</td><td class="num r">${m.logins}</td><td class="num r">${m.watch}</td><td class="num r">${m.groups||0}</td><td>${m.disabled?'<span class="pill warn">已停權</span>':'正常'}</td><td>${m.owner?'':`<button class="btn" data-s="${escA(m.sub)}" data-d="${m.disabled?0:1}" onclick="memberToggle(this)">${m.disabled?'恢復':'停權'}</button>`}</td></tr>`).join('')||'<tr><td colspan="9" class="mut" style="padding:14px">尚無會員</td></tr>'}</tbody></table>`;
+  const mStatus=m=>m.disabled?'<span class="pill warn">已停權</span>':m.suspended?`<span class="pill warn">暫停至 ${esc2(m.suspended_until||'')}</span>`:'正常';
+  const mActs=m=>{if(m.owner)return '';const blocked=m.disabled||m.suspended;
+    return `<div class="mem-acts">`
+      +`<button class="btn" data-s="${escA(m.sub)}" data-d="${blocked?0:1}" onclick="memberToggle(this)">${blocked?'恢復':'永久停權'}</button>`
+      +(blocked?'':`<button class="btn" onclick="memberSuspend('${escA(m.sub)}')">暫停</button>`)
+      +`<button class="btn" onclick="memberLogout('${escA(m.sub)}')">強制登出</button>`
+      +`<button class="btn danger" onclick="memberDelete('${escA(m.sub)}','${escA(m.name||m.email||m.sub)}')">刪除</button>`
+      +`</div>`;};
+  document.getElementById('mem-table').innerHTML=`<table class="tbl mem-tbl"><thead><tr><th>名稱</th><th>Email</th><th>加入日</th><th>最後登入</th><th class="r">登入次數</th><th class="r">自選股</th><th class="r">分組</th><th>狀態</th><th>管控</th></tr></thead><tbody>${d.members.map(m=>`<tr><td>${esc2(m.name||'—')}${m.owner?' <span class="pill">站主</span>':''}</td><td>${esc2(m.email)}</td><td>${esc2(m.created)}</td><td>${esc2(m.last_login)}</td><td class="num r">${m.logins}</td><td class="num r">${m.watch}</td><td class="num r">${m.groups||0}</td><td>${mStatus(m)}</td><td>${mActs(m)}</td></tr>`).join('')||'<tr><td colspan="9" class="mut" style="padding:14px">尚無會員</td></tr>'}</tbody></table>`;
   document.getElementById('mem-events').innerHTML=`<table class="tbl mem-tbl"><thead><tr><th>時間</th><th>結果</th><th>Email</th><th>原因</th><th>來源（雜湊）</th><th>瀏覽器</th></tr></thead><tbody>${d.events.map(e=>`<tr><td>${esc2(new Date(e.at).toLocaleString('zh-TW',{hour12:false}))}</td><td>${e.ok?'成功':'<span class="pill warn">失敗</span>'}</td><td>${esc2(e.email||'—')}</td><td>${esc2(e.reason)}</td><td>${esc2(e.ip)}</td><td>${esc2(e.ua)}</td></tr>`).join('')||'<tr><td colspan="6" class="mut" style="padding:14px">近 30 天沒有登入紀錄</td></tr>'}</tbody></table>`;
 }
 async function memberToggle(b){
@@ -4151,6 +4162,28 @@ async function memberToggle(b){
   const r=await fetch('/api/admin/members/status',{method:'POST',headers:TS_H,body:JSON.stringify({sub:b.dataset.s,disabled:dis})});
   const x=await r.json().catch(()=>({}));if(!r.ok){toast(x.error||'操作失敗');return;}
   toast(dis?'已停權':'已恢復');loadMembersPage();
+}
+async function memberSuspend(sub){
+  const v=prompt('暫時停權幾天？到期會自動恢復（1～365）：','7');
+  if(v==null)return;
+  const days=parseInt(v,10);
+  if(!(days>=1&&days<=365)){toast('請輸入 1～365 的天數');return;}
+  const r=await fetch('/api/admin/members/suspend',{method:'POST',headers:TS_H,body:JSON.stringify({sub,days})});
+  const x=await r.json().catch(()=>({}));if(!r.ok){toast(x.error||'操作失敗');return;}
+  toast('已暫時停權 '+days+' 天');loadMembersPage();
+}
+async function memberLogout(sub){
+  if(!confirm('強制登出這位會員所有裝置？帳號仍可用，他需要重新登入。'))return;
+  const r=await fetch('/api/admin/members/logout',{method:'POST',headers:TS_H,body:JSON.stringify({sub})});
+  const x=await r.json().catch(()=>({}));if(!r.ok){toast(x.error||'操作失敗');return;}
+  toast('已強制登出');loadMembersPage();
+}
+async function memberDelete(sub,label){
+  if(!confirm('永久刪除會員「'+label+'」？\n將一併刪除其自選股、分組與登入紀錄，不可復原。'))return;
+  if(!confirm('再次確認：這個動作無法復原，確定要刪除嗎？'))return;
+  const r=await fetch('/api/admin/members/delete',{method:'POST',headers:TS_H,body:JSON.stringify({sub})});
+  const x=await r.json().catch(()=>({}));if(!r.ok){toast(x.error||'操作失敗');return;}
+  toast('已永久刪除');loadMembersPage();
 }
 async function logoutAll(){
   if(!confirm('要登出所有裝置嗎？包含這台，之後都需要重新登入。'))return;
