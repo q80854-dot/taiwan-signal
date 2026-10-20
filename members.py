@@ -124,6 +124,11 @@ def ensure_tables():
     """
     with _store()._conn() as conn:
         conn.executescript(ddl)
+        # 2026-10-20：暫時停權（自動到期）新增欄位；既有資料表用 ALTER 補上，重複執行時忽略「已存在」。
+        try:
+            conn.execute("ALTER TABLE member_status ADD COLUMN disabled_until TEXT")
+        except Exception:
+            pass
     _ready["ok"] = True
 
 
@@ -217,8 +222,24 @@ def remove_group(sub: str, name: str) -> str:
 def status_of(sub: str) -> dict:
     ensure_tables()
     with _store()._conn() as conn:
-        r = conn.execute("SELECT disabled, sess_ver, login_count FROM member_status WHERE sub=?", (sub,)).fetchone()
-    return dict(r) if r else {"disabled": 0, "sess_ver": 0, "login_count": 0}
+        r = conn.execute("SELECT disabled, sess_ver, login_count, disabled_until FROM member_status WHERE sub=?", (sub,)).fetchone()
+    return dict(r) if r else {"disabled": 0, "sess_ver": 0, "login_count": 0, "disabled_until": None}
+
+
+def _suspended(st: dict) -> bool:
+    """暫時停權是否仍在效期內（到期即自動失效，不需手動解除）。"""
+    u = st.get("disabled_until")
+    if not u:
+        return False
+    try:
+        return datetime.now(timezone.utc) < datetime.fromisoformat(str(u).replace("Z", "+00:00"))
+    except Exception:
+        return False
+
+
+def effective_disabled(st: dict) -> bool:
+    """實際是否被擋：永久停權(disabled=1) 或 暫時停權仍在效期內。"""
+    return bool(st.get("disabled")) or _suspended(st)
 
 
 def current_member():
@@ -229,7 +250,7 @@ def current_member():
     m, st = _member_cached(p["sub"])
     if not m:
         return None
-    if st.get("disabled") or int(p.get("v", 0)) != int(st.get("sess_ver") or 0):
+    if effective_disabled(st) or int(p.get("v", 0)) != int(st.get("sess_ver") or 0):
         return None
     return m
 
@@ -570,7 +591,7 @@ def member_stats() -> dict:
     d30 = (now - timedelta(days=29)).strftime("%Y-%m-%d")     # 近 30 天（含今天）
     with _store()._conn() as conn:
         ms = [dict(r) for r in conn.execute("SELECT sub, email, name, created_at, last_login FROM members").fetchall()]
-        st = {r["sub"]: dict(r) for r in conn.execute("SELECT sub, disabled, login_count FROM member_status").fetchall()}
+        st = {r["sub"]: dict(r) for r in conn.execute("SELECT sub, disabled, login_count, disabled_until FROM member_status").fetchall()}
         wc = {r["sub"]: r["n"] for r in conn.execute("SELECT sub, COUNT(*) AS n FROM member_watch GROUP BY sub").fetchall()}
         gc = {r["sub"]: r["n"] for r in conn.execute("SELECT sub, COUNT(*) AS n FROM member_groups GROUP BY sub").fetchall()}
         # 熱門自選股：被最多「不同會員」加入的代號前 20（名稱取任一筆既有名稱）
@@ -605,7 +626,10 @@ def member_stats() -> dict:
     fails24 = sum(1 for e in ev if not e["ok"] and e["at"] >= (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
     rows = [{"name": m.get("name") or "", "email": m.get("email") or "", "created": m["created_day"], "last_login": m["last_day"],
              "logins": (st.get(m["sub"]) or {}).get("login_count", 0), "watch": wc.get(m["sub"], 0), "groups": gc.get(m["sub"], 0),
-             "disabled": bool((st.get(m["sub"]) or {}).get("disabled")), "sub": m["sub"], "owner": is_owner(m)}
+             "disabled": bool((st.get(m["sub"]) or {}).get("disabled")),
+             "suspended": _suspended(st.get(m["sub"]) or {}),
+             "suspended_until": _tw_date((st.get(m["sub"]) or {}).get("disabled_until") or "") if _suspended(st.get(m["sub"]) or {}) else None,
+             "sub": m["sub"], "owner": is_owner(m)}
             for m in sorted(ms, key=lambda x: x.get("last_login") or "", reverse=True)]
     n_watchers = len(wc)
     return {
@@ -651,11 +675,80 @@ def admin_member_status():
         return jsonify({"error": "找不到會員"}), 404
     if is_owner(target):
         return jsonify({"error": "不能停權站主帳號"}), 400
+    # 恢復（disabled=0）時一併清掉暫時停權的到期時間，避免「解除了永久停權卻還卡在暫時停權」。
     with _store()._conn() as conn:
-        conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count) VALUES (?, ?, 0, 0) "
-                     "ON CONFLICT (sub) DO UPDATE SET disabled=EXCLUDED.disabled", (sub, dis))
+        conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count, disabled_until) VALUES (?, ?, 0, 0, NULL) "
+                     "ON CONFLICT (sub) DO UPDATE SET disabled=EXCLUDED.disabled" + ("" if dis else ", disabled_until=NULL"), (sub, dis))
     invalidate_member(sub)
     return jsonify({"ok": True, "disabled": bool(dis)})
+
+
+@bp.route("/api/admin/members/suspend", methods=["POST"])
+def admin_member_suspend():
+    """暫時停權：設定天數，到期自動恢復（不需手動解除）。期間內無法登入、現有登入立即失效。"""
+    m = current_member()
+    if not is_owner(m):
+        return _forbid()
+    if request.headers.get("X-TS") != "1":
+        return jsonify({"error": "請求來源不正確"}), 403
+    d = request.get_json(silent=True) or {}
+    sub = str(d.get("sub") or "")
+    try:
+        days = int(d.get("days") or 0)
+    except (TypeError, ValueError):
+        days = 0
+    if not (1 <= days <= 365):
+        return jsonify({"error": "天數需在 1～365 之間"}), 400
+    target = get_member(sub)
+    if not target:
+        return jsonify({"error": "找不到會員"}), 404
+    if is_owner(target):
+        return jsonify({"error": "不能停權站主帳號"}), 400
+    until = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    with _store()._conn() as conn:
+        conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count, disabled_until) VALUES (?, 0, 0, 0, ?) "
+                     "ON CONFLICT (sub) DO UPDATE SET disabled_until=EXCLUDED.disabled_until", (sub, until))
+    invalidate_member(sub)
+    return jsonify({"ok": True, "suspended_until": until, "days": days})
+
+
+@bp.route("/api/admin/members/logout", methods=["POST"])
+def admin_member_logout():
+    """強制登出（不封鎖）：把該會員所有裝置踢出、需重新登入，但帳號仍可用。"""
+    m = current_member()
+    if not is_owner(m):
+        return _forbid()
+    if request.headers.get("X-TS") != "1":
+        return jsonify({"error": "請求來源不正確"}), 403
+    sub = str((request.get_json(silent=True) or {}).get("sub") or "")
+    if not get_member(sub):
+        return jsonify({"error": "找不到會員"}), 404
+    with _store()._conn() as conn:
+        conn.execute("INSERT INTO member_status (sub, disabled, sess_ver, login_count) VALUES (?, 0, 1, 0) "
+                     "ON CONFLICT (sub) DO UPDATE SET sess_ver=member_status.sess_ver+1", (sub,))
+    invalidate_member(sub)
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/admin/members/delete", methods=["POST"])
+def admin_member_delete():
+    """永久刪除會員：清除會員身分、自選股、分組與其登入紀錄（不可復原）。站主帳號不可刪。"""
+    m = current_member()
+    if not is_owner(m):
+        return _forbid()
+    if request.headers.get("X-TS") != "1":
+        return jsonify({"error": "請求來源不正確"}), 403
+    sub = str((request.get_json(silent=True) or {}).get("sub") or "")
+    target = get_member(sub)
+    if not target:
+        return jsonify({"error": "找不到會員"}), 404
+    if is_owner(target):
+        return jsonify({"error": "不能刪除站主帳號"}), 400
+    with _store()._conn() as conn:
+        for tbl in ("member_watch", "member_groups", "member_status", "login_events", "members"):
+            conn.execute(f"DELETE FROM {tbl} WHERE sub=?", (sub,))
+    invalidate_member(sub)
+    return jsonify({"ok": True})
 
 
 # ───────── 路由：自選股 ─────────
