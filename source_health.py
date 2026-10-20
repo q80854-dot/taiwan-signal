@@ -52,18 +52,26 @@ def _host_of(url):
 
 
 def record(url, ok, ms, code=None, err=None):
-    """記一次請求結果。ms 為毫秒。ok=True 代表連得上且 HTTP < 400。"""
+    """記一次請求結果。ms 為毫秒。ok=True 代表連得上且 HTTP < 400。
+
+    特例：HTTP 402／429＝免費額度／頻率達上限（例如 FinMind）。這代表「連線是通的、
+    只是這個時段額度用完」，程式本身會熔斷＋改用快取優雅降級，不該被當成「連線中斷」。
+    這裡把它記成獨立的『額度達上限』（連線視為可達，不列入連線失敗），健檢顯示成留意、
+    而不是把整個健檢變成異常(紅)；真正的連線失敗（逾時、5xx、DNS）仍照舊標為中斷。"""
     host = _host_of(url)
     if host in ("?", "127.0.0.1", "localhost"):
         return
+    limited = code in (402, 429)
     now = time.time()
     with _LOCK:
         h = _hosts.get(host)
         if h is None:
             h = _hosts[host] = {"ring": deque(maxlen=_RING), "lat": deque(maxlen=_RING),
-                                "last_ok": None, "last_at": None, "last_ms": None,
-                                "last_code": None, "last_err": None}
-        h["ring"].append(1 if ok else 0)
+                                "lim": deque(maxlen=_RING), "last_ok": None, "last_at": None,
+                                "last_ms": None, "last_code": None, "last_err": None}
+        # 連線健康度：成功或『額度達上限』都算「連得上」（ring=1）；只有真正連不上才記 0。
+        h["ring"].append(1 if (ok or limited) else 0)
+        h["lim"].append(1 if limited else 0)
         if ms is not None:
             h["lat"].append(float(ms))
         h["last_at"] = now
@@ -71,21 +79,29 @@ def record(url, ok, ms, code=None, err=None):
         h["last_code"] = code
         if ok:
             h["last_ok"] = now
+            h["last_err"] = None
+        elif limited:
+            h["last_err"] = f"額度/頻率達上限（HTTP {code}），已改用快取降級，非連線中斷"
         else:
             h["last_err"] = (str(err)[:160] if err else (f"HTTP {code}" if code else "連線失敗"))
 
 
-def _state(ring, last_ok):
+def _state(ring, last_ok, lim=None):
     n = len(ring)
     if n == 0:
         return "unknown"
+    lim = list(lim or [])
     rate = sum(ring) / n
     last = ring[-1]
     recent = list(ring)[-3:]
-    if last_ok is None and all(x == 0 for x in ring):
-        return "down"                                   # 從頭到尾沒成功過
+    recent_lim = lim[-3:]
+    # 近幾次都是「額度達上限」（連得上、只是沒額度）→ 獨立標記為 limited，而非 down/warn
+    if recent_lim and all(x == 1 for x in recent_lim):
+        return "limited"
+    if last_ok is None and all(x == 0 for x in ring) and not any(lim):
+        return "down"                                   # 從頭到尾沒成功過（且非額度問題）
     if all(x == 0 for x in recent) and n >= 3:
-        return "down"                                   # 連續失敗
+        return "down"                                   # 連續（真正）失敗
     if last == 0 or rate < 0.9:
         return "warn"
     return "ok"
@@ -108,7 +124,7 @@ def snapshot():
     with _LOCK:
         for host, h in _hosts.items():
             ring = h["ring"]
-            st = _state(ring, h["last_ok"])
+            st = _state(ring, h["last_ok"], h.get("lim"))
             out.append({
                 "host": host,
                 "name": friendly(host),
@@ -122,10 +138,10 @@ def snapshot():
                 "last_attempt_ago": (int(now - h["last_at"]) if h["last_at"] else None),
                 "last_err": h["last_err"] if st != "ok" else None,
             })
-    order = {"down": 0, "warn": 1, "unknown": 2, "ok": 3}
+    order = {"down": 0, "limited": 1, "warn": 2, "unknown": 3, "ok": 4}
     out.sort(key=lambda r: (order.get(r["state"], 9), r["host"]))
     return {"at": now, "sources": out,
-            "counts": {k: sum(1 for r in out if r["state"] == k) for k in ("ok", "warn", "down", "unknown")}}
+            "counts": {k: sum(1 for r in out if r["state"] == k) for k in ("ok", "warn", "down", "limited", "unknown")}}
 
 
 def summary():
@@ -138,6 +154,9 @@ def summary():
     if c["down"]:
         downs = [r["name"] for r in snap["sources"] if r["state"] == "down"][:4]
         return "fail", f"{c['down']} 個來源連線異常：{'、'.join(downs)}（共監測 {total} 個來源）"
+    if c.get("limited"):
+        lims = [r["name"] for r in snap["sources"] if r["state"] == "limited"][:4]
+        return "warn", f"{c['limited']} 個來源額度／頻率達上限：{'、'.join(lims)}（連線正常，已改用快取降級；共監測 {total} 個來源）"
     if c["warn"]:
         warns = [r["name"] for r in snap["sources"] if r["state"] == "warn"][:4]
         return "warn", f"{c['warn']} 個來源成功率偏低：{'、'.join(warns)}（共監測 {total} 個來源）"
