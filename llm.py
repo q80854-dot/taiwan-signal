@@ -15,8 +15,42 @@ complete()，依環境變數自動挑一個「有金鑰」的供應商；全部�
 from __future__ import annotations
 import os
 import logging
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
+
+
+# ── 用量統計（token）：各家 API 回傳的 usage 原本被丟掉，這裡累積起來供站主查看 ──
+# 存在 state_store meta（Postgres 持久化、不隨部署清空）；只記 token 數與呼叫次數，不存內容。
+def _record_usage(provider: str, model: str, pin, pout) -> None:
+    try:
+        from state_store import store
+        pin, pout = int(pin or 0), int(pout or 0)
+        u = store.get_meta("llm_usage") or {}
+        day = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")   # 台北日期
+        bd = u.setdefault("by_day", {})
+        for bucket in (bd.setdefault(day, {}), u.setdefault("total", {})):
+            pv = bucket.setdefault(provider, {"calls": 0, "in": 0, "out": 0})
+            pv["calls"] += 1; pv["in"] += pin; pv["out"] += pout
+        u["last"] = {"at": datetime.now(timezone.utc).isoformat(), "provider": provider,
+                     "model": model, "in": pin, "out": pout}
+        if len(bd) > 120:                           # 只保留最近約 90 天的逐日明細
+            for k in sorted(bd)[:-90]:
+                bd.pop(k, None)
+        store.set_meta("llm_usage", u)
+    except Exception as e:
+        logger.warning(f"llm 用量記錄失敗（不影響產生）：{e}")
+
+
+def usage() -> dict:
+    """目前累積的 AI token 用量（供站主頁顯示）。"""
+    try:
+        from state_store import store
+        u = store.get_meta("llm_usage") or {}
+    except Exception:
+        u = {}
+    u.setdefault("by_day", {}); u.setdefault("total", {})
+    return u
 
 _DEFAULT_MODELS = {
     "gemini": "gemini-3.8-flash",
@@ -113,6 +147,9 @@ def _gemini_once(model: str, system: str, user: str, max_tokens: int, timeout: i
         return None, None, False
     parts = (cands[0].get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts).strip()
+    if text:
+        um = data.get("usageMetadata") or {}
+        _record_usage("gemini", model, um.get("promptTokenCount"), um.get("candidatesTokenCount"))
     return (text or None), None, False
 
 
@@ -157,7 +194,11 @@ def _groq(system: str, user: str, max_tokens: int, timeout: int) -> str | None:
     ch = data.get("choices") or []
     if not ch:
         return None
-    return (ch[0].get("message") or {}).get("content", "").strip() or None
+    text = (ch[0].get("message") or {}).get("content", "").strip() or None
+    if text:
+        us = data.get("usage") or {}
+        _record_usage("groq", _model("groq"), us.get("prompt_tokens"), us.get("completion_tokens"))
+    return text
 
 
 # ── Anthropic Claude（付費，用 SDK）────────────────────
@@ -176,4 +217,8 @@ def _anthropic(system: str, user: str, max_tokens: int, timeout: int) -> str | N
         resp = client.messages.create(**kwargs)
     if getattr(resp, "stop_reason", None) == "refusal":
         return None
-    return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip() or None
+    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip() or None
+    if text:
+        us = getattr(resp, "usage", None)
+        _record_usage("anthropic", _model("anthropic"), getattr(us, "input_tokens", 0), getattr(us, "output_tokens", 0))
+    return text

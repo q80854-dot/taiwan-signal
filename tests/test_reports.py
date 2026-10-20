@@ -116,6 +116,27 @@ def test_llm_provider_resolution(monkeypatch):
     assert llm.provider_name() == "groq"
 
 
+def test_llm_usage_tracking(monkeypatch):
+    import llm, importlib, state_store
+    importlib.reload(llm)
+
+    class _FS:
+        def __init__(self): self.m = {}
+        def get_meta(self, k, d=None): return self.m.get(k, d)
+        def set_meta(self, k, v): self.m[k] = v
+    monkeypatch.setattr(state_store, "store", _FS())
+    llm._record_usage("gemini", "gemini-x", 100, 40)
+    llm._record_usage("gemini", "gemini-x", 50, 10)
+    llm._record_usage("groq", "llama", 20, 5)
+    u = llm.usage()
+    assert u["total"]["gemini"] == {"calls": 2, "in": 150, "out": 50}
+    assert u["total"]["groq"] == {"calls": 1, "in": 20, "out": 5}
+    assert u["last"]["provider"] == "groq" and u["last"]["out"] == 5
+    # 今日逐日桶也有累積
+    day = next(iter(u["by_day"]))
+    assert u["by_day"][day]["gemini"]["calls"] == 2
+
+
 def test_gemini_retries_on_retired_model(monkeypatch):
     import llm, importlib
     importlib.reload(llm)

@@ -3,7 +3,7 @@ app.py — Flask 主應用 v1.2
 修正：改用 send_from_directory 繞過 Jinja2 解析 dashboard.html
 """
 import sys, os, signal, logging, threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, send_from_directory
 from config import SYSTEM, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
 
@@ -1798,6 +1798,33 @@ def api_finmind_market():
 def api_finmind_status():
     import finmind_data as finmind
     return jsonify(finmind.status())
+
+
+@app.route("/api/usage")
+@members.owner_required
+def api_usage():
+    """站主：外部 API 用量彙總——AI token（各家累積與今日）、FinMind 額度、記憶體。"""
+    out = {}
+    try:
+        import llm
+        u = llm.usage()
+        today = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
+        out["llm"] = {"provider": llm.provider_name(), "available": llm.available(),
+                      "total": u.get("total", {}), "today": (u.get("by_day", {}) or {}).get(today, {}),
+                      "by_day": u.get("by_day", {}), "last": u.get("last")}
+    except Exception as e:
+        out["llm_error"] = str(e)
+    try:
+        import finmind_data as finmind
+        out["finmind"] = finmind.status()
+    except Exception as e:
+        out["finmind_error"] = str(e)
+    try:
+        import resource
+        out["memory_rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    except Exception:
+        pass
+    return jsonify(out)
 
 
 @app.route("/api/db_stats")
