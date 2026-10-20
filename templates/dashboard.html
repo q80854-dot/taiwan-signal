@@ -382,8 +382,16 @@ body{font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Helvetica Ne
 .fund-top{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center}
 .fund-big{font-family:var(--serif);font-size:54px;font-weight:800;line-height:1;text-align:center}
 .fund-big small{display:block;font-size:12px;letter-spacing:2px;color:var(--t3);font-weight:600;margin-top:6px}
-.fbar{display:grid;grid-template-columns:48px 1fr 36px;gap:10px;align-items:center;margin:7px 0;font-size:12px}
+.fbar{display:grid;grid-template-columns:48px 1fr 58px;gap:10px;align-items:center;margin:7px 0;font-size:12px}
 .fbar .t{height:10px;background:var(--paper2);border:1px solid var(--line2)}.fbar .t i{display:block;height:100%;background:var(--accent)}
+.fbar b{text-align:right;font-variant-numeric:tabular-nums}.fbar b small{font-size:10px}
+/* 基本面體檢白話層 */
+.fund-say{margin-top:14px;padding:11px 13px;background:var(--paper2);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;font-size:13px;line-height:1.7;color:var(--t1)}
+.fund-say small{display:block;color:var(--t3);font-size:11px;margin-top:3px}
+.fund-tips{margin-top:12px;display:grid;gap:8px}
+.fund-tips .ft{border:1px solid var(--line2);border-radius:6px;padding:9px 11px;background:var(--paper)}
+.fund-tips .ft b{display:block;font-size:12.5px;color:var(--t1);margin-bottom:2px}
+.fund-tips .ft span{font-size:12px;color:var(--t2);line-height:1.6}
 .fund .tg{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px}
 .fund .tg span{font-size:11px;border:1px solid var(--line2);padding:2px 9px;background:var(--paper2);color:var(--t1)}
 .spark{display:flex;align-items:flex-end;gap:5px;height:54px;margin-top:14px;border-bottom:1px solid var(--ink)}
@@ -4574,17 +4582,44 @@ function fundChip(s){
 function fundBlock(f){
   if(!f||f.error)return '';
   if(f.score===null||f.score===undefined)return `<div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">基本面體檢</div></div><div class="fund"><div class="empty" style="padding:20px">這檔的基本面資料涵蓋不足（${f.coverage}%），不評分。缺：${(f.missing||[]).join('、')||'—'}。</div></div>`;
-  const parts=['成長','獲利','估值'].filter(k=>(f.parts||{})[k]).map(k=>[k,f.parts[k]]).map(([k,v])=>`<div class="fbar"><span>${k}</span><div class="t"><i style="width:${v.score}%"></i></div><b>${v.score}</b></div>`).join('');
+  const P=f.parts||{};
+  // 每個面向「這在看什麼」的白話說明，讓新手一眼懂（不是看數字，而是知道意義）
+  const DMEAN={成長:'生意有沒有越做越大',獲利:'本業賺錢能力強不強',估值:'現在股價貴不貴'};
+  const lvWord=s=>s>=70?['強','var(--up)']:s>=50?['普通','var(--warn)']:['偏弱','var(--down)'];
+  const parts=['成長','獲利','估值'].filter(k=>P[k]).map(k=>{const v=P[k],w=lvWord(v.score);
+    return `<div class="fbar"><span title="${DMEAN[k]}">${k}</span><div class="t"><i style="width:${v.score}%"></i></div><b style="color:${w[1]}">${v.score}<small style="font-weight:500"> ${w[0]}</small></b></div>`;}).join('')
+    +`<div style="font-size:10.5px;color:var(--t3);line-height:1.6;margin-top:4px">成長＝生意有沒有越做越大　獲利＝賺錢能力強不強　估值＝現在股價貴不貴</div>`;
+  // 一句話白話總評：挑每個面向的強弱講成人話，再加總體結論
+  const ph=(name,s)=>{if(s==null)return null;const st=s>=70,wk=s<50;
+    return name==='成長'?(st?'成長很快':wk?'成長偏慢':'成長穩定')
+      :name==='獲利'?(st?'很會賺錢':wk?'獲利偏弱':'獲利中等')
+      :(st?'股價便宜':wk?'股價偏貴':'股價合理');};
+  const phrases=['成長','獲利','估值'].map(k=>P[k]?ph(k,P[k].score):null).filter(Boolean);
+  const concl=f.score>=70?'整體基本面偏強':f.score>=50?'整體基本面中等':'整體基本面偏弱';
+  const sayC=f.score>=70?'var(--up)':f.score>=50?'var(--warn)':'var(--down)';
+  const say=`<div class="fund-say"><b>一句話：</b>這家公司${phrases.join('、')||'資料有限'}，<b style="color:${sayC}">${concl}</b>（${f.score} 分，滿分 100）。`
+    +`<small>分數越高代表基本面越好；下面每一項都附白話解釋。</small></div>`;
+  // 新手解讀：把關鍵數字翻成人話（只用實際有的數值，不編造）
+  const g=P['成長'],pr=P['獲利'],va=P['估值'],tips=[];
+  if(g&&g.yoy!=null)tips.push(['月營收年增 '+_sg(g.yoy,0)+'%','這個月賣的錢比「去年同一個月」'+(g.yoy>=0?'多':'少')+' '+Math.abs(Math.round(g.yoy))+'%'+(g.yoy>=20?'，成長很快':g.yoy<0?'，要留意是不是衰退':'')]);
+  if(g&&g.cum_yoy!=null)tips.push(['累計營收年增 '+_sg(g.cum_yoy,0)+'%','今年到目前為止，總營收比去年同期'+(g.cum_yoy>=0?'多':'少')+' '+Math.abs(Math.round(g.cum_yoy))+'%（看整年趨勢、比單月穩）']);
+  if(pr&&pr.op_margin!=null)tips.push(['營業利益率 '+_fmtN(pr.op_margin,1)+'%','每做 100 元生意、本業實際賺 '+Math.round(pr.op_margin)+' 元，數字越高越會賺']);
+  if(va&&va.pe!=null)tips.push(['本益比 '+_fmtN(va.pe,1),'現在股價約等於這家公司「'+_fmtN(va.pe,1)+' 年的獲利」，數字越小代表越便宜（市場上 15 倍上下算普通）']);
+  if(va&&va.yield!=null)tips.push(['殖利率 '+_fmtN(va.yield,1)+'%','若用現價買進並領股息，一年大約可領回 '+_fmtN(va.yield,1)+'%，越高越好（4% 以上算不錯）']);
+  const tipsHtml=tips.length?`<div class="fund-tips">${tips.map(t=>`<div class="ft"><b>${t[0]}</b><span>${t[1]}</span></div>`).join('')}</div>`:'';
   const hist=(f.history||[]).filter(h=>h.yoy_pct!==null&&h.yoy_pct!==undefined);
   const mx=Math.max(10,...hist.map(h=>Math.abs(h.yoy_pct)));
-  const spark=hist.length>=2?`<div style="font-size:11px;color:var(--t3);margin-top:12px">近 ${hist.length} 期月營收年增率</div><div class="spark">${hist.map(h=>`<i class="${h.yoy_pct<0?'n':''}" style="height:${Math.max(4,Math.abs(h.yoy_pct)/mx*100)}%"><b>${h.yoy_pct>0?'+':''}${Math.round(h.yoy_pct)}</b></i>`).join('')}</div>`:'<div style="font-size:11px;color:var(--t3);margin-top:12px">歷史月營收尚在累積（每月公告後自動存檔），之後這裡會出現趨勢圖。</div>';
+  const spark=hist.length>=2?`<div style="font-size:11px;color:var(--t3);margin-top:12px">近 ${hist.length} 期月營收年增率（長條越高＝成長越多，往下＝衰退）</div><div class="spark">${hist.map(h=>`<i class="${h.yoy_pct<0?'n':''}" style="height:${Math.max(4,Math.abs(h.yoy_pct)/mx*100)}%"><b>${h.yoy_pct>0?'+':''}${Math.round(h.yoy_pct)}</b></i>`).join('')}</div>`:'<div style="font-size:11px;color:var(--t3);margin-top:12px">歷史月營收尚在累積（每月公告後自動存檔），之後這裡會出現趨勢圖。</div>';
   const r=f.revenue||{};
   return `<div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">基本面體檢</div></div><div class="fund"><div class="fund-top">
     <div class="fund-big" style="color:${f.score>=70?'var(--up)':f.score>=50?'var(--warn)':'var(--t3)'}">${f.score}<small>基本面${f.grade}　涵蓋 ${f.coverage}%</small></div>
     <div>${parts}</div></div>
+    ${say}
+    ${tipsHtml}
     <div class="tg">${(f.tags||[]).map(t=>`<span>${t}</span>`).join('')}</div>
     ${r.revenue?`<div style="font-size:11px;color:var(--t3);margin-top:10px">${fmtMinguoYM(r.period)} 營收 ${(r.revenue/100000).toFixed(1)} 億（去年同月 ${r.revenue_ly?(r.revenue_ly/100000).toFixed(1):'—'} 億）　累計 ${r.cum_revenue?(r.cum_revenue/100000).toFixed(1):'—'} 億</div>`:''}
-    ${spark}</div>`;
+    ${spark}
+    <div style="font-size:10.5px;color:var(--t3);margin-top:10px">「涵蓋 ${f.coverage}%」＝這次有多少比例的基本面資料抓得到；越高越完整。本區只客觀說明數字，不構成買賣建議。</div></div>`;
 }
 let _radarLoaded=false;
 const RADAR_DESC={growth:'單月年增 ≥ 20%，且累計年增 ≥ 10%：營收不是只有這個月好看。',accel:'單月年增 ≥ 15%，且比累計年增高 8 個百分點以上、月增為正：成長正在加速。',value:'營收年增為正、本益比 15 倍以下、殖利率 4% 以上：便宜又還在成長。'};
