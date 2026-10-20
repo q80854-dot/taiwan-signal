@@ -639,8 +639,15 @@ def _flags_for(code, market, fx, black):
     return out
 
 
-def build_rows(items):
-    """把清單代號補上即時報價、訊號、旗標。報價用 build_live_universe（盤中為官方即時快照）。"""
+def build_rows(items, view="quote"):
+    """把清單代號補上即時報價、訊號、旗標。報價用 build_live_universe（盤中為官方即時快照）。
+
+    view 控制「看盤樣式」要帶哪些額外欄位（像三竹可切換報價／基本／籌碼）：
+      - quote（預設）：只有報價＋訊號＋旗標，不額外抓任何資料（零延遲）。
+      - basic：加本益比／殖利率／淨值比，取自 fetch_valuation_map()（全市場一次、已快取）。
+      - chips：加「今日三大法人買賣超（張）」，取自 fetch_institutional_flow()（全市場一次、已快取）。
+    兩個額外來源都是整個市場一張快取表、每檔只做字典查詢，不逐檔對外抓取，所以切換樣式不會變慢；
+    抓不到就留 None（前端顯示「—」），不以推估或舊值充數。"""
     from stock_universe import build_live_universe, BLACKLIST_CODES
     uni = {s["code"]: s for s in build_live_universe()}
     try:
@@ -655,6 +662,20 @@ def build_rows(items):
                 sigs[str(p.get("ticker", "")).split(".")[0]] = p
     except Exception:
         pass
+    vm = {}
+    if view == "basic":
+        try:
+            from fundamentals import fetch_valuation_map
+            vm = fetch_valuation_map() or {}
+        except Exception:
+            vm = {}
+    inst = {}
+    if view == "chips":
+        try:
+            from data_fetcher import fetch_institutional_flow
+            inst = fetch_institutional_flow() or {}
+        except Exception:
+            inst = {}
     rows = []
     for it in items:
         c = it["code"]
@@ -662,7 +683,7 @@ def build_rows(items):
         sg = sigs.get(c)
         price, chg = u.get("close"), u.get("change_pct")
         prev = (price / (1 + chg / 100)) if price and chg is not None else None
-        rows.append({
+        row = {
             "code": c, "name": u.get("name") or it.get("name"), "market": u.get("market") or it.get("market"),
             "sector": u.get("sector"), "price": price,
             "change": round(price - prev, 2) if prev else None, "change_pct": chg,
@@ -670,7 +691,15 @@ def build_rows(items):
             "signal": ({"direction": sg.get("direction"), "score": sg.get("score")} if sg else None),
             "flags": _flags_for(c, u.get("market"), fx, BLACKLIST_CODES),
             "listed": bool(u),
-        })
+        }
+        if view == "basic":
+            v = vm.get(c) or {}
+            row.update({"pe": v.get("pe"), "yield_pct": v.get("yield_pct"), "pb": v.get("pb")})
+        elif view == "chips":
+            q = inst.get(c) or {}
+            row.update({"inst_foreign": q.get("foreign_net"), "inst_trust": q.get("trust_net"),
+                        "inst_total": q.get("total_net")})
+        rows.append(row)
     return rows
 
 
@@ -682,7 +711,10 @@ def my_watch_get():
     grp = _clean_group(request.args.get("grp")) or (gs[0]["name"] if gs else DEFAULT_GROUP)
     if grp not in [g["name"] for g in gs]:
         grp = gs[0]["name"] if gs else DEFAULT_GROUP
-    return jsonify({"groups": gs, "grp": grp, "items": build_rows(items_of(sub, grp))})
+    view = (request.args.get("view") or "quote").strip().lower()
+    if view not in ("quote", "basic", "chips"):
+        view = "quote"
+    return jsonify({"groups": gs, "grp": grp, "view": view, "items": build_rows(items_of(sub, grp), view)})
 
 
 @bp.route("/api/my/watchlist", methods=["POST"])
