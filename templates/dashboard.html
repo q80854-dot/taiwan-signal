@@ -5399,7 +5399,7 @@ async function pollFreshness(render){
     pollSourceHealth();
   }
 }
-const _SH_ST={ok:['正常','var(--ok,#16a34a)'],warn:['不穩','var(--warn,#d97706)'],down:['異常','var(--alert,#dc2626)'],unknown:['未測','var(--t3)']};
+const _SH_ST={ok:['正常','var(--ok,#16a34a)'],warn:['不穩','var(--warn,#d97706)'],down:['異常','var(--alert,#dc2626)'],limited:['額度達上限','var(--warn,#d97706)'],unknown:['未測','var(--t3)']};
 function _agoTxt(s){if(s==null)return '—';if(s<60)return s+' 秒前';if(s<3600)return Math.round(s/60)+' 分前';if(s<86400)return Math.round(s/3600)+' 時前';return Math.round(s/86400)+' 天前';}
 async function pollSourceHealth(){
   let d;try{d=await(await fetch('/api/source_health',{cache:'no-store'})).json();}catch(e){return;}
