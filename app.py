@@ -2193,8 +2193,23 @@ def api_instrument(ticker: str):
                 top += [x for x in same if x.get("code") == code]
             chg = [x["change_pct"] for x in same if x.get("change_pct") is not None]
             rank = sorted(chg, reverse=True).index(_inf["change_pct"]) + 1 if _inf.get("change_pct") in chg else None
+            # 同業定位：用整個產業（非只前 8 名）算本檔在本益比／殖利率的排名，零額外抓取（same、vm 都已在手）。
+            # 只排「有該指標」的同業，標清楚母體 n；本益比取正值（虧損無本益比不納入），由低到高（第 1＝最便宜）；
+            # 殖利率由高到低（第 1＝最高）。資料全來自官方估值表，不推估。
+            import statistics as _stats
+            _self = vm.get(code) or {}
+            self_pe, self_yield = _self.get("pe"), _self.get("yield_pct")
+            pes = sorted(v for v in ((vm.get(x.get("code")) or {}).get("pe") for x in same) if v and v > 0)
+            yds = sorted((v for v in ((vm.get(x.get("code")) or {}).get("yield_pct") for x in same) if v is not None), reverse=True)
+
+            def _rk(arr, val):
+                return [arr.index(val) + 1, len(arr)] if (val is not None and val in arr) else None
             out["peers"] = {"sector": sec, "n": len(same), "avg_change_pct": round(sum(chg) / len(chg), 2) if chg else None,
                             "rank_by_change": rank,
+                            "self_pe": self_pe, "self_yield": self_yield,
+                            "rank_by_pe": _rk(pes, self_pe), "rank_by_yield": _rk(yds, self_yield),
+                            "median_pe": round(_stats.median(pes), 2) if pes else None,
+                            "median_yield": round(_stats.median(yds), 2) if yds else None,
                             "rows": [{"code": x.get("code"), "name": x.get("name"), "market": x.get("market"),
                                       "close": x.get("close"), "change_pct": x.get("change_pct"),
                                       "value_yi": round((x.get("close") or 0) * (x.get("volume_lots") or 0) * 1000 / 1e8, 2),

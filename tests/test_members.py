@@ -81,6 +81,33 @@ def test_members_are_isolated(cl):
     assert cl.get("/api/my/watchlist").get_json()["items"] == []
 
 
+def test_watchlist_views(cl, monkeypatch):
+    # 看盤樣式：預設 quote 不抓額外資料；basic 帶本益比/殖利率；chips 帶今日法人（張）
+    login(cl)
+    cl.post("/api/my/watchlist", json={"code": "2330"}, headers=H)
+    import fundamentals as fd
+    import data_fetcher as df
+    val_calls = {"n": 0}
+    def fake_val():
+        val_calls["n"] += 1
+        return {"2330": {"pe": 20.1, "yield_pct": 1.8, "pb": 5.2}}
+    monkeypatch.setattr(fd, "fetch_valuation_map", fake_val)
+    monkeypatch.setattr(df, "fetch_institutional_flow", lambda date_str=None: {"2330": {"foreign_net": 1234, "trust_net": -56, "total_net": 1100}})
+    # 預設 quote：不含 pe，且沒呼叫估值表
+    q = cl.get("/api/my/watchlist").get_json()
+    assert q["view"] == "quote" and "pe" not in q["items"][0] and val_calls["n"] == 0
+    # basic：帶 pe / 殖利率 / 淨值比
+    b = cl.get("/api/my/watchlist?view=basic").get_json()
+    row = b["items"][0]
+    assert b["view"] == "basic" and row["pe"] == 20.1 and row["yield_pct"] == 1.8 and row["pb"] == 5.2
+    # chips：帶今日三大法人（張）
+    c = cl.get("/api/my/watchlist?view=chips").get_json()
+    row = c["items"][0]
+    assert c["view"] == "chips" and row["inst_foreign"] == 1234 and row["inst_total"] == 1100
+    # 不合法的 view 退回 quote
+    assert cl.get("/api/my/watchlist?view=xxx").get_json()["view"] == "quote"
+
+
 def test_groups(cl):
     login(cl)
     assert cl.post("/api/my/groups", json={"name": "短線"}, headers=H).status_code == 200

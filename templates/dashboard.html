@@ -790,6 +790,15 @@ html:not([data-theme=dark]) #theme-ic-sun,html[data-theme=dark] #theme-ic-moon{d
 .mw-x{color:var(--t3);font-size:17px;padding:0 8px;cursor:pointer}.mw-x:hover{color:var(--up)}
 .mw-tbl .pill{margin-left:4px;padding:1px 8px;font-size:11.5px}
 html[data-theme=dark] .mw-tab.on{background:var(--navy2);border-color:var(--navy2)}
+/* 看盤樣式切換 + 排序工具列 */
+.mw-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 2px}
+.mw-segs{display:inline-flex;border:1px solid var(--line2);border-radius:999px;overflow:hidden;background:var(--s1)}
+.mw-seg{border:0;background:transparent;color:var(--t2);font:inherit;font-size:13px;font-weight:600;padding:7px 16px;cursor:pointer}
+.mw-seg+.mw-seg{border-left:1px solid var(--line2)}
+.mw-seg.on{background:var(--accent);color:#fff}
+.mw-sortsel{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--t3);margin-left:auto}
+.mw-sortsel select{height:34px;border:1px solid var(--line2);border-radius:8px;background:var(--s1);color:var(--t1);font:inherit;font-size:13px;padding:0 8px;cursor:pointer}
+.mw-dir{height:34px;border:1px solid var(--line2);border-radius:8px;background:var(--s1);color:var(--t1);font:inherit;font-size:13px;padding:0 10px;cursor:pointer}
 html[data-theme=dark] .mw-add input{background:var(--s2)}
 .mem-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
 .mem-k{background:var(--s1);border:1px solid var(--line2);border-radius:6px;padding:12px 14px}
@@ -1097,6 +1106,15 @@ body{font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHe
 .rp-v.rp-na{color:var(--t3);font-size:14px;font-weight:500}
 .rp-c{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:3px;min-height:16px}
 @media(max-width:700px){.rp-grid{grid-template-columns:repeat(2,1fr)}.rp-narr{max-width:none}.rp-narr p{text-align:left}}
+/* 同業定位（個股研究同業比較的相對排名卡） */
+.peer-posrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:2px 0 12px}
+.peer-pos{border:1px solid var(--line);border-radius:var(--r,4px);padding:10px 12px;background:var(--s1)}
+.peer-pos .pp-k{font-size:11.5px;color:var(--t3);letter-spacing:.02em}
+.peer-pos .pp-v{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--t1);line-height:1.2;margin-top:2px}
+.peer-pos .pp-r{font-size:12px;color:var(--t2);margin-top:3px}
+.peer-pos .pp-r b{color:var(--accent)}
+.peer-pos .pp-m{font-size:11px;color:var(--t3);margin-top:1px}
+@media(max-width:460px){.peer-posrow{grid-template-columns:1fr}}
 .top-l{font-weight:600!important}
 .btn{border-radius:6px!important;height:34px;padding:0 14px!important;font-size:13px!important;font-weight:500!important;letter-spacing:0!important;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2)!important;background:var(--s1)!important;color:var(--t1)!important}
 .btn:hover{background:var(--s2)!important}
@@ -2901,9 +2919,20 @@ function instExtraHtml(d){
   const P=d.peers;
   if(P&&P.rows&&P.rows.length>1){
     const n2=v=>v==null?'—':_fmtN(v,2);
+    // 同業定位：本檔在整個產業中的相對排名（本益比越前面＝越便宜、殖利率越前面＝越高），母體 n 標清楚
+    const posChip=(label,self,unit,rk,med,hint)=>{
+      if(self==null||!rk)return '';
+      const pct=Math.round(rk[0]/rk[1]*100);
+      return `<div class="peer-pos"><div class="pp-k">${label}</div><div class="pp-v">${n2(self)}${unit}</div>`
+        +`<div class="pp-r">同業第 <b>${rk[0]}</b>/${rk[1]}（前 ${pct}%，${hint}）</div>`
+        +`<div class="pp-m">中位數 ${med==null?'—':n2(med)+unit}</div></div>`;
+    };
+    const posHtml=[posChip('本益比',P.self_pe,'',P.rank_by_pe,P.median_pe,'越前面越便宜'),
+                   posChip('殖利率',P.self_yield,'%',P.rank_by_yield,P.median_yield,'越前面越高')].filter(Boolean).join('');
     h+=`<div class="sec-label"><div class="bar"></div><div class="tx">同產業比較（${safe(P.sector)}，共 ${P.n} 檔）</div></div>
     <div class="panel card"><div class="panel-body">
       <div style="font-size:12.5px;color:var(--t2);margin-bottom:8px">產業平均漲跌 ${P.avg_change_pct==null?'—':fmtPct(P.avg_change_pct)}${P.rank_by_change?`；本檔今日漲跌排第 <b>${P.rank_by_change}</b> / ${P.n}`:''}</div>
+      ${posHtml?`<div class="peer-posrow">${posHtml}</div>`:''}
       <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>股票</th><th style="text-align:right">股價</th><th style="text-align:right">漲跌</th><th style="text-align:right">成交金額(億)</th><th style="text-align:right">本益比</th><th style="text-align:right">殖利率</th><th style="text-align:right">淨值比</th></tr></thead><tbody>
       ${P.rows.map(x=>`<tr style="${x.self?'background:var(--accent-soft,rgba(37,99,235,.08));font-weight:600':''}"><td><a href="#" onclick="document.getElementById('inst-ticker').value='${escH(x.code)}';fetchInstrument();return false" style="color:inherit">${safe(x.name)} <span style="color:var(--t3)">${safe(x.code)}</span></a></td><td style="text-align:right">${n2(x.close)}</td><td style="text-align:right">${x.change_pct==null?'—':fmtPct(x.change_pct)}</td><td style="text-align:right">${n2(x.value_yi)}</td><td style="text-align:right">${x.pe?n2(x.pe):'—'}</td><td style="text-align:right">${x.yield_pct==null?'—':n2(x.yield_pct)+'%'}</td><td style="text-align:right">${n2(x.pb)}</td></tr>`).join('')}
       </tbody></table></div>
@@ -4136,11 +4165,20 @@ async function toggleMyStar(ticker){
   if(document.getElementById('page-watchlist').classList.contains('on'))renderMyWatch();
 }
 const escA=x=>String(x==null?'':x).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
-var _mw={grp:null,star:null,data:null,sort:{k:'code',d:1},t:null,edit:false,newg:false,delArm:false,q:'',res:null,open:false};
-const WL_HOT=[['2330','台積電'],['2317','鴻海'],['2454','聯發科'],['2412','中華電'],['2881','富邦金'],['0050','元大台灣50']];
+var _mw={grp:null,star:null,data:null,sort:{k:'code',d:1},view:'quote',t:null,edit:false,newg:false,delArm:false,q:'',res:null,open:false};
+// 記住使用者的看盤樣式與排序偏好（存在瀏覽器，下次進來維持一樣）
+(function mwLoadPref(){try{
+  const p=JSON.parse(localStorage.getItem('mwPref')||'{}');
+  if(p&&typeof p==='object'){
+    if(['quote','basic','chips'].includes(p.view))_mw.view=p.view;
+    if(p.sort&&p.sort.k)_mw.sort={k:String(p.sort.k),d:p.sort.d===-1?-1:1};
+  }
+}catch(e){}})();
+function mwSavePref(){try{localStorage.setItem('mwPref',JSON.stringify({view:_mw.view,sort:_mw.sort}));}catch(e){}}
+const MW_VIEWS={quote:'報價',basic:'基本',chips:'籌碼'};
 async function mwFetch(){
-  const q=_mw.grp?'?grp='+encodeURIComponent(_mw.grp):'';
-  const r=await fetch('/api/my/watchlist'+q,{cache:'no-store'});
+  const p=new URLSearchParams();if(_mw.grp)p.set('grp',_mw.grp);if(_mw.view!=='quote')p.set('view',_mw.view);
+  const r=await fetch('/api/my/watchlist'+(p.toString()?'?'+p:''),{cache:'no-store'});
   if(r.status===401){_mw.data=null;return false;}
   if(!r.ok)return false;
   _mw.data=await r.json();_mw.grp=_mw.data.grp;return true;
@@ -4176,34 +4214,70 @@ function mwDraw(keep){
   const th=(c,l,al)=>`<th class="${al||''}" onclick="mwSort('${c}')" style="cursor:pointer">${l}${arrow(c)}</th>`;
   const badge=r=>r.signal?`<span class="sig-badge ${esc2(r.signal.direction)}">${r.signal.direction==='buy'?'做多':'做空'} ${esc2(r.signal.score)}</span>`:'';
   const flags=r=>(r.flags||[]).map(f=>`<span class="pill warn">${esc2(f)}</span>`).join('');
+  const instTd=v=>v==null?'—':`<span style="color:${_col(v)}">${_sg(v)}</span>`;
+  // 各看盤樣式要顯示的「指標欄」（像三竹切換）：報價 / 基本 / 籌碼
+  const COLS={
+    quote:[['change','漲跌','r',r=>`<span style="color:${mwCol(r.change)}">${r.change!=null?mwArrow(r.change)+' '+_fmtN(Math.abs(r.change),2):'—'}</span>`],
+           ['change_pct','漲跌幅','r',r=>`<span style="color:${mwCol(r.change_pct)}">${r.change_pct!=null?_sg(r.change_pct,2)+'%':'—'}</span>`],
+           ['volume_lots','成交量（張）','r',r=>r.volume_lots!=null?_fmtN(r.volume_lots):'—']],
+    basic:[['change_pct','漲跌幅','r',r=>`<span style="color:${mwCol(r.change_pct)}">${r.change_pct!=null?_sg(r.change_pct,2)+'%':'—'}</span>`],
+           ['pe','本益比','r',r=>r.pe!=null?_fmtN(r.pe,2):'—'],
+           ['yield_pct','殖利率','r',r=>r.yield_pct!=null?_fmtN(r.yield_pct,2)+'%':'—'],
+           ['pb','淨值比','r',r=>r.pb!=null?_fmtN(r.pb,2):'—']],
+    chips:[['change_pct','漲跌幅','r',r=>`<span style="color:${mwCol(r.change_pct)}">${r.change_pct!=null?_sg(r.change_pct,2)+'%':'—'}</span>`],
+           ['inst_foreign','外資(張)','r',r=>instTd(r.inst_foreign)],
+           ['inst_trust','投信(張)','r',r=>instTd(r.inst_trust)],
+           ['inst_total','合計(張)','r',r=>instTd(r.inst_total)]],
+  };
+  const cols=COLS[_mw.view]||COLS.quote;
+  const headCols=cols.map(c=>th(c[0],c[1],c[2])).join('');
+  const bodyCols=r=>cols.map(c=>`<td class="num ${c[2]||''}">${c[3](r)}</td>`).join('');
+  const tailTh=_mw.view==='quote'?'<th>訊號</th><th>狀態</th>':'<th>訊號</th>';
+  const tailTd=r=>_mw.view==='quote'?`<td>${badge(r)||'<span class="mut">—</span>'}</td><td>${flags(r)}</td>`:`<td>${badge(r)||'<span class="mut">—</span>'}</td>`;
   const body=rows.map(r=>`<tr onclick="goToInstrument('${esc2(r.code)}')" style="cursor:pointer">
       <td class="num"><b>${esc2(r.code)}</b></td><td>${esc2(r.name||'—')}<span class="mut"> ${r.market==='OTC'?'櫃':'市'}</span></td>
       <td class="num r" style="color:${mwCol(r.change_pct)};font-weight:600">${r.price!=null?_fmtN(r.price,2):'—'}</td>
-      <td class="num r" style="color:${mwCol(r.change)}">${r.change!=null?mwArrow(r.change)+' '+_fmtN(Math.abs(r.change),2):'—'}</td>
-      <td class="num r" style="color:${mwCol(r.change_pct)}">${r.change_pct!=null?_sg(r.change_pct,2)+'%':'—'}</td>
-      <td class="num r">${r.volume_lots!=null?_fmtN(r.volume_lots):'—'}</td><td>${badge(r)||'<span class="mut">—</span>'}</td><td>${flags(r)}</td>
+      ${bodyCols(r)}${tailTd(r)}
       <td class="r"><span class="mw-x" title="從清單移除" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">×</span></td></tr>`).join('');
+  // 手機卡片右下角的次要資訊，依樣式變動
+  const cardSub=r=>_mw.view==='basic'
+      ?`本益比 ${r.pe!=null?_fmtN(r.pe,2):'—'}　殖利率 ${r.yield_pct!=null?_fmtN(r.yield_pct,2)+'%':'—'}`
+      :_mw.view==='chips'
+      ?`外資今日 ${r.inst_foreign!=null?_sg(r.inst_foreign)+' 張':'—'}`
+      :(r.volume_lots!=null?'量 '+_fmtN(r.volume_lots)+' 張':'');
   const cards=rows.map(r=>`<div class="wl-card" onclick="goToInstrument('${esc2(r.code)}')">
       <div class="l"><div class="nm">${esc2(r.name||r.code)}</div><div class="cd">${esc2(r.code)}<i>${r.market==='OTC'?'櫃':'市'}</i></div>${(r.signal||(r.flags||[]).length)?`<div class="tg">${badge(r)}${flags(r)}</div>`:''}</div>
       <div class="r"><div class="px" style="color:${mwCol(r.change_pct)}">${r.price!=null?_fmtN(r.price,2):'—'}</div>
         <div class="ch" style="color:${mwCol(r.change_pct)};background:${mwBg(r.change_pct)}">${r.change_pct!=null?mwArrow(r.change_pct)+' '+_fmtN(Math.abs(r.change||0),2)+'（'+_sg(r.change_pct,2)+'%）':'—'}</div>
-        <div class="vo">${r.volume_lots!=null?'量 '+_fmtN(r.volume_lots)+' 張':''}</div></div>
+        <div class="vo">${cardSub(r)}</div></div>
       ${_mw.edit?`<button class="rm" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">移除</button>`:''}</div>`).join('');
   const live=d.items.some(r=>r.live);
   const tabs=d.groups.map(g=>`<button class="mw-tab${g.name===d.grp?' on':''}" data-g="${escA(g.name)}" onclick="mwGroup(this.dataset.g)">${esc2(g.name)}<small>${g.count}</small></button>`).join('');
   const ng=_mw.newg?`<div class="wl-ng"><input id="mw-gn" maxlength="12" placeholder="新清單名稱（最多 12 字）" onkeydown="if(event.key==='Enter')mwNewGroup(true)"><button class="btn primary" onclick="mwNewGroup(true)">建立</button><button class="btn" onclick="_mw.newg=false;mwDraw()">取消</button></div>`:'';
+  // 看盤樣式切換 + 排序選單（手機沒有表頭可點，用選單一樣能改排序）
+  const viewSeg=Object.entries(MW_VIEWS).map(([v,l])=>`<button class="mw-seg${_mw.view===v?' on':''}" onclick="mwView('${v}')">${l}</button>`).join('');
+  const sortOpts=[['code','代號'],['name','名稱'],['price','成交價'],['change_pct','漲跌幅'],['volume_lots','成交量']]
+      .concat(_mw.view==='basic'?[['pe','本益比'],['yield_pct','殖利率'],['pb','淨值比']]:_mw.view==='chips'?[['inst_foreign','外資'],['inst_total','法人合計']]:[['change','漲跌']])
+      .map(o=>`<option value="${o[0]}"${k===o[0]?' selected':''}>${o[1]}</option>`).join('');
+  const toolbar=d.items.length?`<div class="mw-toolbar"><div class="mw-segs">${viewSeg}</div>
+      <label class="mw-sortsel">排序 <select onchange="mwSortSel(this.value)">${sortOpts}</select>
+      <button class="mw-dir" title="切換升冪/降冪" onclick="mwSortDir()">${dir>0?'▲ 升':'▼ 降'}</button></label></div>`:'';
   el.innerHTML=`<div class="wl-bar"><div class="mw-tabs">${tabs}<button class="mw-tab add" onclick="mwNewGroup()">＋ 新清單</button></div>${d.items.length?`<button class="wl-edit" onclick="mwEdit()">${_mw.edit?'完成':'編輯'}</button>`:''}</div>${ng}
     <div class="wl-search${typed?' has':''}"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg><input id="mw-in" type="search" inputmode="search" enterkeyhint="search" placeholder="搜尋代號或名稱，加入「${escA(d.grp)}」" autocomplete="off" autocapitalize="off" spellcheck="false" oninput="mwSearch()" onfocus="mwOpen(true)" onkeydown="if(event.key==='Enter')mwEnter()" value="${escA(typed)}"><button class="wl-clr" aria-label="清除" onclick="mwClear()">×</button></div>
     <div id="mw-res" onmousedown="event.preventDefault()"></div>
-    ${rows.length?`<div class="wl-tblw panel card"><div style="overflow-x:auto"><table class="tbl mw-tbl"><thead><tr>${th('code','代號')}${th('name','名稱')}${th('price','成交價','r')}${th('change','漲跌','r')}${th('change_pct','漲跌幅','r')}${th('volume_lots','成交量（張）','r')}<th>訊號</th><th>狀態</th><th></th></tr></thead><tbody>${body}</tbody></table></div></div><div class="wl-cards">${cards}</div>`
+    ${toolbar}
+    ${rows.length?`<div class="wl-tblw panel card"><div style="overflow-x:auto"><table class="tbl mw-tbl"><thead><tr>${th('code','代號')}${th('name','名稱')}${th('price','成交價','r')}${headCols}${tailTh}<th></th></tr></thead><tbody>${body}</tbody></table></div></div><div class="wl-cards">${cards}</div>`
       :'<div class="empty" style="margin-top:14px"><div class="empty-label">這個清單還是空的</div>在上面搜尋代號或名稱，點「加入」就會出現在這裡。</div>'}
-    <div class="wl-foot">${live?'報價為證交所官方即時快照（約 5 分鐘更新）':'報價為最近一個交易日收盤資料'}；每 60 秒自動更新。每個清單上限 100 檔，存在伺服器，換手機也看得到。在訊號卡按 ☆ 也會加進來。${d.groups.length>1?`　<a href="#" onclick="mwDelGroup();return false">${_mw.delArm?'再按一次確定刪除「'+esc2(d.grp)+'」':'刪除此清單'}</a>`:''}　<a href="#" onclick="logoutAll();return false">登出所有裝置</a></div>`;
+    <div class="wl-foot">${live?'報價為證交所官方即時快照（約 5 分鐘更新）':'報價為最近一個交易日收盤資料'}；每 60 秒自動更新。${_mw.view==='chips'?'「籌碼」欄為當日三大法人買賣超（張，證交所 T86）；':_mw.view==='basic'?'「基本」欄本益比／殖利率／淨值比為官方每日收盤後估值；':''}每個清單上限 100 檔，存在伺服器，換手機也看得到。在訊號卡按 ☆ 也會加進來。${d.groups.length>1?`　<a href="#" onclick="mwDelGroup();return false">${_mw.delArm?'再按一次確定刪除「'+esc2(d.grp)+'」':'刪除此清單'}</a>`:''}　<a href="#" onclick="logoutAll();return false">登出所有裝置</a></div>`;
   const ni=document.getElementById('mw-in');
   if(ni&&had){ni.focus();try{ni.setSelectionRange(ni.value.length,ni.value.length);}catch(e){}}
   if(_mw.newg){const g=document.getElementById('mw-gn');if(g&&!keep)g.focus();}
   mwRenderRes();
 }
-function mwSort(c){_mw.sort=_mw.sort.k===c?{k:c,d:-_mw.sort.d}:{k:c,d:(c==='code'||c==='name')?1:-1};mwDraw(true);}
+function mwSort(c){_mw.sort=_mw.sort.k===c?{k:c,d:-_mw.sort.d}:{k:c,d:(c==='code'||c==='name')?1:-1};mwSavePref();mwDraw(true);}
+function mwSortSel(c){_mw.sort={k:c,d:(c==='code'||c==='name')?1:-1};mwSavePref();mwDraw(true);}
+function mwSortDir(){_mw.sort={k:_mw.sort.k,d:-_mw.sort.d};mwSavePref();mwDraw(true);}
+async function mwView(v){if(_mw.view===v)return;_mw.view=v;mwSavePref();_mw.data=null;if(await mwFetch())mwDraw();}
 function mwEdit(){_mw.edit=!_mw.edit;mwDraw(true);}
 function mwOpen(v){_mw.open=v;mwRenderRes();}
 function mwClear(){const i=document.getElementById('mw-in');if(i){i.value='';i.focus();}_mw.q='';_mw.res=null;document.querySelector('.wl-search')?.classList.remove('has');mwRenderRes();}
