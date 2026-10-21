@@ -1194,17 +1194,17 @@ def fetch_foreign_total_flow() -> Dict:
         def _pick(*names):
             vals = [by[n] for n in names if by.get(n) is not None]
             return sum(vals) if vals else None
-        amt_foreign = _pick("外資及陸資(不含外資自營商)", "外資自營商")
-        if amt_foreign is None:                       # 名稱若略有差異，退回以 startswith 比對外資相關列
-            fs = [v for n, v in by.items() if n.startswith("外資") and v is not None]
-            amt_foreign = sum(fs) if fs else None
+        # ★ 2026-10-21 口徑修正：外資＝外資及陸資(不含外資自營商)，與媒體／玩股網及 T86 張數的
+        # 「外陸資」口徑一致（先前誤把外資自營商也加進來，使金額比玩股網多了一截，造成對不起來）。
+        amt_foreign = by.get("外資及陸資(不含外資自營商)")
+        if amt_foreign is None:                       # 名稱若略有差異，退回以 startswith 比對（外資自營商不會 startswith 外資及陸資）
+            amt_foreign = next((v for n, v in by.items() if n.startswith("外資及陸資") and v is not None), None)
         amt_trust = by.get("投信")
         amt_dealer = _pick("自營商(自行買賣)", "自營商(避險)")
         if amt_dealer is None:
             amt_dealer = by.get("自營商")
-        amt_total = next((v for n, v in by.items() if n.strip() in ("合計", "三大法人合計") and v is not None), None)
-        if amt_total is None and None not in (amt_foreign, amt_trust, amt_dealer):
-            amt_total = amt_foreign + amt_trust + amt_dealer
+        # 合計＝外資(不含外資自營商)＋投信＋自營（與玩股網/媒體呈現一致；不另加外資自營商這一小類）
+        amt_total = (amt_foreign + amt_trust + amt_dealer) if None not in (amt_foreign, amt_trust, amt_dealer) else None
         amounts = {"foreign": amt_foreign, "trust": amt_trust, "dealer": amt_dealer, "total": amt_total}
         return _cache_set("foreign_total", {
             "date": data.get("date",""), "net_buy_twd": net_buy,
