@@ -1181,8 +1181,34 @@ def fetch_foreign_total_flow() -> Dict:
         net_buy = int(foreign_row[3].replace(",","").replace("+",""))
         # 註：BFI82U 的數字是「買賣差額金額（新台幣元）」。原本另外輸出的 net_buy_lots＝net_buy/1000
         # 是把『金額』除以 1000 當『張』，口徑錯誤且無人使用，已移除以免日後誤用。
+        # ★ 2026-10-21：使用者要求「大盤三大法人買賣超除了張數再加官方金額」。BFI82U 本就逐法人
+        # 列出買賣差額金額（元），這裡把三大法人各自的官方金額一併解析出來（精確、非估算）：
+        #   外資 ＝ 外資及陸資(不含外資自營商) ＋ 外資自營商（與 T86 張數「外陸資」口徑一致）
+        #   投信 ＝ 投信；自營 ＝ 自營商(自行買賣) ＋ 自營商(避險)；合計 ＝ 官方「合計」列（或三者相加）
+        def _amt(row):
+            try:
+                return int(str(row[3]).replace(",", "").replace("+", ""))
+            except Exception:
+                return None
+        by = {r[0].strip(): _amt(r) for r in rows if len(r) >= 4}
+        def _pick(*names):
+            vals = [by[n] for n in names if by.get(n) is not None]
+            return sum(vals) if vals else None
+        amt_foreign = _pick("外資及陸資(不含外資自營商)", "外資自營商")
+        if amt_foreign is None:                       # 名稱若略有差異，退回以 startswith 比對外資相關列
+            fs = [v for n, v in by.items() if n.startswith("外資") and v is not None]
+            amt_foreign = sum(fs) if fs else None
+        amt_trust = by.get("投信")
+        amt_dealer = _pick("自營商(自行買賣)", "自營商(避險)")
+        if amt_dealer is None:
+            amt_dealer = by.get("自營商")
+        amt_total = next((v for n, v in by.items() if n.strip() in ("合計", "三大法人合計") and v is not None), None)
+        if amt_total is None and None not in (amt_foreign, amt_trust, amt_dealer):
+            amt_total = amt_foreign + amt_trust + amt_dealer
+        amounts = {"foreign": amt_foreign, "trust": amt_trust, "dealer": amt_dealer, "total": amt_total}
         return _cache_set("foreign_total", {
             "date": data.get("date",""), "net_buy_twd": net_buy,
+            "amounts": amounts,              # 三大法人官方買賣差額金額（元），供大盤「張數＋金額並列」顯示
             "signal": "strong_buy" if net_buy>50e8 else "buy" if net_buy>0 else "strong_sell" if net_buy<-50e8 else "sell"
         })
     except Exception as e:

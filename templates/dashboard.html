@@ -2996,26 +2996,28 @@ async function loadMarketInstFlow(targetId){
     const d=await(await fetch('/api/market/inst-flow',{cache:'no-store'})).json();
     if(d.error||!d.days||!d.days.length){el.innerHTML='<div class="empty">尚未累積足夠的全市場三大法人資料（系統每日收盤後累積，約需 1 個交易日起）</div>';return;}
     const H=d.headline||{},lots=v=>v==null?'—':`<span style="color:${_col(v)}">${_sg(v)}</span>`;
-    const leg=(lab,o,first)=>`<div class="kpi"${first?' style="border-left:none"':''}><div class="kpi-label">${lab}</div><div class="kpi-val" style="font-size:15px">${lots((o||{}).d1)}</div><div class="kpi-sub">5日 ${lots((o||{}).sum5)}／20日 ${lots((o||{}).sum20)}</div></div>`;
+    const AMT=(d.foreign_amount&&d.foreign_amount.amounts)||{},amtDate=d.foreign_amount&&d.foreign_amount.date;
+    // 每個法人：張數（今日＋5/20日累計）與官方金額（億）並列，一眼看懂規模
+    const yiLine=v=>v==null?'<div class="kpi-sub" style="margin-top:3px;color:var(--t3)">金額 —</div>':`<div class="kpi-sub" style="margin-top:3px">金額 <b style="color:${_col(v)}">${_sg(v/1e8,1)} 億</b></div>`;
+    const leg=(lab,o,amtV,first)=>`<div class="kpi"${first?' style="border-left:none"':''}><div class="kpi-label">${lab}</div><div class="kpi-val" style="font-size:15px">${lots((o||{}).d1)} <small style="font-size:11px;color:var(--t3)">張</small></div><div class="kpi-sub">5日 ${lots((o||{}).sum5)}／20日 ${lots((o||{}).sum20)} 張</div>${yiLine(amtV)}</div>`;
     // 趨勢條：近 20 個交易日「三大法人合計」淨買賣超（張）。紅買超、綠賣超。
     const recent=d.days.slice(0,20).reverse();
     const mx=Math.max(1,...recent.map(x=>Math.abs(x.total)));
     const bars=recent.map(x=>{const hpx=Math.max(3,Math.round(Math.abs(x.total)/mx*62));const up=x.total>=0;
       return `<div class="mif-col" title="${x.date}｜合計 ${_sg(x.total)} 張"><div class="mif-bar" style="height:${hpx}px;background:${up?'var(--up)':'var(--down)'}"></div></div>`;}).join('');
-    const famt=d.foreign_amount&&d.foreign_amount.net_buy_twd!=null
-      ? `　外資買賣金額（官方 BFI82U，${safe(d.foreign_amount.date)}）<span style="color:${_col(d.foreign_amount.net_buy_twd)}">${_sg(d.foreign_amount.net_buy_twd/1e8,1)} 億</span>（金額口徑，與上方張數不同口徑）`
-      : '';
+    // 金額說明：張數＝全市場 T86 加總（逐日累計）；金額＝官方 BFI82U 最新一日買賣差額（同為官方、非估算）
+    const amtNote=amtDate?`；上方「金額」為官方 BFI82U（${safe(amtDate)}）最新一日三大法人買賣差額（同為官方、非估算；張數為 T86 全市場加總、可逐日累計，金額目前僅提供官方最新一日）`:'';
     el.innerHTML=`
       <div style="font-size:12px;color:var(--t2);margin-bottom:8px">全市場（上市）三大法人逐日淨買賣超加總，最新 ${safe(d.latest_date)}，單位：張（買超為正）。此為「整體市場」資金流向，非本檔個股。</div>
       <div class="hero-row" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:10px">
-        ${leg('外資',H.foreign,true)}${leg('投信',H.trust)}${leg('自營商',H.dealer)}${leg('三大法人合計',H.total)}
+        ${leg('外資',H.foreign,AMT.foreign,true)}${leg('投信',H.trust,AMT.trust)}${leg('自營商',H.dealer,AMT.dealer)}${leg('三大法人合計',H.total,AMT.total)}
       </div>
       <div class="mif-chart" style="display:flex;align-items:flex-end;gap:3px;height:72px;padding:4px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:8px">${bars}</div>
       <div style="font-size:11px;color:var(--t3);margin-bottom:8px">近 ${recent.length} 個交易日「三大法人合計」淨買賣超（張）；<span style="color:var(--up)">買超</span>為正、<span style="color:var(--down)">賣超</span>為負（顏色同全站漲跌色）。</div>
       <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>日期</th><th style="text-align:right">外資</th><th style="text-align:right">投信</th><th style="text-align:right">自營商</th><th style="text-align:right">合計</th></tr></thead><tbody>
       ${d.days.slice(0,10).map(x=>`<tr><td>${safe(x.date)}</td><td style="text-align:right">${lots(x.foreign)}</td><td style="text-align:right">${lots(x.trust)}</td><td style="text-align:right">${lots(x.dealer)}</td><td style="text-align:right">${lots(x.total)}</td></tr>`).join('')}
       </tbody></table></div>
-      <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(d.source)}${famt}</div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(d.source)}${amtNote}</div>
       <div id="${(targetId||'mkt-inst-flow')}-sec"></div>`;
     try{ await loadInstFlowSectors((targetId||'mkt-inst-flow')+'-sec'); }catch(e){}
   }catch(e){el.innerHTML='<div class="empty">載入失敗，稍後重試</div>';}

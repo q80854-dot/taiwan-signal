@@ -1425,13 +1425,14 @@ def api_market_inst_flow():
                 "dealer":  {"d1": days[0]["dealer"] if days else 0,  "sum5": _sum("dealer", 5),  "sum20": _sum("dealer", 20)},
                 "total":   {"d1": days[0]["total"] if days else 0,   "sum5": _sum("total", 5),   "sum20": _sum("total", 20)},
             }
-            # 官方 BFI82U 外資買賣金額（最新一日，金額口徑；僅作對照）
+            # 官方 BFI82U 三大法人買賣金額（最新一日，金額口徑；與上方張數並列顯示，供規模對照）
             foreign_amt = None
             try:
                 from data_fetcher import fetch_foreign_total_flow
                 ft = fetch_foreign_total_flow() or {}
                 if ft.get("net_buy_twd") is not None:
-                    foreign_amt = {"date": ft.get("date"), "net_buy_twd": ft.get("net_buy_twd")}
+                    foreign_amt = {"date": ft.get("date"), "net_buy_twd": ft.get("net_buy_twd"),
+                                   "amounts": ft.get("amounts")}   # {foreign,trust,dealer,total} 元，官方非估算
             except Exception:
                 pass
             resp = {"days": days, "headline": headline, "latest_date": days[0]["date"] if days else None,
