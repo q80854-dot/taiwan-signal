@@ -997,6 +997,43 @@ class StateStore:
             logger.warning(f"get_market_inst_flow: {e}")
             return []
 
+    def get_inst_raw_debug(self, top: int = 20) -> Dict:
+        """站主專用診斷：回傳最新一個交易日的 inst_daily 原始存檔樣貌，
+        用來人工核對「法人張數」口徑（確認存進去的是『張』而非『股』）。
+        回傳：該日個股筆數、三大法人加總（外資/投信/自營商/合計）、
+        以及依 |外資買賣超| 排序的前 N 檔原始列（code/name/foreign/trust/total）。
+        單位沿用資料庫既有欄位（upsert_inst_daily 寫入時已換算為張），不做任何加工或臆測。"""
+        try:
+            with self._conn() as conn:
+                row = conn.execute(
+                    "SELECT trade_date FROM inst_daily ORDER BY trade_date DESC LIMIT 1"
+                ).fetchone()
+                if not row:
+                    return {"date": None, "rows": 0, "agg": None, "top": []}
+                d = row["trade_date"]
+                agg = conn.execute(
+                    "SELECT SUM(foreign_net) AS f, SUM(trust_net) AS tr, "
+                    "SUM(total_net) AS t, COUNT(*) AS n FROM inst_daily WHERE trade_date=?", (d,)
+                ).fetchone()
+                tops = conn.execute(
+                    "SELECT code,name,foreign_net,trust_net,total_net FROM inst_daily "
+                    "WHERE trade_date=? ORDER BY ABS(foreign_net) DESC LIMIT ?", (d, int(top))
+                ).fetchall()
+            f = int(agg["f"] or 0); tr = int(agg["tr"] or 0); t = int(agg["t"] or 0)
+            return {
+                "date": d,
+                "rows": int(agg["n"] or 0),
+                "unit": "張（upsert 時 T86 股數已÷1000）",
+                "agg": {"foreign": f, "trust": tr, "dealer": t - f - tr, "total": t},
+                "top": [{"code": r["code"], "name": r["name"],
+                         "foreign": int(r["foreign_net"] or 0),
+                         "trust": int(r["trust_net"] or 0),
+                         "total": int(r["total_net"] or 0)} for r in tops],
+            }
+        except Exception as e:
+            logger.warning(f"get_inst_raw_debug: {e}")
+            return {"date": None, "rows": 0, "agg": None, "top": [], "error": str(e)}
+
     # ── 獲利品質（季報毛利率/營業利益率快照，用來算「趨勢」）──
     # ★ 新增：2026-09-28——使用者要求接「獲利品質」評分。TWSE OpenAPI 的季報
     # 端點（opendata/t187ap06_L_ci）每次只回傳「最新一期」數字，沒有歷史序列，
