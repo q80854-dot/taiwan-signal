@@ -26,10 +26,10 @@ def test_bfi82u_parses_all_three_amounts(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **k: R())
     out = df.fetch_foreign_total_flow()
     a = out["amounts"]
-    assert a["foreign"] == 2_000_000_000 - 30_000_000      # 外資及陸資 ＋ 外資自營商
+    assert a["foreign"] == 2_000_000_000                    # 外資＝外資及陸資(不含外資自營商)，與玩股網/媒體一致
     assert a["trust"] == 300_000_000
     assert a["dealer"] == 100_000_000 + 50_000_000          # 自行買賣 ＋ 避險
-    assert a["total"] == 2_420_000_000                      # 官方合計列
+    assert a["total"] == 2_000_000_000 + 300_000_000 + 150_000_000   # 合計＝外資(不含自營商)＋投信＋自營
     assert out["net_buy_twd"] == 2_000_000_000              # 既有欄位不變（外資及陸資不含自營商）
 
 
