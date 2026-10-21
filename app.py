@@ -909,6 +909,22 @@ def api_admin_shadow():
         logger.error(f"api_admin_shadow: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/diagnostics/inst_raw")
+@members.owner_required
+@admin_auth.admin_required
+def api_diagnostics_inst_raw():
+    """站主專用：檢視最新一日 inst_daily 原始存檔（法人張數加總＋前 N 檔），
+    用來人工核對張數口徑是否正確。預設前 20 檔，可用 ?top=N 調整（上限 100）。"""
+    try:
+        from state_store import store
+        top = request.args.get("top", type=int) or 20
+        top = max(1, min(int(top), 100))
+        return jsonify(store.get_inst_raw_debug(top))
+    except Exception as e:
+        logger.error(f"api_diagnostics_inst_raw: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/admin/shadow/export.csv")
 @admin_auth.admin_required
 def api_admin_export():

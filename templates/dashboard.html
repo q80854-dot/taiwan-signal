@@ -2121,6 +2121,8 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
           <p><b>上市資料修復（重要）</b><br>・修正根因：上市日行情（STOCK_DAY_ALL）從主機端常逾時，整個上市市場會從清單裡消失，導致「查無個股（含 2317 等）」「排行榜上市全空」「法人板塊圖空白」。現在新增第三段備援：以估值端點（BWIBBU_ALL，實測可達）取得上市代號、再用證交所 MIS 官方報價補價（盤中即時、盤後定案），確保上市市場不再消失；並在快取缺一整個市場時自動強制重抓、自我修復。</p>
           <p><b>FinMind 額度韌性</b><br>・FinMind 免費額度盤中用完（HTTP 402）時，加入額度熔斷＋資料庫快取回退：財務指標、三大法人等區塊改顯示最近一次正確資料，而不是「暫時取不到」；季報/法人本就不是盤中會變動的資料，符合「不顯示錯誤資訊」。個股頁亦不再因此卡到 20 幾秒。</p>
           <p><b>法人資金流向板塊圖</b><br>・「全體法人資金流向」新增板塊圖：外資近 5 日對各產業板塊的淨買賣超（張），一張圖看資金流進／流出哪些板塊，附外資／投信／自營商／合計明細表。</p>
+          <p><b>2026-10-21</b></p>
+          <p><b>期貨籌碼改用臺股期貨(TX)口徑</b><br>・「期交所籌碼」與「籌碼速覽」的外資／投信／自營商期貨淨未平倉，主數字改為臺股期貨(TX)口數，與券商／媒體及期交所官方表格一致；原本的大台等效（臺股期貨＋小型臺指÷4＋微型臺指÷20）改列為括註參考。純顯示，不影響訊號分數。</p>
           <p><b>2026-10-15</b></p>
           <p><b>全體法人資金流向</b><br>・總覽的「市場儀表板」與個股研究頁新增「全體法人資金流向（上市整體）」：把全市場三大法人逐日買賣超加總，呈現外資／投信／自營商／合計的近 1 日與 5／20 日累計、20 日趨勢條與近 10 日明細。資料與個股頁同一來源（證交所 T86）加總，單位為張，不另推估金額以免誤差。</p>
           <p><b>影子策略（策略學習）強化</b><br>・擴充搜集的特徵（連漲天數、收盤區間位置、量能趨勢、均線斜率、站上 20 日線天數等），全部由日線直接計算、不影響訊號，並納入大數據匯出供日後分析。<br>・學習報告新增出場原因分布、平均最大回撤、平均持有天數，以及相對大盤／產業強弱、突破前高、季節性等 12 個分析維度。</p>
@@ -3605,18 +3607,18 @@ async function fetchTaifexStrip(){
     if(d.error||!d.date||!d.items){el.hidden=true;fmMarketAppend(el,false);return;}
     const o=(d.options||{})['外資及陸資']||{};
     const p=d.pcr,l=d.large;
-    const cell=(lab,who,sub)=>{const x=d.items[who];if(!x)return '';const tx=(x.tx_net_oi!=null&&x.tx_net_oi!==x.equiv_net_oi)?`臺股期貨 ${_sg(x.tx_net_oi)}`:'';const ss=[tx,sub].filter(Boolean).join('　');return `<div><dt>${lab}</dt><dd class="num" style="color:${_col(x.equiv_net_oi)}">${_sg(x.equiv_net_oi)}<small>口</small></dd>${ss?`<em>${ss}</em>`:''}</div>`;};
+    const cell=(lab,who,sub)=>{const x=d.items[who];if(!x)return '';const head=(x.tx_net_oi!=null?x.tx_net_oi:x.equiv_net_oi);const eq=(x.equiv_net_oi!=null&&x.tx_net_oi!=null&&x.equiv_net_oi!==x.tx_net_oi)?`大台等效 ${_sg(x.equiv_net_oi)}`:'';const ss=[eq,sub].filter(Boolean).join('　');return `<div><dt>${lab}</dt><dd class="num" style="color:${_col(head)}">${_sg(head)}<small>口</small></dd>${ss?`<em>${ss}</em>`:''}</div>`;};
     const _tp=new Date(Date.now()+8*3600e3),_late=_tp.getUTCDay()>=1&&_tp.getUTCDay()<=5&&_tp.getUTCHours()>=15&&d.date<todayISO();
     const stale=(d.stale||[]).length?`<span class="pill warn" title="期交所這次沒回資料，先沿用上一次成功取得的數字">沿用前次資料</span>`:_late?`<span class="pill warn" title="期交所今日資料尚未取得，系統每 10 分鐘重抓一次">今日資料尚未公布</span>`:'';
     el.hidden=false;
-    el.innerHTML=`<header><h3>期交所籌碼</h3><span class="mut"><span>${d.date}</span><span>期貨：大台等效淨未平倉</span>${stale}${d.source==='finmind'?'<span class="pill" title="期交所開放資料還沒更新到最新交易日，改用 FinMind 的期貨三大法人">FinMind 較新</span>':''}</span></header>
+    el.innerHTML=`<header><h3>期交所籌碼</h3><span class="mut"><span>${d.date}</span><span>期貨：臺股期貨(TX)淨未平倉</span>${stale}${d.source==='finmind'?'<span class="pill" title="期交所開放資料還沒更新到最新交易日，改用 FinMind 的期貨三大法人">FinMind 較新</span>':''}</span></header>
     <dl>
       ${cell('外資','外資及陸資',d.foreign_chg_5d!==undefined?'5 日 '+_sg(d.foreign_chg_5d):'')}${cell('投信','投信')}${cell('自營商','自營商')}
       ${o.call_net_oi!==undefined?`<div><dt>外資臺指選擇權淨未平倉</dt><dd class="num opt"><span><small>Call</small><b style="font-weight:inherit;color:${_col(o.call_net_oi)}">${_sg(o.call_net_oi)}</b></span><span><small>Put</small><b style="font-weight:inherit;color:${_col(o.put_net_oi||0)}">${_sg(o.put_net_oi||0)}</b></span></dd><em>單位：口</em></div>`:''}
       ${p?`<div><dt>Put/Call 未平倉比</dt><dd class="num">${p.oi_ratio}<small>%</small></dd>${d.pcr_chg_5d!==undefined?`<em>5 日 ${d.pcr_chg_5d>0?'+':''}${d.pcr_chg_5d}</em>`:''}</div>`:''}
       ${l?`<div><dt>前十大交易人淨部位</dt><dd class="num" style="color:${_col(l.top10_net)}">${_sg(l.top10_net)}<small>口</small></dd><em>占市場 ${l.top10_net_pct}%</em></div>`:''}
     </dl>
-    <p class="mut">${d.foreign_note?d.foreign_note+'（僅描述部位，不影響訊號分數）。':''}大台等效＝臺股期貨＋小型臺指÷4＋微型臺指÷20。來源：${d.source==='finmind'?'FinMind（期交所開放資料尚未更新）':'期交所 OpenAPI'}。</p>`;
+    <p class="mut">${d.foreign_note?d.foreign_note+'（僅描述部位，不影響訊號分數）。':''}主數字為臺股期貨(TX)淨未平倉口數，與券商／媒體口徑一致；括註的大台等效＝臺股期貨＋小型臺指÷4＋微型臺指÷20。來源：${d.source==='finmind'?'FinMind（期交所開放資料尚未更新）':'期交所 OpenAPI'}。</p>`;
     fmMarketAppend(el,true);
   }catch(e){el.hidden=true;}
 }
@@ -5502,14 +5504,14 @@ async function fetchOverviewDash(){
   }catch(e){['ovd-gain','ovd-loss','ovd-value','ovd-heat'].forEach(id=>setHtml(id,'<div class="empty" style="padding:18px">載入失敗，稍後自動重試</div>'));}
   try{
     const t=await(await fetch('/api/taifex',{cache:'no-store'})).json();
-    const it=t.items||{},f=(it['外資及陸資']||{}).equiv_net_oi,tr=(it['投信']||{}).equiv_net_oi,dl=(it['自營商']||{}).equiv_net_oi;
+    const it=t.items||{},_tx=w=>{const x=it[w]||{};return x.tx_net_oi!=null?x.tx_net_oi:(x.equiv_net_oi!=null?x.equiv_net_oi:null);},f=_tx('外資及陸資'),tr=_tx('投信'),dl=_tx('自營商');
     const fn=(_state&&_state.market_overview&&_state.market_overview.foreign)||{};const fv=typeof fn.net_buy_twd==='number'?fn.net_buy_twd:null;
     const cell=(lab,v,u)=>`<div><dt>${lab}</dt><dd style="color:${v==null?'var(--t3)':_col(v)}">${v==null?'—':_sg(v)}<small style="font-size:11px;color:var(--t3);margin-left:3px">${u}</small></dd></div>`;
     setHtml('ovd-chip',`<dl class="ovd-kv" style="margin:0">${cell('外資期貨淨部位',f,'口')}${cell('投信期貨淨部位',tr,'口')}${cell('自營商期貨淨部位',dl,'口')}
       <div><dt>Put/Call 未平倉比</dt><dd>${t.pcr?t.pcr.oi_ratio+'<small style="font-size:11px;color:var(--t3);margin-left:3px">%</small>':'—'}</dd></div>
       <div><dt>前十大交易人淨部位</dt><dd style="color:${t.large?_col(t.large.top10_net):'var(--t3)'}">${t.large?_sg(t.large.top10_net):'—'}<small style="font-size:11px;color:var(--t3);margin-left:3px">口</small></dd></div>
       <div><dt>外資現貨買賣超</dt><dd style="color:${fv==null?'var(--t3)':_col(fv)}">${fv==null?'—':_sg(fv/1e8,1)}<small style="font-size:11px;color:var(--t3);margin-left:3px">億</small></dd></div></dl>`);
-    setEl('ovd-chip-date',t.date?`期貨 ${t.date}・大台等效`:'');
+    setEl('ovd-chip-date',t.date?`期貨 ${t.date}・臺股期貨(TX)`:'');
   }catch(e){setHtml('ovd-chip','<div class="empty" style="padding:18px">載入失敗，稍後自動重試</div>');}
   try{loadMarketInstFlow('ovd-inst-flow');}catch(e){}
 }
