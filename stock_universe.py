@@ -437,15 +437,30 @@ def _twse_list_openapi() -> List[Dict]:
         logger.error(f"_twse_list_openapi: {e}"); return []
 
 def _fetch_tpex_list() -> List[Dict]:
-    try:
+    # ★ 2026-10-21：上櫃只有單一來源（www.tpex.org.tw），偶發逾時/5xx 就會讓「整個上櫃市場」
+    # 退回前次清單並發故障通知（使用者回報「上櫃日行情抓取失敗」）。TWSE 那端有三段備援，
+    # 這裡至少補上「重試＋退避」：連線逾時/中斷/非 200 時退避後重試最多 3 次，多半重試即通，
+    # 大幅減少這類暫時性失敗。連 3 次仍失敗才回空（上游會沿用前次上櫃清單，不顯示過期價）。
+    r = None
+    for attempt in range(3):
         try:
-            r = requests.get(TPEX_LIST_URL, headers=HEADERS, timeout=15)
-        except requests.exceptions.SSLError as e:
-            logger.warning(f"_fetch_tpex_list: SSL 憑證驗證失敗（{e}），改用不驗證憑證重試一次")
-            r = requests.get(TPEX_LIST_URL, headers=HEADERS, timeout=15, verify=False)
-        if r.status_code != 200:
-            logger.warning(f"_fetch_tpex_list: HTTP {r.status_code} - {r.text[:200]}")
-            return []
+            try:
+                r = requests.get(TPEX_LIST_URL, headers=HEADERS, timeout=15)
+            except requests.exceptions.SSLError as e:
+                logger.warning(f"_fetch_tpex_list: SSL 憑證驗證失敗（{e}），改用不驗證憑證重試一次")
+                r = requests.get(TPEX_LIST_URL, headers=HEADERS, timeout=15, verify=False)
+            if r.status_code == 200:
+                break
+            logger.warning(f"_fetch_tpex_list: HTTP {r.status_code}（第 {attempt + 1}/3 次）- {r.text[:160]}")
+        except Exception as e:
+            logger.warning(f"_fetch_tpex_list 連線失敗（第 {attempt + 1}/3 次）：{type(e).__name__} {str(e)[:120]}")
+            r = None
+        if attempt < 2:
+            time.sleep(1.5 * (attempt + 1))        # 1.5s、3s 退避
+    if r is None or r.status_code != 200:
+        logger.warning("_fetch_tpex_list: 連 3 次仍失敗，回空（上游會沿用前次上櫃清單，盤中以 MIS 官方即時價覆蓋）")
+        return []
+    try:
         stocks = []
         for item in r.json():
             code = str(item.get("SecuritiesCompanyCode","")).strip()

@@ -712,10 +712,23 @@ def send_intraday_digest(pending: List[Dict], prices: Dict[str, float]):
 # 系統警報
 # ══════════════════════════════════════════════
 def send_alert(message: str, level: str = "info"):
+    """系統／故障通知。依使用者要求：優先 Telegram 傳，網頁通知中心第二（兩者各自獨立，
+    Telegram 失敗也不影響網頁留存，反之亦然，確保站主一定看得到）。"""
     emoji = {"info": "ℹ️", "warning": "⚠️", "error": "🚨"}.get(level, "📢")
-    subs  = _load_subscribers()
-    for admin_id in subs.get("admin", []):
-        send_message(admin_id, f"{emoji} <b>系統通知</b>\n{message}")
+    # 1) 優先：Telegram（站主）
+    try:
+        subs = _load_subscribers()
+        for admin_id in subs.get("admin", []):
+            send_message(admin_id, f"{emoji} <b>系統通知</b>\n{message}")
+    except Exception as e:
+        logger.warning(f"send_alert Telegram 失敗（仍會寫入網頁通知中心）：{e}")
+    # 2) 其次：網頁通知中心（即使 Telegram 沒設定／失敗，站主在網頁也看得到故障紀錄）
+    try:
+        from state_store import store
+        title = {"error": "🚨 系統警報", "warning": "⚠️ 系統通知"}.get(level, "ℹ️ 系統通知")
+        store.add_event("system", title, message)
+    except Exception as e:
+        logger.warning(f"send_alert 寫入網頁通知中心失敗：{e}")
 
 # ══════════════════════════════════════════════
 # Bot 指令
