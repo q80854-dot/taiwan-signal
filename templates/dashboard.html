@@ -7,9 +7,9 @@
 <title>台股波段智慧交易系統</title>
 <meta name="description" content="台股波段訊號研究平台：多週期技術面、籌碼、基本面共振，每筆訊號全程追蹤，績效與資料來源完整公開。">
 <meta property="og:title" content="台股波段智慧交易系統"><meta property="og:description" content="多因子波段訊號、透明績效、資料來源公開（研究用途，非投資建議）">
-<meta property="og:type" content="website"><meta name="theme-color" content="#0b1f3a">
+<meta property="og:type" content="website"><meta name="theme-color" content="#f1f1ef">
 <link rel="manifest" href="/manifest.webmanifest">
-<script>(function(){try{var t=localStorage.getItem('dashTheme');if(t!=='dark'&&t!=='light')t='dark';/* 2026-10-10：終端機風為預設look，未設定過一律深色 */document.documentElement.setAttribute('data-theme',t);if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.content='#0a0b0d'}}catch(e){document.documentElement.setAttribute('data-theme','dark')}})();</script>
+<script>(function(){try{var t=localStorage.getItem('dashTheme');if(!localStorage.getItem('dashThemeV3')){t='light';localStorage.setItem('dashTheme','light');localStorage.setItem('dashThemeV3','1');}if(t!=='dark'&&t!=='light')t='light';/* 2026-10-23：設計系統 v3 改為淺色預設，未設定過一律淺色 */document.documentElement.setAttribute('data-theme',t);if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.content='#0a0b0d'}}catch(e){document.documentElement.setAttribute('data-theme','dark')}})();</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1f3a'/%3E%3Cpath d='M6 22l6-8 5 5 9-12' stroke='%23e5484d' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
@@ -1357,175 +1357,255 @@ body{overflow-x:hidden}
 .main,.content,.wrap{max-width:100%}
 .tbl-wrap,.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 </style>
-<style id="skin-term">
-/* 2026-10-10 終端機風（使用者選定 Bloomberg 終端質感）。最後載入，凌駕前面所有 skin。
-   以既有的 data-theme=dark 為基礎重新調色為近黑＋琥珀＋等寬數字＋髮絲線，並設為預設 look。 */
-:root{--mono:ui-monospace,"SF Mono","JetBrains Mono","Menlo","Consolas","DejaVu Sans Mono",monospace}
-html[data-theme=dark]{
-  --desk:#0a0b0d;--paper:#121318;--paper2:#16181e;--bg:#0a0b0d;--s1:#121318;--s2:#16181e;--s3:#1d2026;--wash:#16181e;
-  --line:#23262d;--line2:#30343c;--rule:#23262d;
-  --ink:#e6e4da;--t1:#e6e4da;--t2:#9ba0a0;--t3:#696d6c;
-  --navy:#07080a;--navy2:#20242c;--brass:#e0a63c;--brass-lt:#f0bd5a;
-  --accent:#e0a63c;--accent-soft:#2a2210;
-  --up:#ff5a46;--up-soft:#2a1411;--up-line:#5a241d;
-  --down:#33d17a;--down-soft:#0f2418;--down-line:#1d5a3b;
-  --ok:#33d17a;--warn:#e0a63c;--alert:#ff5a46;--r:2px;--sh:none;--card-sh:none;--card-sh-h:none;
-}
-html[data-theme=dark] body,html[data-theme=dark] .content,html[data-theme=dark] .body{background:#0a0b0d!important}
-/* 等寬數字：行情、評分、表格、KPI 一律對齊的終端數字感 */
-html[data-theme=dark] .num,html[data-theme=dark] .kpi-val,html[data-theme=dark] .ticker-val,html[data-theme=dark] .ticker-chg,
-html[data-theme=dark] .sig-item span,html[data-theme=dark] .tbl td,html[data-theme=dark] .tbl th,html[data-theme=dark] .pos-stats b,
-html[data-theme=dark] .mono,html[data-theme=dark] table td,html[data-theme=dark] table th{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-/* 卡片／面板：去陰影、髮絲線、小圓角，走終端面板感 */
-html[data-theme=dark] .panel,html[data-theme=dark] .card,html[data-theme=dark] .kpi,html[data-theme=dark] .box,html[data-theme=dark] .sig-card,html[data-theme=dark] .pos,html[data-theme=dark] .ovd{box-shadow:none!important;border-radius:2px!important;border-color:var(--line)!important}
-html[data-theme=dark] .panel,html[data-theme=dark] .ovd,html[data-theme=dark] .kpi{background:var(--s1)!important}
-/* 表格：髮絲橫線、表頭琥珀小標 */
-html[data-theme=dark] .tbl th,html[data-theme=dark] table th{color:var(--t3)!important;text-transform:none;letter-spacing:.04em;font-weight:600;border-bottom:1px solid var(--line2)!important}
-html[data-theme=dark] .tbl td,html[data-theme=dark] .tbl th{border-bottom:1px solid var(--line)!important}
-html[data-theme=dark] .tbl tr:hover td{background:var(--s2)!important}
-/* 主要按鈕：琥珀（覆蓋前面 dark 的藍色強制值）＋區塊標題用琥珀細標 */
-html[data-theme=dark] .btn.primary{background:var(--brass)!important;border-color:var(--brass)!important;color:#141000!important;font-weight:700}
-html[data-theme=dark] .btn.primary:hover{background:var(--brass-lt)!important}
-html[data-theme=dark] .sec-label .tx,html[data-theme=dark] .phd .eyebrow,html[data-theme=dark] .panel-title{letter-spacing:.02em}
-html[data-theme=dark] .sec-label .bar{background:var(--brass)!important}
-/* 頂部行情 ticker：純黑跑馬燈、琥珀名稱、等寬數字 */
-html[data-theme=dark] .ticker{background:#07080a!important;border-bottom:1px solid var(--line)!important;--up:#ff5a46;--down:#33d17a}
-html[data-theme=dark] .ticker-name{color:var(--t3)!important;letter-spacing:.06em}
-html[data-theme=dark] .ticker-val{font-family:var(--mono);font-weight:600!important}
-/* 左側導覽：純黑、選中列用琥珀左緣 */
-html[data-theme=dark] .side,html[data-theme=dark] .sidebar{background:#07080a!important;border-right:1px solid var(--line)!important}
-html[data-theme=dark] .nav.active,html[data-theme=dark] .nav.on{background:var(--s2)!important;box-shadow:inset 3px 0 0 var(--brass)!important;color:var(--ink)!important}
-html[data-theme=dark] .statusbar{background:#07080a!important;border-top:1px solid var(--line)!important}
-/* 連結／強調色一致用琥珀 */
-html[data-theme=dark] .lnk,html[data-theme=dark] .mut a,html[data-theme=dark] a.lw-link{color:var(--brass)!important}
-</style>
-<style id="skin-term2">
-/* 2026-10-10 終端機風「元件重構」層：這一層重做的是元件的「形」與操作感，
-   而非顏色——按鈕＝機能鍵、區塊標題＝標籤＋延伸髮絲線、頂列＝終端狀態軌、
-   表頭與徽章＝等寬終端標記。僅作用於 data-theme=dark（終端＝預設 look）。
-   載於所有 skin 之後，凌駕 skin-term 的純調色。 */
-html[data-theme=dark]{--term-glow:rgba(224,166,60,.16)}
-
-/* ── 頂列：終端狀態軌（漸層底＋底部琥珀細光 + 等寬提示字頁名） ── */
-html[data-theme=dark] .top{
-  height:52px;background:linear-gradient(180deg,#0e0f13,#0a0b0d);
-  border-bottom:1px solid var(--line);
-  box-shadow:inset 0 -1px 0 rgba(224,166,60,.12);
-}
-html[data-theme=dark] #page-title{
-  font-family:var(--mono);font-size:12.5px;font-weight:700;
-  text-transform:uppercase;letter-spacing:.14em;color:var(--ink);
-  display:inline-flex;align-items:center;gap:9px;
-}
-html[data-theme=dark] #page-title::before{
-  content:"";width:7px;height:13px;background:var(--brass);
-  box-shadow:0 0 6px var(--term-glow);animation:termcur 1.2s steps(1) infinite;
-}
-@keyframes termcur{50%{opacity:.25}}
-html[data-theme=dark] #tw-time{font-family:var(--mono);letter-spacing:.04em}
-html[data-theme=dark] .gs input{font-family:var(--mono);letter-spacing:.02em}
-
-/* ── 按鈕：機能鍵（等寬大寫、方形、hover 以琥珀描邊＋微光） ── */
-html[data-theme=dark] .btn{
-  font-family:var(--mono);text-transform:uppercase;font-size:10.5px;
-  font-weight:600;letter-spacing:.1em;padding:7px 13px;border-radius:2px;
-  border:1px solid var(--line2);background:#15171c;color:var(--t2);
-  transition:border-color .12s,color .12s,background .12s,box-shadow .12s,transform .06s;
-}
-html[data-theme=dark] .btn:hover{
-  border-color:var(--brass);color:var(--brass);background:#1b1d23;
-  box-shadow:0 0 0 1px rgba(224,166,60,.22),0 0 10px var(--term-glow);
-}
-html[data-theme=dark] .btn:active{transform:translateY(1px)}
-html[data-theme=dark] .btn.btn-ic,html[data-theme=dark] .srch-btn{padding:7px 9px}
-/* 主要機能鍵：實心琥珀＋前綴執行箭號（取代原本的箭尾，避免重複） */
-html[data-theme=dark] .btn.primary{
-  background:var(--brass);border-color:var(--brass);color:#141000;font-weight:700;
-}
-html[data-theme=dark] .btn.primary::before{content:"\25B8";margin-right:7px}
-html[data-theme=dark] .btn.primary:hover{
-  background:var(--brass-lt);border-color:var(--brass-lt);
-  box-shadow:0 0 14px rgba(224,166,60,.4);
-}
-html[data-theme=dark] .btn.arrow::after{content:""}
-
-/* ── 區塊標題：琥珀標籤 ▸ + 延伸到右緣的髮絲線（終端章節分隔手法）
-   前面的 skin-pro / skin-terminal 以 !important 把 .bar 藏掉、把 .tx 改回 serif、
-   把 .lnk 釘在右側，因此這一層必須用同等的 !important 收回元件語言。 ── */
-html[data-theme=dark] .sec-label{gap:12px!important;margin:30px 0 13px;align-items:center}
-html[data-theme=dark] .sec-label .bar{display:inline-flex!important;order:1;width:auto!important;height:auto!important;background:none!important;line-height:1}
-html[data-theme=dark] .sec-label .bar::before{content:"\25B8";color:var(--brass);font-size:11px}
-html[data-theme=dark] .sec-label .tx{
-  order:2;font-family:var(--mono)!important;font-size:11px!important;font-weight:700!important;
-  letter-spacing:.16em!important;color:var(--brass)!important;text-transform:uppercase!important;
-}
-html[data-theme=dark] .sec-label::after{
-  content:""!important;display:block!important;order:3;flex:1 1 auto!important;height:1px!important;align-self:center;
-  background:linear-gradient(90deg,var(--line2),transparent)!important;
-}
-html[data-theme=dark] .sec-label .lnk{
-  order:4!important;margin-left:0!important;flex:0 0 auto!important;font-family:var(--mono)!important;
-  text-transform:uppercase!important;font-size:9.5px!important;font-weight:600!important;
-  letter-spacing:.1em!important;color:var(--t3)!important;border:0!important;
-}
-html[data-theme=dark] .sec-label .lnk::before{content:"[";margin-right:3px;color:var(--line2)}
-html[data-theme=dark] .sec-label .lnk::after{content:"]";margin-left:3px;color:var(--line2)}
-html[data-theme=dark] .sec-label .lnk:hover{color:var(--brass)!important}
-/* 市場儀表板那列有一個空的日期 span（會以 order:0 跑到最前面），壓掉它的 margin 避免空隙 */
-html[data-theme=dark] .sec-label .mut:empty{display:none!important}
-
-/* ── 面板表頭：同樣改為標籤 ▸ + 延伸髮絲線 ── */
-html[data-theme=dark] .panel-head{padding:12px 18px!important;background:#0e0f13;gap:10px;display:flex;align-items:center}
-html[data-theme=dark] .panel-head .bar{display:inline-flex!important;order:1;width:auto!important;height:auto!important;background:none!important;line-height:1}
-html[data-theme=dark] .panel-head .bar::before{content:"\25B8";color:var(--brass);font-size:10px}
-html[data-theme=dark] .panel-title{order:2;font-family:var(--mono)!important;color:var(--brass)!important;letter-spacing:.14em!important;font-size:10px!important;font-weight:700!important;text-transform:uppercase!important}
-html[data-theme=dark] .panel-head::after{content:""!important;display:block!important;order:3;flex:1 1 auto!important;height:1px!important;align-self:center;background:linear-gradient(90deg,var(--line2),transparent)!important}
-html[data-theme=dark] .panel-link{order:4;margin-left:0!important;flex:0 0 auto;font-family:var(--mono);text-transform:uppercase;font-size:9px;letter-spacing:.1em}
-
-/* ── 數字排版：英雄數字、KPI、評分一律等寬對齊；標籤等寬寬字距 ── */
-html[data-theme=dark] .hero-val,html[data-theme=dark] .sig-score{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-html[data-theme=dark] .hero-label,html[data-theme=dark] .kpi-label{font-family:var(--mono);letter-spacing:.12em}
-html[data-theme=dark] .hero{border-left-width:2px}
-
-/* ── 表格：等寬琥珀表頭、hover 列加左側琥珀標記 ── */
-html[data-theme=dark] .tbl th,html[data-theme=dark] table th{
-  font-family:var(--mono);color:var(--brass)!important;text-transform:uppercase;
-  letter-spacing:.1em;font-size:9px;font-weight:600;border-bottom:1px solid var(--line2)!important;
-}
-html[data-theme=dark] .tbl tbody tr:hover td{background:#15171c!important;box-shadow:inset 2px 0 0 var(--brass)}
-
-/* ── 徽章／標記：等寬＋方形；輕量標記改為描邊方括號感 ── */
-html[data-theme=dark] .sig-badge{font-family:var(--mono);border-radius:2px;letter-spacing:.08em}
-html[data-theme=dark] .tag{
-  font-family:var(--mono);border-radius:2px;letter-spacing:.06em;
-  background:transparent!important;border:1px solid currentColor;padding:1px 6px;
-}
-html[data-theme=dark] .tag.green{color:var(--up)}
-html[data-theme=dark] .tag.red{color:var(--down)}
-html[data-theme=dark] .tag.blue{color:var(--t2)}
-
-/* ── 狀態小物：資料新鮮度、盤別 pill 改方形等寬 ── */
-html[data-theme=dark] .fresh-badge,html[data-theme=dark] .mkt-pill{font-family:var(--mono);border-radius:2px;letter-spacing:.04em}
-
-/* ── 2026-10-16 總覽 KPI 卡精修（終端風，只動深色、只動總覽那排卡片）──
-   每張卡加一條頂部髮絲、主評分卡用琥珀強調並加一個終端式左上角標記；滑過時琥珀邊＋微亮，
-   讓五張原本一模一樣的卡有層次、可互動，但不破壞終端機識別。 */
-html[data-theme=dark] .kpis .kpi{position:relative;overflow:hidden;transition:border-color .14s ease,background .14s ease}
-html[data-theme=dark] .kpis .kpi::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;
-  background:linear-gradient(90deg,var(--line2),transparent 55%);opacity:.7}
-html[data-theme=dark] .kpis .kpi:hover{border-color:var(--brass)!important;background:var(--s2)!important;
-  box-shadow:inset 0 0 0 1px var(--term-glow)!important}
-html[data-theme=dark] .kpis .kpi.env{background:linear-gradient(180deg,var(--accent-soft),var(--s1) 46%)!important}
-html[data-theme=dark] .kpis .kpi.env::before{background:linear-gradient(90deg,var(--brass-lt),var(--brass) 30%,transparent 75%);opacity:1}
-/* 主評分卡左上角的終端式角標 */
-html[data-theme=dark] .kpis .kpi.env::after{content:"";position:absolute;left:8px;top:8px;width:9px;height:9px;
-  border-left:2px solid var(--brass);border-top:2px solid var(--brass);opacity:.85}
-html[data-theme=dark] .kpis .kpi.env .kpi-label{color:var(--brass)!important;letter-spacing:.08em}
-html[data-theme=dark] .kpis .kpi.env .kpi-val{color:var(--brass-lt)!important}   /* 主評分＝全頁焦點數字，琥珀點題 */
-html[data-theme=dark] .meter{background:#1b1e24;height:5px;border-radius:2px}
-html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var(--brass-lt))}
-</style>
+<!-- skin-term：2026-10-23 由 skin-v3 取代，已移除 -->
+<!-- skin-term2：2026-10-23 由 skin-v3 取代，已移除 -->
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+<style id="skin-v3">
+/* ===== skin-v3 (2026-10-23) 設計系統「台股波段」v3 ===== 
+   暖灰畫布＋白色圓角卡片＋pill 控制項＋每頁一張黑色焦點卡；顏色只留給價格（紅漲綠跌）。
+   最後載入，覆蓋前面所有 skin-*。規格見 Design System artifact「台股波段」。 */
+html[data-theme]{
+  --sans:'Geist','Noto Sans TC','PingFang TC','Microsoft JhengHei',system-ui,sans-serif;--serif:var(--sans);
+  --mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --r:20px;--rs:10px;--rp:999px;
+}
+html[data-theme=light],html:not([data-theme=dark]){
+  color-scheme:light;
+  --bg:#f1f1ef;--desk:#f1f1ef;--paper:#fff;--paper2:#f5f5f3;--s1:#fff;--s2:#f5f5f3;--s3:#ececea;--wash:#f5f5f3;
+  --line:#ebebe8;--line2:#dcdcd8;--rule:transparent;
+  --ink:#111113;--t1:#111113;--t2:#4a4b50;--t3:#6b6c74;
+  --navy:#111113;--navy2:#26262a;--accent:#111113;--accent-soft:#efefed;--brass:#111113;--brass-lt:#333;
+  --up:#c8231a;--up-soft:#fdecea;--up-line:#f2c4bf;--down:#0b7a40;--down-soft:#e6f4ec;--down-line:#b5dcc4;
+  --ok:#2563b8;--ok-soft:#e8f0fa;--warn:#8a6100;--warn-soft:#fbf3dc;--alert:#b4235a;--alert-soft:#fbe9f0;
+  --hero:#111113;--on-hero:#fff;--on-hero-2:#9d9da4;--hero-line:#2a2a2e;--hero-up:#ff7a74;--hero-down:#4ee08a;
+  --chart-up:#e5484d;--chart-down:#18a957;--seal:#c8231a;--focus:#2563b8;
+  --sh:0 1px 2px rgba(17,17,19,.04);--card-sh:0 1px 2px rgba(17,17,19,.04);--card-sh-h:0 4px 16px rgba(17,17,19,.07);
+  --hero-sh:0 12px 32px -12px rgba(17,17,19,.35);--pop-sh:0 8px 28px rgba(17,17,19,.14);
+}
+html[data-theme=dark]{
+  color-scheme:dark;
+  --bg:#0b0b0d;--desk:#0b0b0d;--paper:#151517;--paper2:#1c1c1f;--s1:#151517;--s2:#1c1c1f;--s3:#252528;--wash:#1c1c1f;
+  --line:#232326;--line2:#2e2e33;--rule:transparent;
+  --ink:#ededee;--t1:#ededee;--t2:#a1a1a8;--t3:#85858d;
+  --navy:#ededee;--navy2:#d9d9d5;--accent:#ededee;--accent-soft:#26262a;--brass:#ededee;--brass-lt:#fff;
+  --up:#ff5c5c;--up-soft:#2b1414;--up-line:#5a2323;--down:#3ecf7a;--down-soft:#0f2619;--down-line:#1d5236;
+  --ok:#6aa8f0;--ok-soft:#12223a;--warn:#e8c35a;--warn-soft:#2a2412;--alert:#f36f9c;--alert-soft:#2c1420;
+  --hero:#f2f2f0;--on-hero:#111113;--on-hero-2:#5b5b63;--hero-line:#d9d9d5;--hero-up:#c8231a;--hero-down:#0b7a40;
+  --chart-up:#ff6369;--chart-down:#3ecf7a;--seal:#ff5c5c;--focus:#6aa8f0;
+  --sh:none;--card-sh:none;--card-sh-h:none;--hero-sh:none;--pop-sh:0 8px 28px rgba(0,0,0,.6);--term-glow:transparent;
+}
+html[data-theme] body{font-family:var(--sans)!important;font-feature-settings:"tnum" 1;-webkit-font-smoothing:antialiased;background:var(--bg)!important;color:var(--ink)}
+html[data-theme] body,html[data-theme] .shell,html[data-theme] .body,html[data-theme] .content{background:var(--bg)!important}
+html[data-theme] .num,html[data-theme] .kpi-val,html[data-theme] .ticker-val,html[data-theme] .ticker-chg,html[data-theme] .tbl td,html[data-theme] .tbl th,html[data-theme] table td,html[data-theme] table th,html[data-theme] .pos-stats b,html[data-theme] .sig-item span{font-family:var(--sans)!important;font-variant-numeric:tabular-nums;letter-spacing:0}
+html[data-theme] .mono,html[data-theme] code{font-family:var(--mono)!important}
+html[data-theme] :focus-visible{outline:2px solid var(--focus)!important;outline-offset:2px}
+
+/* ── 側欄：桌面為浮在畫布上的白卡，選中＝黑色 pill ── */
+@media(min-width:641px){html[data-theme]:not(.force-mobile) .side{margin:12px 0 12px 12px!important;height:calc(100vh - 24px)!important;border-radius:var(--r)!important;border:0!important;box-shadow:var(--card-sh)!important;background:var(--s1)!important;width:232px!important;min-width:232px!important;padding:8px 0!important}}
+html[data-theme] .side,html[data-theme] .sidebar{background:var(--s1)!important;border-right:0!important}
+html[data-theme] .logo{padding:14px 20px 14px!important;border-bottom:0!important;gap:12px!important}
+html[data-theme] .logo-mark{width:32px!important;height:32px!important;background:none!important;border:2px solid var(--seal)!important;border-radius:8px!important;color:var(--seal)!important;transform:rotate(-3deg)!important;box-shadow:none!important;display:grid!important;place-items:center!important;font:700 17px/1 'Noto Serif TC',serif!important}
+html[data-theme] .logo-mark svg{display:none!important}
+html[data-theme] .logo-nm{font:600 15px/1.2 var(--sans)!important;color:var(--ink)!important;letter-spacing:-.01em!important}
+html[data-theme] .logo-nm span{display:block;font-size:11px!important;font-weight:400!important;color:var(--t3)!important;letter-spacing:0!important;margin-top:2px}
+html[data-theme] .logo-vr{color:var(--t3)!important;font-size:10px!important;letter-spacing:0!important}
+html[data-theme] .nav-g{padding:18px 24px 6px!important;font:500 12px/16px var(--sans)!important;letter-spacing:0!important;text-transform:none!important;color:var(--t3)!important}
+html[data-theme] .nav{height:40px!important;margin:1px 12px!important;padding:0 12px!important;gap:10px!important;border-radius:var(--rp)!important;border-left:0!important;box-shadow:none!important;font:500 13.5px/1 var(--sans)!important;color:var(--t2)!important;background:transparent!important}
+html[data-theme] .nav svg{width:17px!important;height:17px!important;opacity:1!important;color:inherit!important}
+html[data-theme] .nav:hover{background:var(--s2)!important;color:var(--ink)!important}
+html[data-theme] .nav.on,html[data-theme] .nav.active{background:var(--ink)!important;color:var(--s1)!important;font-weight:500!important}
+html[data-theme] .nav.on svg{color:var(--s1)!important;stroke:var(--s1)!important}
+html[data-theme] .nbadge{border-radius:var(--rp)!important;min-width:20px;height:20px;padding:0 6px!important;display:inline-flex!important;align-items:center;justify-content:center;background:var(--s3)!important;color:var(--t2)!important;font:500 11px/1 var(--sans)!important;margin-left:auto}
+html[data-theme] .nav.on .nbadge{background:var(--s1)!important;color:var(--ink)!important}
+html[data-theme] .sfoot{border-top:1px solid var(--line)!important;margin:8px 12px 0!important;padding:14px 12px 6px!important;color:var(--t3)!important}
+
+/* ── 頂部列：直接放在畫布上 ── */
+html[data-theme] .top{height:64px!important;background:transparent!important;border-bottom:0!important;box-shadow:none!important;padding:0 24px!important;gap:16px}
+html[data-theme] #page-title{font:600 18px/1 var(--sans)!important;letter-spacing:-.01em!important;text-transform:none!important;color:var(--ink)!important}
+html[data-theme] #page-title::before,html[data-theme] #page-title::after{display:none!important;content:none!important}
+html[data-theme] .gs input{height:40px!important;border-radius:var(--rp)!important;background:var(--s1)!important;border:1px solid transparent!important;box-shadow:var(--card-sh)!important;padding:0 16px 0 40px!important;font:400 13px var(--sans)!important;color:var(--ink)!important;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23858590' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E")!important;background-repeat:no-repeat!important;background-position:14px 50%!important;background-size:16px!important}
+html[data-theme] .gs input:focus{border-color:var(--focus)!important;box-shadow:0 0 0 1px var(--focus)!important}
+html[data-theme] .gs-dd{border-radius:16px!important;border:0!important;box-shadow:var(--pop-sh)!important;background:var(--s1)!important;overflow:hidden}
+html[data-theme] .bell,html[data-theme] .srch-btn,html[data-theme] .btn-ic,html[data-theme] #theme-btn{width:38px!important;height:38px!important;padding:0!important;border-radius:50%!important;display:inline-grid!important;place-items:center!important;background:var(--s1)!important;border:0!important;box-shadow:var(--card-sh)!important;color:var(--ink)!important}
+html[data-theme] .bell .cnt{background:var(--seal)!important;color:#fff!important;border:2px solid var(--bg)!important;border-radius:var(--rp)!important}
+html[data-theme] .fresh-badge,html[data-theme] .mkt-pill{height:30px;display:inline-flex!important;align-items:center;gap:6px;padding:0 12px!important;border-radius:var(--rp)!important;background:var(--s1)!important;border:0!important;box-shadow:var(--card-sh)!important;font:500 12px var(--sans)!important;color:var(--t2)!important}
+
+/* ── 按鈕：全部 pill ── */
+html[data-theme] .btn{height:38px!important;min-height:0!important;padding:0 16px!important;border-radius:var(--rp)!important;border:1px solid var(--line2)!important;background:var(--s1)!important;color:var(--ink)!important;font:500 13px/1 var(--sans)!important;letter-spacing:0!important;box-shadow:none!important;text-transform:none!important}
+html[data-theme] .btn:hover{background:var(--s2)!important}
+html[data-theme] .btn.primary{background:var(--ink)!important;border-color:var(--ink)!important;color:var(--s1)!important}
+html[data-theme] .btn.primary:hover{opacity:.88;background:var(--ink)!important}
+html[data-theme] .btn.sm,html[data-theme] .btn.btn-sm{height:30px!important;padding:0 12px!important;font-size:12px!important}
+html[data-theme] .btn.arrow::after{display:none!important}
+
+/* ── 內容區 ── */
+html[data-theme] .content{padding:0 0 32px!important}
+html[data-theme] .pad{padding:8px 24px 0!important}
+html[data-theme] .phd{padding:8px 24px 0!important;border:0!important;background:transparent!important}
+html[data-theme] .phd h1{font:600 26px/32px var(--sans)!important;letter-spacing:-.02em!important;color:var(--ink)!important}
+html[data-theme] .phd p,html[data-theme] .phd-crumb{color:var(--t3)!important;font-family:var(--sans)!important}
+
+/* 行情條：白色卡片 */
+html[data-theme] .ticker{margin:4px 24px 0!important;border-radius:var(--r)!important;background:var(--s1)!important;border:0!important;box-shadow:var(--card-sh)!important;color:var(--ink)!important;overflow-x:auto!important;scrollbar-width:none}
+html[data-theme] .ticker{--up:var(--up-c);--down:var(--down-c)}
+html[data-theme=light] .ticker,html:not([data-theme=dark]) .ticker{--up-c:#c8231a;--down-c:#0b7a40}
+html[data-theme=dark] .ticker{--up-c:#ff5c5c;--down-c:#3ecf7a}
+html[data-theme] .ticker-item{padding:14px 20px!important;border-right:0!important;position:relative;min-width:140px}
+html[data-theme] .ticker-item+.ticker-item::before{content:"";position:absolute;left:0;top:16px;bottom:16px;width:1px;background:var(--line)}
+html[data-theme] .ticker-name{font:500 12px/16px var(--sans)!important;color:var(--t3)!important;letter-spacing:0!important;text-transform:none!important}
+html[data-theme] .ticker-val{font:500 18px/24px var(--sans)!important;color:var(--ink)!important;letter-spacing:-.01em!important;margin-top:4px!important}
+html[data-theme] .ticker-chg{font:500 12px/16px var(--sans)!important;margin-top:2px!important}
+
+/* 今日戰報 → 黑色焦點卡 */
+html[data-theme] .mast{background:var(--hero)!important;color:var(--on-hero)!important;border:0!important;border-radius:var(--r)!important;box-shadow:var(--hero-sh)!important;padding:24px 28px!important;margin:0 0 16px!important;animation:none!important}
+html[data-theme] .mast .dt{border-color:var(--hero-line)!important;font-family:var(--sans)!important}
+html[data-theme] .mast .dt b{font:600 30px/1.1 var(--sans)!important;letter-spacing:-.02em!important;color:var(--on-hero)!important}
+html[data-theme] .mast .dt span{color:var(--on-hero-2)!important;letter-spacing:0!important;font-family:var(--sans)!important}
+html[data-theme] .mast .say{font:500 16px/1.75 var(--sans)!important;color:var(--on-hero)!important}
+html[data-theme] .mast .say em{background:none!important;color:var(--on-hero)!important;font-weight:600;padding:0 1px!important;border-bottom:1px solid var(--on-hero-2)}
+html[data-theme] .mast .say small{color:var(--on-hero-2)!important}
+html[data-theme] .mast .seal{background:transparent!important;border:2px solid var(--hero-up)!important;border-radius:14px!important;box-shadow:none!important;color:var(--hero-up)!important;animation:none!important}
+html[data-theme] .mast .seal b{color:var(--on-hero)!important;font-family:var(--sans)!important}
+html[data-theme] .mast .seal i{color:var(--on-hero-2)!important;border-color:var(--hero-line)!important;font-family:var(--sans)!important}
+html[data-theme] .mast .up{color:var(--hero-up)!important}html[data-theme] .mast .down{color:var(--hero-down)!important}
+
+/* KPI：白卡 */
+html[data-theme] .kpis,html[data-theme] .kpi-strip,html[data-theme] .hero-row{gap:12px!important;border:0!important;background:transparent!important;box-shadow:none!important}
+html[data-theme] .kpi{background:var(--s1)!important;border:0!important;border-radius:var(--r)!important;box-shadow:var(--card-sh)!important;padding:20px 22px!important}
+html[data-theme] .kpi::before,html[data-theme] .kpi::after{display:none!important}
+html[data-theme] .kpi-label{font:500 12px/16px var(--sans)!important;letter-spacing:0!important;text-transform:none!important;color:var(--t3)!important}
+html[data-theme] .kpi-val{font:500 30px/36px var(--sans)!important;letter-spacing:-.03em!important;color:var(--ink)!important;margin-top:8px!important}
+html[data-theme] .kpi-sub{font:400 12px/18px var(--sans)!important;color:var(--t3)!important;margin-top:6px!important}
+html[data-theme] .meter{height:6px!important;border-radius:var(--rp)!important;background:var(--s3)!important;overflow:hidden;margin-top:12px!important}
+html[data-theme] .meter i{border-radius:var(--rp)!important;background:var(--ink)!important}
+
+/* 區段標題：去掉色條 */
+html[data-theme] .sec-label{margin:28px 0 12px!important;gap:10px!important;align-items:baseline!important}
+html[data-theme] .sec-label .bar{display:none!important}
+html[data-theme] .sec-label .tx{font:600 18px/24px var(--sans)!important;letter-spacing:-.01em!important;color:var(--ink)!important;text-transform:none!important}
+html[data-theme] .sec-label .lnk,html[data-theme] .lnk{color:var(--t2)!important;font:500 13px var(--sans)!important;margin-left:auto}
+html[data-theme] .sec-label .lnk:hover,html[data-theme] .lnk:hover{color:var(--ink)!important}
+
+/* 面板／卡片：白色圓角 */
+html[data-theme] .panel,html[data-theme] .card,html[data-theme] .box,html[data-theme] .sig-card,html[data-theme] .pos,html[data-theme] .ovd,html[data-theme] .note-card{background:var(--s1)!important;border:0!important;border-radius:var(--r)!important;box-shadow:var(--card-sh)!important;overflow:hidden}
+html[data-theme] .panel:hover,html[data-theme] .sig-card:hover{box-shadow:var(--card-sh)!important;transform:none!important}
+html[data-theme] .panel-head{border-bottom:0!important;background:transparent!important;padding:18px 22px 4px!important;min-height:0!important}
+html[data-theme] .panel-title{font:600 15px/22px var(--sans)!important;letter-spacing:0!important;text-transform:none!important;color:var(--ink)!important}
+html[data-theme] .panel-title::before{display:none!important}
+html[data-theme] .panel-body{padding:12px 22px 20px!important}
+html[data-theme] .ovd-grid{gap:12px!important}
+html[data-theme] .mut{color:var(--t3)!important;font-family:var(--sans)!important}
+
+/* 表格 */
+html[data-theme] .tbl,html[data-theme] .panel table{border-collapse:separate!important;border-spacing:0!important}
+html[data-theme] .tbl th,html[data-theme] .panel table th{background:var(--s2)!important;color:var(--t3)!important;font:500 12px/16px var(--sans)!important;letter-spacing:0!important;text-transform:none!important;border:0!important;padding:10px 12px!important}
+html[data-theme] .tbl th:first-child,html[data-theme] .panel table th:first-child{border-radius:10px 0 0 10px}
+html[data-theme] .tbl th:last-child,html[data-theme] .panel table th:last-child{border-radius:0 10px 10px 0}
+html[data-theme] .tbl td,html[data-theme] .panel table td{border-bottom:1px solid var(--line)!important;padding:12px!important;color:var(--t2)}
+html[data-theme] .tbl tr:last-child td{border-bottom:0!important}
+html[data-theme] .tbl tr:hover td{background:var(--s2)!important}
+
+/* 標籤 */
+html[data-theme] .tag,html[data-theme] .pill,html[data-theme] .rp-badge{border-radius:var(--rp)!important;border:0!important;font-family:var(--sans)!important;letter-spacing:0!important;text-transform:none!important}
+html[data-theme] .tag.green,html[data-theme] .pill.green{background:var(--ok-soft)!important;color:var(--ok)!important}
+
+/* 頁內分頁：白色 pill 容器、黑色選中（不影響手機底部 .tabbar） */
+html[data-theme] .content .tabs{display:inline-flex!important;gap:2px!important;padding:4px!important;background:var(--s2)!important;border:0!important;border-radius:var(--rp)!important;box-shadow:none!important}
+html[data-theme] .content .tabs .tab{height:30px!important;padding:0 14px!important;border:0!important;border-radius:var(--rp)!important;background:transparent!important;color:var(--t2)!important;font:500 13px/30px var(--sans)!important;box-shadow:none!important}
+html[data-theme] .content .tabs .tab.on,html[data-theme] .content .tabs .tab.active{background:var(--ink)!important;color:var(--s1)!important}
+
+/* 提示框、空狀態、骨架 */
+html[data-theme] .note-box{background:var(--s2)!important;border:0!important;border-radius:var(--rs)!important;color:var(--t2)!important;box-shadow:none!important}
+html[data-theme] .empty,html[data-theme] .empty-label{color:var(--t3)!important;font-family:var(--sans)!important}
+html[data-theme] .skel{background:var(--s3)!important;border-radius:var(--rp)!important}
+
+/* 狀態列、手機底部分頁 */
+html[data-theme] .statusbar{background:var(--bg)!important;border-top:0!important;color:var(--t3)!important}
+html[data-theme] .tabbar{background:var(--s1)!important;border-top:1px solid var(--line)!important}
+html[data-theme] .tabbar .tab.on{color:var(--ink)!important}
+@media(max-width:640px){html[data-theme]:not(.force-desktop) .ticker{margin:4px 12px 0!important}html[data-theme]:not(.force-desktop) .pad{padding:8px 12px 0!important}html[data-theme]:not(.force-desktop) .top{padding:0 12px!important}}
+html.force-mobile[data-theme] .ticker{margin:4px 12px 0!important}html.force-mobile[data-theme] .pad{padding:8px 12px 0!important}
+html[data-theme] .nav::before,html[data-theme] .nav::after{display:none!important}
+html[data-theme] .content .page>.ticker{margin:4px 24px 0!important}
+html[data-theme] .kpi.env{background:var(--s1)!important;background-image:none!important}
+html[data-theme] #tw-time{font-family:var(--sans)!important}
+/* ── v3 總覽頁版型（2026-10-23）：走勢圖＋黑色焦點卡＋自選股 → KPI → 快速前往 → 最新訊號卡 ── */
+html[data-theme=light],html:not([data-theme=dark]){--chart-area:rgba(17,17,19,.07);--chart-line:#111113;--grid-line:#ebebe8}
+html[data-theme=dark]{--chart-area:rgba(242,242,240,.08);--chart-line:#f2f2f0;--grid-line:#232326}
+.v3-top{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr);gap:12px;margin:4px 0 12px}
+.v3-side{display:flex;flex-direction:column;gap:12px;min-width:0}
+html[data-theme] .v3-chart .panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.v3-px{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:6px}
+.v3-px b{font:500 26px/32px var(--sans);letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+.v3-tag{display:inline-flex;align-items:center;gap:3px;height:22px;padding:0 9px;border-radius:999px;background:var(--s2);color:var(--t2);font:500 12px/1 var(--sans);font-variant-numeric:tabular-nums;white-space:nowrap}
+.v3-tag.up{background:var(--up-soft);color:var(--up)}.v3-tag.down{background:var(--down-soft);color:var(--down)}
+.v3-rng{flex:none}
+html[data-theme] .content .tabs.v3-rng .tab{height:26px!important;padding:0 11px!important;font-size:12px!important;line-height:26px!important}
+.v3-area{position:relative;height:300px;margin-top:4px}
+.v3-area svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.v3-area .fill{fill:var(--chart-area)}.v3-area .ln{fill:none;stroke:var(--chart-line);stroke-width:1.8;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.v3-area .gl{stroke:var(--grid-line);stroke-width:1;vector-effect:non-scaling-stroke}
+.v3-axis{position:absolute;left:0;right:0;bottom:-22px;height:16px;font:400 11px/16px var(--sans);color:var(--t3)}
+.v3-axis span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.v3-yax{position:absolute;right:0;top:0;bottom:0;font:400 11px var(--sans);color:var(--t3);pointer-events:none}
+.v3-yax span{position:absolute;right:0;transform:translateY(-50%);background:var(--s1);padding-left:6px;font-variant-numeric:tabular-nums}
+.v3-band{position:absolute;top:0;bottom:0;width:44px;margin-left:-22px;border-radius:8px;background:var(--s3);opacity:.7;display:none;pointer-events:none}
+.v3-cross{position:absolute;top:0;bottom:0;width:1px;background:var(--chart-line);display:none;pointer-events:none}
+.v3-dot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:var(--s1);border:2px solid var(--chart-line);display:none;pointer-events:none}
+.v3-tip{position:absolute;transform:translate(-50%,calc(-100% - 12px));padding:6px 10px;border-radius:10px;background:var(--ink);color:var(--s1);font:500 13px/16px var(--sans);text-align:center;white-space:nowrap;box-shadow:var(--pop-sh);display:none;pointer-events:none;font-variant-numeric:tabular-nums;z-index:2}
+.v3-tip small{display:block;font-size:11px;font-weight:400;opacity:.7}
+.v3-src{margin-top:30px;font-size:11px}
+.v3-hero{background:var(--hero);color:var(--on-hero);border-radius:20px;box-shadow:var(--hero-sh);padding:22px 24px}
+.v3h-top{display:flex;justify-content:space-between;gap:8px;font:500 12px/16px var(--sans);color:var(--on-hero-2)}
+.v3h-px{margin-top:10px;font:500 36px/42px var(--sans);letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--on-hero)}
+.v3h-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px;font-size:12px;color:var(--on-hero-2)}
+.v3h-chg{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--hero-line);font:500 12px/1 var(--sans);font-variant-numeric:tabular-nums}
+.v3h-chg.up{color:var(--hero-up)}.v3h-chg.down{color:var(--hero-down)}
+.v3h-spark{display:block;width:100%;height:56px;margin-top:16px}
+.v3h-spark path{fill:none;stroke:var(--on-hero);stroke-width:1.6;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.v3h-spark .b{stroke:var(--hero-line);stroke-dasharray:2 3;stroke-width:1}
+.v3h-split{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--hero-line)}
+.v3h-split div{font-size:11px;color:var(--on-hero-2)}
+.v3h-split b{display:block;margin-top:2px;font:500 14px/20px var(--sans);color:var(--on-hero);font-variant-numeric:tabular-nums}
+.v3-wrow{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.v3-wrow:last-child{border-bottom:0}
+.v3-av{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--s2);color:var(--t2);font:600 13px/1 var(--sans)}
+.v3-wrow .nm{font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.v3-wrow .nm small{display:block;font:400 12px/16px var(--mono);color:var(--t3)}
+.v3-wrow .px{text-align:right;font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums}
+.v3-wrow .px small{display:block;font-size:12px;font-weight:400}
+.v3-chips{display:flex;flex-wrap:wrap;gap:8px}
+.v3-chip{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 13px 0 6px;border:0;border-radius:999px;background:var(--s2);color:var(--ink);font:500 13px/1 var(--sans);cursor:pointer;white-space:nowrap}
+.v3-chip:hover{background:var(--s3)}
+.v3-chip .ci{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--s1);color:var(--t2)}
+.v3-chip .ci svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.v3-chip b{font-weight:500;color:var(--t3)}
+.v3-chip.on{background:var(--ink);color:var(--s1)}.v3-chip.on .ci{background:var(--s1);color:var(--ink)}.v3-chip.on b{color:var(--s1);opacity:.7}
+.v3-sigs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.v3-sig{background:var(--s1);border-radius:20px;box-shadow:var(--card-sh);padding:18px 20px;display:flex;flex-direction:column;gap:12px;cursor:pointer;min-width:0}
+.v3s-head{display:flex;align-items:center;gap:10px}
+.v3s-nm{flex:1;min-width:0;font:600 14px/18px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.v3s-nm small{display:block;font:400 12px/16px var(--sans);color:var(--t3)}
+.v3s-dir{display:inline-grid;place-items:center;height:22px;min-width:22px;padding:0 6px;border-radius:999px;background:var(--chart-up);color:#fff;font:600 12px/1 var(--sans)}
+.v3s-dir.sell{background:var(--chart-down)}
+.v3s-px{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.v3s-px b{font:500 24px/30px var(--sans);letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+.v3s-sc{margin-left:auto;font-size:12px;color:var(--t3)}.v3s-sc b{font:500 15px/1 var(--sans);letter-spacing:0;color:var(--ink)}
+.v3s-grid{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:8px;padding:10px 14px;background:var(--s2);border-radius:10px}
+.v3s-grid label{display:block;font-size:11px;line-height:16px;color:var(--t3)}
+.v3s-grid span{display:block;font-weight:500;color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums}
+.v3s-grid span.up{color:var(--up)}.v3s-grid span.down{color:var(--down)}
+.v3s-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--t3)}
+html[data-theme] .mast{background:var(--s1)!important;color:var(--ink)!important;box-shadow:var(--card-sh)!important}
+html[data-theme] .mast .dt b,html[data-theme] .mast .say,html[data-theme] .mast .say em{color:var(--ink)!important}
+html[data-theme] .mast .dt span,html[data-theme] .mast .say small{color:var(--t3)!important}
+html[data-theme] .mast .dt{border-color:var(--line)!important}
+html[data-theme] .mast .say em{border-bottom-color:var(--line2)!important}
+@media(max-width:1100px){.v3-top{grid-template-columns:1fr}.v3-sigs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.v3-sigs{grid-template-columns:1fr}.v3-area{height:220px}.v3h-px{font-size:30px}}
+html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{grid-template-columns:1fr}
+</style>
 </head>
 <body>
 <div class="shell">
@@ -1535,7 +1615,7 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
 <a class="skip-link" href="#content">跳到主要內容</a>
 <div class="side" id="side" role="navigation" aria-label="主選單">
   <div class="logo">
-    <div class="logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4v3M6 17v3M12 2v4M12 14v4M18 7v3M18 19v2"/><rect x="4" y="7" width="4" height="10" rx="1"/><rect x="10" y="6" width="4" height="8" rx="1"/><rect x="16" y="10" width="4" height="9" rx="1"/></svg></div>
+    <div class="logo-mark" aria-hidden="true">台</div>
     <div><div class="logo-nm">台股波段<span>智慧交易系統</span></div><div class="logo-vr" id="version">v1.0.0</div></div>
   </div>
   <div class="side-scroll">
@@ -1617,7 +1697,17 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
       <div class="ticker-item"><div class="ticker-name">Bitcoin BTC</div><div class="ticker-val" id="btc-val">—</div><div class="ticker-chg" id="btc-chg">—</div></div>
     </div>
     <div class="pad">
-    <div class="mast" id="mast"></div>
+    <div class="v3-top">
+      <section class="panel v3-chart" aria-label="加權指數走勢">
+        <div class="panel-head"><div><span class="panel-title">加權指數走勢</span><div class="v3-px"><b id="v3c-px">—</b><span class="v3-tag" id="v3c-chg">—</span><span class="mut" id="v3c-range-chg"></span></div></div>
+          <div class="tabs v3-rng" id="v3-rng" role="tablist" aria-label="期間"><button class="tab" data-m="3" onclick="v3SetRange(3)">3M</button><button class="tab" data-m="6" onclick="v3SetRange(6)">6M</button><button class="tab on" data-m="12" onclick="v3SetRange(12)">1Y</button></div></div>
+        <div class="panel-body"><div class="v3-area" id="v3-area"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div><div class="v3-src mut" id="v3c-src"></div></div>
+      </section>
+      <div class="v3-side">
+        <section class="v3-hero" id="v3-hero" aria-label="加權指數"><div class="v3h-top"><span>加權指數 · TAIEX</span></div><div class="v3h-px">—</div></section>
+        <section class="panel"><div class="panel-head"><span class="panel-title">自選股</span><span class="lnk" onclick="go('watchlist')">管理 →</span></div><div class="panel-body" id="v3-wl" style="padding-top:4px;padding-bottom:10px"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
+      </div>
+    </div>
     <div class="kpis">
       <div class="kpi env"><div class="kpi-label">市場環境評分</div><div class="kpi-val" id="env-score">—</div><div class="kpi-sub" id="env-status">載入中</div><div class="meter"><i id="env-bar"></i></div></div>
       <div class="kpi"><div class="kpi-label">市場情緒</div><div class="kpi-val" id="sentiment-score">—</div><div class="kpi-sub" id="sentiment-zh">—</div></div>
@@ -1625,6 +1715,11 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
       <div class="kpi"><div class="kpi-label">歷史勝率</div><div class="kpi-val" id="win-rate">—%</div><div class="kpi-sub" id="wr-sub">—</div></div>
       <div class="kpi"><div class="kpi-label">掃描次數</div><div class="kpi-val" id="scan-count">0</div><div class="kpi-sub" id="last-scan-top">尚未掃描</div></div>
     </div>
+    <div class="panel" style="margin-top:12px"><div class="panel-head"><span class="panel-title">快速前往</span></div><div class="panel-body"><div class="v3-chips" id="v3-chips"></div></div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">最新訊號</div><div class="lnk" onclick="go('signals')">查看全部 →</div></div>
+    <div class="v3-sigs" id="latest-signals"><div class="empty"><div class="empty-label">訊號</div>尚無訊號，等待盤後掃描</div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">今日戰報</div></div>
+    <div class="mast" id="mast"></div>
     <div id="ov-live-wrap" hidden><div class="sec-label"><div class="bar"></div><div class="tx">指數走勢</div><div class="lnk" onclick="go('marketoverview')">市場總覽 →</div></div><section id="ov-live" class="mbar" aria-label="大盤指數走勢"></section></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">市場儀表板</div><span class="mut" id="ovd-date" style="margin-left:10px"></span><div class="lnk" onclick="go('rank')">完整排行 →</div></div>
     <div class="ovd-grid">
@@ -1638,15 +1733,9 @@ html[data-theme=dark] .meter i{background:linear-gradient(90deg,var(--brass),var
     </div>
     <div class="sec-label"><div class="bar"></div><div class="tx">全體法人資金流向（上市整體）</div></div>
     <div class="panel"><div class="panel-body" id="ovd-inst-flow"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></div>
-    <div class="sec-label"><div class="bar"></div><div class="tx">最新訊號</div><div class="lnk" onclick="go('signals')">查看全部 →</div></div>
-    <div class="grid2">
-      <div class="panel">
-        <div class="panel-body" id="latest-signals" style="padding:0"><div class="empty"><div class="empty-label">訊號</div>尚無訊號，等待盤後掃描</div></div>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><div class="bar"></div><span class="panel-title">今日大盤</span></div>
-        <div class="panel-body" id="market-summary"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div>
-      </div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">今日大盤</div></div>
+    <div class="panel">
+      <div class="panel-body" id="market-summary"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div>
     </div>
     <div class="sec-label"><div class="bar" style="background:var(--alert)"></div><div class="tx">重大訊息公告</div><div class="lnk" onclick="go('news')">查看全部 →</div></div>
     <div class="panel card" style="margin-bottom:2px"><div class="panel-body" id="news-preview" style="padding:0"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
@@ -4527,7 +4616,7 @@ function toggleTheme(){
   const next=html.getAttribute('data-theme')==='dark'?'light':'dark';
   html.setAttribute('data-theme',next);
   try{localStorage.setItem('dashTheme',next);}catch(e){}
-  const m=document.querySelector('meta[name=theme-color]');if(m)m.content=next==='dark'?'#070d17':'#0b1f3a';
+  const m=document.querySelector('meta[name=theme-color]');if(m)m.content=next==='dark'?'#0b0b0d':'#f1f1ef';
   try{if(_eqChart){const d=_eqChart.data.datasets[0],sc=_eqChart.options.scales;d.borderColor=_cv('--ink');d.backgroundColor=_cv('--ink')+'12';sc.x.ticks.color=_cv('--t3');sc.y.ticks.color=_cv('--t3');sc.y.grid.color=_cv('--line');_eqChart.update();}}catch(e){}
 }
 // ── 無障礙：所有只有 onclick 的 div／span 補上按鈕角色與鍵盤操作（Enter／空白鍵）──
@@ -5161,7 +5250,7 @@ async function runWalkForward(){
 // Render
 function renderAll(d){
   renderIndex(d.market_overview?.index||{});renderKPIs(d);
-  renderMast(d);renderLatestSignals(d.active_signals||[]);renderSignals();renderMarketSummary(d.market_overview||{});
+  renderMast(d);try{renderV3Overview(d);}catch(e){console.warn(e)}renderLatestSignals(d.active_signals||[]);renderSignals();renderMarketSummary(d.market_overview||{});
   renderSidebar(d);document.getElementById('version').textContent='v'+(d.version||'1.0.0');
   updateFreshBadge(d.market_overview?.fetched_at);
   const sh=(d.scan_history||[])[0];if(sh)setEl('scan-dur-side','上次掃描 '+(sh.scan_date||'')+'　耗時 '+(sh.duration_min!=null?Number(sh.duration_min).toFixed(1)+' 分':'—'));
@@ -5260,25 +5349,116 @@ function chaseHtml(s){
   if(s.sl_atr!==undefined&&s.sl_atr!==null)bits.push('停損 '+safeN(s.sl_atr,1)+' ATR');
   return `<div class="chase ${lv}"><span class="k">追高風險</span><span class="m"><u></u><u></u><u></u></span><span class="tx ${lv}">${zh}</span><span style="color:var(--t3)">${bits.join('　')}</span></div>`;
 }
+// ===== v3 總覽頁（2026-10-23）：加權指數走勢圖（TWSE 官方每日收盤）＋焦點卡＋自選股＋快速前往＋最新訊號卡 =====
+let _v3Hist=null,_v3HistT=0,_v3Rng=12,_v3Brd=null,_v3BrdT=0,_v3State=null;
+const v3Fmt=(v,d=2)=>{const n=Number(v);return isFinite(n)?n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}):'—';};
+const v3Sgn=(v,d=2)=>{const n=Number(v);if(!isFinite(n))return '—';return (n>0?'+':n<0?'−':'')+v3Fmt(Math.abs(n),d);};
+const v3Cls=v=>{const n=Number(v);return !isFinite(n)||n===0?'':(n>0?'up':'down');};
+const v3Arr=v=>{const n=Number(v);return !isFinite(n)||n===0?'':(n>0?'▲ ':'▼ ');};
+async function v3LoadHist(){
+  if(_v3Hist&&Date.now()-_v3HistT<10*60e3)return _v3Hist;
+  try{const j=await(await fetch('/api/index/history?months=12',{cache:'no-store'})).json();
+    if(j&&Array.isArray(j.series)&&j.series.length){_v3Hist=j;_v3HistT=Date.now();}else if(!_v3Hist)_v3Hist=j||{};}catch(e){}
+  return _v3Hist;
+}
+async function v3LoadBreadth(){
+  if(_v3Brd&&Date.now()-_v3BrdT<5*60e3)return _v3Brd;
+  try{const j=await(await fetch('/api/market/breadth',{cache:'no-store'})).json();if(j&&!j.error){_v3Brd=j;_v3BrdT=Date.now();}}catch(e){}
+  return _v3Brd;
+}
+function v3Slice(series,months){
+  if(!series||!series.length)return [];
+  const last=new Date(series[series.length-1].d+'T00:00:00');const from=new Date(last);from.setMonth(from.getMonth()-months);
+  const iso=from.toISOString().slice(0,10);return series.filter(p=>p.d>iso);
+}
+function v3Path(vals,w,h,pad){
+  const lo=Math.min(...vals),hi=Math.max(...vals),rg=(hi-lo)||1;
+  return vals.map((v,i)=>[i*(w/(vals.length-1||1)),pad+(h-2*pad)*(1-(v-lo)/rg)]);
+}
+function v3DrawChart(){
+  const box=document.getElementById('v3-area');if(!box)return;
+  const src=document.getElementById('v3c-src');
+  const all=(_v3Hist&&_v3Hist.series)||[];
+  const pts=v3Slice(all,_v3Rng);
+  if(pts.length<2){box.innerHTML=`<div class="empty"><div class="empty-label">加權指數走勢</div>${_v3Hist&&_v3Hist.ok===false?'官方指數歷史暫時抓不到（TWSE），稍後自動重試':'載入中…'}</div>`;if(src)src.textContent='';return;}
+  const W=1000,H=300,P=14,vals=pts.map(p=>p.c),xy=v3Path(vals,W,H,P);
+  const line='M'+xy.map(([x,y])=>x.toFixed(1)+','+y.toFixed(1)).join(' L');
+  const lo=Math.min(...vals),hi=Math.max(...vals);
+  const grid=[0,1,2,3].map(k=>`<path class="gl" d="M0 ${(P+(H-2*P)*k/3).toFixed(1)}H${W}"/>`).join('');
+  const yax=[0,1,2,3].map(k=>`<span style="top:${((P+(H-2*P)*k/3)/H*100).toFixed(2)}%">${v3Fmt(hi-(hi-lo)*k/3,0)}</span>`).join('');
+  const seen={};const ax=[];pts.forEach((p,i)=>{const m=p.d.slice(0,7);if(!seen[m]){seen[m]=1;if(i>pts.length*0.03)ax.push(`<span style="left:${(i/(pts.length-1)*100).toFixed(2)}%">${+p.d.slice(5,7)}月</span>`);}});
+  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${grid}<path class="fill" d="${line} L${W},${H} L0,${H} Z"/><path class="ln" d="${line}"/></svg><div class="v3-yax">${yax}</div><div class="v3-band"></div><div class="v3-cross"></div><div class="v3-dot"></div><div class="v3-tip"></div><div class="v3-axis">${ax.join('')}</div>`;
+  const first=pts[0].c,lastp=pts[pts.length-1].c,rc=(lastp-first)/first*100;
+  const rcEl=document.getElementById('v3c-range-chg');if(rcEl)rcEl.innerHTML=`${({3:'近 3 個月',6:'近 6 個月',12:'近 1 年'})[_v3Rng]} <span class="${v3Cls(rc)}">${v3Sgn(rc)}%</span>`;
+  if(src)src.textContent=`資料：${_v3Hist.source||'TWSE'}，${pts[0].d} ～ ${pts[pts.length-1].d} 共 ${pts.length} 個交易日`;
+  const band=box.querySelector('.v3-band'),cross=box.querySelector('.v3-cross'),dot=box.querySelector('.v3-dot'),tip=box.querySelector('.v3-tip');
+  const show=e=>{const r=box.getBoundingClientRect();const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+    const i=Math.max(0,Math.min(pts.length-1,Math.round(cx/r.width*(pts.length-1))));const x=i/(pts.length-1)*r.width,y=xy[i][1]/H*r.height;
+    [band,cross].forEach(el=>{el.style.display='block';el.style.left=x+'px';});dot.style.display='block';dot.style.left=x+'px';dot.style.top=y+'px';
+    tip.style.display='block';tip.style.left=Math.max(50,Math.min(r.width-50,x))+'px';tip.style.top=y+'px';tip.innerHTML=`<small>${pts[i].d.replace(/-/g,'/')}</small>${v3Fmt(pts[i].c)}`;};
+  const hide=()=>[band,cross,dot,tip].forEach(el=>el.style.display='none');
+  box.onmousemove=show;box.ontouchmove=show;box.onmouseleave=hide;box.ontouchend=hide;
+}
+function v3SetRange(m){_v3Rng=m;document.querySelectorAll('#v3-rng .tab').forEach(b=>b.classList.toggle('on',+b.dataset.m===m));v3DrawChart();}
+function v3Spark(vals){
+  if(!vals||vals.length<2)return '';
+  const W=300,H=56,xy=v3Path(vals,W,H,3);
+  return `<svg class="v3h-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><path class="b" d="M0 ${H/2}H${W}"/><path d="M${xy.map(([x,y])=>x.toFixed(1)+','+y.toFixed(1)).join(' L')}"/></svg>`;
+}
+function v3RenderHero(d){
+  const el=document.getElementById('v3-hero');if(!el)return;
+  const mo=(d&&d.market_overview)||{},ix=(mo.index||{}).twii||{},fg=mo.foreign||{};
+  const px=ix.price,ch=ix.chg,cp=ix.chg_pt;
+  const srcZh={fugle:'富果即時',twse_official:'證交所',twse:'證交所'}[ix.source]||(ix.source?'備援來源':'');
+  const ser=(_v3Hist&&_v3Hist.series)||[];const sp=ser.slice(-40).map(p=>p.c);
+  const b=_v3Brd||{};const useT=b.dates_mismatch&&b.tse;const adv=useT?b.tse.advancers:b.advancers,dec=useT?b.tse.decliners:b.decliners;
+  const fn=fg.net_buy_twd;const fy=(typeof fn==='number'&&isFinite(fn))?v3Sgn(fn/1e8,1)+' 億':'—';
+  el.innerHTML=`<div class="v3h-top"><span>加權指數 · TAIEX</span><span>${safe(srcZh,'')}${mo.fetched_at?' · '+toTaipeiHM(mo.fetched_at):''}</span></div>
+    <div class="v3h-px">${v3Fmt(px)}</div>
+    <div class="v3h-row"><span class="v3h-chg ${v3Cls(ch)}">${v3Arr(ch)}${v3Fmt(Math.abs(cp))} · ${v3Fmt(Math.abs(ch))}%</span><span>${safe(mo.sentiment_zh,'')}${mo.sentiment_score!=null?' · 情緒 '+mo.sentiment_score:''}</span></div>
+    ${v3Spark(sp)}
+    <div class="v3h-split"><div>${useT?'上市上漲':'上漲家數'}<b>${adv??'—'}</b></div><div>${useT?'上市下跌':'下跌家數'}<b>${dec??'—'}</b></div><div>外資現貨${fg.date?'（'+String(fg.date).slice(4,6)+'/'+String(fg.date).slice(6,8)+'）':''}<b>${fy}</b></div></div>`;
+  const pe=document.getElementById('v3c-px'),ce=document.getElementById('v3c-chg');
+  if(pe)pe.textContent=v3Fmt(px);
+  if(ce){ce.className='v3-tag '+v3Cls(ch);ce.textContent=`${v3Arr(ch)}${v3Fmt(Math.abs(ch))}%`;}
+}
+async function v3RenderWatch(){
+  const el=document.getElementById('v3-wl');if(!el)return;
+  try{
+    const r=await fetch('/api/my/watchlist',{cache:'no-store'});
+    if(r.status===401||r.status===403){el.innerHTML=`<div class="empty"><div class="empty-label">自選股</div>登入後即可建立自己的自選股清單<div style="margin-top:10px"><button class="btn sm" onclick="memberBtn()">Google 登入</button></div></div>`;return;}
+    const j=await r.json();const it=(j.items||[]).slice(0,5);
+    if(!it.length){el.innerHTML=`<div class="empty"><div class="empty-label">自選股</div>還沒有自選股，到個股頁按 ☆ 加入</div>`;return;}
+    el.innerHTML=it.map(s=>`<div class="v3-wrow" onclick="go('watchlist')"><span class="v3-av">${safe((s.name||'').slice(0,1),'?')}</span><span class="nm">${safe(s.name)}<small>${safe(s.code)}${s.quote_date?' · '+safe(String(s.quote_date).slice(5).replace('-','/')):''}</small></span><span class="px">${v3Fmt(s.price)}<small class="${v3Cls(s.change_pct)}">${v3Arr(s.change_pct)}${v3Fmt(Math.abs(s.change_pct))}%</small></span></div>`).join('');
+  }catch(e){el.innerHTML='<div class="empty">自選股載入失敗</div>';}
+}
+function v3RenderChips(d){
+  const el=document.getElementById('v3-chips');if(!el)return;
+  const I={bolt:'<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',bag:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5h6v2"/>',bars:'<path d="M4 20V10M10 20V4M16 20v-7"/>',flow:'<path d="M4 17l5-5 4 3 7-8"/>',news:'<path d="M3 10v4h4l6 4V6L7 10z"/>',radar:'<circle cx="12" cy="12" r="8"/><path d="M12 12l5-5"/>',fresh:'<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',star:'<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.5 2.9 1-6.1L3.2 9.5l6.1-.9z"/>'};
+  const c=(id,ic,tx,n,on)=>`<button class="v3-chip${on?' on':''}" onclick="go('${id}')"><span class="ci"><svg viewBox="0 0 24 24">${I[ic]}</svg></span>${tx}${n!=null?' <b>'+n+'</b>':''}</button>`;
+  const sc=d.signal_count??(d.active_signals||[]).length;
+  el.innerHTML=[c('signals','bolt','今日訊號',sc,sc>0),c('positions','bag','持倉追蹤'),c('watchlist','star','自選股'),c('rank','bars','漲跌排行'),c('marketoverview','flow','法人籌碼'),c('news','news','重大訊息',d.material_news_count),c('radar','radar','基本面雷達'),c('freshness','fresh','資料更新狀態')].join('');
+}
+async function renderV3Overview(d){
+  _v3State=d;v3RenderHero(d);v3RenderChips(d);v3RenderWatch();
+  await Promise.all([v3LoadHist(),v3LoadBreadth()]);
+  v3RenderHero(_v3State);v3DrawChart();
+}
+window.addEventListener('resize',()=>{if(_v3Hist)v3DrawChart();});
+
 function renderLatestSignals(sigs){
+  // 2026-10-23 v3：改為三欄訊號卡（名稱代號、現價與漲跌、評分、進場／停損／目標、建議股數、產生時間）
   const el=document.getElementById('latest-signals');
-  if(!sigs||!sigs.length){el.innerHTML='<div class="empty"><div class="empty-label">訊號</div>今日尚無訊號<br><small>每日 16:30 盤後掃描</small></div>';return;}
-  el.innerHTML=sigs.slice(0,4).map(s=>`
-    <div class="sig-card ${s.direction==='buy'?'':'sell'}" style="cursor:pointer;border-right:none;border-top:none" onclick="go('signals')">
-      <div class="sig-head">
-        <div><span class="sig-name">${s.name}（${s.code||s.ticker}）</span><span class="sig-badge ${s.direction}">${s.direction==='buy'?'做多':'做空'}</span>${wlStar(s.ticker)}</div>
-        ${sealHtml(s)}
-      </div>
-      <div class="sig-grid">
-        <div class="sig-item"><label>現價</label><span>${safeN(s.current_price,2)}</span></div>
-        <div class="sig-item"><label>止損</label><span style="color:var(--down)">${safeN(s.stop_loss,2)}</span></div>
-        <div class="sig-item"><label>TP1</label><span style="color:var(--up)">${safeN(s.tp1,2)}</span></div>
-        <div class="sig-item"><label>張數</label><span>${safe(s.suggested_lots,1)}</span></div>
-      </div>
+  if(!sigs||!sigs.length){el.innerHTML='<div class="panel" style="grid-column:1/-1"><div class="empty"><div class="empty-label">今日尚無訊號</div>每日 16:30 收盤後掃描全市場</div></div>';return;}
+  el.innerHTML=sigs.slice(0,3).map(s=>{const buy=s.direction==='buy';const cd=s.code||s.ticker;return `
+    <article class="v3-sig" onclick="go('signals')">
+      <div class="v3s-head"><span class="v3-av">${safe((s.name||'').slice(0,1),'?')}</span><div class="v3s-nm">${safe(s.name)}<small>${safe(cd)} · ${safe(s.sector,'未分類')}</small></div>${wlStar(s.ticker)}<span class="v3s-dir ${buy?'':'sell'}">${buy?'多':'空'}</span></div>
+      <div class="v3s-px"><b>${safeN(s.current_price,2)}</b><span class="v3-tag ${v3Cls(s.change_pct)}">${v3Arr(s.change_pct)}${safeN(Math.abs(s.change_pct),2)}%</span><span class="v3s-sc">評分 <b>${safe(s.score,0)}</b> · ${GRADE_ZH[s.grade]||safe(s.grade)}</span></div>
+      <div class="v3s-grid"><div><label>進場區</label><span>${safeN(s.entry_zone_low,2)}–${safeN(s.entry_zone_high,2)}</span></div><div><label>停損</label><span class="${buy?'down':'up'}">${safeN(s.stop_loss,2)}</span></div><div><label>目標 1</label><span class="${buy?'up':'down'}">${safeN(s.tp1,2)}</span></div></div>
       ${chaseHtml(s)}${fundChip(s)}
-      <div class="sig-footer"><span>${safe(s.sector)}</span><span>風險 TWD ${(s.risk_twd||0).toLocaleString()}</span><span>RR 1:${safeN(s.rr1,1)}</span></div>
-      <div class="sig-footer" style="margin-top:6px">${qnBadge(s.quality_check,'獲利品質')}${qnBadge(s.news_check,'重大訊息')}<button class="btn qc-btn" onclick="event.stopPropagation();qcRun('${s.code||s.ticker}')">下單前質檢</button></div>
-    </div>`).join('');
+      <div class="v3s-foot"><span>建議 ${(s.suggested_shares||0).toLocaleString()} 股 · RR 1:${safeN(s.rr1,1)}</span><span>${s.generated_at?toTaipeiHM(s.generated_at):''}</span></div>
+      <div class="v3s-foot">${qnBadge(s.quality_check,'獲利品質')}${qnBadge(s.news_check,'重大訊息')}<button class="btn sm" onclick="event.stopPropagation();qcRun('${esc2(cd)}')">下單前質檢</button></div>
+    </article>`;}).join('');
 }
 
 function renderSignals(){
