@@ -5390,7 +5390,7 @@ function v3DrawChart(){
   const lo=Math.min(...vals),hi=Math.max(...vals);
   const grid=[0,1,2,3].map(k=>`<path class="gl" d="M0 ${(P+(H-2*P)*k/3).toFixed(1)}H${W}"/>`).join('');
   const yax=[0,1,2,3].map(k=>`<span style="top:${((P+(H-2*P)*k/3)/H*100).toFixed(2)}%">${v3Fmt(hi-(hi-lo)*k/3,0)}</span>`).join('');
-  const seen={};const ax=[];pts.forEach((p,i)=>{const m=p.d.slice(0,7);if(!seen[m]){seen[m]=1;if(i>pts.length*0.03)ax.push(`<span style="left:${(i/(pts.length-1)*100).toFixed(2)}%">${+p.d.slice(5,7)}月</span>`);}});
+  const seen={};const ax=[];const gap=box.clientWidth<520?0.14:0.06;let lastX=-1;pts.forEach((p,i)=>{const m=p.d.slice(0,7);if(!seen[m]){seen[m]=1;const fx=i/(pts.length-1);if(fx>0.03&&fx-lastX>=gap){lastX=fx;ax.push(`<span style="left:${(fx*100).toFixed(2)}%">${+p.d.slice(5,7)}月</span>`);}}});
   box.innerHTML=`<div class="v3-plot"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${grid}<path class="fill" d="${line} L${W},${H} L0,${H} Z"/><path class="ln" d="${line}"/></svg><div class="v3-band"></div><div class="v3-cross"></div><div class="v3-dot"></div><div class="v3-tip"></div><div class="v3-axis">${ax.join('')}</div></div><div class="v3-yax">${yax}</div>`;
   const plot=box.querySelector('.v3-plot');
   const first=pts[0].c,lastp=pts[pts.length-1].c,rc=(lastp-first)/first*100;
