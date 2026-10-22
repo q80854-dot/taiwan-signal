@@ -830,7 +830,35 @@ def build_rows(items, view="quote"):
             row.update({"inst_foreign": q.get("foreign_net"), "inst_trust": q.get("trust_net"),
                         "inst_total": q.get("total_net")})
         rows.append(row)
+    _overlay_fresh_quotes(rows)
     return rows
+
+
+def _overlay_fresh_quotes(rows):
+    """★ 修正：2026-10-23——使用者回報「自選股漲跌跟個股研究不一樣（大盤跌、自選股卻顯示上漲）」。
+    根因：build_live_universe() 的官方日行情（尤其上市）常晚一天更新，自選股仍顯示前一交易日的
+    收盤與漲跌幅；個股研究頁則會改用證交所 MIS 的最新成交（app.py api_instrument 同一套邏輯）。
+    這裡一次批次抓清單內所有代號的 MIS 報價，資料日期比官方日行情新才覆蓋（收盤後即當日定案價），
+    抓不到就維持官方數字，不估算。"""
+    if not rows:
+        return
+    try:
+        import realtime
+        got = realtime.fetch_mis([(r["code"], r.get("market")) for r in rows if r.get("code")])
+    except Exception as e:
+        logger.warning(f"watchlist MIS overlay 失敗：{e}")
+        return
+    today = realtime.now_tpe().strftime("%Y-%m-%d")
+    for r in rows:
+        q = got.get(str(r.get("code") or "").upper())
+        if not q or not q.get("price") or not q.get("date"):
+            continue
+        if q["date"] > (r.get("quote_date") or ""):
+            r.update({"price": q["price"], "change": q.get("change"), "change_pct": q.get("change_pct"),
+                      "quote_date": q["date"], "quote_source": q.get("source"),
+                      "live": bool(q["date"] == today and realtime.market_open())})
+            if q.get("volume_lots") is not None:
+                r["volume_lots"] = q["volume_lots"]
 
 
 @bp.route("/api/my/watchlist", methods=["GET"])
