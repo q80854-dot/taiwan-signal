@@ -1543,13 +1543,17 @@ html[data-theme] .v3-chart .panel-head{display:flex;justify-content:space-betwee
 .v3-rng{flex:none}
 html[data-theme] .content .tabs.v3-rng .tab{height:26px!important;padding:0 11px!important;font-size:12px!important;line-height:26px!important}
 .v3-area{position:relative;height:300px;margin-top:4px}
+.v3-plot{position:absolute;top:0;bottom:0;left:0;right:58px}
 .v3-area svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .v3-area .fill{fill:var(--chart-area)}.v3-area .ln{fill:none;stroke:var(--chart-line);stroke-width:1.8;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .v3-area .gl{stroke:var(--grid-line);stroke-width:1;vector-effect:non-scaling-stroke}
 .v3-axis{position:absolute;left:0;right:0;bottom:-22px;height:16px;font:400 11px/16px var(--sans);color:var(--t3)}
 .v3-axis span{position:absolute;transform:translateX(-50%);white-space:nowrap}
-.v3-yax{position:absolute;right:0;top:0;bottom:0;font:400 11px var(--sans);color:var(--t3);pointer-events:none}
-.v3-yax span{position:absolute;right:0;transform:translateY(-50%);background:var(--s1);padding-left:6px;font-variant-numeric:tabular-nums}
+.v3-yax{position:absolute;right:0;top:0;bottom:0;width:54px;font:400 11px var(--sans);color:var(--t3);pointer-events:none}
+.v3-yax span{position:absolute;right:0;transform:translateY(-50%);white-space:nowrap;font-variant-numeric:tabular-nums}
+html[data-theme] .content .tabs .tab::before,html[data-theme] .content .tabs .tab::after{display:none!important;content:none!important}
+html[data-theme] .content .tabs.v3-rng{align-items:center}
+.v3-plot{touch-action:pan-y}
 .v3-band{position:absolute;top:0;bottom:0;width:44px;margin-left:-22px;border-radius:8px;background:var(--s3);opacity:.7;display:none;pointer-events:none}
 .v3-cross{position:absolute;top:0;bottom:0;width:1px;background:var(--chart-line);display:none;pointer-events:none}
 .v3-dot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:var(--s1);border:2px solid var(--chart-line);display:none;pointer-events:none}
@@ -5387,17 +5391,18 @@ function v3DrawChart(){
   const grid=[0,1,2,3].map(k=>`<path class="gl" d="M0 ${(P+(H-2*P)*k/3).toFixed(1)}H${W}"/>`).join('');
   const yax=[0,1,2,3].map(k=>`<span style="top:${((P+(H-2*P)*k/3)/H*100).toFixed(2)}%">${v3Fmt(hi-(hi-lo)*k/3,0)}</span>`).join('');
   const seen={};const ax=[];pts.forEach((p,i)=>{const m=p.d.slice(0,7);if(!seen[m]){seen[m]=1;if(i>pts.length*0.03)ax.push(`<span style="left:${(i/(pts.length-1)*100).toFixed(2)}%">${+p.d.slice(5,7)}月</span>`);}});
-  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${grid}<path class="fill" d="${line} L${W},${H} L0,${H} Z"/><path class="ln" d="${line}"/></svg><div class="v3-yax">${yax}</div><div class="v3-band"></div><div class="v3-cross"></div><div class="v3-dot"></div><div class="v3-tip"></div><div class="v3-axis">${ax.join('')}</div>`;
+  box.innerHTML=`<div class="v3-plot"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${grid}<path class="fill" d="${line} L${W},${H} L0,${H} Z"/><path class="ln" d="${line}"/></svg><div class="v3-band"></div><div class="v3-cross"></div><div class="v3-dot"></div><div class="v3-tip"></div><div class="v3-axis">${ax.join('')}</div></div><div class="v3-yax">${yax}</div>`;
+  const plot=box.querySelector('.v3-plot');
   const first=pts[0].c,lastp=pts[pts.length-1].c,rc=(lastp-first)/first*100;
   const rcEl=document.getElementById('v3c-range-chg');if(rcEl)rcEl.innerHTML=`${({3:'近 3 個月',6:'近 6 個月',12:'近 1 年'})[_v3Rng]} <span class="${v3Cls(rc)}">${v3Sgn(rc)}%</span>`;
   if(src)src.textContent=`資料：${_v3Hist.source||'TWSE'}，${pts[0].d} ～ ${pts[pts.length-1].d} 共 ${pts.length} 個交易日`;
-  const band=box.querySelector('.v3-band'),cross=box.querySelector('.v3-cross'),dot=box.querySelector('.v3-dot'),tip=box.querySelector('.v3-tip');
-  const show=e=>{const r=box.getBoundingClientRect();const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const band=plot.querySelector('.v3-band'),cross=plot.querySelector('.v3-cross'),dot=plot.querySelector('.v3-dot'),tip=plot.querySelector('.v3-tip');
+  const show=e=>{const r=plot.getBoundingClientRect();const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
     const i=Math.max(0,Math.min(pts.length-1,Math.round(cx/r.width*(pts.length-1))));const x=i/(pts.length-1)*r.width,y=xy[i][1]/H*r.height;
     [band,cross].forEach(el=>{el.style.display='block';el.style.left=x+'px';});dot.style.display='block';dot.style.left=x+'px';dot.style.top=y+'px';
     tip.style.display='block';tip.style.left=Math.max(50,Math.min(r.width-50,x))+'px';tip.style.top=y+'px';tip.innerHTML=`<small>${pts[i].d.replace(/-/g,'/')}</small>${v3Fmt(pts[i].c)}`;};
   const hide=()=>[band,cross,dot,tip].forEach(el=>el.style.display='none');
-  box.onmousemove=show;box.ontouchmove=show;box.onmouseleave=hide;box.ontouchend=hide;
+  plot.onmousemove=show;plot.ontouchstart=show;plot.ontouchmove=show;plot.onmouseleave=hide;plot.ontouchend=hide;
 }
 function v3SetRange(m){_v3Rng=m;document.querySelectorAll('#v3-rng .tab').forEach(b=>b.classList.toggle('on',+b.dataset.m===m));v3DrawChart();}
 function v3Spark(vals){
