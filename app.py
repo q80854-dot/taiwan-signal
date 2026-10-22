@@ -1261,6 +1261,23 @@ def api_market():
         return jsonify(fetch_market_overview())
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+@app.route("/api/index/history")
+def api_index_history():
+    """★ 新增：2026-10-23——總覽頁「加權指數走勢」面積圖。只用 TWSE 官方加權指數
+    每日收盤（MI_5MINS_HIST），不估算、不補值；抓不到就回 ok=false 讓前端顯示原因。"""
+    try:
+        months = int(request.args.get("months", 12) or 12)
+    except (TypeError, ValueError):
+        months = 12
+    try:
+        from data_fetcher import twse_index_history
+        pts = twse_index_history(months)
+        return jsonify({"ok": bool(pts), "months": max(1, min(months, 24)),
+                        "source": "臺灣證券交易所 MI_5MINS_HIST（加權指數每日收盤）",
+                        "series": [{"d": d, "c": c} for d, c in pts]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "series": []}), 500
+
 @app.route("/api/universe")
 def api_universe():
     try:

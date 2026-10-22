@@ -265,6 +265,22 @@ def _twse_index_daily_closes(months: int = 5) -> list:
     """用 TWSE 官方「加權指數歷史」MI_5MINS_HIST 取最近 months 個月的『每日收盤』
     （不依賴 yfinance）。回傳依日期由舊到新的 float 收盤清單；失敗回 []。
     欄位：row[0]=民國年月日、row[4]=收盤指數（與 analysis_foreign._taiex_month 同一來源與解析）。"""
+    return [c for _, c in _twse_index_daily_points(months)]
+
+
+def twse_index_history(months: int = 12) -> list:
+    """★ 新增：2026-10-23——總覽頁「加權指數走勢」圖用。官方 TWSE MI_5MINS_HIST
+    每日收盤，回傳 [(YYYY-MM-DD, close), ...] 由舊到新；30 分鐘快取，失敗回 []（不快取空值）。"""
+    months = max(1, min(int(months), 24))
+    ck = f"twse_index_history_{months}"
+    if c := _cache_get(ck, 1800):
+        return c
+    pts = _twse_index_daily_points(months, pause=0.25)
+    return _cache_set(ck, pts) if pts else []
+
+
+def _twse_index_daily_points(months: int = 5, pause: float = 0.0) -> list:
+    """TWSE MI_5MINS_HIST 逐月抓取，回傳 [(iso_date, close)] 由舊到新。"""
     out = {}
     now = datetime.now(timezone.utc) + timedelta(hours=8)
     y, m = now.year, now.month
@@ -284,11 +300,13 @@ def _twse_index_daily_closes(months: int = 5) -> list:
                         except Exception:
                             continue
         except Exception as e:
-            logger.debug(f"_twse_index_daily_closes {ym}: {e}")
+            logger.debug(f"_twse_index_daily_points {ym}: {e}")
         m -= 1
         if m == 0:
             m = 12; y -= 1
-    return [out[k] for k in sorted(out)]
+        if pause:
+            time.sleep(pause)   # 逐月請求間稍停，避免被 TWSE 視為頻繁存取
+    return [(k, out[k]) for k in sorted(out)]
 
 
 def _regime_from_closes(closes: list, source: str) -> Optional[Dict]:
