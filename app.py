@@ -170,7 +170,7 @@ def job_premarket_cache_refresh():
     except Exception as e:
         logger.error(f"job_premarket_cache_refresh: {e}", exc_info=True)
 
-def job_daily_scan():
+def job_daily_scan(force=False):
     # ★ 新增：2026-09-25——使用者反映「今天（中秋節）沒開盤」，稽核發現排程
     # 的 CronTrigger 只設 day_of_week="mon-fri"，平日國定假日一樣會照常觸發
     # 全市場掃描（見 config.py TW_MARKET_HOLIDAYS、data_fetcher.py
@@ -179,11 +179,21 @@ def job_daily_scan():
     # watchdog 誤以為「今天沒掃描」而發假警報（job_scan_watchdog 只看
     # last_scan_at 的日期，這裡跳過的話 watchdog 仍可能誤報，需要同步處理，
     # 見 job_scan_watchdog 的對應修正）。
-    from data_fetcher import get_market_session
+    # ★ 新增：2026-10-23——颱風假（臨時休市）現在也會被 get_market_session() 判成
+    # session=="holiday"（見 data_fetcher.refresh_typhoon_state 全自動偵測），所以這道
+    # 守門不改一行就自動涵蓋颱風假。掃描前先刷新一次颱風判定，確保 16:30 這個檢查看到的是
+    # 最新狀態。force=True（使用者手動「立即掃描」）則略過休市守門照常掃描——「放假但掃描
+    # 抓資料能力要繼續存在」就是靠這個 force 參數保留的。
+    from data_fetcher import get_market_session, refresh_typhoon_state
+    try: refresh_typhoon_state()
+    except Exception: pass
     session = get_market_session()
     if session.get("session") == "holiday":
-        logger.info(f"⏰ 全市場掃描：今天是國定假日休市（{session.get('taipei_time')}），跳過本次掃描")
-        return
+        if not force:
+            logger.info(f"⏰ 全市場掃描：今天休市（{session.get('session_zh')}，{session.get('taipei_time')}），"
+                        f"跳過本次排程掃描；手動『立即掃描』仍可強制執行")
+            return
+        logger.info(f"⏰ 全市場掃描：今天休市（{session.get('session_zh')}），但收到手動強制掃描要求 → 照常執行")
     logger.info("⏰ 全市場掃描")
     try:
         # 掃描前先確認官方日行情已更新到今天（沒有就重抓一次）；仍沒更新時，最後一根 K 棒改用 MIS 盤後定案資料
@@ -391,8 +401,24 @@ def job_refresh_universe_if_stale():
         logger.error(f"job_refresh_universe_if_stale: {e}")
 
 
+def job_typhoon_watch():
+    # ★ 新增：2026-10-23——全自動颱風／天災臨時休市偵測的背景探測點（見
+    # data_fetcher.refresh_typhoon_state）。平日盤中到盤後每 15 分鐘問一次官方即時行情，
+    # 判定今天到底有沒有實際開盤交易；判定結果快取整天，請求路徑只讀不探測。
+    try:
+        from data_fetcher import refresh_typhoon_state
+        refresh_typhoon_state()
+    except Exception as e:
+        logger.warning(f"job_typhoon_watch: {e}")
+
+
 def job_freshness_poll():
     try:
+        # 先刷新颱風休市判定：若今日為臨時休市，freshness 的「應有日期」會自動退回上一個
+        # 交易日，不再把「今天沒有資料」誤判成落後／抓取失敗而發假警報。
+        from data_fetcher import refresh_typhoon_state
+        try: refresh_typhoon_state()
+        except Exception: pass
         import freshness
         freshness.job_poll()
     except Exception as e:
@@ -525,6 +551,10 @@ def setup_scheduler():
     # 這兩個官方端點常比別人晚公布（甚至拖到深夜／長假前後），落在這個空窗就要等隔天或靠有人開頁面才補。
     # 改為平日「全天候持續追」：公布／收盤時段（14:00–23:59）每 5 分鐘；其餘時段（含盤中與清晨）每 20 分鐘。
     # job_poll 只有在某項真的落後時才會打官方 API，沒落後時只讀快取／資料庫，成本極低，所以放寬排程很安全。
+    # 颱風／天災臨時休市：平日 09:00–21:00 每 15 分鐘自動偵測一次（內部節流＋判定後整天沿用），
+    # 另開機後 60 秒先探一次，讓剛啟動的 worker 也盡快知道今天是否休市。
+    scheduler.add_job(job_typhoon_watch, CronTrigger(hour="9-21", minute="*/15", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="typhoon_watch", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_typhoon_watch, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=60), id="typhoon_watch_boot", replace_existing=True)
     scheduler.add_job(job_freshness_poll, CronTrigger(hour="14-23", minute="*/5", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_freshness_poll, CronTrigger(hour="0-13", minute="*/20", day_of_week="mon-fri", timezone=TZ_TAIPEI), id="freshness_poll_offhours", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(lambda: __import__("freshness").log_summary(force=True), "date",
@@ -2429,7 +2459,9 @@ def api_force_scan():
             return jsonify({"status": "already_scanning"})
     except Exception:
         pass
-    threading.Thread(target=job_daily_scan, daemon=True).start()
+    # 手動「立即掃描」：force=True，即使今天休市（颱風假/國定假日）也照常掃描——
+    # 這是「放假但掃描抓資料能力要繼續存在」的入口。
+    threading.Thread(target=lambda: job_daily_scan(force=True), daemon=True).start()
     return jsonify({"status": "scanning_started"})
 
 @app.route("/api/performance")
