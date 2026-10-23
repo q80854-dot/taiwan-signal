@@ -1495,7 +1495,85 @@ def fetch_market_overview() -> Dict:
 # 完全沒有。抓不到（網路問題/端點改版）就退回原本的 TW_MARKET_HOLIDAYS
 # 靜態清單，維持原有的 fail-open 精神，不會讓假日判斷整個掛掉。
 _holiday_warned_years = set()
-_HOLIDAY_API_CACHE_TTL_SEC = 6 * 3600  # 6小時重抓一次，同一天內如果證交所臨時更新公告，最慢6小時後就會反映
+_HOLIDAY_API_CACHE_TTL_SEC = 1 * 3600  # 1小時重抓一次（原本6小時）：若證交所把臨時停市公告更新進 holidaySchedule，最慢1小時後就反映
+
+# ★ 新增：2026-10-23——使用者反映「今天放颱風假」，要系統「自行應對、知道放假所以休市，
+# 但掃描抓資料能力要繼續存在」，並選擇「全自動偵測」。颱風假當天才宣布、天生不可能進
+# 預先公布的官方假日清單（見上方 2026-09-28 說明），holidaySchedule 是否會同步更新也
+# 無法事先保證。這裡再加一層「不依賴任何清單」的全自動判定：直接問官方即時行情
+# （證交所 MIS 的台積電 2330 成交日期）——
+#   正常交易日 11:00 之後，2330 的 MIS 成交日期一定是「今天」；
+#   颱風／天災臨時休市當天，市場根本沒開，MIS 仍停在「上一個交易日」→ 判定今日休市。
+# 抓不到（網路問題）回 None＝無法判定＝視為有開盤（保守，絕不把正常交易日誤判成休市，
+# 避免漏掉真正交易日的掃描）。一旦判定當日休市就整天沿用（sticky），並寫入 state_store
+# meta 供 16:15 掃描前重啟後沿用。探測只在背景（排程/輪詢）做，請求路徑只讀判定結果、
+# 不觸發任何網路呼叫，不會拖慢網頁。「掃描抓資料能力繼續存在」＝休市只讓『排程』掃描
+# 自動跳過與關閉假警報，手動「立即掃描」(force) 與所有抓資料函式照常可用。
+_TYPHOON_PROBE_AFTER_MIN = 11 * 60     # 11:00 台北：盤已開一段時間才判，避免早盤資料未齊時誤判
+_TYPHOON_REPROBE_SEC     = 15 * 60     # 未判定前，最多每 15 分鐘探測一次
+_typhoon_state = {"date": None, "reason": None, "resolved": False, "last_probe": 0.0}
+
+def _reset_typhoon_state():
+    _typhoon_state.update({"date": None, "reason": None, "resolved": False, "last_probe": 0.0})
+
+def _market_probe_today(now) -> Optional[bool]:
+    """問官方即時行情：今天市場有沒有實際成交？以台積電 2330 的 MIS 成交日期為準。
+    回 True＝今天有成交、False＝行情有回應但停在前一交易日（＝今日沒開盤）、
+    None＝抓不到或日期缺漏（無法判定）。"""
+    try:
+        import realtime
+        q = (realtime.fetch_mis([("2330", "TSE")]) or {}).get("2330")
+        if not q:
+            return None
+        d = q.get("date")
+        if not d:
+            return None
+        return d == now.strftime("%Y-%m-%d")
+    except Exception as e:
+        logger.warning(f"_market_probe_today: {e}")
+        return None
+
+def refresh_typhoon_state(now=None) -> Optional[str]:
+    """背景更新「颱風／天災臨時休市」判定（由排程 job_typhoon_watch、job_freshness_poll、
+    job_daily_scan 呼叫；不在網頁請求路徑裡做網路探測）。回傳當日休市原因（'typhoon' 或 None）。"""
+    now = now or datetime.now(timezone(timedelta(hours=8)))
+    date_str = now.strftime("%Y-%m-%d")
+    if _typhoon_state["date"] != date_str:            # 換日：重置，並嘗試沿用當日已寫入的判定（重啟後）
+        _reset_typhoon_state()
+        _typhoon_state["date"] = date_str
+        try:
+            from state_store import store
+            m = store.get_meta("typhoon_closure")
+            if m and m.get("date") == date_str and m.get("reason"):
+                _typhoon_state.update({"reason": m["reason"], "resolved": True})
+        except Exception:
+            pass
+    if now.weekday() >= 5:                             # 週末另由 get_market_session 判定
+        return None
+    if _typhoon_state["resolved"]:                     # 當日已定（開盤或休市）→ 不再探測
+        return _typhoon_state["reason"]
+    if _is_national_holiday(now):                      # 國定假日由另一條路徑處理，這裡不碰
+        return None
+    if now.hour * 60 + now.minute < _TYPHOON_PROBE_AFTER_MIN:
+        return None                                    # 11:00 前不判（避免早盤誤判）
+    if _time_mod.time() - _typhoon_state["last_probe"] < _TYPHOON_REPROBE_SEC:
+        return _typhoon_state["reason"]                # 節流
+    _typhoon_state["last_probe"] = _time_mod.time()
+    probed = _market_probe_today(now)
+    if probed is True:
+        _typhoon_state.update({"resolved": True, "reason": None})      # 確定今天有開盤，整天不用再探
+    elif probed is False:
+        _typhoon_state.update({"resolved": True, "reason": "typhoon"})
+        try:
+            from state_store import store
+            store.set_meta("typhoon_closure", {"date": date_str, "reason": "typhoon", "at": now.isoformat()})
+        except Exception:
+            pass
+        logger.warning(f"🌀 偵測到今日（{date_str}）市場未實際交易（官方即時行情停在前一交易日）"
+                       f"→ 判定臨時休市（颱風／天災）：今日排程掃描自動跳過、資料新鮮度不再要求今日、"
+                       f"相關『抓取失敗』假警報一併抑制；手動『立即掃描』仍可強制執行。")
+    # probed is None（抓不到）→ 維持未判定，稍後再探
+    return _typhoon_state["reason"]
 
 def _fetch_official_holiday_set() -> Optional[set]:
     """向 TWSE 官方 OpenAPI 查詢當年度休市日期，回傳 {'2026-01-01', ...} 格式的
@@ -1523,7 +1601,8 @@ def _fetch_official_holiday_set() -> Optional[set]:
         logger.warning(f"_fetch_official_holiday_set: {e}")
         return None
 
-def _is_tw_market_holiday(now) -> bool:
+def _is_national_holiday(now) -> bool:
+    """預先公布的國定假日休市（證交所官方 holidaySchedule，查不到退回 config 靜態清單）。"""
     year = now.year
     date_str = now.strftime("%Y-%m-%d")
     official = _fetch_official_holiday_set()
@@ -1533,10 +1612,25 @@ def _is_tw_market_holiday(now) -> bool:
     if holidays is None:
         if year not in _holiday_warned_years:
             _holiday_warned_years.add(year)
-            logger.warning(f"_is_tw_market_holiday: 官方 API 查詢失敗，且 config.TW_MARKET_HOLIDAYS 沒有 {year} 年的休市日清單，"
+            logger.warning(f"_is_national_holiday: 官方 API 查詢失敗，且 config.TW_MARKET_HOLIDAYS 沒有 {year} 年的休市日清單，"
                             f"目前只用「是否週末」判斷開盤，平日遇到國定假日會誤判成開盤，需要手動補上該年度清單")
         return False
     return date_str in holidays
+
+def _closure_reason(now) -> Optional[str]:
+    """今日休市原因：'national'（預先公布的國定假日）、'typhoon'（颱風／天災臨時休市）、
+    或 None（有開盤）。只讀、不做網路探測——颱風判定由 refresh_typhoon_state 背景更新後
+    存在 _typhoon_state，這裡只讀當日已判定的結果（請求路徑零網路呼叫）。"""
+    if _is_national_holiday(now):
+        return "national"
+    if (now.weekday() < 5 and _typhoon_state.get("date") == now.strftime("%Y-%m-%d")
+            and _typhoon_state.get("reason") == "typhoon"):
+        return "typhoon"
+    return None
+
+def _is_tw_market_holiday(now) -> bool:
+    """今日是否休市（國定假日 or 颱風／天災臨時休市）。既有呼叫端行為不變。"""
+    return _closure_reason(now) is not None
 
 def _is_trading_session() -> bool:
     now = datetime.now(timezone(timedelta(hours=8)))
@@ -1549,7 +1643,13 @@ def get_market_session() -> Dict:
     now = datetime.now(timezone(timedelta(hours=8)))
     m   = now.hour*60+now.minute
     if now.weekday()>=5: return {"session":"weekend","session_zh":"週末休市","is_open":False,"taipei_time":now.strftime("%H:%M")}
-    if _is_tw_market_holiday(now): return {"session":"holiday","session_zh":"國定假日休市","is_open":False,"taipei_time":now.strftime("%H:%M")}
+    reason = _closure_reason(now)
+    if reason == "typhoon":
+        # session 仍回 "holiday"，讓所有既有「== holiday 就跳過」的守門（排程掃描、watchdog、
+        # 新鮮度）不改一行就自動涵蓋颱風假；只有對外顯示的中文與 reason 區分成臨時休市。
+        return {"session":"holiday","session_zh":"臨時休市（颱風／天災）","is_open":False,"reason":"typhoon","taipei_time":now.strftime("%H:%M")}
+    if reason == "national":
+        return {"session":"holiday","session_zh":"國定假日休市","is_open":False,"reason":"national","taipei_time":now.strftime("%H:%M")}
     if 540<=m<=810:      return {"session":"trading", "session_zh":"交易時段","is_open":True, "taipei_time":now.strftime("%H:%M")}
     if m<540:            return {"session":"pre_market","session_zh":"盤前",  "is_open":False,"taipei_time":now.strftime("%H:%M")}
     return               {"session":"after_market","session_zh":"盤後",      "is_open":False,"taipei_time":now.strftime("%H:%M")}
