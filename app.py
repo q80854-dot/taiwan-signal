@@ -961,6 +961,72 @@ def api_diagnostics_inst_raw():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/admin/tools", methods=["GET"])
+@members.owner_required
+@admin_auth.admin_required
+def api_admin_tools():
+    """站主系統工具狀態：記憶體、記憶體快取筆數、最後掃描、市場時段、排程下次執行時間。
+    讓站主一眼看到系統現況，搭配 POST 動作可自行處理故障（重抓、清快取、重掃、重判休市）。"""
+    import data_fetcher as _df
+    out = {"market": None, "cache_entries": None, "last_scan": None, "scanning": None, "memory_mb": None, "jobs": []}
+    try: out["market"] = _df.get_market_session()
+    except Exception: pass
+    try: out["cache_entries"] = len(_df._cache)
+    except Exception: pass
+    try:
+        from scanner import scanner
+        out["last_scan"] = scanner.last_scan_at
+        out["scanning"] = bool(scanner.is_scanning)
+    except Exception: pass
+    try:
+        import resource
+        out["memory_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)  # Linux: KB→MB
+    except Exception: pass
+    try:
+        if scheduler:
+            for j in scheduler.get_jobs():
+                nr = getattr(j, "next_run_time", None)
+                out["jobs"].append({"id": j.id, "next": nr.strftime("%Y-%m-%d %H:%M") if nr else None})
+    except Exception: pass
+    return jsonify(out)
+
+
+@app.route("/api/admin/tools", methods=["POST"])
+@members.owner_required
+@admin_auth.admin_required
+def api_admin_tools_run():
+    """站主一鍵維運動作。都是對既有功能的包裝，不改資料、可重複執行。"""
+    if request.headers.get("X-TS") != "1":
+        return jsonify({"error": "請求來源不正確"}), 403
+    action = str((request.get_json(silent=True) or {}).get("action") or "")
+    import data_fetcher as _df
+    try:
+        if action == "clear_cache":
+            n = len(_df._cache)
+            _df._cache_clear_all()
+            return jsonify({"ok": True, "msg": f"已清除記憶體快取 {n} 筆（下次查詢會重抓最新）"})
+        if action == "refresh_universe":
+            from stock_universe import refresh_universe_daily
+            threading.Thread(target=refresh_universe_daily, daemon=True).start()
+            return jsonify({"ok": True, "msg": "已在背景重抓上市＋上櫃品種清單"})
+        if action == "warm_finmind":
+            threading.Thread(target=job_finmind_warm, daemon=True).start()
+            return jsonify({"ok": True, "msg": "已在背景預熱 FinMind 大盤／期貨資料"})
+        if action == "recheck_holiday":
+            _df.refresh_typhoon_state()
+            return jsonify({"ok": True, "msg": "已重新判定今日市場狀態：" + (_df.get_market_session().get("session_zh") or "")})
+        if action == "scan":
+            from scanner import scanner
+            if scanner.is_scanning:
+                return jsonify({"ok": False, "msg": "目前已有掃描在進行中"})
+            threading.Thread(target=lambda: job_daily_scan(force=True), daemon=True).start()
+            return jsonify({"ok": True, "msg": "已開始全市場掃描（背景執行，完成後會更新訊號）"})
+        return jsonify({"error": "未知的動作"}), 400
+    except Exception as e:
+        logger.error(f"api_admin_tools_run {action}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/admin/shadow/export.csv")
 @admin_auth.admin_required
 def api_admin_export():

@@ -2246,6 +2246,8 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
           <p><b>上市資料修復（重要）</b><br>・修正根因：上市日行情（STOCK_DAY_ALL）從主機端常逾時，整個上市市場會從清單裡消失，導致「查無個股（含 2317 等）」「排行榜上市全空」「法人板塊圖空白」。現在新增第三段備援：以估值端點（BWIBBU_ALL，實測可達）取得上市代號、再用證交所 MIS 官方報價補價（盤中即時、盤後定案），確保上市市場不再消失；並在快取缺一整個市場時自動強制重抓、自我修復。</p>
           <p><b>FinMind 額度韌性</b><br>・FinMind 免費額度盤中用完（HTTP 402）時，加入額度熔斷＋資料庫快取回退：財務指標、三大法人等區塊改顯示最近一次正確資料，而不是「暫時取不到」；季報/法人本就不是盤中會變動的資料，符合「不顯示錯誤資訊」。個股頁亦不再因此卡到 20 幾秒。</p>
           <p><b>法人資金流向板塊圖</b><br>・「全體法人資金流向」新增板塊圖：外資近 5 日對各產業板塊的淨買賣超（張），一張圖看資金流進／流出哪些板塊，附外資／投信／自營商／合計明細表。</p>
+          <p><b>2026-10-24</b></p>
+          <p><b>會員功能升級＋站主工具</b><br>・看盤樣式／排序／深色淺色主題改存進帳號，換手機或電腦登入都一致（未登入維持瀏覽器記憶）。<br>・新增「到價提醒」：自選股每檔可按 🔔 設定目標價／停損價，盤中到價時在頂端「我的提醒」🔔 收到站內通知（同方向每天最多一次）。<br>・站主「系統診斷」頁新增「系統工具」：一眼看到記憶體、快取筆數、最後掃描與排程；並可一鍵立即掃描、重抓品種清單、預熱大盤／期貨、重新判定今日休市、清除記憶體快取，遇到資料過期或卡住可自行處理。</p>
           <p><b>2026-10-23</b></p>
           <p><b>颱風／天災臨時休市：自動偵測</b><br>・颱風假這種當天才宣布、不在官方預排假日清單裡的臨時休市，系統現在會自動判斷：盤中（11:00 後）起用證交所官方即時行情反推「今天到底有沒有實際開盤」，確認沒開就自動當成休市——當日排程掃描自動跳過、資料新鮮度不再要求今天、相關「抓取失敗／排程異常」假警報一併抑制，頂端狀態也會顯示「臨時休市（颱風／天災）」。抓不到行情時保守當成有開盤，絕不把正常交易日誤判成休市。<br>・休市只停掉「自動排程」：手動「立即掃描」與所有抓資料功能照常可用，想在休市日強制掃一次也沒問題。</p>
           <p><b>2026-10-21</b></p>
@@ -2272,6 +2274,19 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
 
   <div class="page" id="page-diag">
     <div class="pad">
+    <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統工具（站主維運）</span></div>
+      <div class="panel-body">
+        <div id="tools-status" class="mut" style="font-size:13px;line-height:1.9">載入中…</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+          <button class="btn" onclick="adminTool('scan',this)">立即全市場掃描</button>
+          <button class="btn" onclick="adminTool('refresh_universe',this)">重抓品種清單</button>
+          <button class="btn" onclick="adminTool('warm_finmind',this)">預熱大盤／期貨</button>
+          <button class="btn" onclick="adminTool('recheck_holiday',this)">重新判定今日休市</button>
+          <button class="btn" onclick="adminTool('clear_cache',this)">清除記憶體快取</button>
+          <button class="btn" onclick="fetchAdminTools()">重新整理狀態</button>
+        </div>
+        <p class="mut" style="font-size:12px;margin-top:10px">這些都是對既有功能的安全包裝，可重複執行、不會刪資料；遇到資料過期或卡住時可自行處理。</p>
+      </div></div>
     <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統診斷</span></div><div class="panel-body" id="diag-body"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     </div>
   </div>
@@ -2637,7 +2652,7 @@ function go(id){
   if(id==='events')fetchEvents();
   if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
   if(id==='marketoverview'&&!window._moTimer){window._moTimer=setInterval(()=>{if(document.hidden||window._curPage!=='marketoverview')return;fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();},300000);}
-  if(id==='diag')fetchDiag();
+  if(id==='diag'){fetchDiag();fetchAdminTools();}
   if(id==='freshness')pollFreshness(true);
   if(id==='feedback')fbLoadMine();
   if(id==='fbadmin')fbLoadAdmin();
@@ -5220,6 +5235,30 @@ async function fetchDiag(){
       return `<div class="kv"><span>${k}</span><span style="color:${color}">${diagValueHtml(v)}</span></div>`;
     }).join('');
   }catch(e){document.getElementById('diag-body').innerHTML='<div class="empty">診斷失敗</div>';}
+}
+// 站主系統工具：狀態readout＋一鍵維運動作
+async function fetchAdminTools(){
+  const el=document.getElementById('tools-status');if(!el)return;
+  try{
+    const r=await fetch('/api/admin/tools',{cache:'no-store'});
+    if(r.status===401){el.textContent='登入已逾時，請重新登入。';return;}
+    const d=await r.json();
+    const m=d.market||{},jobs=(d.jobs||[]).slice().sort((a,b)=>String(a.next||'').localeCompare(String(b.next||''))).slice(0,6);
+    el.innerHTML=
+      `市場狀態：<b>${escH(m.session_zh||'—')}</b>　｜　記憶體：<b>${d.memory_mb!=null?d.memory_mb+' MB':'—'}</b>　｜　記憶體快取：<b>${d.cache_entries!=null?d.cache_entries+' 筆':'—'}</b><br>`
+      +`最後掃描：<b>${d.last_scan?escH(toTaipeiStr(d.last_scan)||d.last_scan):'尚無'}</b>${d.scanning?'　<span style="color:var(--warn)">（掃描進行中）</span>':''}<br>`
+      +`接下來的排程：${jobs.length?jobs.map(j=>`${escH(j.id)}＠${escH(j.next||'—')}`).join('、'):'—'}`;
+  }catch(e){el.textContent='狀態載入失敗，稍後再試。';}
+}
+async function adminTool(action,btn){
+  if(btn){btn.disabled=true;var _t=btn.textContent;btn.textContent='執行中…';}
+  try{
+    const r=await fetch('/api/admin/tools',{method:'POST',headers:TS_H,body:JSON.stringify({action})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){toast(j.error||'執行失敗');}
+    else{toast(j.msg||(j.ok?'完成':'已略過'));fetchAdminTools();}
+  }catch(e){toast('執行失敗，請稍後再試');}
+  finally{if(btn){btn.disabled=false;btn.textContent=_t;}}
 }
 // ★ 新增：2026-09-29——重大訊息公告（真實 TWSE OpenAPI 資料，見 fundamentals.py
 // fetch_material_news_risk_map()）。後端有 6 小時記憶體快取，前端不需要跟
