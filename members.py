@@ -35,6 +35,8 @@ SESSION_TTL = 30 * 24 * 3600
 OAUTH_TTL = 600
 MAX_GROUPS = 10
 MAX_PER_GROUP = 100
+MAX_ALERTS = 100            # 每位會員最多設定的到價提醒檔數
+MAX_NOTES = 100             # 每位會員保留的站內通知則數（超過自動清掉最舊的）
 DEFAULT_GROUP = "自選股"
 GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
@@ -124,6 +126,14 @@ def ensure_tables():
         CREATE TABLE IF NOT EXISTS member_prefs (
             sub TEXT PRIMARY KEY, prefs TEXT, updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS member_alerts (
+            sub TEXT, code TEXT, name TEXT, market TEXT, target REAL, stop REAL,
+            enabled INTEGER DEFAULT 1, created_at TEXT, fired TEXT, PRIMARY KEY (sub, code)
+        );
+        CREATE TABLE IF NOT EXISTS member_notes (
+            id TEXT PRIMARY KEY, sub TEXT, at TEXT, kind TEXT, title TEXT, body TEXT, code TEXT, read INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_member_notes_sub ON member_notes(sub, at);
     """
     with _store()._conn() as conn:
         conn.executescript(ddl)
@@ -270,6 +280,160 @@ def set_prefs(sub: str, patch: dict) -> dict:
                      "ON CONFLICT (sub) DO UPDATE SET prefs=EXCLUDED.prefs, updated_at=EXCLUDED.updated_at",
                      (sub, raw, _now()))
     return merged
+
+
+# ───────── 會員到價提醒 ＋ 站內通知 ─────────
+# 使用者要求「提升會員的功能」。會員替自選股設定目標價／停損價，盤中到價時自動寫一則
+# 站內通知（會員收不到 Telegram，那是站主專用）。同方向每天最多提醒一次（fired 記當天日期）。
+def _f(v):
+    """把價格字串/數字轉成正數 float；空值或非正數回 None（不猜、不接受 0 或負數）。"""
+    if v is None or v == "":
+        return None
+    try:
+        x = float(v)
+        return x if x > 0 else None
+    except Exception:
+        return None
+
+
+def alerts_of(sub: str) -> list:
+    ensure_tables()
+    with _store()._conn() as conn:
+        rows = conn.execute("SELECT code, name, market, target, stop, enabled, fired FROM member_alerts "
+                            "WHERE sub=? ORDER BY code", (sub,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["enabled"] = bool(d.get("enabled", 1))
+        try:
+            d["fired"] = json.loads(d["fired"]) if d.get("fired") else {}
+        except Exception:
+            d["fired"] = {}
+        out.append(d)
+    return out
+
+
+def set_alert(sub: str, code: str, name: str, market: str, target, stop) -> str:
+    """設定/更新一檔到價提醒。回傳 ok／need_price／full。target 或 stop 至少要有一個。"""
+    ensure_tables()
+    t, s = _f(target), _f(stop)
+    if t is None and s is None:
+        return "need_price"
+    with _store()._conn() as conn:
+        exists = conn.execute("SELECT 1 FROM member_alerts WHERE sub=? AND code=?", (sub, code)).fetchone()
+        if not exists:
+            n = conn.execute("SELECT COUNT(*) AS n FROM member_alerts WHERE sub=?", (sub,)).fetchone()["n"]
+            if n >= MAX_ALERTS:
+                return "full"
+        # 設定變更時清掉 fired 紀錄，讓新的門檻能重新觸發
+        conn.execute("INSERT INTO member_alerts (sub, code, name, market, target, stop, enabled, created_at, fired) "
+                     "VALUES (?, ?, ?, ?, ?, ?, 1, ?, '{}') "
+                     "ON CONFLICT (sub, code) DO UPDATE SET name=EXCLUDED.name, market=EXCLUDED.market, "
+                     "target=EXCLUDED.target, stop=EXCLUDED.stop, enabled=1, fired='{}'",
+                     (sub, code, name, market, t, s, _now()))
+    return "ok"
+
+
+def remove_alert(sub: str, code: str):
+    ensure_tables()
+    with _store()._conn() as conn:
+        conn.execute("DELETE FROM member_alerts WHERE sub=? AND code=?", (sub, code))
+
+
+def add_note(sub: str, kind: str, title: str, body: str, code: str = "") -> str:
+    """寫一則會員站內通知，並把該會員超過 MAX_NOTES 的最舊通知清掉。回傳 note id。"""
+    ensure_tables()
+    nid = secrets.token_hex(8)
+    with _store()._conn() as conn:
+        conn.execute("INSERT INTO member_notes (id, sub, at, kind, title, body, code, read) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+                     (nid, sub, _now(), str(kind)[:20], str(title)[:120], str(body)[:400], str(code)[:12]))
+        conn.execute("DELETE FROM member_notes WHERE sub=? AND id NOT IN "
+                     "(SELECT id FROM member_notes WHERE sub=? ORDER BY at DESC LIMIT ?)",
+                     (sub, sub, MAX_NOTES))
+    return nid
+
+
+def notes_of(sub: str, limit: int = 50, unread_only: bool = False) -> list:
+    ensure_tables()
+    q = "SELECT id, at, kind, title, body, code, read FROM member_notes WHERE sub=?"
+    if unread_only:
+        q += " AND read=0"
+    q += " ORDER BY at DESC LIMIT ?"
+    with _store()._conn() as conn:
+        rows = conn.execute(q, (sub, int(limit))).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["read"] = bool(d.get("read", 0))
+        out.append(d)
+    return out
+
+
+def unread_count(sub: str) -> int:
+    ensure_tables()
+    with _store()._conn() as conn:
+        r = conn.execute("SELECT COUNT(*) AS n FROM member_notes WHERE sub=? AND read=0", (sub,)).fetchone()
+    return int(r["n"]) if r else 0
+
+
+def mark_notes_read(sub: str, ids=None) -> int:
+    ensure_tables()
+    with _store()._conn() as conn:
+        if ids:
+            ids = [str(x) for x in ids][:200]
+            ph = ",".join("?" for _ in ids)
+            cur = conn.execute(f"UPDATE member_notes SET read=1 WHERE sub=? AND id IN ({ph})", (sub, *ids))
+        else:
+            cur = conn.execute("UPDATE member_notes SET read=1 WHERE sub=? AND read=0", (sub,))
+        return cur.rowcount if cur.rowcount is not None else 0
+
+
+def check_member_alerts() -> int:
+    """盤中檢查所有會員到價提醒，到價就寫站內通知（同方向每天最多一次）。回傳發出的通知數。
+    由排程在交易時段呼叫；用證交所官方即時行情（與自選股顯示同一來源）。"""
+    ensure_tables()
+    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+    with _store()._conn() as conn:
+        rows = conn.execute("SELECT sub, code, name, market, target, stop, fired FROM member_alerts WHERE enabled=1").fetchall()
+    if not rows:
+        return 0
+    rows = [dict(r) for r in rows]
+    pairs = {(r["code"], (r["market"] or "TSE")) for r in rows}
+    try:
+        import realtime
+        quotes = realtime.fetch_mis(list(pairs)) or {}
+    except Exception as e:
+        logger.warning(f"check_member_alerts: 取即時價失敗 {e}")
+        return 0
+    sent = 0
+    for r in rows:
+        q = quotes.get(r["code"]) or {}
+        price = q.get("price")
+        if not price:
+            continue
+        try:
+            fired = json.loads(r["fired"]) if r.get("fired") else {}
+        except Exception:
+            fired = {}
+        name = r.get("name") or r["code"]
+        hit = None
+        if r.get("target") and price >= r["target"] and fired.get("target") != today:
+            hit = "target"
+            add_note(r["sub"], "price_up", f"🔔 {name}（{r['code']}）到目標價",
+                     f"現價 {price} 已達你設定的目標價 {r['target']}。", r["code"])
+        elif r.get("stop") and price <= r["stop"] and fired.get("stop") != today:
+            hit = "stop"
+            add_note(r["sub"], "price_down", f"⚠️ {name}（{r['code']}）跌破停損價",
+                     f"現價 {price} 已跌破你設定的停損價 {r['stop']}。", r["code"])
+        if hit:
+            fired[hit] = today
+            with _store()._conn() as conn:
+                conn.execute("UPDATE member_alerts SET fired=? WHERE sub=? AND code=?",
+                             (json.dumps(fired), r["sub"], r["code"]))
+            sent += 1
+    if sent:
+        logger.info(f"check_member_alerts: 發出 {sent} 則會員到價通知")
+    return sent
 
 
 # ───────── 登入狀態 ─────────
@@ -799,7 +963,7 @@ def admin_member_delete():
     if is_owner(target):
         return jsonify({"error": "不能刪除站主帳號"}), 400
     with _store()._conn() as conn:
-        for tbl in ("member_watch", "member_groups", "member_status", "member_prefs", "login_events", "members"):
+        for tbl in ("member_watch", "member_groups", "member_status", "member_prefs", "member_alerts", "member_notes", "login_events", "members"):
             conn.execute(f"DELETE FROM {tbl} WHERE sub=?", (sub,))
     invalidate_member(sub)
     return jsonify({"ok": True})
@@ -1000,3 +1164,56 @@ def my_prefs_set():
     if not isinstance(patch, dict):
         return jsonify({"error": "格式不正確"}), 400
     return jsonify({"prefs": set_prefs(request.member["sub"], patch)})
+
+
+@bp.route("/api/my/alerts", methods=["GET"])
+@login_required
+def my_alerts_get():
+    return jsonify({"alerts": alerts_of(request.member["sub"]), "max": MAX_ALERTS})
+
+
+@bp.route("/api/my/alerts", methods=["PUT", "POST"])
+@login_required
+def my_alerts_set():
+    from stock_universe import build_full_universe
+    j = request.get_json(silent=True) or {}
+    code = str(j.get("code", "")).strip().upper()
+    if not _CODE_RE.match(code):
+        return jsonify({"error": "代號格式不正確"}), 400
+    s = next((x for x in build_full_universe() if x.get("code") == code), None)
+    if not s:
+        return jsonify({"error": "查無此股票代號"}), 404
+    r = set_alert(request.member["sub"], code, s.get("name", ""), s.get("market", ""), j.get("target"), j.get("stop"))
+    if r == "need_price":
+        return jsonify({"error": "請至少輸入目標價或停損價"}), 400
+    if r == "full":
+        return jsonify({"error": f"最多設定 {MAX_ALERTS} 檔提醒"}), 400
+    return jsonify({"ok": True, "alerts": alerts_of(request.member["sub"])})
+
+
+@bp.route("/api/my/alerts", methods=["DELETE"])
+@login_required
+def my_alerts_remove():
+    code = str(request.args.get("code", "")).strip().upper()
+    if not _CODE_RE.match(code):
+        return jsonify({"error": "代號格式不正確"}), 400
+    remove_alert(request.member["sub"], code)
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/my/notifications", methods=["GET"])
+@login_required
+def my_notes_get():
+    sub = request.member["sub"]
+    return jsonify({"notes": notes_of(sub, limit=int(request.args.get("limit", 50)),
+                                      unread_only=request.args.get("unread") == "1"),
+                    "unread": unread_count(sub)})
+
+
+@bp.route("/api/my/notifications/read", methods=["POST"])
+@login_required
+def my_notes_read():
+    j = request.get_json(silent=True) or {}
+    ids = j.get("ids") if isinstance(j.get("ids"), list) else None
+    n = mark_notes_read(request.member["sub"], ids)
+    return jsonify({"ok": True, "marked": n, "unread": unread_count(request.member["sub"])})
