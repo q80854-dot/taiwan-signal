@@ -4347,7 +4347,25 @@ var _mw={grp:null,star:null,data:null,sort:{k:'code',d:1},view:'quote',t:null,ed
     if(p.sort&&p.sort.k)_mw.sort={k:String(p.sort.k),d:p.sort.d===-1?-1:1};
   }
 }catch(e){}})();
-function mwSavePref(){try{localStorage.setItem('mwPref',JSON.stringify({view:_mw.view,sort:_mw.sort}));}catch(e){}}
+function mwSavePref(){try{localStorage.setItem('mwPref',JSON.stringify({view:_mw.view,sort:_mw.sort}));}catch(e){}
+  try{MyPrefs.set({view:_mw.view,sort:_mw.sort});}catch(e){}}
+// 會員個人偏好雲端化：登入後把看盤樣式／排序／主題存進帳號，換手機/電腦都一致（未登入仍只用瀏覽器）。
+const MyPrefs={_server:null,_loaded:false,_t:null,
+  async load(){try{const r=await fetch('/api/my/prefs',{cache:'no-store'});
+    if(r.status===401){this._server=null;this._loaded=true;return;}            // 未登入：維持 localStorage
+    if(r.ok){this._server=(await r.json()).prefs||{};this._loaded=true;this.apply();}
+  }catch(e){this._loaded=true;}},
+  apply(){const p=this._server||{};
+    if(p.theme==='dark'||p.theme==='light'){try{localStorage.setItem('dashTheme',p.theme);}catch(e){}
+      document.documentElement.setAttribute('data-theme',p.theme);
+      const m=document.querySelector('meta[name=theme-color]');if(m)m.content=p.theme==='dark'?'#0b0b0d':'#f1f1ef';}
+    if(['quote','basic','chips'].includes(p.view))_mw.view=p.view;
+    if(p.sort&&p.sort.k)_mw.sort={k:String(p.sort.k),d:p.sort.d===-1?-1:1};
+    try{localStorage.setItem('mwPref',JSON.stringify({view:_mw.view,sort:_mw.sort}));}catch(e){}},
+  set(patch){this._server=Object.assign({},this._server||{},patch);               // 合併＋防抖寫回
+    if(this._t)clearTimeout(this._t);this._t=setTimeout(()=>this._flush(),600);},
+  async _flush(){try{await fetch('/api/my/prefs',{method:'PUT',headers:TS_H,body:JSON.stringify({prefs:this._server})});}catch(e){}}};
+try{MyPrefs.load();}catch(e){}
 const MW_VIEWS={quote:'報價',basic:'基本',chips:'籌碼'};
 async function mwFetch(){
   const p=new URLSearchParams();if(_mw.grp)p.set('grp',_mw.grp);if(_mw.view!=='quote')p.set('view',_mw.view);
@@ -4622,6 +4640,7 @@ function toggleTheme(){
   const next=html.getAttribute('data-theme')==='dark'?'light':'dark';
   html.setAttribute('data-theme',next);
   try{localStorage.setItem('dashTheme',next);}catch(e){}
+  try{MyPrefs.set({theme:next});}catch(e){}   // 主題偏好同步到帳號（登入時）
   const m=document.querySelector('meta[name=theme-color]');if(m)m.content=next==='dark'?'#0b0b0d':'#f1f1ef';
   try{if(_eqChart){const d=_eqChart.data.datasets[0],sc=_eqChart.options.scales;d.borderColor=_cv('--ink');d.backgroundColor=_cv('--ink')+'12';sc.x.ticks.color=_cv('--t3');sc.y.ticks.color=_cv('--t3');sc.y.grid.color=_cv('--line');_eqChart.update();}}catch(e){}
 }
