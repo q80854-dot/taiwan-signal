@@ -64,3 +64,26 @@ def test_prefs_sanitized(cl):
 def test_prefs_bad_body_rejected(cl):
     _login(cl, "g-prefs-3")
     assert cl.put("/api/my/prefs", json={"prefs": "notadict"}, headers=H).status_code == 400
+
+
+def test_ensure_tables_runs_alter_in_separate_transaction(monkeypatch):
+    """迴歸：2026-10-24 production bug——ensure_tables 的 ALTER 若和 CREATE 共用同一個交易，
+    Postgres 在 ALTER 失敗（欄位已存在）時會把整個交易 abort、commit 等同回滾，連新表的
+    CREATE 一起消失（SQLite 不會，所以本機測不出）。這裡結構性驗證：建表與 ALTER 分屬不同
+    _conn() 交易（至少開兩次連線），且新表建立後可正常查詢。"""
+    from state_store import store
+    members._ready["ok"] = False
+    orig = store._conn
+    n = {"c": 0}
+
+    def counting():
+        n["c"] += 1
+        return orig()
+
+    monkeypatch.setattr(store, "_conn", counting)
+    members.ensure_tables()
+    assert n["c"] >= 2, "CREATE 與 ALTER 必須分開交易，否則 Postgres 會連帶回滾新表"
+    # 新表可用（不會 UndefinedTable）
+    assert members.get_prefs("nobody-x") == {}
+    assert members.notes_of("nobody-x") == []
+    assert members.alerts_of("nobody-x") == []
