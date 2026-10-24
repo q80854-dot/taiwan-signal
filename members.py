@@ -121,6 +121,9 @@ def ensure_tables():
         CREATE TABLE IF NOT EXISTS login_events (
             id TEXT PRIMARY KEY, at TEXT, sub TEXT, email TEXT, ok INTEGER, reason TEXT, ip_hash TEXT, ua TEXT
         );
+        CREATE TABLE IF NOT EXISTS member_prefs (
+            sub TEXT PRIMARY KEY, prefs TEXT, updated_at TEXT
+        );
     """
     with _store()._conn() as conn:
         conn.executescript(ddl)
@@ -216,6 +219,57 @@ def remove_group(sub: str, name: str) -> str:
         conn.execute("DELETE FROM member_watch WHERE sub=? AND grp=?", (sub, name))
         conn.execute("DELETE FROM member_groups WHERE sub=? AND grp=?", (sub, name))
     return "ok"
+
+
+# ───────── 會員個人偏好（雲端化：跨裝置一致）─────────
+# 使用者要求「提升會員的功能和設定可調整的東西」。原本看盤樣式／排序／主題只存在瀏覽器
+# localStorage，換手機或換電腦就不見。這裡把少量個人偏好存進帳號，前端登入後讀回、變更
+# 時寫回（未登入仍用 localStorage）。只收白名單鍵、值做型別與長度清洗，避免被塞任意資料。
+_PREF_KEYS = {"view", "sort", "sort_dir", "theme", "default_grp", "mobile", "density"}
+_PREF_MAX_BYTES = 4000
+
+
+def _sanitize_prefs(raw: dict) -> dict:
+    out = {}
+    for k in _PREF_KEYS:
+        if k not in raw:
+            continue
+        v = raw[k]
+        if k == "sort" and isinstance(v, dict):          # {k: 欄位, d: 1/-1}
+            col = re.sub(r"[^a-zA-Z0-9_]", "", str(v.get("k", "")))[:24]
+            if col:
+                out["sort"] = {"k": col, "d": -1 if v.get("d") in (-1, "-1", "desc") else 1}
+        elif isinstance(v, bool):
+            out[k] = v
+        elif isinstance(v, (int, float)):
+            out[k] = v
+        else:
+            out[k] = str(v)[:40]                          # 字串一律截斷，避免過長
+    return out
+
+
+def get_prefs(sub: str) -> dict:
+    ensure_tables()
+    with _store()._conn() as conn:
+        r = conn.execute("SELECT prefs FROM member_prefs WHERE sub=?", (sub,)).fetchone()
+    if not r or not r["prefs"]:
+        return {}
+    try:
+        return _sanitize_prefs(json.loads(r["prefs"]) or {})
+    except Exception:
+        return {}
+
+
+def set_prefs(sub: str, patch: dict) -> dict:
+    """把 patch 合併進既有偏好（只收白名單鍵），回傳清洗後的完整偏好。"""
+    ensure_tables()
+    merged = {**get_prefs(sub), **_sanitize_prefs(patch or {})}
+    raw = json.dumps(merged, ensure_ascii=False)[:_PREF_MAX_BYTES]
+    with _store()._conn() as conn:
+        conn.execute("INSERT INTO member_prefs (sub, prefs, updated_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT (sub) DO UPDATE SET prefs=EXCLUDED.prefs, updated_at=EXCLUDED.updated_at",
+                     (sub, raw, _now()))
+    return merged
 
 
 # ───────── 登入狀態 ─────────
@@ -745,7 +799,7 @@ def admin_member_delete():
     if is_owner(target):
         return jsonify({"error": "不能刪除站主帳號"}), 400
     with _store()._conn() as conn:
-        for tbl in ("member_watch", "member_groups", "member_status", "login_events", "members"):
+        for tbl in ("member_watch", "member_groups", "member_status", "member_prefs", "login_events", "members"):
             conn.execute(f"DELETE FROM {tbl} WHERE sub=?", (sub,))
     invalidate_member(sub)
     return jsonify({"ok": True})
@@ -927,3 +981,22 @@ def my_group_remove():
     if r == "last":
         return jsonify({"error": "至少要保留一個清單"}), 400
     return jsonify({"ok": True})
+
+
+@bp.route("/api/my/prefs", methods=["GET"])
+@login_required
+def my_prefs_get():
+    return jsonify({"prefs": get_prefs(request.member["sub"])})
+
+
+@bp.route("/api/my/prefs", methods=["PUT", "POST"])
+@login_required
+def my_prefs_set():
+    j = request.get_json(silent=True) or {}
+    if "prefs" in j:                       # {"prefs": {...}} 形式：prefs 必須是物件
+        patch = j["prefs"]
+    else:                                   # 也接受直接把偏好當 body（{...}）
+        patch = j
+    if not isinstance(patch, dict):
+        return jsonify({"error": "格式不正確"}), 400
+    return jsonify({"prefs": set_prefs(request.member["sub"], patch)})
