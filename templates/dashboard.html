@@ -1009,6 +1009,12 @@ html.force-mobile .wl-cards{display:block}html.force-mobile .wl-tblw{display:non
 .mnotif-item.unread{background:var(--accent-soft)}
 .mnotif-empty{padding:22px 14px;text-align:center;color:var(--t3);font-size:13px}
 .amodal{position:fixed;inset:0;background:rgba(7,13,23,.45);display:flex;align-items:center;justify-content:center;z-index:900;padding:16px}
+.amodal[hidden]{display:none!important}   /* 關鍵修正：class 的 display:flex 會蓋過瀏覽器 [hidden]，一定要明確讓 hidden 取勝，否則視窗會一載入就蓋住整站、關不掉 */
+.amodal .box{animation:amodal-in .16s ease}
+@keyframes amodal-in{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+.amodal .box .amx{position:absolute;top:10px;right:12px;border:none;background:none;color:var(--t3);font-size:22px;line-height:1;cursor:pointer;padding:4px}
+.amodal .box{position:relative}
+.amodal .am-cur{font-size:13px;color:var(--t2);margin:2px 0 0}
 .amodal .box{background:var(--s1);border:1px solid var(--line2);border-radius:16px;max-width:360px;width:100%;padding:18px;box-shadow:0 20px 50px rgba(11,31,58,.3)}
 .amodal h3{margin:0 0 2px;font-size:16px}
 .amodal .hint{color:var(--t3);font-size:12px;margin:0 0 6px}
@@ -1706,12 +1712,14 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
   </div>
   <div class="amodal" id="alert-modal" hidden onclick="if(event.target===this)mwAlertClose()">
     <div class="box" role="dialog" aria-modal="true" aria-labelledby="am-title">
+      <button class="amx" onclick="mwAlertClose()" aria-label="關閉">×</button>
       <h3 id="am-title">到價提醒</h3>
-      <p class="hint">盤中到價時會在「我的提醒」🔔 收到站內通知（同方向每天最多提醒一次）。</p>
-      <div class="fld"><label>目標價（漲到此價提醒）</label><input id="am-target" type="number" inputmode="decimal" step="any" min="0" placeholder="例如 1050"></div>
-      <div class="fld"><label>停損價（跌到此價提醒）</label><input id="am-stop" type="number" inputmode="decimal" step="any" min="0" placeholder="例如 960"></div>
+      <p class="am-cur" id="am-cur"></p>
+      <p class="hint">設定後，盤中到價會在右上角「我的提醒」🔔 通知你（同方向每天最多一次）。兩個都可只填一個。</p>
+      <div class="fld"><label>目標價（漲到這個價位提醒）</label><input id="am-target" type="number" inputmode="decimal" step="any" min="0" placeholder="例如 1050"></div>
+      <div class="fld"><label>停損價（跌到這個價位提醒）</label><input id="am-stop" type="number" inputmode="decimal" step="any" min="0" placeholder="例如 960"></div>
       <div class="act">
-        <button class="btn" id="am-del" onclick="mwAlertDelete()" style="display:none">移除</button>
+        <button class="btn" id="am-del" onclick="mwAlertDelete()" style="display:none">移除提醒</button>
         <button class="btn" onclick="mwAlertClose()">取消</button>
         <button class="btn primary" onclick="mwAlertSave()">儲存</button>
       </div>
@@ -4434,19 +4442,23 @@ const MyNotif={_t:null,
     this._t=setInterval(()=>{if(!document.hidden)this.refresh();},60000);}};
 document.addEventListener('click',e=>{if(!e.target.closest('#mnotif')){const m=document.getElementById('mnotif-menu');if(m)m.classList.remove('on');}});
 
-// 到價提醒設定視窗（從自選股每列的 🔔 開啟）
-async function mwAlertOpen(code,name){
+// 到價提醒設定視窗（從自選股每列／個股頁的 🔔 開啟；只有被明確呼叫時才會打開）
+async function mwAlertOpen(code,name,price){
   if(!(_me&&_me.user)){toast('請先用 Google 登入，才能設定到價提醒');return;}
-  let cur={};
-  try{const r=await fetch('/api/my/alerts',{cache:'no-store'});if(r.ok){const d=await r.json();cur=(d.alerts||[]).find(a=>a.code===code)||{};}}catch(e){}
   const el=document.getElementById('alert-modal');
   setEl('am-title',`到價提醒：${name||code}（${code}）`);
-  document.getElementById('am-target').value=cur.target!=null?cur.target:'';
-  document.getElementById('am-stop').value=cur.stop!=null?cur.stop:'';
-  el.dataset.code=code;el.hidden=false;
-  document.getElementById('am-del').style.display=cur.code?'':'none';
+  setEl('am-cur',price!=null&&price!==''?`目前股價 ${_fmtN(price,2)}`:'');
+  const tI=document.getElementById('am-target'),sI=document.getElementById('am-stop');
+  tI.value='';sI.value='';el.dataset.code=code;el.hidden=false;
+  document.getElementById('am-del').style.display='none';
+  try{const r=await fetch('/api/my/alerts',{cache:'no-store'});   // 帶出已設定過的值（如果有）
+    if(r.ok){const cur=((await r.json()).alerts||[]).find(a=>a.code===code);
+      if(cur){tI.value=cur.target!=null?cur.target:'';sI.value=cur.stop!=null?cur.stop:'';document.getElementById('am-del').style.display='';}}
+  }catch(e){}
+  setTimeout(()=>{try{tI.focus();}catch(e){}},50);
 }
 function mwAlertClose(){const el=document.getElementById('alert-modal');if(el)el.hidden=true;}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){const el=document.getElementById('alert-modal');if(el&&!el.hidden)mwAlertClose();}});
 async function mwAlertSave(){
   const el=document.getElementById('alert-modal'),code=el.dataset.code;
   const t=document.getElementById('am-target').value.trim(),s=document.getElementById('am-stop').value.trim();
@@ -4523,7 +4535,7 @@ function mwDraw(keep){
       <td class="num"><b>${esc2(r.code)}</b></td><td>${esc2(r.name||'—')}<span class="mut"> ${r.market==='OTC'?'櫃':'市'}</span></td>
       <td class="num r" style="color:${mwCol(r.change_pct)};font-weight:600">${r.price!=null?_fmtN(r.price,2):'—'}</td>
       ${bodyCols(r)}${tailTd(r)}
-      <td class="r" style="white-space:nowrap"><span class="mw-bell" title="到價提醒" onclick="event.stopPropagation();mwAlertOpen('${esc2(r.code)}','${escA(r.name||'')}')">🔔</span>　<span class="mw-x" title="從清單移除" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">×</span></td></tr>`).join('');
+      <td class="r" style="white-space:nowrap"><span class="mw-bell" title="到價提醒" onclick="event.stopPropagation();mwAlertOpen('${esc2(r.code)}','${escA(r.name||'')}',${r.price!=null?r.price:"''"})">🔔</span>　<span class="mw-x" title="從清單移除" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">×</span></td></tr>`).join('');
   // 手機卡片右下角的次要資訊，依樣式變動
   const cardSub=r=>_mw.view==='basic'
       ?`本益比 ${r.pe!=null?_fmtN(r.pe,2):'—'}　殖利率 ${r.yield_pct!=null?_fmtN(r.yield_pct,2)+'%':'—'}`
@@ -4535,7 +4547,7 @@ function mwDraw(keep){
       <div class="r"><div class="px" style="color:${mwCol(r.change_pct)}">${r.price!=null?_fmtN(r.price,2):'—'}</div>
         <div class="ch" style="color:${mwCol(r.change_pct)};background:${mwBg(r.change_pct)}">${r.change_pct!=null?mwArrow(r.change_pct)+' '+_fmtN(Math.abs(r.change||0),2)+'（'+_sg(r.change_pct,2)+'%）':'—'}</div>
         <div class="vo">${cardSub(r)}</div>
-        <button class="wl-bell" onclick="event.stopPropagation();mwAlertOpen('${esc2(r.code)}','${escA(r.name||'')}')" title="到價提醒">🔔 提醒</button></div>
+        <button class="wl-bell" onclick="event.stopPropagation();mwAlertOpen('${esc2(r.code)}','${escA(r.name||'')}',${r.price!=null?r.price:"''"})" title="到價提醒">🔔 提醒</button></div>
       ${_mw.edit?`<button class="rm" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">移除</button>`:''}</div>`).join('');
   const live=d.items.some(r=>r.live);
   const tabs=d.groups.map(g=>`<button class="mw-tab${g.name===d.grp?' on':''}" data-g="${escA(g.name)}" onclick="mwGroup(this.dataset.g)">${esc2(g.name)}<small>${g.count}</small></button>`).join('');
