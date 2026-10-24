@@ -1001,6 +1001,24 @@ html.force-mobile .wl-cards{display:block}html.force-mobile .wl-tblw{display:non
 .acct-btn{background:var(--navy);color:#fff;border-color:var(--navy)}
 .acct-menu{display:none;position:absolute;right:0;top:44px;min-width:230px;background:var(--s1);border:1px solid var(--line2);border-radius:14px;box-shadow:0 18px 44px rgba(11,31,58,.22);z-index:600;overflow:hidden}
 .acct-menu.on{display:block}
+/* 會員到價提醒 ＋ 站內通知 */
+#mnotif-menu{max-height:min(70vh,460px);overflow:auto;padding:4px 0}
+.mnotif-item{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.mnotif-item:last-child{border-bottom:none}
+.mnotif-item:hover{background:var(--s2)}
+.mnotif-item.unread{background:var(--accent-soft)}
+.mnotif-empty{padding:22px 14px;text-align:center;color:var(--t3);font-size:13px}
+.amodal{position:fixed;inset:0;background:rgba(7,13,23,.45);display:flex;align-items:center;justify-content:center;z-index:900;padding:16px}
+.amodal .box{background:var(--s1);border:1px solid var(--line2);border-radius:16px;max-width:360px;width:100%;padding:18px;box-shadow:0 20px 50px rgba(11,31,58,.3)}
+.amodal h3{margin:0 0 2px;font-size:16px}
+.amodal .hint{color:var(--t3);font-size:12px;margin:0 0 6px}
+.amodal .fld{margin-top:12px}
+.amodal label{display:block;font-size:12.5px;color:var(--t2);margin-bottom:4px}
+.amodal input{width:100%;padding:9px 11px;border:1px solid var(--line2);border-radius:10px;background:var(--s2);color:var(--t1);font-size:15px}
+.amodal .act{display:flex;gap:8px;margin-top:16px}
+.amodal .act .btn{flex:1;justify-content:center}
+.mw-bell{cursor:pointer;color:var(--t3);font-size:14px}.mw-bell:hover{color:var(--brass)}
+.wl-bell{margin-top:6px;border:1px solid var(--line2);background:var(--s2);color:var(--t2);border-radius:8px;padding:3px 8px;font-size:12px;cursor:pointer}
 .acct-h{padding:14px 16px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
 .acct-h b{color:var(--ink);font-size:15px}.acct-h span{color:var(--t3);font-size:12px;word-break:break-all}
 .acct-h em{align-self:flex-start;margin-top:6px;font-style:normal;font-size:11px;font-weight:700;background:var(--navy);color:#fff;border-radius:999px;padding:2px 9px}
@@ -1676,13 +1694,27 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
       <span class="mkt-pill" id="mkt-pill"><i></i><span id="mkt-txt">—</span></span>
       <span id="tw-time" style="font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums"></span>
       <button class="srch-btn" onclick="mSearch()" aria-label="搜尋股票"><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg></button>
-      <div class="bell" onclick="go('events')" title="通知中心" role="button" aria-label="通知中心"><svg viewBox="0 0 24 24" class="ic"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="cnt" id="bell-cnt">0</span></div>
+      <div class="acct" id="mnotif" hidden style="position:relative"><button class="bell" onclick="MyNotif.toggle(event)" title="我的提醒" aria-label="我的提醒" style="background:none;border:none;padding:0"><svg viewBox="0 0 24 24" class="ic"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="cnt" id="mnotif-cnt" hidden>0</span></button><div class="acct-menu" id="mnotif-menu" role="menu"></div></div>
+      <div class="bell" onclick="go('events')" title="系統通知中心" role="button" aria-label="系統通知中心"><svg viewBox="0 0 24 24" class="ic"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="cnt" id="bell-cnt">0</span></div>
       <div class="acct" id="acct" hidden><button class="acct-btn" id="acct-btn" onclick="acctToggle(event)" aria-haspopup="menu" aria-expanded="false" aria-label="帳號選單">我</button><div class="acct-menu" id="acct-menu" role="menu"></div></div>
       <button class="btn" id="login-btn" onclick="memberBtn()" hidden>Google 登入</button>
       <button class="btn" id="theme-btn" onclick="toggleTheme()" aria-label="切換深色／淺色模式" title="切換深色／淺色模式"><span id="theme-ic-moon"><svg viewBox="0 0 24 24" class="ic"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></span><span id="theme-ic-sun"><svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span></button>
       <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">手機版</button>
       <button class="btn btn-ic" onclick="fetchState()" aria-label="重新整理" title="重新整理"><svg viewBox="0 0 24 24" class="ic"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
       <button class="btn primary arrow own-only" onclick="forceScan()">立即掃描</button>
+    </div>
+  </div>
+  <div class="amodal" id="alert-modal" hidden onclick="if(event.target===this)mwAlertClose()">
+    <div class="box" role="dialog" aria-modal="true" aria-labelledby="am-title">
+      <h3 id="am-title">到價提醒</h3>
+      <p class="hint">盤中到價時會在「我的提醒」🔔 收到站內通知（同方向每天最多提醒一次）。</p>
+      <div class="fld"><label>目標價（漲到此價提醒）</label><input id="am-target" type="number" inputmode="decimal" step="any" min="0" placeholder="例如 1050"></div>
+      <div class="fld"><label>停損價（跌到此價提醒）</label><input id="am-stop" type="number" inputmode="decimal" step="any" min="0" placeholder="例如 960"></div>
+      <div class="act">
+        <button class="btn" id="am-del" onclick="mwAlertDelete()" style="display:none">移除</button>
+        <button class="btn" onclick="mwAlertClose()">取消</button>
+        <button class="btn primary" onclick="mwAlertSave()">儲存</button>
+      </div>
     </div>
   </div>
   <div class="content" id="content" role="main" tabindex="-1">
@@ -3928,6 +3960,7 @@ async function loadMe(force){
   const b=document.getElementById('login-btn');
   if(b){b.hidden=!_me.login_enabled;b.textContent=_me.user?('登出　'+String(_me.user.name||'').slice(0,8)):'Google 登入';}
   loginWall();applyRoleUI();renderAcct();
+  try{MyNotif.start();}catch(e){}   // 會員站內到價通知輪詢
   const q=new URLSearchParams(location.search).get('login');
   if(q){history.replaceState(null,'',location.pathname);
     toast(({ok:'登入成功',failed:'登入失敗，請再試一次',busy:'嘗試次數過多，請稍後再試',banned:'此帳號已被停用，如有疑問請聯絡站主'})[q]||'尚未啟用會員登入');}
@@ -4366,6 +4399,52 @@ const MyPrefs={_server:null,_loaded:false,_t:null,
     if(this._t)clearTimeout(this._t);this._t=setTimeout(()=>this._flush(),600);},
   async _flush(){try{await fetch('/api/my/prefs',{method:'PUT',headers:TS_H,body:JSON.stringify({prefs:this._server})});}catch(e){}}};
 try{MyPrefs.load();}catch(e){}
+
+// 會員站內通知（到價提醒）：登入後每分鐘查一次未讀，🔔 下拉顯示；打開即標為已讀。
+const MyNotif={_t:null,
+  async refresh(){if(!(_me&&_me.user))return;
+    try{const r=await fetch('/api/my/notifications?limit=50',{cache:'no-store'});if(!r.ok)return;this._render(await r.json());}catch(e){}},
+  _render(d){const b=document.getElementById('mnotif');if(b)b.hidden=false;
+    const n=d.unread||0,c=document.getElementById('mnotif-cnt');if(c){c.textContent=n>99?'99+':String(n);c.hidden=!n;}
+    const m=document.getElementById('mnotif-menu');if(m)m.innerHTML=(d.notes&&d.notes.length)
+      ?d.notes.map(x=>`<div class="mnotif-item${x.read?'':' unread'}" onclick="MyNotif.click('${escA(x.code||'')}')"><div style="font-weight:600;font-size:13px">${escH(x.title||'')}</div><div class="mut" style="font-size:12px">${escH(x.body||'')}</div><div class="mut" style="font-size:11px">${escH(_fbTime(x.at))}</div></div>`).join('')
+      :'<div class="mnotif-empty">目前沒有到價通知</div>';},
+  async toggle(e){if(e)e.stopPropagation();const m=document.getElementById('mnotif-menu');if(!m)return;
+    const open=!m.classList.contains('on');document.querySelectorAll('.acct-menu.on').forEach(x=>x.classList.remove('on'));
+    if(open){m.classList.add('on');await this.refresh();this.markRead();}},
+  async markRead(){try{await fetch('/api/my/notifications/read',{method:'POST',headers:TS_H,body:'{}'});
+    const c=document.getElementById('mnotif-cnt');if(c)c.hidden=true;setTimeout(()=>this.refresh(),500);}catch(e){}},
+  click(code){const m=document.getElementById('mnotif-menu');if(m)m.classList.remove('on');if(code)goToInstrument(code);},
+  start(){if(!(_me&&_me.user))return;this.refresh();if(this._t)clearInterval(this._t);
+    this._t=setInterval(()=>{if(!document.hidden)this.refresh();},60000);}};
+document.addEventListener('click',e=>{if(!e.target.closest('#mnotif')){const m=document.getElementById('mnotif-menu');if(m)m.classList.remove('on');}});
+
+// 到價提醒設定視窗（從自選股每列的 🔔 開啟）
+async function mwAlertOpen(code,name){
+  if(!(_me&&_me.user)){toast('請先用 Google 登入，才能設定到價提醒');return;}
+  let cur={};
+  try{const r=await fetch('/api/my/alerts',{cache:'no-store'});if(r.ok){const d=await r.json();cur=(d.alerts||[]).find(a=>a.code===code)||{};}}catch(e){}
+  const el=document.getElementById('alert-modal');
+  setEl('am-title',`到價提醒：${name||code}（${code}）`);
+  document.getElementById('am-target').value=cur.target!=null?cur.target:'';
+  document.getElementById('am-stop').value=cur.stop!=null?cur.stop:'';
+  el.dataset.code=code;el.hidden=false;
+  document.getElementById('am-del').style.display=cur.code?'':'none';
+}
+function mwAlertClose(){const el=document.getElementById('alert-modal');if(el)el.hidden=true;}
+async function mwAlertSave(){
+  const el=document.getElementById('alert-modal'),code=el.dataset.code;
+  const t=document.getElementById('am-target').value.trim(),s=document.getElementById('am-stop').value.trim();
+  if(!t&&!s){toast('請至少輸入目標價或停損價');return;}
+  try{const r=await fetch('/api/my/alerts',{method:'PUT',headers:TS_H,body:JSON.stringify({code,target:t||null,stop:s||null})});
+    const j=await r.json().catch(()=>({}));if(!r.ok){toast(j.error||'設定失敗');return;}
+    toast('已設定到價提醒');mwAlertClose();}catch(e){toast('設定失敗，請稍後再試');}
+}
+async function mwAlertDelete(){
+  const el=document.getElementById('alert-modal'),code=el.dataset.code;
+  try{await fetch('/api/my/alerts?code='+encodeURIComponent(code),{method:'DELETE',headers:TS_H});toast('已移除提醒');}catch(e){}
+  mwAlertClose();
+}
 const MW_VIEWS={quote:'報價',basic:'基本',chips:'籌碼'};
 async function mwFetch(){
   const p=new URLSearchParams();if(_mw.grp)p.set('grp',_mw.grp);if(_mw.view!=='quote')p.set('view',_mw.view);
@@ -4429,7 +4508,7 @@ function mwDraw(keep){
       <td class="num"><b>${esc2(r.code)}</b></td><td>${esc2(r.name||'—')}<span class="mut"> ${r.market==='OTC'?'櫃':'市'}</span></td>
       <td class="num r" style="color:${mwCol(r.change_pct)};font-weight:600">${r.price!=null?_fmtN(r.price,2):'—'}</td>
       ${bodyCols(r)}${tailTd(r)}
-      <td class="r"><span class="mw-x" title="從清單移除" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">×</span></td></tr>`).join('');
+      <td class="r" style="white-space:nowrap"><span class="mw-bell" title="到價提醒" onclick="event.stopPropagation();mwAlertOpen('${esc2(r.code)}','${escA(r.name||'')}')">🔔</span>　<span class="mw-x" title="從清單移除" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">×</span></td></tr>`).join('');
   // 手機卡片右下角的次要資訊，依樣式變動
   const cardSub=r=>_mw.view==='basic'
       ?`本益比 ${r.pe!=null?_fmtN(r.pe,2):'—'}　殖利率 ${r.yield_pct!=null?_fmtN(r.yield_pct,2)+'%':'—'}`
@@ -4440,7 +4519,8 @@ function mwDraw(keep){
       <div class="l"><div class="nm">${esc2(r.name||r.code)}</div><div class="cd">${esc2(r.code)}<i>${r.market==='OTC'?'櫃':'市'}</i></div>${(r.signal||(r.flags||[]).length)?`<div class="tg">${badge(r)}${flags(r)}</div>`:''}</div>
       <div class="r"><div class="px" style="color:${mwCol(r.change_pct)}">${r.price!=null?_fmtN(r.price,2):'—'}</div>
         <div class="ch" style="color:${mwCol(r.change_pct)};background:${mwBg(r.change_pct)}">${r.change_pct!=null?mwArrow(r.change_pct)+' '+_fmtN(Math.abs(r.change||0),2)+'（'+_sg(r.change_pct,2)+'%）':'—'}</div>
-        <div class="vo">${cardSub(r)}</div></div>
+        <div class="vo">${cardSub(r)}</div>
+        <button class="wl-bell" onclick="event.stopPropagation();mwAlertOpen('${esc2(r.code)}','${escA(r.name||'')}')" title="到價提醒">🔔 提醒</button></div>
       ${_mw.edit?`<button class="rm" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">移除</button>`:''}</div>`).join('');
   const live=d.items.some(r=>r.live);
   const tabs=d.groups.map(g=>`<button class="mw-tab${g.name===d.grp?' on':''}" data-g="${escA(g.name)}" onclick="mwGroup(this.dataset.g)">${esc2(g.name)}<small>${g.count}</small></button>`).join('');

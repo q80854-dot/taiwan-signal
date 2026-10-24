@@ -328,6 +328,12 @@ def job_intraday_snapshot():
         _take_snapshot(save_live=True, save_bars=(_n.hour * 60 + _n.minute >= 13 * 60 + 33))
     except Exception as e:
         logger.error(f"job_intraday_snapshot: {e}", exc_info=True)
+    # 會員到價提醒：盤中（本工作每 5 分鐘、已排除假日）順便檢查一次，到價就寫會員站內通知。
+    try:
+        import members
+        members.check_member_alerts()
+    except Exception as e:
+        logger.warning(f"job_intraday_snapshot: 會員到價提醒檢查失敗 {e}")
 
 
 def job_final_bars():
