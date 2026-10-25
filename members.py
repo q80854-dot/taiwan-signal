@@ -137,11 +137,18 @@ def ensure_tables():
     """
     with _store()._conn() as conn:
         conn.executescript(ddl)
-        # 2026-10-20：暫時停權（自動到期）新增欄位；既有資料表用 ALTER 補上，重複執行時忽略「已存在」。
-        try:
+    # 2026-10-20：暫時停權（自動到期）新增欄位；既有資料表用 ALTER 補上，重複執行時忽略「已存在」。
+    # ★ 2026-10-24 根因修正：這段 ALTER 原本和上面的 CREATE 共用同一個交易。Postgres 一旦有
+    # 一條陳述句出錯，整個交易就會進入 aborted 狀態，commit 時等同全部回滾——所以每次部署後
+    # ALTER 因「欄位已存在」而失敗，就把上面新加的 member_prefs／member_alerts／member_notes
+    # 的 CREATE 一起回滾掉，導致 production（Postgres）一直說這些表不存在、API 噴 UndefinedTable。
+    # （SQLite 不會這樣中止整個交易，所以本機測試過得了、沒抓到。）改成放在獨立交易：即使這條
+    # ALTER 失敗也只回滾它自己，不影響上面的建表。
+    try:
+        with _store()._conn() as conn:
             conn.execute("ALTER TABLE member_status ADD COLUMN disabled_until TEXT")
-        except Exception:
-            pass
+    except Exception:
+        pass
     _ready["ok"] = True
 
 
