@@ -6,8 +6,11 @@
 資料來源採「兩者結合」（使用者選擇）：
   1. 主來源 FMP economic_calendar（需 FMP_API_KEY）：提供事件、前值/預測值/公佈值/重要度。
      FMP 官方 FAQ 明載事件時間為 UTC，這裡統一換算成台北時間（+8）顯示並標註。
-  2. 備援/校驗 FRED releases/dates（需 FRED_API_KEY）：美國聖路易聯準會官方「發布排程」，
-     只有日期沒有預測值，用來補 FMP 沒涵蓋到的官方發布日（依發布名稱關鍵字比對）。
+  2. 備援/校驗 FRED releases/dates（需 FRED_API_KEY）：美國聖路易聯準會官方「發布排程」。
+     只在「真正排程公布」那天列出事件——用 FRED 穩定的 release_id 白名單精準比對（不用寬鬆關鍵字，
+     以免每個營業日都更新的資料如「Federal Funds Data」被誤判成 FOMC 天天出現）；白名單由已查證的
+     靜態項 ＋ 向 FRED 問出各關注數列所屬 release 組成。FOMC 利率決議非 FRED 資料發布，改用 Fed
+     官方行事曆寫死、只在決議日出現。
   另：FMP 經濟日曆為付費端點（免費方案回 402），故免費情境下再用 FRED series/observations
   免費補「前值／公佈值」（僅對照明確、FRED 自帶換算＝市場口徑的指標；「預測值」無免費來源留 —）。
 
@@ -35,6 +38,33 @@ _TTL = 3600
 FMP_URL = "https://financialmodelingprep.com/stable/economic-calendar"
 FRED_DATES_URL = "https://api.stlouisfed.org/fred/releases/dates"
 FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations"
+FRED_SERIES_RELEASE_URL = "https://api.stlouisfed.org/fred/series/release"
+
+# 只列「真正排程公布」的官方發布，避免把 FRED 每個營業日都更新的資料（如「Federal Funds Data」）
+# 用關鍵字誤判成排程事件（例如天天冒出 FOMC）。改用 FRED 官方穩定的 release_id 白名單精準比對。
+# 這三個 release_id 已查證（FRED/ALFRED）；其餘（初領失業金、PCE、零售…）在執行期向 FRED
+# 的 series/release 問出所屬 release_id（權威、零猜測），見 fetch 內 _build_release_whitelist。
+# release_id → (中文名, 重要度)。中文名刻意對齊 _FRED_SERIES 的鍵，讓前值/公佈值能接著補上。
+_FRED_RELEASE_WL = {
+    50: ("非農就業人數（NFP）", "高"),        # Employment Situation（就業報告，頭條＝非農）
+    10: ("消費者物價指數（CPI）", "高"),       # Consumer Price Index
+    46: ("生產者物價指數（PPI）", "高"),       # Producer Price Index
+}
+
+# FOMC 利率決議不是 FRED 的「資料發布」，無法從 releases/dates 可靠取得；改用 Fed 官方 FOMC
+# 行事曆寫死（只在會議第 2 天＝週三 美東 14:00 公布決議）。存成 UTC（2026 年 3/8–11/1 為 EDT=UTC-4，
+# 其餘為 EST=UTC-5），再與其他事件一樣換算台北時間顯示，只在決議當天出現、不會天天寫。
+# 來源：federalreserve.gov FOMC calendar。日後每年更新一次即可。
+_FOMC_DECISIONS_UTC = [
+    "2026-01-28T19:00:00+00:00",  # EST
+    "2026-03-18T18:00:00+00:00",  # EDT
+    "2026-04-29T18:00:00+00:00",
+    "2026-06-17T18:00:00+00:00",
+    "2026-07-29T18:00:00+00:00",
+    "2026-09-16T18:00:00+00:00",
+    "2026-10-28T18:00:00+00:00",
+    "2026-12-09T19:00:00+00:00",  # EST（11/1 後）
+]
 
 # 免費補「前值／公佈值」用：指標中文名 → (FRED 數列代號, 單位換算, 單位標示)。
 # 只收「FRED 自帶換算後＝市場公佈口徑」且對照明確者，避免資訊錯誤：
@@ -131,7 +161,7 @@ def _fmp_events(frm: str, to: str):
 
 
 def _fred_future_releases(frm: str, to: str):
-    """FRED 官方發布排程（只有日期），回傳 [(date_str, release_name)]；未設金鑰或失敗回 []。"""
+    """FRED 官方發布排程，回傳 [(date_str, release_id, release_name)]；未設金鑰或失敗回 []。"""
     key = _fred_key()
     if not key:
         return []
@@ -146,13 +176,32 @@ def _fred_future_releases(frm: str, to: str):
             return []
         out = []
         for d in (r.json().get("release_dates") or []):
-            ds, nm = d.get("date"), d.get("release_name") or ""
+            ds, rid, nm = d.get("date"), d.get("release_id"), d.get("release_name") or ""
             if ds and frm <= ds <= to:
-                out.append((ds, nm))
+                out.append((ds, rid, nm))
         return out
     except Exception as e:
         logger.warning(f"econ_calendar FRED: {e}")
         return []
+
+
+def _fred_series_release(series_id: str):
+    """問 FRED「某數列屬於哪個 release」，回傳 release_id(int) 或 None（權威、零猜測）。"""
+    key = _fred_key()
+    if not key:
+        return None
+    try:
+        r = requests.get(FRED_SERIES_RELEASE_URL, params={
+            "series_id": series_id, "api_key": key, "file_type": "json",
+        }, headers=_HEADERS, timeout=12)
+        if r.status_code != 200:
+            logger.warning(f"econ_calendar FRED series/release {series_id} HTTP {r.status_code}")
+            return None
+        rels = r.json().get("releases") or []
+        return rels[0].get("id") if rels else None
+    except Exception as e:
+        logger.warning(f"econ_calendar FRED series/release {series_id}: {e}")
+        return None
 
 
 def _fred_obs_latest(series_id: str, units: str = "lin", n: int = 4):
@@ -238,17 +287,25 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
                 logger.warning(f"econ_calendar 解析 FMP 筆失敗：{e}")
                 continue
 
-    # 2) 備援/校驗 FRED 官方發布排程（只有日期；補 FMP 沒涵蓋到的官方發布日）
+    # 2) FRED 官方發布排程：只在「真正排程公布」的那天列出。用 release_id 白名單精準比對，
+    #    不再用寬鬆關鍵字（避免每日資料如 Federal Funds Data 被誤判成 FOMC 天天出現）。
+    #    白名單＝已查證的靜態三項 ＋ 向 FRED 問出 _FRED_SERIES 各數列所屬 release（權威）。
     fred_rows = _fred_future_releases(frm, to)
     if fred_rows:
         sources["fred"] = True
-        for ds, nm in fred_rows:
-            zh, imp = _match(nm)
-            if not zh:                      # 只補我們關心、能對應到中文的官方發布，避免雜訊
+        wl = dict(_FRED_RELEASE_WL)                      # release_id -> (zh, importance)
+        for zh, (sid, _u, _ul) in _FRED_SERIES.items():
+            rid = _fred_series_release(sid)
+            if rid and rid not in wl:
+                wl[rid] = (zh, "高")
+        for ds, rid, nm in fred_rows:
+            spec = wl.get(rid)
+            if not spec:                                 # 不在白名單（含每日資料）→ 不列
                 continue
+            zh, imp = spec
             key = (ds, zh.lower())
             if key in seen:
-                continue                    # FMP 已有（有完整數值）→ 不重複、不覆蓋
+                continue
             seen.add(key)
             try:
                 wd = "一二三四五六日"[datetime.strptime(ds, "%Y-%m-%d").weekday()]
@@ -256,10 +313,35 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
                 wd = ""
             events.append({
                 "dt": ds, "date": ds, "time": "", "weekday": wd,
-                "event": nm, "zh": zh, "importance": imp or "中",
+                "event": nm, "zh": zh, "importance": imp,
                 "prev": None, "estimate": None, "actual": None, "unit": "",
                 "source": "FRED",
             })
+
+    # 2b) FOMC 利率決議：Fed 官方行事曆寫死，只在決議日（會議第 2 天）出現，不天天寫。
+    #     僅在已有實際資料來源時加入（避免 no_source / 來源失效時冒出孤單的 FOMC）。
+    for iso in (_FOMC_DECISIONS_UTC if (sources["fmp"] or sources["fred"]) else []):
+        try:
+            d_utc = datetime.fromisoformat(iso)
+            d_tpe = d_utc.astimezone(_TPE)
+            ds = d_tpe.strftime("%Y-%m-%d")
+            if not (frm <= ds <= to):
+                continue
+            zh = "FOMC 利率決議（升／降息）"
+            key = (ds, zh.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            events.append({
+                "dt": d_utc.isoformat(), "date": ds, "time": d_tpe.strftime("%H:%M"),
+                "weekday": "一二三四五六日"[d_tpe.weekday()],
+                "event": "FOMC Interest Rate Decision", "zh": zh, "importance": "高",
+                "prev": None, "estimate": None, "actual": None, "unit": "",
+                "source": "Fed",
+            })
+        except Exception as e:
+            logger.warning(f"econ_calendar FOMC 排程解析失敗：{e}")
+            continue
 
     events.sort(key=lambda e: (e["date"], e["time"] or "99:99"))
 
