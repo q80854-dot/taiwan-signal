@@ -270,17 +270,25 @@ def _twse_index_daily_closes(months: int = 5) -> list:
 
 def twse_index_history(months: int = 12) -> list:
     """★ 新增：2026-10-23——總覽頁「加權指數走勢」圖用。官方 TWSE MI_5MINS_HIST
-    每日收盤，回傳 [(YYYY-MM-DD, close), ...] 由舊到新；30 分鐘快取，失敗回 []（不快取空值）。"""
+    每日開高低收，回傳 [(YYYY-MM-DD, open, high, low, close), ...] 由舊到新；30 分鐘快取，失敗回 []（不快取空值）。
+    2026-10-28：加入開高低，供總覽頁加權指數卡畫日 K。"""
     months = max(1, min(int(months), 24))
-    ck = f"twse_index_history_{months}"
+    ck = f"twse_index_ohlc_{months}"
     if c := _cache_get(ck, 1800):
         return c
-    pts = _twse_index_daily_points(months, pause=0.25)
+    pts = _twse_index_daily_ohlc(months, pause=0.25)
     return _cache_set(ck, pts) if pts else []
 
 
 def _twse_index_daily_points(months: int = 5, pause: float = 0.0) -> list:
     """TWSE MI_5MINS_HIST 逐月抓取，回傳 [(iso_date, close)] 由舊到新。"""
+    return [(d, c) for d, _o, _h, _l, c in _twse_index_daily_ohlc(months, pause)]
+
+
+def _twse_index_daily_ohlc(months: int = 5, pause: float = 0.0) -> list:
+    """TWSE MI_5MINS_HIST 逐月抓取，回傳 [(iso_date, open, high, low, close)] 由舊到新。
+    欄位順序：日期、開盤指數、最高指數、最低指數、收盤指數。"""
+    num = lambda v: float(str(v).replace(",", ""))
     out = {}
     now = datetime.now(timezone.utc) + timedelta(hours=8)
     y, m = now.year, now.month
@@ -296,7 +304,7 @@ def _twse_index_daily_points(months: int = 5, pause: float = 0.0) -> list:
                         try:
                             parts = str(row[0]).split("/")
                             iso = f"{int(parts[0]) + 1911:04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
-                            out[iso] = float(str(row[4]).replace(",", ""))
+                            out[iso] = (num(row[1]), num(row[2]), num(row[3]), num(row[4]))
                         except Exception:
                             continue
         except Exception as e:
@@ -306,7 +314,7 @@ def _twse_index_daily_points(months: int = 5, pause: float = 0.0) -> list:
             m = 12; y -= 1
         if pause:
             time.sleep(pause)   # 逐月請求間稍停，避免被 TWSE 視為頻繁存取
-    return [(k, out[k]) for k in sorted(out)]
+    return [(k, *out[k]) for k in sorted(out)]
 
 
 def _regime_from_closes(closes: list, source: str) -> Optional[Dict]:
