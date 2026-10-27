@@ -8,6 +8,8 @@
      FMP 官方 FAQ 明載事件時間為 UTC，這裡統一換算成台北時間（+8）顯示並標註。
   2. 備援/校驗 FRED releases/dates（需 FRED_API_KEY）：美國聖路易聯準會官方「發布排程」，
      只有日期沒有預測值，用來補 FMP 沒涵蓋到的官方發布日（依發布名稱關鍵字比對）。
+  另：FMP 經濟日曆為付費端點（免費方案回 402），故免費情境下再用 FRED series/observations
+  免費補「前值／公佈值」（僅對照明確、FRED 自帶換算＝市場口徑的指標；「預測值」無免費來源留 —）。
 
 守住「不要資訊錯誤」：沒設金鑰就回 status="no_source"、events 空（前端顯示「尚未設定資料來源」），
 絕不編造；抓取/解析失敗一律略過該筆、不塞假值；數值缺就留 None（顯示 —）。
@@ -32,6 +34,21 @@ _TTL = 3600
 # 與舊版相同，解析不受影響。
 FMP_URL = "https://financialmodelingprep.com/stable/economic-calendar"
 FRED_DATES_URL = "https://api.stlouisfed.org/fred/releases/dates"
+FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations"
+
+# 免費補「前值／公佈值」用：指標中文名 → (FRED 數列代號, 單位換算, 單位標示)。
+# 只收「FRED 自帶換算後＝市場公佈口徑」且對照明確者，避免資訊錯誤：
+#   PAYEMS chg＝非農當月增減（千人，＝市場頭條口徑）、ICSA 為初領失業金人數、
+#   CPIAUCSL/PCEPI 的 pc1＝年增率(%)、RSAFS 的 pch＝零售月增率(%)。
+# 「預測值」（市場共識）無免費來源，一律留 None（顯示 —）。其餘指標（ADP、ISM、FOMC…）
+# 免費亦無可靠公佈值，維持無數值。FRED 回傳為最新修正值（非初值），來源標 FRED。
+_FRED_SERIES = {
+    "非農就業人數（NFP）": ("PAYEMS", "chg", "千人"),
+    "初領失業救濟金人數": ("ICSA", "lin", "人"),
+    "消費者物價指數（CPI）": ("CPIAUCSL", "pc1", "%（年增）"),
+    "PCE 物價指數（Fed 最看重）": ("PCEPI", "pc1", "%（年增）"),
+    "零售銷售": ("RSAFS", "pch", "%（月增）"),
+}
 
 
 def _fmp_key() -> str:
@@ -138,9 +155,36 @@ def _fred_future_releases(frm: str, to: str):
         return []
 
 
+def _fred_obs_latest(series_id: str, units: str = "lin", n: int = 4):
+    """FRED series/observations 最新 n 筆（新→舊），回傳 [(date, value)]；缺值(".")略過。
+    units 交給 FRED 換算（chg/pc1/pch…），確保數字＝市場公佈口徑，不由本程式自算。"""
+    key = _fred_key()
+    if not key:
+        return []
+    try:
+        r = requests.get(FRED_OBS_URL, params={
+            "series_id": series_id, "api_key": key, "file_type": "json",
+            "units": units, "sort_order": "desc", "limit": n,
+        }, headers=_HEADERS, timeout=12)
+        if r.status_code != 200:
+            logger.warning(f"econ_calendar FRED obs {series_id} HTTP {r.status_code}")
+            return []
+        out = []
+        for o in (r.json().get("observations") or []):
+            v = _num(o.get("value"))
+            if v is not None:
+                out.append((o.get("date"), v))
+        return out
+    except Exception as e:
+        logger.warning(f"econ_calendar FRED obs {series_id}: {e}")
+        return []
+
+
 def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: bool = False) -> dict:
     """彙整未來美國財經事件。回傳 {events, status, sources, window, at}。
-    events 每筆：{dt(UTC iso), date, time, weekday, event, zh, importance(高/中/低), prev, estimate, actual, source}。"""
+    events 每筆：{dt(UTC iso), date, time, weekday, event, zh, importance(高/中/低),
+    prev, estimate, actual, unit, source}。prev/actual 可由 FRED 官方資料庫免費補上（帶 unit 單位），
+    estimate（市場共識）無免費來源恆為 None。"""
     if not force:
         c = _cache.get("econ")
         if c and time.time() - c[0] < _TTL:
@@ -187,6 +231,7 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
                     "prev": _num(row.get("previous")),
                     "estimate": _num(row.get("estimate")),
                     "actual": _num(row.get("actual")),
+                    "unit": "",
                     "source": "FMP",
                 })
             except Exception as e:
@@ -212,10 +257,40 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
             events.append({
                 "dt": ds, "date": ds, "time": "", "weekday": wd,
                 "event": nm, "zh": zh, "importance": imp or "中",
-                "prev": None, "estimate": None, "actual": None, "source": "FRED",
+                "prev": None, "estimate": None, "actual": None, "unit": "",
+                "source": "FRED",
             })
 
     events.sort(key=lambda e: (e["date"], e["time"] or "99:99"))
+
+    # 3) 免費補「前值／公佈值」：對照明確的指標用 FRED 官方資料庫（series/observations），
+    #    單位換算由 FRED 負責＝市場公佈口徑。只補 FMP 沒給數值者；「預測值」免費拿不到留 None。
+    #    已排序遞增 → 每個數列只補「最近一筆未來事件」（前值＝最後公佈、公佈值待出），
+    #    更遠期不亂套舊值；已到期事件則最新＝公佈值、次新＝前值。
+    if _fred_key():
+        today = datetime.now(_TPE).strftime("%Y-%m-%d")
+        obs_cache, future_taken = {}, set()
+        for e in events:
+            spec = _FRED_SERIES.get(e["zh"])
+            if not spec or e["prev"] is not None or e["actual"] is not None:
+                continue
+            series_id, units, unit = spec
+            if series_id not in obs_cache:
+                obs_cache[series_id] = _fred_obs_latest(series_id, units)
+            obs = obs_cache[series_id]
+            if not obs:
+                continue
+            if e["date"] <= today:                       # 已公佈：最新＝公佈值、次新＝前值
+                e["actual"] = obs[0][1]
+                e["prev"] = obs[1][1] if len(obs) > 1 else None
+                e["unit"] = unit
+                e["source"] = "FRED"
+            elif series_id not in future_taken:           # 最近一筆未來事件：前值＝最後公佈
+                e["prev"] = obs[0][1]
+                e["unit"] = unit
+                e["source"] = "FRED"
+                future_taken.add(series_id)
+
     status = "ok" if (sources["fmp"] or sources["fred"]) else "no_source"
     out = {"events": events, "status": status, "sources": sources,
            "window": {"from": frm, "to": to}, "tz": "Asia/Taipei", "at": time.time()}

@@ -5967,10 +5967,12 @@ function econDraw(){
   let html='',last='';
   evs.forEach(e=>{
     if(e.date!==last){last=e.date;html+=`<div class="econ-day">${escH(e.date)}（${escH(e.weekday||'')}）</div>`;}
-    const actual=e.actual!=null?`　<b>公佈 ${fmt(e.actual)}</b>`:'';
+    const u=e.unit?escH(e.unit):'';
+    const uv=v=>v==null?'—':fmt(v)+u;   // 有值才帶單位，缺值顯示 —
+    const actual=e.actual!=null?`　<b>公佈 ${uv(e.actual)}</b>`:'';
     html+=`<div class="econ-row"><div class="econ-tm">${escH(e.time||'—')}</div>`
       +`<div class="econ-ev"><div class="nm">${dot(e.importance)}${escH(e.zh)}</div>`
-      +`<div class="mt">前值 ${fmt(e.prev)}　預測 ${fmt(e.estimate)}${actual}</div></div></div>`;
+      +`<div class="mt">前值 ${uv(e.prev)}　預測 ${fmt(e.estimate)}${actual}</div></div></div>`;
   });
   el.innerHTML=html;
 }
