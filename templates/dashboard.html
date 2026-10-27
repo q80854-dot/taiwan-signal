@@ -1664,6 +1664,71 @@ html[data-theme] .mast .say em{border-bottom-color:var(--line2)!important}
 @media(max-width:640px){.v3-sigs{grid-template-columns:1fr}.v3-area{height:220px}.v3h-px{font-size:30px}}
 html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{grid-template-columns:1fr}
 </style>
+<style id="skin-v4">
+/* ===== skin-v4 (2026-10-28) 介面重設計 =====
+   米灰畫布＋白卡；紫色只給互動與系統強調（連結、走勢線、均線）；每頁最多一張深色資料卡；漲跌仍只用紅綠。
+   最後載入，覆蓋 skin-v3。設計稿見 Design artifact「台股系統 UI 重設計」。 */
+html[data-theme=light],html:not([data-theme=dark]){--bg:#f3f1ec;--desk:#f3f1ec;--acc:#6f55e0;--acc-soft:#efeaff;--amber:#c98a00;--chart-line:#6f55e0;--chart-area:rgba(111,85,224,.12)}
+html[data-theme=dark]{--acc:#b8a8ff;--acc-soft:#26213d;--amber:#e8c35a;--chart-line:#b8a8ff;--chart-area:rgba(184,168,255,.12)}
+[hidden]{display:none!important}
+html[data-theme] .v4-hide{display:none!important}
+
+/* 頁首與區段標題：小字眉標＋22px 標題 */
+html[data-theme] .phd h1{font:600 22px/28px var(--sans)!important}
+html[data-theme] .phd-crumb{font:500 11px/16px var(--mono)!important;letter-spacing:.08em!important}
+html[data-theme] .sec-label{margin:24px 0 12px!important}
+html[data-theme] .sec-label .tx{font:600 16px/22px var(--sans)!important}
+html[data-theme] .lnk,html[data-theme] .sec-label .lnk{color:var(--acc)!important;font-size:12px!important}
+html[data-theme] .lnk:hover{color:var(--ink)!important}
+
+/* 側欄：分組標題縮小、0 不顯示徽章、今日訊號徽章朱紅、底部狀態卡可點 */
+html[data-theme] .nav-g{padding:16px 24px 6px!important;font:500 11px/14px var(--sans)!important;letter-spacing:.06em!important}
+html[data-theme] .nav{height:38px!important}
+html[data-theme] .nbadge:empty,html[data-theme] .nbadge.v4-zero{display:none!important}
+html[data-theme] #sig-count-badge{background:var(--seal)!important;color:#fff!important}
+html[data-theme] .sfoot{margin:12px!important;padding:12px 14px!important;border:0!important;border-radius:14px!important;background:var(--s2)!important}
+html[data-theme] .sfoot:hover{background:var(--s3)!important}
+
+/* 手機底部分頁列：選中項的圖示為黑色 pill */
+html[data-theme] .tabbar .tab{color:var(--t3)!important}
+html[data-theme] .tabbar .tab svg{box-sizing:content-box;padding:5px 16px;border-radius:999px}
+html[data-theme] .tabbar .tab.on svg{background:var(--ink);color:var(--s1);stroke:var(--s1)}
+
+/* 加權指數卡：白卡（不再是黑色焦點卡），畫日 K */
+html[data-theme] .v3-hero{--hero:var(--s1);--on-hero:var(--ink);--on-hero-2:var(--t3);--hero-line:var(--line);--hero-up:var(--up);--hero-down:var(--down);box-shadow:var(--card-sh)!important}
+.v4k-head{display:flex;justify-content:space-between;gap:8px;margin-top:14px;font:500 11px/14px var(--sans);color:var(--t3);font-variant-numeric:tabular-nums}
+.v4k-head i{display:inline-block;width:10px;height:2px;margin-right:4px;vertical-align:middle;border-radius:1px}
+.v4k-head i.ma5{background:var(--acc)}.v4k-head i.ma10{background:var(--amber)}
+.v4k{display:block;width:100%;height:130px;margin-top:6px}
+.v4k path.u,.v4k path.d{stroke-width:1.2;vector-effect:non-scaling-stroke}
+.v4k path.u{stroke:var(--chart-up)}.v4k path.d{stroke:var(--chart-down)}
+.v4k rect.u{fill:var(--chart-up)}.v4k rect.d{fill:var(--chart-down)}
+.v4k path.ma5,.v4k path.ma10{fill:none;stroke-width:1.5;vector-effect:non-scaling-stroke}
+.v4k path.ma5{stroke:var(--acc)}.v4k path.ma10{stroke:var(--amber)}
+.v4k-ohlc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:8px;margin-top:12px;padding:10px 12px;border-radius:12px;background:var(--s2);font-size:11px;color:var(--t3)}
+.v4k-ohlc b{display:block;margin-top:2px;font:500 13px/18px var(--sans);color:var(--ink);font-variant-numeric:tabular-nums}
+.v4k-ohlc b.up{color:var(--up)}.v4k-ohlc b.down{color:var(--down)}
+.v4k-ohlc .mut{align-self:end;font-size:10px}
+
+/* 全球市場：深色資料卡。在卡內重新定義顏色變數，讓 JS 產生的內容（.wcard／行情條）自動變深色 */
+.v4-dark{--s1:#1c1c1f;--s2:#26262a;--s3:#2e2e33;--line:#2a2a2e;--line2:#3a3a40;--ink:#fff;--t1:#fff;--t2:#c4c4ca;--t3:#9d9da4;--up:#ff7a74;--down:#4ee08a;
+  background:#111113;color:#fff;border-radius:20px;padding:20px 22px 22px;margin:0 0 4px;display:flex;flex-direction:column;gap:14px}
+html[data-theme=dark] .v4-dark{background:#1a1a1d}
+.v4-dark-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.v4-dark-head h2{margin:0;font:600 16px/22px var(--sans);color:#fff}
+html[data-theme] .v4-dark-head .mut{display:block;font:400 11px/16px var(--mono)!important;color:#9d9da4!important}
+html[data-theme] .v4-dark .wtabs{margin:0!important;padding:3px;gap:2px;border-radius:999px;background:#1c1c1f}
+html[data-theme] .v4-dark .wtabs button{border:0!important;background:transparent!important;color:#9d9da4!important;padding:7px 14px!important;font:500 12px/1 var(--sans)!important}
+html[data-theme] .v4-dark .wtabs button.on{background:#fff!important;color:#111113!important}
+html[data-theme] .v4-dark .ticker{--up-c:#ff7a74;--down-c:#4ee08a;margin:0!important;background:#1c1c1f!important;box-shadow:none!important;border-radius:14px!important}
+html[data-theme] .v4-dark .ticker-item+.ticker-item::before{background:#2a2a2e!important}
+html[data-theme] .v4-dark .ticker-name{color:#9d9da4!important}
+html[data-theme] .v4-dark .ticker-val{color:#fff!important}
+html[data-theme] .v4-dark .wcard{background:#1c1c1f!important;border:0!important;border-radius:14px!important;box-shadow:none!important}
+html[data-theme] .v4-dark .wn,html[data-theme] .v4-dark .wsub{color:#9d9da4!important}
+html[data-theme] .v4-dark .skel{background:#2a2a2e!important}
+@media(max-width:640px){html[data-theme]:not(.force-desktop) .v4-dark{padding:16px;border-radius:18px}}
+</style>
 </head>
 <body>
 <div class="shell">
@@ -1682,25 +1747,26 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
   <div class="nav" onclick="go('signals')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg><span class="nl">今日訊號</span> <span class="nbadge" id="sig-count-badge">0</span></div>
   <div class="nav" onclick="go('positions')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M3 12h18"/></svg><span class="nl">持倉追蹤</span> <span class="nbadge" id="pos-count-badge">0</span></div>
   <div class="nav" onclick="go('watchlist')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.5 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg><span class="nl">自選股</span> <span class="nbadge" id="wl-count-badge">0</span></div>
-  <div class="nav" onclick="go('events')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="nl">系統通知</span> <span class="nbadge" id="ev-count-badge"></span></div>
+  <!-- 2026-10-28 v4：系統通知改由頁首鈴鐺進入、資料更新狀態改由側欄底部狀態卡進入；兩個項目保留在 DOM（徽章 ID 仍由 JS 更新）但不顯示 -->
+  <div class="nav v4-hide" onclick="go('events')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="nl">系統通知</span> <span class="nbadge" id="ev-count-badge"></span></div>
   <div class="nav-g">市場</div>
   <div class="nav" onclick="go('marketoverview')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg><span class="nl">市場總覽</span></div>
-  <div class="nav" onclick="go('rank')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="nl">排行榜</span></div>
   <div class="nav" onclick="go('market')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/></svg><span class="nl">市場環境</span></div>
+  <div class="nav" onclick="go('rank')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="nl">排行榜</span></div>
   <div class="nav" onclick="go('instrument')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v4M7 17v4M17 6v3M17 15v4"/><rect x="5" y="7" width="4" height="10" rx="1"/><rect x="15" y="9" width="4" height="6" rx="1"/></svg><span class="nl">個股研究</span></div>
+  <div class="nav" onclick="go('radar')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8.5 6.2-3.2 10H6.7L3.5 9.2z"/><path d="M12 8l4 3-1.5 4.5h-5L8 11z"/></svg><span class="nl">基本面雷達</span></div>
+  <div class="nav-g">報告</div>
   <div class="nav" onclick="go('report')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg><span class="nl">每日報告</span></div>
   <div class="nav" onclick="go('news')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4h4l6 4V6L7 10z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg><span class="nl">重大訊息公告</span> <span class="nbadge" id="news-count-badge">0</span></div>
-  <div class="nav" onclick="go('freshness')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg><span class="nl">資料更新狀態</span> <span class="nbadge" id="fr-late-badge"></span></div>
+  <div class="nav v4-hide" onclick="go('freshness')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg><span class="nl">資料更新狀態</span> <span class="nbadge" id="fr-late-badge"></span></div>
   <div class="nav-g">風控與績效</div>
   <div class="nav" onclick="go('risk')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg><span class="nl">風險管理</span></div>
-  <div class="nav" onclick="go('autopsy')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M8.5 7.5L20 18M8.5 16.5L20 6"/></svg><span class="nl">停損解剖</span></div>
-  <div class="nav" onclick="go('history')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="nl">交易歷史</span></div>
   <div class="nav" onclick="go('perf')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M5 16l4-5 4 3 6-8"/></svg><span class="nl">績效分析</span></div>
-  <div class="nav-g">研究</div>
-  <div class="nav" onclick="go('radar')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></svg><span class="nl">基本面雷達</span></div>
+  <div class="nav" onclick="go('history')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="nl">交易歷史</span></div>
+  <div class="nav" onclick="go('autopsy')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M8.5 7.5L20 18M8.5 16.5L20 6"/></svg><span class="nl">停損解剖</span></div>
+  <div class="nav-g own-only">站主工具</div>
   <div class="nav own-only" onclick="go('learning')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10l8-5 8 5-8 5z"/><path d="M8 12.5V17c2.5 2 5.5 2 8 0v-4.5"/></svg><span class="nl">策略學習</span></div>
   <div class="nav own-only" onclick="go('audit')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3 6l1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span class="nl">資料稽核</span></div>
-  <div class="nav-g own-only">工具</div>
   <div class="nav own-only" onclick="go('backtest')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2l-6-10V3"/></svg><span class="nl">回測</span></div>
   <div class="nav own-only" onclick="go('health')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span class="nl">系統檢查</span></div>
   <div class="nav own-only" onclick="go('diag')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0 5 5L21 13l-8 8-3-3 8-8-1.3-1.3a4 4 0 0 0-5-5l3 3-2 2z"/></svg><span class="nl">系統診斷</span></div>
@@ -1711,7 +1777,7 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
   <div class="nav" onclick="go('feedback')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/><path d="M12 8v3M12 13.5v.01"/></svg><span class="nl">問題回報</span></div>
   <div class="nav" onclick="go('method')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M6 21h12M5 7h14"/><path d="M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg><span class="nl">方法論與風險聲明</span></div>
   </div>
-  <div class="sfoot">
+  <div class="sfoot" onclick="go('freshness')" role="button" tabindex="0" title="查看各項資料更新狀態" style="cursor:pointer">
     <div class="sfr"><div class="dot-live"></div><span id="market-session-side">載入中...</span></div>
     <div style="font-size:10.5px" id="scan-dur-side"></div>
     <div style="font-size:10.5px;color:var(--t3)" id="last-scan-side">—</div>
@@ -1760,16 +1826,6 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
 
   <!-- Overview -->
   <div class="page on" id="page-overview">
-    <div class="ticker" id="idx-row">
-      <div class="ticker-item"><div class="ticker-name">加權指數</div><div class="ticker-val" id="twii-val">—</div><div class="ticker-chg" id="twii-chg">—</div></div>
-      <div class="ticker-item"><div class="ticker-name">上櫃指數</div><div class="ticker-val" id="tpex-val">—</div><div class="ticker-chg" id="tpex-chg">—</div></div>
-      <div class="ticker-item"><div class="ticker-name">VIX</div><div class="ticker-val" id="vix-val">—</div><div class="ticker-chg" id="vix-chg">—</div></div>
-      <div class="ticker-item"><div class="ticker-name">S&P 500</div><div class="ticker-val" id="sp500-val">—</div><div class="ticker-chg" id="sp500-chg">—</div></div>
-      <div class="ticker-item"><div class="ticker-name">外資動向</div><div class="ticker-val" id="foreign-val">—</div><div class="ticker-chg" id="foreign-date">—</div></div>
-      <div class="ticker-item"><div class="ticker-name">DXY</div><div class="ticker-val" id="dxy-val">—</div><div class="ticker-chg" id="dxy-chg">—</div></div>
-      <div class="ticker-item"><div class="ticker-name">黃金 XAU/USD</div><div class="ticker-val" id="gold-val">—</div><div class="ticker-chg" id="gold-chg">—</div></div>
-      <div class="ticker-item"><div class="ticker-name">Bitcoin BTC</div><div class="ticker-val" id="btc-val">—</div><div class="ticker-chg" id="btc-chg">—</div></div>
-    </div>
     <div class="pad">
     <div class="v3-top">
       <section class="panel v3-chart" aria-label="加權指數走勢">
@@ -1782,16 +1838,40 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
         <section class="panel"><div class="panel-head"><span class="panel-title">自選股</span><span class="lnk" onclick="go('watchlist')">管理 →</span></div><div class="panel-body" id="v3-wl" style="padding-top:4px;padding-bottom:10px"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
       </div>
     </div>
-    <div class="kpis">
+    <!-- 2026-10-28 v4：行情條＋全球市場合併成一張深色卡，緊接在加權指數之後 -->
+    <section class="v4-dark" aria-label="全球市場">
+      <div class="v4-dark-head"><div><h2>全球市場</h2><span class="mut" id="world-at"></span></div>
+        <div class="wtabs" id="world-tabs">
+          <button class="on" data-wt="futures" onclick="worldTab('futures')">指數期貨</button>
+          <button data-wt="indices" onclick="worldTab('indices')">全球指數</button>
+          <button data-wt="cfx" onclick="worldTab('cfx')">商品·外匯·債券</button>
+        </div></div>
+      <div class="ticker" id="idx-row">
+        <div class="ticker-item"><div class="ticker-name">加權指數</div><div class="ticker-val" id="twii-val">—</div><div class="ticker-chg" id="twii-chg">—</div></div>
+        <div class="ticker-item"><div class="ticker-name">上櫃指數</div><div class="ticker-val" id="tpex-val">—</div><div class="ticker-chg" id="tpex-chg">—</div></div>
+        <div class="ticker-item"><div class="ticker-name">VIX</div><div class="ticker-val" id="vix-val">—</div><div class="ticker-chg" id="vix-chg">—</div></div>
+        <div class="ticker-item"><div class="ticker-name">S&P 500</div><div class="ticker-val" id="sp500-val">—</div><div class="ticker-chg" id="sp500-chg">—</div></div>
+        <div class="ticker-item"><div class="ticker-name">外資動向</div><div class="ticker-val" id="foreign-val">—</div><div class="ticker-chg" id="foreign-date">—</div></div>
+        <div class="ticker-item"><div class="ticker-name">DXY</div><div class="ticker-val" id="dxy-val">—</div><div class="ticker-chg" id="dxy-chg">—</div></div>
+        <div class="ticker-item"><div class="ticker-name">黃金 XAU/USD</div><div class="ticker-val" id="gold-val">—</div><div class="ticker-chg" id="gold-chg">—</div></div>
+        <div class="ticker-item"><div class="ticker-name">Bitcoin BTC</div><div class="ticker-val" id="btc-val">—</div><div class="ticker-chg" id="btc-chg">—</div></div>
+      </div>
+      <div id="world-body"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div>
+    </section>
+    <!-- 2026-10-28 v4：KPI 列與「快速前往」從總覽移除（設計稿），元素保留給既有 JS 寫入，不顯示 -->
+    <div class="kpis" hidden>
       <div class="kpi env"><div class="kpi-label">市場環境評分</div><div class="kpi-val" id="env-score">—</div><div class="kpi-sub" id="env-status">載入中</div><div class="meter"><i id="env-bar"></i></div></div>
       <div class="kpi"><div class="kpi-label">市場情緒</div><div class="kpi-val" id="sentiment-score">—</div><div class="kpi-sub" id="sentiment-zh">—</div></div>
       <div class="kpi"><div class="kpi-label">今日訊號</div><div class="kpi-val" id="signal-count">0</div><div class="kpi-sub">篩選後數量</div></div>
       <div class="kpi"><div class="kpi-label">歷史勝率</div><div class="kpi-val" id="win-rate">—%</div><div class="kpi-sub" id="wr-sub">—</div></div>
       <div class="kpi"><div class="kpi-label">掃描次數</div><div class="kpi-val" id="scan-count">0</div><div class="kpi-sub" id="last-scan-top">尚未掃描</div></div>
     </div>
-    <div class="panel" style="margin-top:12px"><div class="panel-head"><span class="panel-title">快速前往</span></div><div class="panel-body"><div class="v3-chips" id="v3-chips"></div></div></div>
-    <div class="sec-label"><div class="bar"></div><div class="tx">最新訊號</div><div class="lnk" onclick="go('signals')">查看全部 →</div></div>
+    <div class="panel" hidden><div class="panel-head"><span class="panel-title">快速前往</span></div><div class="panel-body"><div class="v3-chips" id="v3-chips"></div></div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">今日訊號</div><div class="lnk" onclick="go('signals')">訊號頁 →</div></div>
     <div class="v3-sigs" id="latest-signals"><div class="empty"><div class="empty-label">訊號</div>尚無訊號，等待盤後掃描</div></div>
+    <div class="sec-label"><div class="bar"></div><div class="tx">本週財經日曆</div>
+      <div class="wtabs" id="econ-tabs" style="margin:0 0 0 auto"><button class="on" data-ef="key" onclick="econFilter('key')">重要</button><button data-ef="all" onclick="econFilter('all')">全部</button></div></div>
+    <div class="panel"><div class="panel-body" id="econ-body" style="padding:0"><div class="skel-wrap" style="padding:12px"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">今日戰報</div></div>
     <div class="mast" id="mast"></div>
     <div id="ov-live-wrap" hidden><div class="sec-label"><div class="bar"></div><div class="tx">指數走勢</div><div class="lnk" onclick="go('marketoverview')">市場總覽 →</div></div><section id="ov-live" class="mbar" aria-label="大盤指數走勢"></section></div>
@@ -1807,16 +1887,6 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
     </div>
     <div class="sec-label"><div class="bar"></div><div class="tx">全體法人資金流向（上市整體）</div></div>
     <div class="panel"><div class="panel-body" id="ovd-inst-flow"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></div>
-    <div class="sec-label"><div class="bar" style="background:var(--accent)"></div><div class="tx">全球市場</div><span class="mut" id="world-at" style="margin-left:10px"></span></div>
-    <div class="wtabs" id="world-tabs">
-      <button class="on" data-wt="futures" onclick="worldTab('futures')">指數期貨</button>
-      <button data-wt="indices" onclick="worldTab('indices')">全球指數</button>
-      <button data-wt="cfx" onclick="worldTab('cfx')">商品·外匯·債券</button>
-    </div>
-    <div class="panel"><div class="panel-body" id="world-body" style="padding:12px"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
-    <div class="sec-label"><div class="bar" style="background:var(--alert)"></div><div class="tx">美國財經日曆</div>
-      <div class="wtabs" id="econ-tabs" style="margin:0 0 0 auto"><button class="on" data-ef="key" onclick="econFilter('key')">重要</button><button data-ef="all" onclick="econFilter('all')">全部</button></div></div>
-    <div class="panel"><div class="panel-body" id="econ-body" style="padding:0"><div class="skel-wrap" style="padding:12px"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">今日大盤</div></div>
     <div class="panel">
       <div class="panel-body" id="market-summary"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div>
@@ -5629,18 +5699,35 @@ function v3Spark(vals){
   const W=300,H=56,xy=v3Path(vals,W,H,3);
   return `<svg class="v3h-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><path class="b" d="M0 ${H/2}H${W}"/><path d="M${xy.map(([x,y])=>x.toFixed(1)+','+y.toFixed(1)).join(' L')}"/></svg>`;
 }
+// 2026-10-28 v4：加權指數卡改畫近 20 日日 K（TWSE MI_5MINS_HIST 開高低收）＋ MA5／MA10；舊資料沒有開高低時退回走勢線。
+function v4Candles(ser){
+  const k=(ser||[]).filter(p=>p.o!=null&&p.h!=null&&p.l!=null).slice(-20);
+  if(k.length<5)return '';
+  const all=(ser||[]).map(p=>p.c),off=all.length-k.length;
+  const ma=n=>k.map((_,i)=>{const j=off+i,w=all.slice(Math.max(0,j-n+1),j+1);return w.reduce((a,b)=>a+b,0)/w.length;});
+  const m5=ma(5),m10=ma(10);
+  const lo=Math.min(...k.map(p=>p.l),...m10),hi=Math.max(...k.map(p=>p.h),...m10),rg=(hi-lo)||1;
+  const W=300,H=130,st=W/k.length,y=v=>(4+(H-8)*(1-(v-lo)/rg)).toFixed(1),cx=i=>(i*st+st/2).toFixed(1);
+  const bars=k.map((p,i)=>{const up=p.c>=p.o,t=y(Math.max(p.o,p.c)),b=y(Math.min(p.o,p.c)),cls=up?'u':'d';
+    return `<path class="${cls}" d="M${cx(i)} ${y(p.h)}V${y(p.l)}"/><rect class="${cls}" x="${(i*st+st*0.22).toFixed(1)}" y="${t}" width="${(st*0.56).toFixed(1)}" height="${Math.max(1,b-t).toFixed(1)}" rx="1"/>`;}).join('');
+  const ln=m=>'M'+m.map((v,i)=>cx(i)+','+y(v)).join(' L');
+  const last=k[k.length-1];
+  return `<div class="v4k-head"><span>日 K · 近 ${k.length} 日</span><span><i class="ma5"></i>MA5 ${v3Fmt(m5[m5.length-1])}　<i class="ma10"></i>MA10 ${v3Fmt(m10[m10.length-1])}</span></div>
+    <svg class="v4k" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="加權指數近 ${k.length} 日 K 線" role="img">${bars}<path class="ma5" d="${ln(m5)}"/><path class="ma10" d="${ln(m10)}"/></svg>
+    <div class="v4k-ohlc"><div>開盤<b>${v3Fmt(last.o)}</b></div><div>最高<b class="up">${v3Fmt(last.h)}</b></div><div>最低<b class="down">${v3Fmt(last.l)}</b></div><div class="mut">${last.d.slice(5).replace('-','/')} 官方日線</div></div>`;
+}
 function v3RenderHero(d){
   const el=document.getElementById('v3-hero');if(!el)return;
   const mo=(d&&d.market_overview)||{},ix=(mo.index||{}).twii||{},fg=mo.foreign||{};
   const px=ix.price,ch=ix.chg,cp=ix.chg_pt;
   const srcZh={fugle:'富果即時',twse_official:'證交所',twse:'證交所'}[ix.source]||(ix.source?'備援來源':'');
-  const ser=(_v3Hist&&_v3Hist.series)||[];const sp=ser.slice(-40).map(p=>p.c);
+  const ser=(_v3Hist&&_v3Hist.series)||[];const sp=ser.slice(-40).map(p=>p.c);const kHtml=v4Candles(ser);
   const b=_v3Brd||{};const useT=b.dates_mismatch&&b.tse;const adv=useT?b.tse.advancers:b.advancers,dec=useT?b.tse.decliners:b.decliners;
   const fn=fg.net_buy_twd;const fy=(typeof fn==='number'&&isFinite(fn))?v3Sgn(fn/1e8,1)+' 億':'—';
   el.innerHTML=`<div class="v3h-top"><span>加權指數 · TAIEX</span><span>${safe(srcZh,'')}${mo.fetched_at?' · '+toTaipeiHM(mo.fetched_at):''}</span></div>
     <div class="v3h-px">${v3Fmt(px)}</div>
     <div class="v3h-row"><span class="v3h-chg ${v3Cls(ch)}">${v3Arr(ch)}${v3Fmt(Math.abs(cp))} · ${v3Fmt(Math.abs(ch))}%</span><span>${safe(mo.sentiment_zh,'')}${mo.sentiment_score!=null?' · 情緒 '+mo.sentiment_score:''}</span></div>
-    ${v3Spark(sp)}
+    ${kHtml||v3Spark(sp)}
     <div class="v3h-split"><div>${useT?'上市上漲':'上漲家數'}<b>${adv??'—'}</b></div><div>${useT?'上市下跌':'下跌家數'}<b>${dec??'—'}</b></div><div>外資現貨${fg.date?'（'+String(fg.date).slice(4,6)+'/'+String(fg.date).slice(6,8)+'）':''}<b>${fy}</b></div></div>`;
   const pe=document.getElementById('v3c-px'),ce=document.getElementById('v3c-chg');
   if(pe)pe.textContent=v3Fmt(px);
@@ -6061,5 +6148,10 @@ document.addEventListener('DOMContentLoaded',()=>{
   <span>最後掃描：<b id="sb-scan">—</b></span>
   <span class="sb-r">資料來源：證交所・櫃買中心・期交所　僅供研究參考，不構成投資建議</span>
 </footer>
+<script>
+// 2026-10-28 v4：側欄徽章數量為 0（或空）時不顯示；各徽章由既有 JS 寫入數字，這裡只切換 class。
+(function(){function z(){document.querySelectorAll('.nbadge').forEach(function(b){var t=b.textContent.trim();b.classList.toggle('v4-zero',t===''||t==='0');});}
+document.addEventListener('DOMContentLoaded',z);setInterval(z,1500);})();
+</script>
 </body>
 </html>
