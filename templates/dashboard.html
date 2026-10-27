@@ -4807,6 +4807,9 @@ async function loadMe(force){
   return _me;
 }
 function loginWall(){
+  // 2026-10-28：未登入首頁依 Design 定稿（Main.dc.html 桌機／MLanding.dc.html 手機）重做。
+  // 數字只用真實資料：/api/public/pulse（加權即時）、/api/public/summary（掃描漏斗、訊號追蹤彙總、加權日 K）；不公開個股名稱與價位。
+  // 登入流程不變（Google，/auth/google）；常見問題依使用者要求移除。
   let w=document.getElementById('login-wall');
   const need=_me.login_enabled&&!_me.user;
   if(!need){if(w)w.remove();return;}
@@ -4815,293 +4818,285 @@ function loginWall(){
   w.setAttribute('role','dialog');w.setAttribute('aria-label','台股波段：歡迎');
   w.style.cssText='position:fixed;inset:0;z-index:9999;overflow-y:auto;scroll-behavior:smooth';
   const go='onclick="location.href=\'/auth/google\'"';
-  const G='<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.3 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.4 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.8-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.8 2.3-8.4 2.3-6.3 0-11.7-4.1-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>';
-  const ic=(p,s=22)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
-  const LOGO='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M6 4v3M6 17v3M12 2v4M12 14v4M18 7v3M18 19v2"/><rect x="4" y="7" width="4" height="10" rx="1"/><rect x="10" y="6" width="4" height="8" rx="1"/><rect x="16" y="10" width="4" height="9" rx="1"/></svg>';
+  const ic=(p,s=20)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${p}"/></svg>`;
+  const SEAL=(s=34)=>`<span class="lw-seal" style="width:${s}px;height:${s}px;font-size:${Math.round(s*.53)}px" aria-hidden="true">台</span>`;
+  const F=(icon,tone,t,b,k,id)=>`<article class="lw-card lw-feat"><span class="lw-ic ${tone}">${ic(icon)}</span><div class="lw-ft"><h3>${t}</h3><p>${b}</p></div><div class="lw-inset lw-fk"><span>${k}</span><b id="${id||''}">${id?'—':''}</b></div></article>`;
+  const tw=new Date(Date.now()+8*3600e3),wd=tw.getUTCDay(),hm=tw.getUTCHours()*60+tw.getUTCMinutes();
+  let nx=new Date(tw);if(wd===0||wd===6||hm>=990){do{nx=new Date(nx.getTime()+864e5);}while(nx.getUTCDay()===0||nx.getUTCDay()===6);}
+  const nextScan=`${nx.getUTCMonth()+1}/${nx.getUTCDate()}（${'日一二三四五六'[nx.getUTCDay()]}）16:30`;
   w.innerHTML=`<style>
-  #login-wall{--n0:#06070a;--n1:#0b0d11;--n2:#101318;--n3:#161a21;--line:#20242c;--line2:#2b303a;
-    --ink:#eceae0;--mut:#9aa0a6;--soft:#6a7076;--ac:#e0a63c;--ac2:#f3c667;--acdim:rgba(224,166,60,.12);
-    --up:#ff5648;--dn:#2fd27f;
-    background:var(--n0);color:var(--ink);font-family:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:.005em}
+  #login-wall{--paper:#f3f1ec;--s1:#fff;--s2:#f5f5f3;--s3:#ececea;--line:#ebebe8;--line2:#dcdcd8;--ink:#111113;--t2:#4a4b50;--t3:#6b6c74;
+    --acc:#6f55e0;--acc-soft:#efeaff;--up:#c8231a;--down:#0b7a40;--cup:#e5484d;--cdn:#18a957;--seal:#c8231a;--ok:#1c7a5e;
+    --tm:#111113;--tm2:#1c1c1f;--tm3:#2a2a2e;--tm-t2:#a1a1a8;--sh:0 1px 2px rgba(17,17,19,.05),0 1px 3px rgba(17,17,19,.04);
+    --sans:'Geist','Noto Sans TC','PingFang TC','Microsoft JhengHei',system-ui,sans-serif;--mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    background:var(--paper);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
   #login-wall *{box-sizing:border-box}
   #login-wall a{color:inherit;text-decoration:none;cursor:pointer}
-  #login-wall .lw-w{max-width:1200px;margin:0 auto;padding:0 24px}
-  #login-wall .lw-mono{font-family:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
-  #login-wall .up{color:var(--up)}#login-wall .dn{color:var(--dn)}#login-wall .ac{color:var(--ac)}
-  /* 頂部即時行情帶 */
-  #login-wall .lw-mkt{background:var(--n0);border-bottom:1px solid var(--line);color:var(--mut);font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px}
-  #login-wall .lw-mkt .lw-w{display:flex;align-items:center;gap:22px;height:36px;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
-  #login-wall .lw-mkt .lw-w::-webkit-scrollbar{display:none}
-  #login-wall .lw-mkt b{color:var(--ink);font-weight:500}
-  #login-wall .lw-live{display:flex;align-items:center;gap:7px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);font-size:11px}
-  #login-wall .lw-dot{width:7px;height:7px;border-radius:50%;background:#555b61;transition:.2s}
-  #login-wall .lw-dot.lw-on{background:var(--dn);box-shadow:0 0 0 3px rgba(47,210,127,.18);animation:lwpulse 2s ease-in-out infinite}
-  @keyframes lwpulse{50%{opacity:.4}}
-  /* 導覽列 */
-  #login-wall .lw-nav{position:sticky;top:0;z-index:20;background:rgba(6,7,10,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
-  #login-wall .lw-nav .lw-w{display:flex;align-items:center;gap:28px;height:62px}
-  #login-wall .lw-brand{display:flex;align-items:center;gap:11px;color:var(--ink);font-weight:600;font-size:16px;margin-right:auto}
-  #login-wall .lw-brand i{width:30px;height:30px;border-radius:3px;background:linear-gradient(135deg,var(--ac2),var(--ac));display:grid;place-items:center;box-shadow:0 0 16px rgba(224,166,60,.35)}
-  #login-wall .lw-brand small{display:block;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;letter-spacing:.2em;font-weight:400;color:var(--soft);margin-top:1px}
-  #login-wall .lw-nl{font-size:13.5px;color:var(--mut);padding:7px 12px;border-radius:4px}
-  #login-wall .lw-nl:hover{color:var(--ink);background:var(--n2)}
-  #login-wall .lw-nbtn{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;letter-spacing:.06em;border:0;background:var(--ac);color:#1a1200;font-weight:600;border-radius:3px;padding:11px 20px;cursor:pointer;box-shadow:0 0 20px rgba(224,166,60,.3);transition:.16s}
-  #login-wall .lw-nbtn:hover{background:var(--ac2);box-shadow:0 0 30px rgba(224,166,60,.5)}
-  /* 主視覺 */
-  #login-wall .lw-hero{position:relative;overflow:hidden;border-bottom:1px solid var(--line);background:radial-gradient(1100px 520px at 82% -8%,rgba(224,166,60,.13),transparent 58%),linear-gradient(180deg,#06070a,#0b0d11 72%)}
-  #login-wall .lw-hero::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(224,166,60,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(224,166,60,.045) 1px,transparent 1px);background-size:52px 52px;-webkit-mask-image:radial-gradient(900px 500px at 78% 0%,#000,transparent 75%);mask-image:radial-gradient(900px 500px at 78% 0%,#000,transparent 75%)}
-  #login-wall .lw-hero .lw-w{position:relative;display:grid;grid-template-columns:1.02fr 1.1fr;gap:54px;align-items:center;padding-top:72px;padding-bottom:84px}
-  #login-wall .lw-pill{display:inline-flex;align-items:center;gap:9px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;letter-spacing:.08em;color:var(--ac2);border:1px solid rgba(224,166,60,.35);background:var(--acdim);padding:6px 13px 6px 7px;border-radius:999px;margin-bottom:26px}
-  #login-wall .lw-pill b{background:var(--ac);color:#1a1200;border-radius:999px;padding:2px 9px;font-weight:700;font-size:10.5px}
-  #login-wall h1{font-size:clamp(38px,5.4vw,64px);line-height:1.03;margin:0;font-weight:700;letter-spacing:-.025em}
-  #login-wall h1 em{font-style:normal;background:linear-gradient(92deg,var(--ac2),var(--ac) 50%,var(--ac2));-webkit-background-clip:text;background-clip:text;color:transparent}
-  #login-wall .lw-sub{color:var(--mut);font-size:17px;line-height:1.75;max-width:30em;margin:24px 0 34px}
-  #login-wall .lw-ctas{display:flex;gap:13px;flex-wrap:wrap;align-items:center}
-  #login-wall .lw-cta{display:inline-flex;align-items:center;gap:10px;background:var(--ac);color:#1a1200;border:0;border-radius:3px;padding:14px 24px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 0 20px rgba(224,166,60,.3);transition:.16s}
-  #login-wall .lw-cta:hover{background:var(--ac2);box-shadow:0 0 30px rgba(224,166,60,.5)}
-  #login-wall .lw-cta .g{width:18px;height:18px;background:#fff;border-radius:2px;display:grid;place-items:center}
-  #login-wall .lw-ghost{display:inline-flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px;color:var(--mut);padding:13px 16px;border-radius:3px;border:1px solid var(--line2)}
-  #login-wall .lw-ghost:hover{border-color:var(--ac);color:var(--ac);background:var(--acdim)}
-  #login-wall .lw-trust{display:flex;gap:20px;flex-wrap:wrap;margin-top:30px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:var(--soft)}
-  #login-wall .lw-trust span{display:inline-flex;align-items:center;gap:7px}
-  #login-wall .lw-trust svg{color:var(--dn)}
-  /* 終端機面板 */
-  #login-wall .lw-term{background:linear-gradient(180deg,#0e1116,#0a0c10);border:1px solid var(--line);border-radius:6px;box-shadow:0 50px 100px -30px rgba(0,0,0,.8),0 0 0 1px rgba(224,166,60,.07),inset 0 1px 0 rgba(255,255,255,.03);overflow:hidden}
-  #login-wall .lw-tbar{display:flex;align-items:center;gap:8px;padding:11px 15px;border-bottom:1px solid var(--line);background:#0b0d11}
-  #login-wall .lw-tbar i{width:9px;height:9px;border-radius:50%;background:#2b303a}
-  #login-wall .lw-tbar .t{margin-left:8px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.08em;color:var(--soft);text-transform:uppercase}
-  #login-wall .lw-tbar .st{margin-left:auto;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:var(--dn);display:flex;align-items:center;gap:6px}
-  #login-wall .lw-tbody{padding:18px}
-  #login-wall .lw-q{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-  #login-wall .lw-q .q-name{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:var(--mut);letter-spacing:.05em}
-  #login-wall .lw-q .lw-p{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:38px;font-weight:600;line-height:1.05;letter-spacing:-.02em;color:var(--ink);margin-top:3px}
-  #login-wall .lw-q .lw-p small{font-size:14px;font-weight:600;margin-left:10px}
-  #login-wall .lw-q .q-right{text-align:right;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;color:var(--soft);line-height:1.7}
-  #login-wall .lw-spark{height:120px;margin:12px 0 2px}
-  #login-wall .lw-draw{stroke-dasharray:1;stroke-dashoffset:1;animation:lwdraw 1.5s ease-out .15s forwards}
-  @keyframes lwdraw{to{stroke-dashoffset:0}}
-  #login-wall .lw-illus{display:flex;align-items:center;gap:8px;margin:14px 0 10px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10px;letter-spacing:.08em;color:var(--soft);text-transform:uppercase}
-  #login-wall .lw-illus::before,#login-wall .lw-illus::after{content:"";height:1px;background:var(--line);flex:1}
-  #login-wall .lw-g3{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
-  #login-wall .lw-sc{background:var(--n2);border:1px solid var(--line);border-radius:4px;padding:11px 12px}
-  #login-wall .lw-sc .sc-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
-  #login-wall .lw-sc .code{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;font-weight:600;color:var(--ink)}
-  #login-wall .lw-sc .nm{font-size:10.5px;color:var(--soft);margin-top:1px}
-  #login-wall .lw-tag{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:2px;letter-spacing:.04em}
-  #login-wall .lw-tag.b{background:rgba(255,86,72,.16);color:var(--up)}
-  #login-wall .lw-tag.s{background:rgba(47,210,127,.16);color:var(--dn)}
-  #login-wall .lw-sc .row{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;color:var(--mut);margin-top:4px}
-  #login-wall .lw-sc .row b{color:var(--ink);font-weight:500}
-  #login-wall .lw-breadth{margin-top:14px;border-top:1px solid var(--line);padding-top:13px}
-  #login-wall .lw-breadth .bl{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;color:var(--soft);margin-bottom:7px}
-  #login-wall .lw-bbar{height:7px;border-radius:999px;background:var(--dn);overflow:hidden;display:flex}
-  #login-wall .lw-bbar i{height:100%;background:var(--up)}
-  /* 數據帶 */
-  #login-wall .lw-stats{background:var(--n1);border-bottom:1px solid var(--line)}
-  #login-wall .lw-stats .lw-w{display:grid;grid-template-columns:repeat(4,1fr)}
-  #login-wall .lw-st{padding:26px 24px;border-left:1px solid var(--line)}
-  #login-wall .lw-st:first-child{border-left:0;padding-left:0}
-  #login-wall .lw-st b{display:block;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:30px;font-weight:600;color:var(--ac);letter-spacing:-.02em}
-  #login-wall .lw-st span{font-size:12.5px;color:var(--mut);margin-top:5px;display:block}
-  /* 區塊 */
-  #login-wall section.lw-sec{padding:84px 0;border-bottom:1px solid var(--line)}
-  #login-wall .lw-eyebrow{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--ac);margin-bottom:16px}
-  #login-wall h2{font-size:clamp(26px,3.2vw,38px);font-weight:700;letter-spacing:-.02em;line-height:1.2;margin:0;text-wrap:balance}
-  #login-wall .lw-lead{color:var(--mut);font-size:16px;line-height:1.75;max-width:44em;margin:16px 0 0}
-  #login-wall .lw-feat{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-top:44px}
-  #login-wall .lw-f{background:var(--n1);padding:30px 26px;transition:.18s}
-  #login-wall .lw-f:hover{background:var(--n2)}
-  #login-wall .lw-f i{width:42px;height:42px;border-radius:4px;background:var(--acdim);color:var(--ac);display:grid;place-items:center;margin-bottom:18px}
-  #login-wall .lw-f b{display:block;font-size:17px;font-weight:600;margin-bottom:9px}
-  #login-wall .lw-f span{font-size:14px;color:var(--mut);line-height:1.72}
-  #login-wall .lw-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:44px}
-  #login-wall .lw-s{position:relative;padding-top:8px}
-  #login-wall .lw-s em{font-family:'IBM Plex Mono',ui-monospace,monospace;font-style:normal;font-size:13px;color:#1a1200;background:var(--ac);width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-weight:700;margin-bottom:18px;box-shadow:0 0 0 6px var(--n0),0 0 18px rgba(224,166,60,.3)}
-  #login-wall .lw-s b{display:block;font-size:17px;font-weight:600;margin-bottom:9px}
-  #login-wall .lw-s span{color:var(--mut);font-size:14px;line-height:1.72}
-  #login-wall .lw-src{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:44px}
-  #login-wall .lw-sb{background:var(--n1);border:1px solid var(--line);border-radius:5px;padding:20px;display:flex;gap:13px}
-  #login-wall .lw-sb i{flex:none;width:38px;height:38px;border-radius:4px;background:var(--n3);color:var(--ac);display:grid;place-items:center}
-  #login-wall .lw-sb b{display:block;font-size:14.5px;font-weight:600}
-  #login-wall .lw-sb span{font-size:12px;color:var(--soft);line-height:1.55}
-  #login-wall .lw-secu{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:44px}
-  #login-wall .lw-secu>div{background:var(--n1);border:1px solid var(--line);border-radius:5px;padding:22px 24px}
-  #login-wall .lw-secu b{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600;margin-bottom:8px}
-  #login-wall .lw-secu b svg{color:var(--dn)}
-  #login-wall .lw-secu span{font-size:13.5px;color:var(--mut);line-height:1.7}
-  #login-wall details{background:var(--n1);border:1px solid var(--line);border-radius:5px;padding:18px 22px;margin-top:10px}
-  #login-wall details[open]{border-color:rgba(224,166,60,.4)}
-  #login-wall summary{cursor:pointer;font-weight:600;font-size:15.5px;list-style:none;display:flex;justify-content:space-between;align-items:center}
-  #login-wall summary::-webkit-details-marker{display:none}
-  #login-wall summary::after{content:"+";font-size:20px;color:var(--soft);font-weight:400}
-  #login-wall details[open] summary::after{content:"−"}
-  #login-wall details p{margin:12px 0 2px;font-size:14px;line-height:1.85;color:var(--mut)}
-  #login-wall .lw-end{background:radial-gradient(640px 280px at 85% 0%,rgba(224,166,60,.2),transparent 60%),linear-gradient(135deg,#171205,#241c0b);border:1px solid rgba(224,166,60,.3);border-radius:8px;padding:52px 44px;margin-top:60px;display:flex;align-items:center;gap:28px;flex-wrap:wrap}
-  #login-wall .lw-end h2{margin:0 0 8px}
-  #login-wall .lw-end p{margin:0;color:#e8dcc0;font-size:15px}
-  #login-wall .lw-end>div{margin-right:auto}
-  #login-wall footer{padding:48px 0 56px;color:var(--soft);font-size:12.5px;background:var(--n0)}
-  #login-wall footer .lw-cols{display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:32px;margin-bottom:26px}
-  #login-wall footer b{display:block;color:var(--ink);font-weight:600;margin-bottom:10px}
-  #login-wall footer a{display:block;margin-bottom:8px;color:var(--soft)}#login-wall footer a:hover{color:var(--ac)}
-  #login-wall footer .lw-fine{border-top:1px solid var(--line);padding-top:20px;line-height:1.8;color:var(--soft);max-width:70em}
-  @media(max-width:920px){
-    #login-wall .lw-hero .lw-w{grid-template-columns:1fr;gap:44px;padding-top:52px;padding-bottom:60px}
-    #login-wall .lw-nl{display:none}
-    #login-wall .lw-feat,#login-wall .lw-src{grid-template-columns:1fr 1fr}
-    #login-wall .lw-steps{grid-template-columns:1fr}
+  #login-wall .lw-w{max-width:1240px;margin:0 auto;padding:16px 24px 40px;display:flex;flex-direction:column;gap:16px}
+  #login-wall .n{font-variant-numeric:tabular-nums}
+  #login-wall .up{color:var(--up)}#login-wall .down{color:var(--down)}
+  #login-wall .lw-card{background:var(--s1);border-radius:20px;box-shadow:var(--sh);display:flex;flex-direction:column;min-width:0}
+  #login-wall .lw-dark{background:var(--tm);color:#fff;box-shadow:none}
+  #login-wall .lw-g{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}
+  #login-wall .c4{grid-column:span 4}#login-wall .c6{grid-column:span 6}#login-wall .c8{grid-column:span 8}
+  #login-wall .lw-seal{display:inline-grid;place-items:center;border:2px solid var(--seal);border-radius:9px;color:var(--seal);font-family:'Noto Serif TC',serif;font-weight:700;transform:rotate(-3deg);flex:none}
+  #login-wall .lw-brand{display:flex;align-items:center;gap:10px;font:600 16px/18px var(--sans)}
+  #login-wall .lw-brand small{display:block;font:400 11px/14px var(--sans);color:var(--t3)}
+  #login-wall header{display:flex;flex-wrap:wrap;align-items:center;gap:28px;min-height:64px}
+  #login-wall .lw-nav{display:flex;flex-wrap:wrap;gap:26px}
+  #login-wall .lw-nav a{font:500 14px/1 var(--sans);color:var(--t2)}#login-wall .lw-nav a:hover{color:var(--ink)}
+  #login-wall .sp{flex:1}
+  #login-wall .lw-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 18px;border:1px solid var(--line2);border-radius:999px;background:var(--s1);color:var(--ink);font:500 14px/1 var(--sans);cursor:pointer;white-space:nowrap}
+  #login-wall .lw-btn:hover{background:var(--s2)}
+  #login-wall .lw-btn.pri{background:var(--ink);border-color:var(--ink);color:#fff}#login-wall .lw-btn.pri:hover{opacity:.88}
+  #login-wall .lw-btn.ghost{border-color:transparent;background:transparent}
+  #login-wall .lw-btn.lg{height:48px;padding:0 22px;font-size:15px}
+  #login-wall .lw-btn.sm{height:32px;padding:0 14px;font-size:13px}
+  #login-wall .lw-tag{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;height:26px;padding:0 10px;border-radius:999px;font:500 12px/1 var(--sans);background:var(--s2);color:var(--t2)}
+  #login-wall .lw-tag.ok{background:#e9f5f0;color:var(--ok)}#login-wall .lw-tag.ok i{width:6px;height:6px;border-radius:50%;background:currentColor}
+  #login-wall .lw-tag.up{background:#fdecea;color:var(--up)}#login-wall .lw-tag.down{background:#e6f4ec;color:var(--down)}
+  #login-wall .lw-hero{grid-column:span 6;padding:48px 44px;justify-content:space-between;gap:36px}
+  #login-wall h1{margin:0;font:600 50px/60px var(--sans);letter-spacing:-.035em}
+  #login-wall .lw-sub{margin:0;max-width:480px;font:400 16px/26px var(--sans);color:var(--t2)}
+  #login-wall .lw-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+  #login-wall .lw-trust{display:flex;flex-wrap:wrap;gap:18px;font-size:12px;color:var(--t3)}
+  #login-wall .lw-side{grid-column:span 6;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  #login-wall .lw-lbl{font:500 11px/14px var(--sans);color:var(--t3)}
+  #login-wall .lw-dark .lw-lbl{color:var(--tm-t2)}
+  #login-wall .lw-big{font:500 28px/34px var(--sans);letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+  #login-wall .lw-inset{background:var(--s2);border-radius:12px;padding:10px 12px}
+  #login-wall .lw-stat{font-size:11px;line-height:14px;color:var(--t3)}
+  #login-wall .lw-stat b{display:block;margin-top:3px;font:500 14px/18px var(--sans);color:var(--ink);font-variant-numeric:tabular-nums}
+  #login-wall .lw-dark .lw-stat{color:var(--tm-t2)}#login-wall .lw-dark .lw-stat b{color:#fff}
+  #login-wall .lw-dark .lw-inset{background:var(--tm2)}
+  #login-wall .lw-av{display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:var(--acc-soft);color:var(--acc);font:600 13px var(--sans);flex:none}
+  #login-wall .lw-k{display:block;width:100%;height:90px}
+  #login-wall .lw-k path,#login-wall .lw-k line{vector-effect:non-scaling-stroke}
+  #login-wall .lw-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+  #login-wall .lw-facts>div{padding:22px 24px}#login-wall .lw-facts>div+div{border-left:1px solid var(--line)}
+  #login-wall .lw-facts .s{font-size:12px;color:var(--t3);margin-top:4px}
+  #login-wall .lw-hd{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;padding:32px 4px 4px;scroll-margin-top:16px}
+  #login-wall .lw-eb{display:block;font:500 11px/16px var(--mono);letter-spacing:.1em;color:var(--acc);margin-bottom:6px}
+  #login-wall h2{margin:0;font:600 32px/40px var(--sans);letter-spacing:-.03em}
+  #login-wall .lw-lk{font:500 14px/16px var(--sans);color:var(--acc);cursor:pointer}#login-wall .lw-lk:hover{color:var(--ink)}
+  #login-wall .lw-feat{grid-column:span 4;padding:24px;gap:12px}
+  #login-wall .lw-ft{display:flex;flex-direction:column;gap:12px;flex:1}
+  #login-wall .lw-ic{display:grid;place-items:center;width:44px;height:44px;border-radius:14px;flex:none}
+  #login-wall .lw-ic.p{background:var(--acc-soft);color:var(--acc)}#login-wall .lw-ic.b{background:#e6f0fb;color:#2563b8}#login-wall .lw-ic.a{background:#fff3d6;color:#8a6100}#login-wall .lw-ic.c{background:#ffecea;color:#c33f3c}#login-wall .lw-ic.g{background:var(--s2);color:var(--ink)}
+  #login-wall .lw-feat h3{margin:0;font:600 17px/24px var(--sans)}
+  #login-wall .lw-feat p{margin:0;font-size:13px;line-height:21px;color:var(--t2)}
+  #login-wall .lw-fk{display:flex;justify-content:space-between;font-size:12px}#login-wall .lw-fk span{color:var(--t3)}#login-wall .lw-fk b{font-weight:500;font-variant-numeric:tabular-nums}
+  #login-wall .lw-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+  #login-wall .lw-step{display:flex;flex-direction:column;gap:10px;padding:22px}#login-wall .lw-step+.lw-step{border-left:1px solid var(--line)}
+  #login-wall .lw-step .t{font:500 26px/30px var(--mono);letter-spacing:-.02em}
+  #login-wall .lw-step b{font:600 15px/22px var(--sans)}#login-wall .lw-step span{font-size:13px;line-height:20px;color:var(--t2)}
+  #login-wall .lw-leg{display:inline-flex;align-items:center;gap:5px;font:400 11px/14px var(--sans);color:var(--tm-t2)}#login-wall .lw-leg i{display:inline-block;width:10px;height:2px;border-radius:1px}
+  #login-wall .lw-fn{display:flex;align-items:flex-end;gap:4px;height:64px}
+  #login-wall .lw-fn i{flex:1;border-radius:6px 6px 2px 2px;background:var(--s3);min-height:3px}#login-wall .lw-fn i.l{background:var(--ink)}
+  #login-wall .lw-tbl{width:100%;border-collapse:collapse;font-size:13px}
+  #login-wall .lw-tbl th{font:500 11px/14px var(--sans);color:var(--t3);text-align:right;padding:0 0 10px 10px;white-space:nowrap}
+  #login-wall .lw-tbl th:first-child,#login-wall .lw-tbl td:first-child{text-align:left;padding-left:0}
+  #login-wall .lw-tbl td{padding:12px 0 12px 10px;border-top:1px solid var(--line);text-align:right;white-space:nowrap}
+  #login-wall .lw-tbl tr.bl td{filter:blur(5px);user-select:none}
+  #login-wall .lw-bar{display:inline-block;height:10px;border-radius:5px;background:var(--s3);vertical-align:middle}
+  #login-wall .lw-end{padding:44px;flex-direction:row;flex-wrap:wrap;gap:28px;align-items:center;justify-content:space-between;margin-top:16px}
+  #login-wall .lw-end h2{color:#fff}
+  #login-wall .lw-end .lw-btn{background:#fff;border-color:#fff;color:var(--ink)}
+  #login-wall .lw-end .lw-btn.ol{background:transparent;color:#fff;border-color:var(--tm3)}
+  #login-wall footer{display:flex;flex-direction:column;gap:14px;padding-top:20px}
+  #login-wall .lw-fnav{display:flex;flex-wrap:wrap;gap:20px}#login-wall .lw-fnav a{font-size:13px;color:var(--t2)}
+  #login-wall .lw-fine{display:flex;gap:10px;padding:12px 16px;border-radius:14px;background:rgba(255,255,255,.6);font-size:12px;line-height:18px;color:var(--t3)}
+  #login-wall .lw-fine b{color:var(--t2)}
+  #login-wall .lw-m{display:none}
+  #login-wall :focus-visible{outline:2px solid #2563b8;outline-offset:2px}
+  @media(max-width:1100px){#login-wall .lw-hero,#login-wall .lw-side{grid-column:span 12}#login-wall .lw-feat{grid-column:span 6}#login-wall .c4,#login-wall .c8{grid-column:span 12}}
+  @media(max-width:760px){
+    #login-wall .lw-w{padding:0 16px 24px;gap:14px}
+    #login-wall header{gap:10px;min-height:0;padding:14px 0}
+    #login-wall .lw-nav,#login-wall header .lw-btn.pri,#login-wall .lw-brand small{display:none}
+    #login-wall header .lw-btn.ghost{height:32px;padding:0 14px;font-size:13px;border-color:var(--line2);background:var(--s1)}
+    #login-wall .lw-hero{background:transparent;box-shadow:none;padding:16px 4px 8px;gap:16px}
+    #login-wall h1{font-size:34px;line-height:43px}
+    #login-wall .lw-sub{font-size:15px;line-height:25px}
+    #login-wall .lw-hero .lw-row .lw-btn{width:100%;height:52px}#login-wall .lw-hero .lw-row .lw-btn+.lw-btn{display:none}
+    #login-wall .lw-trust{justify-content:center;gap:14px}#login-wall .lw-trust span:nth-child(2){display:none}
+    #login-wall .lw-side{gap:10px}
+    #login-wall .lw-side .lw-sig .lw-inset{display:none}
+    #login-wall .lw-facts{grid-template-columns:1fr 1fr}#login-wall .lw-facts>div{padding:16px;border-left:0!important;border-top:1px solid var(--line)}#login-wall .lw-facts>div:nth-child(-n+2){border-top:0}#login-wall .lw-facts .s{display:none}
+    #login-wall .lw-facts .lw-big{font-size:20px;line-height:26px}
+    #login-wall .lw-hd{padding:20px 4px 0}
+    #login-wall h2{font-size:24px;line-height:31px}
+    #login-wall .lw-feats{display:flex;flex-direction:column;gap:0;background:var(--s1);border-radius:18px;box-shadow:var(--sh);padding:4px 16px}
+    #login-wall .lw-feat{flex-direction:row;align-items:flex-start;gap:12px;padding:14px 0;background:none;box-shadow:none;border-radius:0;border-bottom:1px solid var(--line)}
+    #login-wall .lw-feat:last-child{border-bottom:0}
+    #login-wall .lw-feat .lw-ic{width:40px;height:40px;border-radius:12px}
+    #login-wall .lw-ft{gap:2px}#login-wall .lw-feat h3{font-size:15px;line-height:21px}#login-wall .lw-feat p{font-size:13px;line-height:20px}
+    #login-wall .lw-fk{display:none}
+    #login-wall .lw-steps{grid-template-columns:1fr;padding:4px 16px}
+    #login-wall .lw-step{display:grid;grid-template-columns:56px 1fr;gap:2px 12px;padding:12px 0}#login-wall .lw-step+.lw-step{border-left:0;border-top:1px solid var(--line)}
+    #login-wall .lw-step .t{grid-row:span 2;font-size:18px;line-height:24px}
+    #login-wall .lw-perf{padding:20px!important}#login-wall .lw-perf .lw-pst{grid-template-columns:1fr 1fr!important}
+    #login-wall .lw-today{display:none}
+    #login-wall .lw-end{padding:24px 20px;flex-direction:column;align-items:stretch;gap:12px}#login-wall .lw-end .lw-row{flex-direction:column;align-items:stretch}#login-wall .lw-end .lw-btn{width:100%}
+    #login-wall .lw-m{display:block}#login-wall .lw-d{display:none}
   }
-  @media(max-width:560px){
-    #login-wall .lw-w{padding:0 18px}
-    #login-wall .lw-stats .lw-w{grid-template-columns:1fr 1fr}
-    #login-wall .lw-st{border-left:0;border-top:1px solid var(--line);padding:20px 0}
-    #login-wall .lw-st:nth-child(-n+2){border-top:0}
-    #login-wall .lw-feat,#login-wall .lw-src,#login-wall .lw-secu{grid-template-columns:1fr}
-    #login-wall .lw-g3{grid-template-columns:1fr}
-    #login-wall section.lw-sec{padding:60px 0}
-    #login-wall .lw-end{padding:34px 24px}
-    #login-wall footer .lw-cols{grid-template-columns:1fr}
-    #login-wall .lw-cta,#login-wall .lw-ghost{width:100%;justify-content:center}
-  }
-  @media(prefers-reduced-motion:reduce){#login-wall *{animation:none!important;transition:none!important}}
+  @media(prefers-reduced-motion:reduce){#login-wall,#login-wall *{scroll-behavior:auto!important}}
   </style>
-  <div class="lw-mkt"><div class="lw-w">
-    <span class="lw-live"><i id="lwm-dot" class="lw-dot"></i><b id="lwm-st">—</b></span>
-    <span>加權指數 <b id="lwm-px">—</b> <span id="lwm-ch"></span></span>
-    <span>台北時間 <b id="lwm-t">—</b></span>
-    <span>資料來源：臺灣證券交易所（延遲資料）</span>
-  </div></div>
-  <header class="lw-nav"><div class="lw-w">
-    <a class="lw-brand" data-t="lw-top"><i>${LOGO}</i><span>台股波段<small>SWING SIGNAL TERMINAL</small></span></a>
-    <a class="lw-nl" data-t="lw-feat">產品功能</a><a class="lw-nl" data-t="lw-how">運作方式</a><a class="lw-nl" data-t="lw-src">資料來源</a><a class="lw-nl" data-t="lw-sec">安全與隱私</a><a class="lw-nl" data-t="lw-faq">常見問題</a>
-    <button class="lw-nbtn" ${go}>登入</button>
-  </div></header>
-  <div class="lw-hero" id="lw-top"><div class="lw-w">
-    <div>
-      <div class="lw-pill"><b>免費</b>上市＋上櫃全市場波段研究平台</div>
-      <h1>看懂台股的<br><em>每一個波段</em></h1>
-      <p class="lw-sub">每天盤前、盤後自動掃描全市場上市櫃股票，結合技術面、籌碼面與基本面共振，整理出值得研究的波段機會——處置、注意、暫停交易等風險一併標示，每筆訊號全程追蹤、績效不美化。</p>
-      <div class="lw-ctas">
-        <button class="lw-cta" ${go}><span class="g">${G}</span>使用 Google 帳號登入</button>
-        <a class="lw-ghost" data-t="lw-feat">了解產品 ${ic('<path d="M5 12h14M13 6l6 6-6 6"/>',16)}</a>
-      </div>
-      <div class="lw-trust">
-        <span>${ic('<path d="M20 6L9 17l-5-5"/>',15)}永久免費</span>
-        <span>${ic('<path d="M20 6L9 17l-5-5"/>',15)}不經手你的密碼</span>
-        <span>${ic('<path d="M20 6L9 17l-5-5"/>',15)}官方公開資料</span>
-      </div>
-    </div>
-    <div class="lw-term" aria-label="加權指數即時走勢">
-      <div class="lw-tbar"><i></i><i></i><i></i><span class="t">市場總覽 · 加權指數</span><span class="st"><i class="lw-dot lw-on"></i>收盤後更新</span></div>
-      <div class="lw-tbody">
-        <div class="lw-q">
-          <div><div class="q-name">加權指數 TAIEX</div><div class="lw-p" id="lw-price">—</div></div>
-          <div class="q-right"><span id="lw-note">載入中…</span></div>
+  <div class="lw-w">
+    <header>
+      <span class="lw-brand">${SEAL()}<span>台股波段<small>智慧交易系統</small></span></span>
+      <nav class="lw-nav" aria-label="主要"><a data-t="lw-features">功能</a><a data-t="lw-how">運作方式</a><a data-t="lw-perf">追蹤績效</a><a data-t="lw-preview">今日訊號</a></nav>
+      <span class="sp"></span>
+      <button class="lw-btn ghost" ${go}>登入</button>
+      <button class="lw-btn pri" ${go}>免費註冊</button>
+    </header>
+
+    <section class="lw-g" style="align-items:stretch">
+      <div class="lw-card lw-hero">
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <span class="lw-tag ok" id="lw-scan-tag"><i></i>每個交易日 16:30 收盤後掃描全市場</span>
+          <h1>收盤後 30 分鐘，<br>知道明天該盯哪幾檔。</h1>
+          <p class="lw-sub">每天掃描上市櫃全部股票，用同一套波段規則篩出訊號，附進場區間、停損、目標價，並依資金與單筆風險上限算好股數。</p>
         </div>
-        <div class="lw-spark" id="lw-chart"></div>
-        <div class="lw-illus">以下為介面示意 · 訊號卡為範例</div>
-        <div class="lw-g3">
-          <div class="lw-sc"><div class="sc-h"><div><div class="code">2330</div><div class="nm">台積電</div></div><span class="lw-tag b">做多</span></div><div class="row"><span>評分</span><b>A · 86</b></div><div class="row"><span>進場</span><b>1,085</b></div><div class="row"><span>停損</span><b class="dn">1,042</b></div></div>
-          <div class="lw-sc"><div class="sc-h"><div><div class="code">2454</div><div class="nm">聯發科</div></div><span class="lw-tag b">做多</span></div><div class="row"><span>評分</span><b>B · 78</b></div><div class="row"><span>進場</span><b>1,420</b></div><div class="row"><span>停損</span><b class="dn">1,368</b></div></div>
-          <div class="lw-sc"><div class="sc-h"><div><div class="code">3008</div><div class="nm">大立光</div></div><span class="lw-tag s">做空</span></div><div class="row"><span>評分</span><b>B · 74</b></div><div class="row"><span>進場</span><b>2,340</b></div><div class="row"><span>停損</span><b class="up">2,418</b></div></div>
-        </div>
-        <div class="lw-breadth">
-          <div class="bl"><span>市場廣度（範例）</span><span><span class="up">上漲 612</span>　/　<span class="dn">下跌 318</span></span></div>
-          <div class="lw-bbar"><i style="width:34%"></i></div>
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="lw-row"><button class="lw-btn pri lg" ${go}>免費開始使用</button><a class="lw-btn lg" data-t="lw-preview">看今日訊號</a></div>
+          <div class="lw-trust"><span>不需信用卡</span><span>資料來源 TWSE／TPEx／FinMind</span><span>不代客操作</span></div>
         </div>
       </div>
-    </div>
-  </div></div>
-  <div class="lw-stats"><div class="lw-w">
-    <div class="lw-st"><b>2,200+</b><span>上市櫃股票全數涵蓋</span></div>
-    <div class="lw-st"><b>8 項</b><span>官方資料自動檢查是否最新</span></div>
-    <div class="lw-st"><b>每 3 分鐘</b><span>收盤後資料補抓頻率</span></div>
-    <div class="lw-st"><b>NT$0</b><span>所有功能免費使用</span></div>
-  </div></div>
-  <section class="lw-sec" id="lw-feat"><div class="lw-w">
-    <div class="lw-eyebrow">產品功能</div><h2>研究一檔股票需要的，都在同一個畫面</h2>
-    <p class="lw-lead">從大盤、產業到個股，從技術面、籌碼面到基本面，資料整合在同一個地方，不用在好幾個網站之間切換。</p>
-    <div class="lw-feat">
-      <div class="lw-f"><i>${ic('<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>')}</i><b>每日波段訊號</b><span>多空方向、評分與等級、建議進場價、停損與三段停利一次給齊，並持續追蹤每筆結果，歷史績效公開檢視、不美化。</span></div>
-      <div class="lw-f"><i>${ic('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>')}</i><b>市場儀表板</b><span>加權與櫃買指數、漲跌幅與成交金額排行、產業熱度、漲跌家數與漲跌停，收盤後即時更新。</span></div>
-      <div class="lw-f"><i>${ic('<rect x="5" y="7" width="4" height="10" rx="1"/><rect x="15" y="9" width="4" height="6" rx="1"/><path d="M7 3v4M7 17v4M17 6v3M17 15v4"/>')}</i><b>個股研究</b><span>K 線與技術指標、區間績效、同產業比較、本益比與殖利率、月營收、除權息與重大訊息一頁看完。</span></div>
-      <div class="lw-f"><i>${ic('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>')}</i><b>籌碼追蹤</b><span>三大法人逐日買賣超與連買連賣、期交所外資與投信期貨部位、融資融券變化一次掌握。</span></div>
-      <div class="lw-f"><i>${ic('<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.5 2.9 1-6.1L3.2 9.5l6.1-.9z"/>')}</i><b>自選股</b><span>多組清單分類管理，報價每 60 秒自動更新，並標示該股是否出現訊號或處置、注意等風險事件。</span></div>
-      <div class="lw-f"><i>${ic('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/>')}</i><b>資料即時性透明</b><span>每項資料的實際日期與應有日期公開列出，官方一公布就自動補抓、畫面自動更新，絕不拿舊資料充數。</span></div>
-    </div>
-  </div></section>
-  <section class="lw-sec" id="lw-how"><div class="lw-w">
-    <div class="lw-eyebrow">運作方式</div><h2>從掃描到提醒，三個步驟</h2>
-    <p class="lw-lead">所有篩選條件與風險規則都寫在方法論中，登入後可以完整查看每一條規則與其設計理由。</p>
-    <div class="lw-steps">
-      <div class="lw-s"><em>1</em><b>盤前、盤後全市場掃描</b><span>平日 08:20 與 16:30 掃描全部上市櫃股票，納入隔夜消息與最新的處置、暫停交易名單。</span></div>
-      <div class="lw-s"><em>2</em><b>先排除風險，再挑訊號</b><span>處置、變更交易、暫停交易的股票直接排除；同產業不重複集中，市場偏弱時自動減少訊號數量。</span></div>
-      <div class="lw-s"><em>3</em><b>完整交易計畫與追蹤</b><span>每個訊號附上進場、停損與三段停利價位，系統持續追蹤實際結果，績效透明不美化。</span></div>
-    </div>
-  </div></section>
-  <section class="lw-sec" id="lw-src"><div class="lw-w">
-    <div class="lw-eyebrow">資料來源</div><h2>只用官方公開資料</h2>
-    <p class="lw-lead">每一個數字都標示來源與資料日期，官方尚未公布時會明確提示，寧可沒有，也不給你錯的。</p>
-    <div class="lw-src">
-      <div class="lw-sb"><i>${ic('<path d="M3 21h18M5 21V10M19 21V10M9 21v-6h6v6M2 10l10-6 10 6"/>',20)}</i><div><b>臺灣證券交易所</b><span>上市行情、三大法人、融資融券、即時報價</span></div></div>
-      <div class="lw-sb"><i>${ic('<path d="M3 21h18M5 21V10M19 21V10M9 21v-6h6v6M2 10l10-6 10 6"/>',20)}</i><div><b>證券櫃檯買賣中心</b><span>上櫃行情、處置注意股、本益比</span></div></div>
-      <div class="lw-sb"><i>${ic('<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',20)}</i><div><b>臺灣期貨交易所</b><span>三大法人期貨與選擇權、P/C 比</span></div></div>
-      <div class="lw-sb"><i>${ic('<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',20)}</i><div><b>公開資訊觀測站</b><span>月營收、財報、重大訊息公告</span></div></div>
-    </div>
-  </div></section>
-  <section class="lw-sec" id="lw-sec"><div class="lw-w">
-    <div class="lw-eyebrow">安全與隱私</div><h2>你的帳號與資料，我們看得很重</h2>
-    <p class="lw-lead">使用 Google 官方登入，本站從頭到尾不會碰到你的密碼，只保存提供服務所需的最少資料。</p>
-    <div class="lw-secu">
-      <div><b>${ic('<path d="M20 6L9 17l-5-5"/>',16)}不經手密碼</b><span>由 Google 驗證身分，本站只收到經驗證的帳號識別碼。</span></div>
-      <div><b>${ic('<path d="M20 6L9 17l-5-5"/>',16)}全程加密傳輸</b><span>強制 HTTPS 加密連線，登入憑證無法被網頁程式讀取。</span></div>
-      <div><b>${ic('<path d="M20 6L9 17l-5-5"/>',16)}資料最小化</b><span>只存帳號、Email、顯示名稱與自選股；IP 只存單向雜湊。</span></div>
-      <div><b>${ic('<path d="M20 6L9 17l-5-5"/>',16)}主動防護</b><span>異常大量請求與越權嘗試會被自動限制，資料庫不對外開放。</span></div>
-    </div>
-  </div></section>
-  <section class="lw-sec" id="lw-faq" style="border-bottom:0"><div class="lw-w" style="max-width:880px">
-    <div class="lw-eyebrow" style="text-align:center">常見問題</div><h2 style="text-align:center">還有疑問嗎？</h2>
-    <div style="margin-top:32px">
-    <details><summary>需要付費嗎？</summary><p>不用。目前所有功能都免費，只需要一個 Google 帳號就能使用。</p></details>
-    <details><summary>你們會保存我的哪些資料？</summary><p>只保存 Google 帳號的識別碼、Email 與顯示名稱、你建立的自選股，以及登入時間。不保存密碼；IP 只存單向雜湊，不保存原始位址；資料不販售、不提供第三方。</p></details>
-    <details><summary>這是投資建議嗎？</summary><p>不是。訊號與數據僅供研究與學習參考，投資一定有風險，請自行評估並自負盈虧。</p></details>
-    <details><summary>資料多久更新一次？</summary><p>盤中指數與報價約每 5 分鐘更新（個股研究頁每 15 秒）；收盤後官方公布的行情、三大法人、期交所籌碼等，系統每 3 分鐘檢查一次，一公布就自動補抓。報價為延遲資料，不適合當作下單依據。</p></details>
-    <details><summary>可以用手機嗎？</summary><p>可以。網站針對手機重新設計過，底部有快速切換列，也能加入主畫面當作 App 使用。</p></details>
-    </div>
-    <div class="lw-end"><div><h2>開始研究你的下一個波段</h2><p>用 Google 帳號登入，30 秒完成，立即使用全部功能。</p></div><button class="lw-cta" ${go}><span class="g">${G}</span>使用 Google 帳號登入</button></div>
-  </div></section>
-  <footer><div class="lw-w">
-    <div class="lw-cols">
-      <div><a class="lw-brand" data-t="lw-top" style="margin-bottom:12px"><i>${LOGO}</i><span>台股波段<small>SWING SIGNAL TERMINAL</small></span></a><div style="line-height:1.8;max-width:26em">台股上市櫃波段研究平台，整合官方公開的行情、籌碼與基本面資料。</div></div>
-      <div><b>產品</b><a data-t="lw-feat">產品功能</a><a data-t="lw-how">運作方式</a><a data-t="lw-src">資料來源</a></div>
-      <div><b>支援</b><a data-t="lw-sec">安全與隱私</a><a data-t="lw-faq">常見問題</a><a ${go}>登入</a></div>
-    </div>
-    <div class="lw-fine">本站內容僅供研究與學習參考，不構成任何投資建議或要約；投資一定有風險，過去績效不代表未來表現，請自行評估並自負盈虧。指數與報價為延遲資料。資料來源：臺灣證券交易所、證券櫃檯買賣中心、臺灣期貨交易所、公開資訊觀測站。</div>
-  </div></footer>`;
+      <div class="lw-side">
+        <div class="lw-card" style="grid-column:span 2;padding:20px 22px;gap:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span class="lw-lbl" id="lw-ix-lbl">加權指數</span><span class="lw-tag" id="lw-ix-tag">—</span></div>
+          <div style="display:flex;align-items:baseline;gap:10px"><span class="lw-big" style="font-size:34px;line-height:40px" id="lw-ix-px">—</span><span style="font-size:13px" id="lw-ix-ch"></span></div>
+          <div id="lw-ix-k" style="height:90px"></div>
+        </div>
+        <div class="lw-card lw-sig" style="padding:18px;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px"><span class="lw-av">${ic('M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z M8 11V8a4 4 0 0 1 8 0v3',16)}</span><span style="flex:1;font:600 14px/18px var(--sans)">今日訊號<small style="display:block;font:400 11px/15px var(--mono);color:var(--t3)" id="lw-sig-date">最近一次掃描</small></span></div>
+          <div style="display:flex;align-items:baseline;gap:6px"><span class="lw-big" style="font-size:22px" id="lw-sig-n">—</span><span class="lw-tag">檔</span></div>
+          <div class="lw-inset" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div class="lw-stat">停損<b>登入查看</b></div><div class="lw-stat">目標<b>登入查看</b></div></div>
+        </div>
+        <div class="lw-card lw-dark" style="padding:18px;gap:8px;justify-content:space-between">
+          <span class="lw-lbl">單筆風險上限 · 以資金 20 萬為例</span>
+          <span style="font:500 30px/36px var(--sans);letter-spacing:-.03em" id="lw-risk-amt">—</span>
+          <div style="font-size:12px;color:var(--tm-t2)" id="lw-risk-note">依停損距離換算建議股數</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="lw-card lw-facts" aria-label="系統規模">
+      <div><div class="lw-lbl">每日掃描</div><div class="lw-big" style="margin-top:6px">16:30</div><div class="s">收盤後自動執行</div></div>
+      <div><div class="lw-lbl">涵蓋標的</div><div class="lw-big" style="margin-top:6px" id="lw-f-uni">—</div><div class="s">上市、上櫃股票</div></div>
+      <div><div class="lw-lbl">已追蹤訊號</div><div class="lw-big" style="margin-top:6px" id="lw-f-trk">—</div><div class="s">每筆從進場追到出場</div></div>
+      <div><div class="lw-lbl">單筆風險上限</div><div class="lw-big" style="margin-top:6px" id="lw-f-risk">—</div><div class="s">依停損距離算股數</div></div>
+    </section>
+
+    <div class="lw-hd" id="lw-features"><div><span class="lw-eb">FEATURES</span><h2>盤後要做的研究，一個地方做完</h2></div></div>
+    <section class="lw-g lw-feats">
+      ${F('M13 2L4 14h7l-1 8 9-12h-7z','p','盤後訊號','多道條件篩選全市場，附進場區間、停損、三段目標與建議股數，並持續追蹤每筆結果。','掃描時間','lw-k1')}
+      ${F('M7 3v18 M17 3v18 M5 8h4v7H5z M15 6h4v9h-4z','b','個股研究','總覽、技術、籌碼、財務、公司五個分頁；K 線可切換均線、EMA、布林、MACD、KD、RSI。','研究分頁','lw-k2')}
+      ${F('M12 3l8.5 6.2-3.2 10H6.7L3.5 9.2z M12 8l4 3-1.5 4.5h-5L8 11z','a','基本面雷達','月營收、獲利與估值綜合評分，FinMind 財報 12 項體檢一眼看懂體質。','財報體檢','lw-k3')}
+      ${F('M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z','c','持倉風控','追蹤每檔停損與目標、組合風險上限，接近停損或到價時提醒。','組合風險上限','lw-k4')}
+      ${F('M3 20h18 M5 16l4-5 4 3 6-8','g','績效追蹤','每筆訊號的勝率、損益與最大回撤公開，不挑結果、不美化。','已平倉','lw-k5')}
+      ${F('M6 3h9l4 4v14H6z M14 3v5h5 M9 13h7 M9 17h5','g','每日報告','大盤、資金、類股、訊號與持倉整理成報告，盤前、盤後各一份。','產出時間','lw-k6')}
+    </section>
+
+    <div class="lw-hd" id="lw-how"><div><span class="lw-eb">HOW IT WORKS</span><h2>每個交易日的四個時間點</h2></div></div>
+    <section class="lw-card lw-steps">
+      <div class="lw-step"><span class="t">08:20</span><b>盤前掃描</b><span>納入隔夜消息與最新處置、暫停交易名單，更新有效訊號。</span></div>
+      <div class="lw-step"><span class="t">13:30</span><b>收盤</b><span>彙整 TWSE／TPEx 價量、三大法人與信用交易資料。</span></div>
+      <div class="lw-step"><span class="t">16:30</span><b>全市場掃描</b><span>上市櫃逐檔套用規則，產出今日訊號與建議股數。</span></div>
+      <div class="lw-step"><span class="t">21:35</span><b>盤後報告</b><span>大盤、資金與訊號整理成報告，並結算追蹤中的訊號。</span></div>
+    </section>
+
+    <div class="lw-hd" id="lw-perf"><div><span class="lw-eb">TRACK RECORD</span><h2>先看訊號實際追蹤的結果</h2></div></div>
+    <section class="lw-g">
+      <div class="lw-card lw-dark c8 lw-perf" style="padding:28px;gap:18px" id="lw-perf-card"><div class="lw-lbl">載入中…</div></div>
+      <div class="lw-card c4" style="padding:28px;gap:14px;justify-content:space-between">
+        <div style="display:flex;flex-direction:column;gap:10px"><h3 style="margin:0;font:600 18px/26px var(--sans)">我們不藏數字</h3><p style="margin:0;font-size:14px;line-height:23px;color:var(--t2)" id="lw-honest">每一筆訊號從產生那天開始追蹤，停損、達標或到期出場都記錄下來，勝率與損益只算實際結果。</p><p style="margin:0;font-size:14px;line-height:23px;color:var(--t2)">價位以訊號日收盤為基準；ETF 放空等散戶難以執行的訊號另外標示，不算進勝率。</p></div>
+        <a class="lw-lk" ${go}>登入看每一筆明細 →</a>
+      </div>
+    </section>
+
+    <div class="lw-hd lw-today" id="lw-preview"><div><span class="lw-eb">TODAY</span><h2>今日訊號與篩選過程</h2></div><a class="lw-lk" ${go}>登入看完整內容 →</a></div>
+    <section class="lw-g lw-today">
+      <div class="lw-card c4" style="padding:24px;gap:14px">
+        <div class="lw-lbl" id="lw-fn-lbl">篩選漏斗</div>
+        <div class="lw-fn" id="lw-fn" aria-hidden="true"></div>
+        <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;font:500 11px/14px var(--mono);text-align:center;color:var(--t3)" id="lw-fn-n"></div>
+        <div style="font-size:12px;line-height:18px;color:var(--t2)">全市場 → 進入檢查 → 通過預篩 → 候選訊號 → 最終訊號</div>
+      </div>
+      <div class="lw-card c8" style="overflow:hidden">
+        <div style="padding:20px 24px 0;overflow-x:auto"><table class="lw-tbl"><thead><tr><th>股票</th><th>方向</th><th>收盤</th><th>漲跌幅</th><th>進場</th><th>停損</th><th>目標</th><th>評分</th></tr></thead><tbody>
+          ${[0,1,2].map(i=>`<tr class="bl" aria-hidden="true"><td><span class="lw-bar" style="width:${[74,60,68][i]}px"></span></td><td><span class="lw-bar" style="width:22px"></span></td><td><span class="lw-bar" style="width:52px"></span></td><td><span class="lw-bar" style="width:46px"></span></td><td><span class="lw-bar" style="width:60px"></span></td><td><span class="lw-bar" style="width:40px"></span></td><td><span class="lw-bar" style="width:56px"></span></td><td><span class="lw-bar" style="width:22px"></span></td></tr>`).join('')}
+        </tbody></table></div>
+        <div style="display:flex;justify-content:center;padding:16px 24px 24px"><div class="lw-row" style="gap:14px;padding:8px 8px 8px 18px;background:var(--s2);border-radius:999px"><span style="font-size:13px;color:var(--t2)" id="lw-today-txt">今日訊號、價位與部位計算，登入後查看</span><button class="lw-btn pri sm" ${go}>免費註冊</button></div></div>
+      </div>
+    </section>
+
+    <section class="lw-card lw-dark lw-end">
+      <div style="flex:1 1 420px;display:flex;flex-direction:column;gap:10px"><span class="lw-lbl">下一次掃描 · ${nextScan}</span><h2>今晚的訊號，一起看。</h2><p style="margin:0;font-size:14px;line-height:22px;color:var(--tm-t2)">設定自選股與到價提醒，訊號出現或價格到位時站內通知。使用 Google 帳號登入，30 秒完成。</p></div>
+      <div class="lw-row"><button class="lw-btn lg" ${go}>免費註冊</button><button class="lw-btn lg ol" ${go}>已有帳號，登入</button></div>
+    </section>
+
+    <footer>
+      <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;justify-content:space-between"><span class="lw-brand">${SEAL(28)}<span style="font:600 14px/1 var(--sans)">台股波段</span></span><nav class="lw-fnav" aria-label="頁尾"><a data-t="lw-features">功能</a><a data-t="lw-how">運作方式</a><a data-t="lw-perf">追蹤績效</a><a ${go}>登入</a></nav></div>
+      <div class="lw-fine"><b>i</b><span>訊號為技術面統計結果，不構成投資建議；過去績效不代表未來報酬。指數與報價為延遲資料，資料來源：臺灣證券交易所、證券櫃檯買賣中心、FinMind。</span></div>
+    </footer>
+  </div>`;
   document.body.appendChild(w);
   w.querySelectorAll('[data-t]').forEach(a=>a.addEventListener('click',()=>{const t=w.querySelector('#'+a.dataset.t);if(t)t.scrollIntoView({behavior:'smooth',block:'start'});}));
-  w.querySelectorAll('.lw-tabs button').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.p;
-    w.querySelectorAll('.lw-tabs button').forEach((x,j)=>x.classList.toggle('lw-on',j===i));
-    w.querySelectorAll('.lw-pane').forEach((x,j)=>x.classList.toggle('lw-on',j===i));}));
-  const lwClock=()=>{const t=new Date(Date.now()+8*3600e3);const el=document.getElementById('lwm-t');if(!el){clearInterval(_lwT);return;}el.textContent=t.toISOString().slice(11,19);};
-  const _lwT=setInterval(lwClock,1000);lwClock();
+  const $=id=>w.querySelector('#'+id),fmt=(v,d=2)=>v==null||!isFinite(v)?'—':Number(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+  const setT=(id,t)=>{const e=$(id);if(e)e.textContent=t;};
+  setT('lw-k1','08:20・16:30');setT('lw-k2','5 個');setT('lw-k3','12 項');setT('lw-k6','08:35・21:35');
+  // 加權指數：即時快照
   fetch('/api/public/pulse',{cache:'no-store'}).then(r=>r.json()).then(d=>{
-    if(!d||!d.ok||d.price==null){document.getElementById('lw-note').textContent='目前尚無指數資料';setEl('lwm-st','資料暫缺');return;}
-    const up=(d.chg||0)>=0,c=up?'#f87171':'#4ade80';
-    setEl('lwm-st',d.market_open?'盤中':'收盤');{const dt=document.getElementById('lwm-dot');if(dt)dt.classList.toggle('lw-on',!!d.market_open);}
-    setEl('lwm-px',Number(d.price).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}));
-    setHtml('lwm-ch',d.chg!=null?`<span style="color:${c}">${up?'▲':'▼'} ${Math.abs(d.chg).toFixed(2)}（${up?'+':''}${d.pct}%）</span>`:'');
-    document.getElementById('lw-price').innerHTML=Number(d.price).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+(d.chg!=null?`<small style="color:${c}">${up?'▲':'▼'} ${Math.abs(d.chg).toFixed(2)}（${up?'+':''}${d.pct}%）</small>`:'');
-    const pts=(d.series||[]).map(p=>p[1]).filter(v=>v!=null);
-    if(d.prev!=null)pts.unshift(d.prev);
-    const el=document.getElementById('lw-chart');
-    if(pts.length>=2){const W=560,H=120,lo=Math.min(...pts),hi=Math.max(...pts),r=(hi-lo||1)*.12,L=lo-r,Hh=hi+r;
-      const X=i=>(i/(pts.length-1)*W).toFixed(1),Y=v=>((1-(v-L)/(Hh-L))*H).toFixed(1);
-      const dd=pts.map((v,i)=>(i?'L':'M')+X(i)+' '+Y(v)).join(' ');
-      const py=Y(d.prev!=null?d.prev:pts[0]);
-      el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" role="img" aria-label="加權指數當日走勢"><defs><linearGradient id="lwg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c}" stop-opacity=".28"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></linearGradient></defs><line x1="0" x2="${W}" y1="${py}" y2="${py}" stroke="rgba(255,255,255,.18)" stroke-dasharray="4 4"/><path d="${dd} L${W} ${H} L0 ${H}Z" fill="url(#lwg)"/><path class="lw-draw" pathLength="1" d="${dd}" fill="none" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;}
-    document.getElementById('lw-note').textContent=(d.date||'')+(d.market_open?'・盤中':'・收盤');
+    if(!d||!d.ok||d.price==null)return;
+    const up=(d.chg||0)>=0;
+    setT('lw-ix-px',fmt(d.price));
+    const ch=$('lw-ix-ch');if(ch&&d.chg!=null){ch.className=up?'up':'down';ch.textContent=`${up?'▲':'▼'} ${fmt(Math.abs(d.chg))}`;}
+    const pct=d.pct??(d.chg!=null&&d.price-d.chg?d.chg/(d.price-d.chg)*100:null);
+    const tg=$('lw-ix-tag');if(tg&&pct!=null){tg.className='lw-tag '+(up?'up':'down');tg.textContent=`${up?'▲':'▼'} ${fmt(Math.abs(pct))}%`;}
+    setT('lw-ix-lbl',`加權指數 · ${(d.date||'').slice(5).replace('-','/')} ${d.market_open?'盤中':'收盤'}`);
   }).catch(()=>{});
+  // 彙總：日 K、掃描漏斗、追蹤績效（只有數字，不含個股）
+  fetch('/api/public/summary',{cache:'no-store'}).then(r=>r.json()).then(s=>{
+    const k=(s.index||[]).filter(x=>x.o!=null);
+    if(k.length>=5){const W=300,H=90,lo=Math.min(...k.map(x=>x.l)),hi=Math.max(...k.map(x=>x.h)),rg=(hi-lo)||1,st=W/k.length,y=v=>(4+(H-8)*(1-(v-lo)/rg)).toFixed(1),cx=i=>(i*st+st/2).toFixed(1);
+      const all=k.map(x=>x.c),m5=all.map((_,i)=>i<4?null:all.slice(i-4,i+1).reduce((a,b)=>a+b,0)/5);
+      const bars=k.map((x,i)=>{const c=x.c>=x.o?'var(--cup)':'var(--cdn)',t=y(Math.max(x.o,x.c)),b=y(Math.min(x.o,x.c));return `<path d="M${cx(i)} ${y(x.h)}V${y(x.l)}" stroke="${c}" stroke-width="1.2"/><rect x="${(i*st+st*.22).toFixed(1)}" y="${t}" width="${(st*.56).toFixed(1)}" height="${Math.max(1,b-t).toFixed(1)}" rx="1" fill="${c}"/>`;}).join('');
+      const ma=m5.map((v,i)=>v==null?'':(m5[i-1]==null?'M':'L')+cx(i)+','+y(v)).join('');
+      const e=$('lw-ix-k');if(e)e.innerHTML=`<svg class="lw-k" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="加權指數近 ${k.length} 日 K 線">${bars}<path d="${ma}" fill="none" stroke="var(--acc)" stroke-width="1.5"/></svg>`;
+      if(!$('lw-ix-px').textContent.match(/\d/)){const l=k[k.length-1],p=k[k.length-2];setT('lw-ix-px',fmt(l.c));setT('lw-ix-lbl',`加權指數 · ${l.d.slice(5).replace('-','/')} 收盤`);if(p){const up=l.c>=p.c,ch=$('lw-ix-ch'),tg=$('lw-ix-tag');ch.className=up?'up':'down';ch.textContent=`${up?'▲':'▼'} ${fmt(Math.abs(l.c-p.c))}`;tg.className='lw-tag '+(up?'up':'down');tg.textContent=`${up?'▲':'▼'} ${fmt(Math.abs((l.c/p.c-1)*100))}%`;}}}
+    const sc=s.scan||{},rk=s.risk||{},pf=s.perf||{};
+    if(sc.universe||s.listed){setT('lw-f-uni',fmt(sc.universe||s.listed,0)+' 檔');}
+    if(sc.date&&sc.universe!=null&&sc.sent!=null){const t=$('lw-scan-tag');if(t)t.innerHTML=`<i></i>${sc.date.slice(5).replace('-','/')} 掃描完成 · ${fmt(sc.universe,0)} 檔 → ${sc.sent} 檔訊號`;}
+    setT('lw-sig-n',sc.sent!=null?String(sc.sent):'—');if(sc.date)setT('lw-sig-date',sc.date.slice(5).replace('-','/')+' 掃描');
+    if(rk.per_trade_pct!=null){setT('lw-f-risk',rk.per_trade_pct+'%');setT('lw-risk-amt',fmt(200000*rk.per_trade_pct/100,0)+' 元');setT('lw-risk-note',`資金 × ${rk.per_trade_pct}%；停損距離越遠，股數越少`);}
+    if(rk.portfolio_pct!=null)setT('lw-k4',rk.portfolio_pct+'%');
+    setT('lw-f-trk',pf.total!=null?fmt(pf.total,0)+' 筆':'—');setT('lw-k5',pf.closed!=null?fmt(pf.closed,0)+' 筆':'—');
+    if(sc.sent!=null)setT('lw-today-txt',`${sc.date?sc.date.slice(5,10).replace('-','/')+' ':''}${sc.sent} 檔訊號、價位與部位計算，登入後查看`);
+    // 漏斗
+    const fn=[sc.universe,sc.examined,sc.passed,sc.found,sc.sent];
+    if(fn.every(v=>v!=null)&&sc.universe>0){const mx=sc.universe;
+      $('lw-fn').innerHTML=fn.map((v,i)=>`<i class="${i===4?'l':''}" style="height:${Math.max(4,v/mx*100).toFixed(0)}%"></i>`).join('');
+      $('lw-fn-n').innerHTML=fn.map((v,i)=>`<span${i===4?' style="color:var(--ink)"':''}>${fmt(v,0)}</span>`).join('');
+      setT('lw-fn-lbl','篩選漏斗 · '+(sc.date||'').slice(5,10).replace('-','/'));}
+    else{$('lw-fn').innerHTML='';$('lw-fn-n').innerHTML='<span style="grid-column:1/-1">第一次掃描完成後顯示</span>';}
+    // 追蹤績效
+    const pc=$('lw-perf-card'),eq=(pf.equity||[]).filter(x=>x.v!=null);
+    const stat=(n,v,c)=>`<div class="lw-inset"><div class="lw-stat">${n}<b${c?` style="color:${c}"`:''}>${v}</b></div></div>`;
+    if((pf.closed||0)>0){
+      let svg='';if(eq.length>1){const W=700,H=200,lo=Math.min(...eq.map(x=>x.v)),hi=Math.max(...eq.map(x=>x.v)),rg=(hi-lo)||1,pts=eq.map((x,i)=>(i?'L':'M')+(i*W/(eq.length-1)).toFixed(1)+','+(10+(H-20)*(1-(x.v-lo)/rg)).toFixed(1)).join(' ');
+        svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block;width:100%;height:200px" role="img" aria-label="訊號追蹤資金曲線"><path d="M0 10H${W} M0 100H${W} M0 190H${W}" stroke="var(--tm3)" stroke-width="1" vector-effect="non-scaling-stroke"/><path d="${pts}" fill="none" stroke="#b8a8ff" stroke-width="2.4" vector-effect="non-scaling-stroke"/></svg>`;}
+      const wr=pf.win_rate!=null?fmt(pf.win_rate,1)+'%':'—',pl=pf.avg_loss?fmt(Math.abs(pf.avg_win/pf.avg_loss),2):'—';
+      pc.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="lw-lbl">系統訊號實際追蹤 · 已平倉 ${fmt(pf.closed,0)} 筆 · 追蹤中 ${fmt((pf.total||0)-(pf.closed||0),0)} 筆</span><span class="lw-leg"><i style="background:#b8a8ff"></i>資金曲線</span></div>
+        ${svg||'<div class="lw-lbl" style="padding:40px 0;text-align:center">資金曲線累積中</div>'}
+        <div class="lw-pst" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">${stat('勝率',wr)}${stat('勝／負',`${pf.wins||0} / ${pf.losses||0}`)}${stat('最大回撤',pf.max_drawdown?'−'+fmt(Math.abs(pf.max_drawdown),1)+'%':'—','#4ee08a')}${stat('平均盈虧比',pl)}</div>`;
+      setT('lw-honest',`目前已平倉 ${fmt(pf.closed,0)} 筆，勝率 ${wr}，${pf.wins||0} 勝 ${pf.losses||0} 負。這是系統訊號照價位實際追蹤的結果，不是事後挑選的回測。`);
+    }else{
+      pc.innerHTML=`<div class="lw-lbl">系統訊號實際追蹤</div><div style="padding:30px 0;display:flex;flex-direction:column;gap:8px"><b style="font:600 20px/28px var(--sans)">樣本累積中</b><span style="font-size:14px;line-height:22px;color:var(--tm-t2)">目前追蹤中 ${fmt(pf.total||0,0)} 筆、尚無已平倉訊號。累積到足夠筆數後，這裡會直接公開勝率、資金曲線與最大回撤。</span></div>
+        <div class="lw-pst" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">${stat('已平倉','0 筆')}${stat('追蹤中',fmt(pf.total||0,0)+' 筆')}${stat('勝率','—')}${stat('最大回撤','—')}</div>`;
+    }
+  }).catch(()=>{const pc=$('lw-perf-card');if(pc)pc.innerHTML='<div class="lw-lbl">績效資料暫時載入失敗</div>';});
 }
 async function loadMembersPage(){
   let d;try{const r=await fetch('/api/admin/members',{cache:'no-store'});if(!r.ok)throw 0;d=await r.json();}
