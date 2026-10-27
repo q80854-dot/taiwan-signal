@@ -382,6 +382,17 @@ def job_warm_instrument():
     logger.info("個股頁預熱：" + "，".join(done))
 
 
+def job_world_warm():
+    """預熱首頁全球市場看板（指數期貨／全球指數／商品／外匯／債券），讓訪客開首頁直接命中快取。"""
+    try:
+        from data_fetcher import fetch_world_board
+        b = fetch_world_board(force=True)
+        ok = sum(1 for g in ("futures", "indices", "commodities", "fx", "bonds") for it in b.get(g, []) if it.get("ok"))
+        logger.info(f"全球市場看板已預熱：{ok} 個標的有資料")
+    except Exception as e:
+        logger.warning(f"job_world_warm: {e}")
+
+
 def job_market_extras():
     """證交所補充資料：交易限制旗標（暫停/變更交易、停資停券…）與融券／借券賣出餘額歷史。"""
     try:
@@ -548,6 +559,9 @@ def setup_scheduler():
     scheduler.add_job(job_finmind_warm, CronTrigger(hour="8,14,15,16,17,18,20,22", minute=50, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="finmind_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_finmind_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="finmind_warm_boot", replace_existing=True)
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
+    # 全球市場看板：全球/美股在台灣晚上到清晨才交易，所以不分平日假日、全天每 10 分鐘預熱一次；開機後 75 秒先暖一次。
+    scheduler.add_job(job_world_warm, "interval", minutes=10, id="world_warm", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_world_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=75), id="world_warm_boot", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
     scheduler.add_job(job_report_boot_catchup, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=120), id="report_boot_catchup", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "interval", minutes=20, id="warm_instrument", replace_existing=True, max_instances=1, coalesce=True)
@@ -1111,6 +1125,17 @@ def api_audit():
 def api_events():
     from state_store import store
     return jsonify({"events": store.get_events(limit=int(request.args.get("limit", 60)))})
+
+
+@app.route("/api/world")
+def api_world():
+    """首頁全球市場看板（指數期貨／全球指數／商品／外匯／債券）。讀快取，由排程預熱。"""
+    try:
+        from data_fetcher import fetch_world_board
+        return jsonify(fetch_world_board())
+    except Exception as e:
+        logger.warning(f"api_world: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/watchlist", methods=["GET", "POST", "DELETE"])
 def api_watchlist():

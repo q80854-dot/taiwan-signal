@@ -1032,6 +1032,18 @@ html.force-mobile .wl-cards{display:block}html.force-mobile .wl-tblw{display:non
 .ma-act{display:flex;gap:6px}
 .ma-act .btn{padding:4px 10px;font-size:12px}
 .mw-bell{display:inline-block;padding:2px 6px;border-radius:7px}.mw-bell:hover{background:var(--s2)}
+/* 全球市場看板（首頁） */
+.wtabs{display:flex;gap:8px;margin:2px 0 10px;flex-wrap:wrap}
+.wtabs button{border:1px solid var(--line2);background:var(--s1);color:var(--t2);border-radius:999px;padding:6px 15px;font-size:13px;cursor:pointer}
+.wtabs button.on{background:var(--navy2);border-color:var(--navy2);color:#fff}
+html[data-theme=dark] .wtabs button.on{background:var(--navy2);border-color:var(--navy2)}
+.wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.wcard{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--s1);min-width:0}
+.wcard .wn{font-size:12.5px;color:var(--t2);margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcard .wp{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.wcard .wc{font-size:12.5px;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wsub{font-size:12.5px;color:var(--t3);margin:14px 0 7px;font-weight:600}
+.wsub:first-child{margin-top:2px}
 .acct-h{padding:14px 16px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
 .acct-h b{color:var(--ink);font-size:15px}.acct-h span{color:var(--t3);font-size:12px;word-break:break-all}
 .acct-h em{align-self:flex-start;margin-top:6px;font-style:normal;font-size:11px;font-weight:700;background:var(--navy);color:#fff;border-radius:999px;padding:2px 9px}
@@ -1784,6 +1796,13 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
     </div>
     <div class="sec-label"><div class="bar"></div><div class="tx">全體法人資金流向（上市整體）</div></div>
     <div class="panel"><div class="panel-body" id="ovd-inst-flow"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></div>
+    <div class="sec-label"><div class="bar" style="background:var(--accent)"></div><div class="tx">全球市場</div><span class="mut" id="world-at" style="margin-left:10px"></span></div>
+    <div class="wtabs" id="world-tabs">
+      <button class="on" data-wt="futures" onclick="worldTab('futures')">指數期貨</button>
+      <button data-wt="indices" onclick="worldTab('indices')">全球指數</button>
+      <button data-wt="cfx" onclick="worldTab('cfx')">商品·外匯·債券</button>
+    </div>
+    <div class="panel"><div class="panel-body" id="world-body" style="padding:12px"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">今日大盤</div></div>
     <div class="panel">
       <div class="panel-body" id="market-summary"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div>
@@ -5885,7 +5904,32 @@ async function fetchOverviewDash(){
     setEl('ovd-chip-date',t.date?`期貨 ${t.date}・臺股期貨(TX)`:'');
   }catch(e){setHtml('ovd-chip','<div class="empty" style="padding:18px">載入失敗，稍後自動重試</div>');}
   try{loadMarketInstFlow('ovd-inst-flow');}catch(e){}
+  try{loadWorld();}catch(e){}
 }
+// 全球市場看板（指數期貨／全球指數／商品·外匯·債券）——資料來自 /api/world（yfinance，排程預熱）
+var _world={data:null,tab:'futures'};
+async function loadWorld(){
+  try{const r=await fetch('/api/world',{cache:'no-store'});if(!r.ok)return;_world.data=await r.json();worldDraw();}catch(e){}
+}
+function _wcard(it){
+  const c=it.chg,up=c>0,down=c<0,col=(!it.ok||c==null)?'var(--t3)':up?'var(--up)':down?'var(--down)':'var(--t2)';
+  const arrow=(!it.ok||c==null)?'':up?'▲':down?'▼':'';
+  const val=(it.ok&&it.price!=null)?_fmtN(it.price,2):'<span style="color:var(--t3);font-size:13px;font-weight:500">暫無</span>';
+  const chg=(it.ok&&c!=null)?`${arrow} ${it.chg_pt!=null?_sg(it.chg_pt,2):''}（${_sg(c,2)}%）`:'';
+  return `<div class="wcard"><div class="wn" title="${escH(it.name)}">${escH(it.name)}</div>`
+    +`<div class="wp" style="color:${col}">${val}</div><div class="wc" style="color:${col}">${chg}</div></div>`;
+}
+const _wgrid=list=>`<div class="wgrid">${(list||[]).map(_wcard).join('')}</div>`;
+function worldDraw(){
+  const el=document.getElementById('world-body');if(!el||!_world.data)return;
+  const d=_world.data;let html='';
+  if(_world.tab==='futures')html=_wgrid(d.futures);
+  else if(_world.tab==='indices')html=_wgrid(d.indices);
+  else html=`<div class="wsub">商品</div>${_wgrid(d.commodities)}<div class="wsub">外匯</div>${_wgrid(d.fx)}<div class="wsub">債券殖利率（%）</div>${_wgrid(d.bonds)}`;
+  el.innerHTML=html||'<div class="empty" style="padding:18px">暫無資料</div>';
+  try{setEl('world-at',d.at?('更新 '+(toTaipeiStr(new Date(d.at*1000).toISOString())||'')):'');}catch(e){}
+}
+function worldTab(t){_world.tab=t;document.querySelectorAll('#world-tabs button').forEach(b=>b.classList.toggle('on',b.dataset.wt===t));worldDraw();}
 function updateStatusBar(){
   const tw=new Date(Date.now()+8*3600e3),h=tw.getUTCHours()*60+tw.getUTCMinutes(),wd=tw.getUTCDay(),open=wd>=1&&wd<=5&&h>=540&&h<=810;
   const pad=n=>String(n).padStart(2,'0');
