@@ -4,6 +4,8 @@
 （FMP 主、FRED 備援）。用 mock 驗證：沒金鑰回 no_source（不編造）、FMP 解析正確
 （只收美國、UTC→台北、中文對照、數值、重要度）、FRED 只補有對應的官方發布且不覆蓋 FMP。
 """
+from datetime import timedelta
+
 import pytest
 
 import econ_calendar as ec
@@ -78,6 +80,38 @@ def test_fred_backstop_matches_and_dedup(monkeypatch):
     assert not any("Obscure" in e["event"] for e in out["events"])  # 無對應的不塞
     nfp = next(e for e in out["events"] if "非農" in e["zh"])
     assert nfp["source"] == "FRED" and nfp["estimate"] is None       # FRED 只有日期、無預測值
+
+
+def test_fred_free_enrichment_prev_actual(monkeypatch):
+    # FMP 付費端點不可用（無金鑰），改以 FRED series/observations 免費補前值/公佈值。
+    monkeypatch.delenv("FMP_API_KEY", raising=False)
+    monkeypatch.setenv("FRED_API_KEY", "f")
+    from datetime import datetime
+    future = (datetime.now(ec._TPE) + timedelta(days=3)).strftime("%Y-%m-%d")
+    today = datetime.now(ec._TPE).strftime("%Y-%m-%d")
+    releases = {"release_dates": [
+        {"date": future, "release_name": "Consumer Price Index"},       # 未來 → 前值=最後公佈、公佈待出
+        {"date": today, "release_name": "Employment Situation"},         # 今日=已公佈 → 最新=公佈、次新=前值
+    ]}
+    cpi_obs = {"observations": [{"date": "2026-09-01", "value": "3.2"}, {"date": "2026-08-01", "value": "3.0"}]}
+    nfp_obs = {"observations": [{"date": "2026-10-01", "value": "150"}, {"date": "2026-09-01", "value": "180"}]}
+
+    def fake_get(url, **k):
+        if "series/observations" in url:
+            sid = (k.get("params") or {}).get("series_id")
+            return _Resp(cpi_obs if sid == "CPIAUCSL" else nfp_obs)
+        if "releases/dates" in url:
+            return _Resp(releases)
+        return _Resp({"Error": "n/a"}, 403)
+    monkeypatch.setattr(ec.requests, "get", fake_get)
+    out = ec.fetch_economic_calendar(force=True)
+    evs = out["events"]
+    cpi = next(e for e in evs if "CPI" in e["zh"])
+    assert cpi["prev"] == 3.2 and cpi["actual"] is None          # 未來事件：前值=最後公佈、公佈值待出
+    assert cpi["estimate"] is None and cpi["unit"] == "%（年增）"   # 預測值無免費來源；單位有標
+    nfp = next(e for e in evs if "非農" in e["zh"])
+    assert nfp["actual"] == 150 and nfp["prev"] == 180           # 今日已公佈：最新=公佈、次新=前值
+    assert nfp["unit"] == "千人" and nfp["source"] == "FRED"
 
 
 def test_graceful_on_bad_fmp(monkeypatch):
