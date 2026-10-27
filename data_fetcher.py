@@ -280,14 +280,15 @@ def twse_index_history(months: int = 12) -> list:
     return _cache_set(ck, pts) if pts else []
 
 
-def twse_market_value(months: int = 2) -> dict:
-    """2026-10-28：總覽加權指數卡「成交金額／量比」用。TWSE FMTQIK 每日市場成交資訊，
-    回傳 {iso_date: 成交金額（元）}；30 分鐘快取，失敗回 {}（不快取空值）。"""
+def twse_market_stats(months: int = 2) -> dict:
+    """TWSE FMTQIK 每日市場成交資訊（上市）：{iso_date: {"value": 成交金額（元）, "shares": 成交股數, "trades": 成交筆數}}。
+    30 分鐘快取，失敗回 {}（不快取空值）。"""
     months = max(1, min(int(months), 3))
-    ck = f"twse_fmtqik_{months}"
+    ck = f"twse_fmtqik_full_{months}"
     if c := _cache_get(ck, 1800):
         return c
     out = {}
+    num = lambda v: float(str(v).replace(",", ""))
     now = datetime.now(timezone.utc) + timedelta(hours=8)
     y, m = now.year, now.month
     for _ in range(months):
@@ -299,16 +300,22 @@ def twse_market_value(months: int = 2) -> dict:
                 for row in d.get("data", []):
                     try:
                         p = str(row[0]).split("/")
-                        out[f"{int(p[0]) + 1911:04d}-{int(p[1]):02d}-{int(p[2]):02d}"] = float(str(row[2]).replace(",", ""))
+                        out[f"{int(p[0]) + 1911:04d}-{int(p[1]):02d}-{int(p[2]):02d}"] = {
+                            "value": num(row[2]), "shares": num(row[1]), "trades": num(row[3])}
                     except Exception:
                         continue
         except Exception as e:
-            logger.debug(f"twse_market_value {y}{m:02d}: {e}")
+            logger.debug(f"twse_market_stats {y}{m:02d}: {e}")
         m -= 1
         if m == 0:
             m = 12; y -= 1
         time.sleep(0.25)
     return _cache_set(ck, out) if out else {}
+
+
+def twse_market_value(months: int = 2) -> dict:
+    """2026-10-28：總覽加權指數卡「成交金額／量比」用。回傳 {iso_date: 成交金額（元）}。"""
+    return {k: v["value"] for k, v in twse_market_stats(months).items()}
 
 
 def _twse_index_daily_points(months: int = 5, pause: float = 0.0) -> list:

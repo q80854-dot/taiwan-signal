@@ -1449,6 +1449,18 @@ def api_index_history():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "series": []}), 500
 
+@app.route("/api/market/turnover")
+def api_market_turnover():
+    """2026-10-28 市場總覽／市場環境（Design 定稿）：上市每日成交金額、股數、筆數（TWSE FMTQIK），近兩個月，舊到新。"""
+    try:
+        from data_fetcher import twse_market_stats
+        st = twse_market_stats(2)
+        return jsonify({"ok": bool(st), "source": "臺灣證券交易所 FMTQIK（上市）",
+                        "days": [{"d": k, **st[k]} for k in sorted(st)]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "days": []}), 500
+
+
 @app.route("/api/universe")
 def api_universe():
     try:
