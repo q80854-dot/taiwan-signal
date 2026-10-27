@@ -27,7 +27,10 @@ _UTC = timezone.utc
 _cache = {}
 _TTL = 3600
 
-FMP_URL = "https://financialmodelingprep.com/api/v3/economic_calendar"
+# FMP 已於 2024–2025 將 API 遷移到 /stable；新申請的金鑰打舊 /api/v3 會回 403「Legacy Endpoint」，
+# 故採官方現行端點。參數（from/to/apikey）與回傳欄位（date/country/event/previous/estimate/actual/impact）
+# 與舊版相同，解析不受影響。
+FMP_URL = "https://financialmodelingprep.com/stable/economic-calendar"
 FRED_DATES_URL = "https://api.stlouisfed.org/fred/releases/dates"
 
 
