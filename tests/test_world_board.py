@@ -23,6 +23,7 @@ def test_world_board_structure_and_ok_flags(monkeypatch):
             return None
         return {"price": 100.0, "prev": 99.0, "chg": 1.01, "chg_pt": 1.0, "source": "yfinance"}
     monkeypatch.setattr(df, "_fetch_yf_single", fake)
+    monkeypatch.setattr(df, "_fetch_yf_board", fake)
     b = df.fetch_world_board(force=True)
     for g in ("futures", "indices", "commodities", "fx", "bonds"):
         assert g in b and isinstance(b[g], list) and b[g]
@@ -36,12 +37,15 @@ def test_world_board_structure_and_ok_flags(monkeypatch):
 
 def test_world_board_all_fail_graceful(monkeypatch):
     monkeypatch.setattr(df, "_fetch_yf_single", lambda sym, rng=None: None)
+    monkeypatch.setattr(df, "_fetch_yf_board", lambda sym, rng=None: None)
     b = df.fetch_world_board(force=True)
     assert all(not it["ok"] and it["price"] is None for g in ("futures", "indices", "commodities", "fx", "bonds") for it in b[g])
 
 
 def test_api_world_endpoint(monkeypatch):
     monkeypatch.setattr(df, "_fetch_yf_single",
+                        lambda sym, rng=None: {"price": 50.0, "prev": 49.0, "chg": 2.04, "chg_pt": 1.0, "source": "yfinance"})
+    monkeypatch.setattr(df, "_fetch_yf_board",
                         lambda sym, rng=None: {"price": 50.0, "prev": 49.0, "chg": 2.04, "chg_pt": 1.0, "source": "yfinance"})
     app_module.app.config["TESTING"] = True
     c = app_module.app.test_client()
