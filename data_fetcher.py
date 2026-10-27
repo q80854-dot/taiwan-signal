@@ -690,6 +690,96 @@ def fetch_global_markets(force: bool = False) -> Dict:
 
 
 # ════════════════════════════════════════════════
+# 全球市場看板（首頁用）：指數期貨／全球指數／商品／外匯／債券
+# ════════════════════════════════════════════════
+# ★ 新增：2026-10-27——使用者要求首頁像富途牛牛那樣看「指數期貨、全球指數、
+# 商品／外匯／債券」。全部走既有 _fetch_yf_single（Yahoo，經熔斷器），抓不到就
+# 標 ok=False／price=None（顯示「暫無」，絕不編造，守住「不要資訊錯誤」）。
+# 每個標的都明確標示它實際是什麼（指數 or 期貨 or 殖利率），不混充。
+_WORLD_GROUPS = {
+    "futures": [
+        ("dow_fut",    "道瓊期貨",        "YM=F",       (10000, 200000)),
+        ("ndx_fut",    "那斯達克100期貨", "NQ=F",       (3000, 100000)),
+        ("sp_fut",     "標普500期貨",     "ES=F",       (1000, 30000)),
+        ("vix",        "VIX 波動率指數",  "^VIX",       (3, 200)),
+        ("nikkei_fut", "日經225期貨",     "NIY=F",      (5000, 100000)),
+        ("hsi_fut",    "恒生指數",        "^HSI",       (5000, 80000)),
+    ],
+    "indices": [
+        ("nasdaq", "那斯達克綜合",   "^IXIC",      (2000, 100000)),
+        ("dow",    "道瓊工業",       "^DJI",       (10000, 200000)),
+        ("sp500",  "標普500",        "^GSPC",      (1000, 30000)),
+        ("sox",    "費城半導體",     "^SOX",       (500, 100000)),
+        ("ftse",   "英國富時100",    "^FTSE",      (3000, 20000)),
+        ("dax",    "德國DAX",        "^GDAXI",     (5000, 60000)),
+        ("cac",    "法國CAC40",      "^FCHI",      (3000, 20000)),
+        ("kospi",  "韓國KOSPI",      "^KS11",      (1000, 10000)),
+        ("sse",    "上證指數",       "000001.SS",  (1000, 10000)),
+        ("hsi",    "恒生指數",       "^HSI",       (5000, 80000)),
+        ("sti",    "新加坡海峽時報", "^STI",       (1000, 10000)),
+        ("n225",   "日經225",        "^N225",      (10000, 100000)),
+        ("asx",    "澳洲ASX200",     "^AXJO",      (3000, 20000)),
+    ],
+    "commodities": [
+        ("wti",    "WTI 原油",   "CL=F", (5, 300)),
+        ("brent",  "布蘭特原油", "BZ=F", (5, 300)),
+        ("gold",   "黃金",       "GC=F", (1000, 10000)),
+        ("silver", "白銀",       "SI=F", (1, 500)),
+    ],
+    "fx": [
+        ("dxy",    "美元指數",     "DX-Y.NYB", (70, 130)),
+        ("usdtwd", "美元/台幣",    "TWD=X",    (20, 45)),
+        ("usdjpy", "美元/日圓",    "JPY=X",    (80, 250)),
+        ("usdcny", "美元/人民幣",  "CNY=X",    (5, 10)),
+    ],
+    "bonds": [
+        ("ust13w", "美債13週殖利率", "^IRX", (0, 25)),
+        ("ust5y",  "美債5年殖利率",  "^FVX", (0, 25)),
+        ("ust10y", "美債10年殖利率", "^TNX", (0, 25)),
+        ("ust30y", "美債30年殖利率", "^TYX", (0, 25)),
+    ],
+}
+
+
+def fetch_world_board(force: bool = False) -> Dict:
+    """首頁全球市場看板。回傳 {futures:[...], indices:[...], commodities:[...], fx:[...],
+    bonds:[...], at: epoch}。每個項目 {key, name, price, chg(%), chg_pt, ok}；抓不到 ok=False、
+    price=None（顯示暫無，不編造）。整體以記憶體快取 600 秒，另由排程預熱，首頁讀到的是快取。"""
+    if not force:
+        if c := _cache_get("world_board", 600):
+            return c
+    flat = [(grp, key, name, sym, rng)
+            for grp, items in _WORLD_GROUPS.items()
+            for (key, name, sym, rng) in items]
+
+    def _one(t):
+        grp, key, name, sym, rng = t
+        try:
+            r = _fetch_yf_single(sym, rng)
+        except Exception as e:
+            logger.warning(f"fetch_world_board {key}({sym}): {e}")
+            r = None
+        if r and r.get("price") is not None:
+            return (grp, {"key": key, "name": name, "price": r["price"],
+                          "chg": r.get("chg"), "chg_pt": r.get("chg_pt"), "ok": True})
+        return (grp, {"key": key, "name": name, "price": None, "chg": None, "chg_pt": None, "ok": False})
+
+    out = {g: [] for g in _WORLD_GROUPS}
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for grp, item in ex.map(_one, flat):   # ex.map 保留輸入順序 → 每組順序不亂
+                out[grp].append(item)
+    except Exception as e:
+        logger.warning(f"fetch_world_board 平行抓取失敗，改循序：{e}")
+        for t in flat:
+            grp, item = _one(t)
+            out[grp].append(item)
+    out["at"] = time.time()
+    return _cache_set("world_board", out)
+
+
+# ════════════════════════════════════════════════
 # K線
 # ════════════════════════════════════════════════
 def _tw_trading_hours_now() -> bool:
