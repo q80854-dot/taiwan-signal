@@ -1426,8 +1426,8 @@ def api_index_history():
         from data_fetcher import twse_index_history
         pts = twse_index_history(months)
         return jsonify({"ok": bool(pts), "months": max(1, min(months, 24)),
-                        "source": "臺灣證券交易所 MI_5MINS_HIST（加權指數每日收盤）",
-                        "series": [{"d": d, "c": c} for d, c in pts]})
+                        "source": "臺灣證券交易所 MI_5MINS_HIST（加權指數每日開高低收）",
+                        "series": [{"d": d, "o": o, "h": h, "l": l, "c": c} for d, o, h, l, c in pts]})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "series": []}), 500
 
