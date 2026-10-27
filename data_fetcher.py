@@ -280,6 +280,37 @@ def twse_index_history(months: int = 12) -> list:
     return _cache_set(ck, pts) if pts else []
 
 
+def twse_market_value(months: int = 2) -> dict:
+    """2026-10-28：總覽加權指數卡「成交金額／量比」用。TWSE FMTQIK 每日市場成交資訊，
+    回傳 {iso_date: 成交金額（元）}；30 分鐘快取，失敗回 {}（不快取空值）。"""
+    months = max(1, min(int(months), 3))
+    ck = f"twse_fmtqik_{months}"
+    if c := _cache_get(ck, 1800):
+        return c
+    out = {}
+    now = datetime.now(timezone.utc) + timedelta(hours=8)
+    y, m = now.year, now.month
+    for _ in range(months):
+        url = f"https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date={y:04d}{m:02d}01&response=json"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=(5, 20))
+            d = r.json() if r.status_code == 200 else {}
+            if d.get("stat") == "OK":
+                for row in d.get("data", []):
+                    try:
+                        p = str(row[0]).split("/")
+                        out[f"{int(p[0]) + 1911:04d}-{int(p[1]):02d}-{int(p[2]):02d}"] = float(str(row[2]).replace(",", ""))
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.debug(f"twse_market_value {y}{m:02d}: {e}")
+        m -= 1
+        if m == 0:
+            m = 12; y -= 1
+        time.sleep(0.25)
+    return _cache_set(ck, out) if out else {}
+
+
 def _twse_index_daily_points(months: int = 5, pause: float = 0.0) -> list:
     """TWSE MI_5MINS_HIST 逐月抓取，回傳 [(iso_date, close)] 由舊到新。"""
     return [(d, c) for d, _o, _h, _l, c in _twse_index_daily_ohlc(months, pause)]
@@ -746,7 +777,36 @@ _WORLD_GROUPS = {
         ("ust10y", "美債10年殖利率", "^TNX", (0, 25)),
         ("ust30y", "美債30年殖利率", "^TYX", (0, 25)),
     ],
+    "crypto": [
+        ("btc", "比特幣", "BTC-USD", (1000, 10000000)),
+        ("eth", "以太幣", "ETH-USD", (50, 1000000)),
+    ],
 }
+
+
+def _fetch_yf_board(sym: str, valid_range: tuple = None) -> Optional[Dict]:
+    """全球市場看板用：同 _fetch_yf_single 的收盤與漲跌，另帶近 1 個月日收盤（走勢小圖）與最後一根的高低（日內區間）。"""
+    if not YFINANCE_OK:
+        return None
+    try:
+        h = yf.Ticker(sym).history(period="1mo", interval="1d", auto_adjust=True)
+    except Exception as e:
+        logger.warning(f"{sym} 1mo: {e}")
+        h = None
+    if h is None or h.empty or len(h) < 2:
+        return _fetch_yf_single(sym, valid_range)
+    close = h["Close"]
+    p, pv = float(close.iloc[-1]), float(close.iloc[-2])
+    if valid_range and not (valid_range[0] < p < valid_range[1]):
+        return _fetch_yf_single(sym, valid_range)
+    out = {"price": round(p, 2), "prev": round(pv, 2), "chg": round((p - pv) / pv * 100, 2),
+           "chg_pt": round(p - pv, 2), "source": "yfinance",
+           "spark": [round(float(x), 4) for x in close.tolist()[-22:]]}
+    try:
+        out["lo"], out["hi"] = round(float(h["Low"].iloc[-1]), 4), round(float(h["High"].iloc[-1]), 4)
+    except Exception:
+        pass
+    return out
 
 
 def fetch_world_board(force: bool = False) -> Dict:
@@ -763,13 +823,14 @@ def fetch_world_board(force: bool = False) -> Dict:
     def _one(t):
         grp, key, name, sym, rng = t
         try:
-            r = _fetch_yf_single(sym, rng)
+            r = _fetch_yf_board(sym, rng)
         except Exception as e:
             logger.warning(f"fetch_world_board {key}({sym}): {e}")
             r = None
         if r and r.get("price") is not None:
             return (grp, {"key": key, "name": name, "price": r["price"],
-                          "chg": r.get("chg"), "chg_pt": r.get("chg_pt"), "ok": True})
+                          "chg": r.get("chg"), "chg_pt": r.get("chg_pt"), "ok": True,
+                          "spark": r.get("spark"), "lo": r.get("lo"), "hi": r.get("hi")})
         return (grp, {"key": key, "name": name, "price": None, "chg": None, "chg_pt": None, "ok": False})
 
     out = {g: [] for g in _WORLD_GROUPS}

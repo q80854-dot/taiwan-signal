@@ -1025,7 +1025,7 @@ def build_rows(items, view="quote"):
         except Exception:
             vm = {}
     inst = {}
-    if view == "chips":
+    if view in ("chips", "cards"):
         try:
             from data_fetcher import fetch_institutional_flow
             inst = fetch_institutional_flow() or {}
@@ -1050,13 +1050,59 @@ def build_rows(items, view="quote"):
         if view == "basic":
             v = vm.get(c) or {}
             row.update({"pe": v.get("pe"), "yield_pct": v.get("yield_pct"), "pb": v.get("pb")})
-        elif view == "chips":
+        elif view in ("chips", "cards"):
             q = inst.get(c) or {}
             row.update({"inst_foreign": q.get("foreign_net"), "inst_trust": q.get("trust_net"),
                         "inst_total": q.get("total_net")})
         rows.append(row)
     _overlay_fresh_quotes(rows)
+    if view == "cards":
+        _attach_card_metrics(rows)
     return rows
+
+
+def _card_metrics(code, market):
+    """總覽自選股卡（2026-10-28 v4 設計稿）：近 20 日走勢、20MA 與乖離、52 週高低與位置、量比（對前 5 日均量）、RSI14。
+    全部由 fetch_ohlcv 日線（已快取）計算；資料不足的欄位留 None，不估算。"""
+    from data_fetcher import fetch_ohlcv
+    t = code + (".TWO" if str(market or "").upper() in ("OTC", "TPEX", "TWO") else ".TW")
+    d = fetch_ohlcv(t, "daily") or {}
+    cl = [float(x) for x in (d.get("closes") or []) if x is not None]
+    if len(cl) < 2:
+        return {}
+    hi_s = [float(x) for x in (d.get("highs") or []) if x is not None][-250:] or cl[-250:]
+    lo_s = [float(x) for x in (d.get("lows") or []) if x is not None][-250:] or cl[-250:]
+    vol = [float(x or 0) for x in (d.get("volumes") or [])]
+    out = {"spark": [round(x, 2) for x in cl[-20:]], "spark_dates": (d.get("dates") or [])[-20:]}
+    ma = [round(sum(cl[i - 19:i + 1]) / 20, 2) if i >= 19 else None for i in range(len(cl))]
+    out["spark_ma20"] = ma[-20:]
+    if ma[-1]:
+        out["ma20"] = ma[-1]
+        out["ma20_gap"] = round((cl[-1] - ma[-1]) / ma[-1] * 100, 2)
+    lo52, hi52 = min(lo_s), max(hi_s)
+    out.update({"lo52": round(lo52, 2), "hi52": round(hi52, 2),
+                "pos52": round((cl[-1] - lo52) / (hi52 - lo52) * 100, 1) if hi52 > lo52 else None})
+    if len(vol) >= 6 and sum(vol[-6:-1]) > 0:
+        out["vol_ratio"] = round(vol[-1] / (sum(vol[-6:-1]) / 5), 2)
+    if len(cl) >= 15:
+        g = [max(cl[i] - cl[i - 1], 0) for i in range(1, len(cl))]
+        l = [max(cl[i - 1] - cl[i], 0) for i in range(1, len(cl))]
+        ag, al = sum(g[:14]) / 14, sum(l[:14]) / 14
+        for i in range(14, len(g)):
+            ag, al = (ag * 13 + g[i]) / 14, (al * 13 + l[i]) / 14
+        out["rsi14"] = round(100.0 if al == 0 else 100 - 100 / (1 + ag / al), 1)
+    return out
+
+
+def _attach_card_metrics(rows):
+    from concurrent.futures import ThreadPoolExecutor
+    def one(r):
+        try:
+            r.update(_card_metrics(r["code"], r.get("market")))
+        except Exception as e:
+            logger.warning(f"watchlist cards {r.get('code')}: {e}")
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        list(ex.map(one, rows))
 
 
 def _overlay_fresh_quotes(rows):
@@ -1095,7 +1141,7 @@ def my_watch_get():
     if grp not in [g["name"] for g in gs]:
         grp = gs[0]["name"] if gs else DEFAULT_GROUP
     view = (request.args.get("view") or "quote").strip().lower()
-    if view not in ("quote", "basic", "chips"):
+    if view not in ("quote", "basic", "chips", "cards"):
         view = "quote"
     return jsonify({"groups": gs, "grp": grp, "view": view, "items": build_rows(items_of(sub, grp), view)})
 

@@ -1177,6 +1177,20 @@ def api_watchlist():
         store.watchlist_remove(t)
     return jsonify({"watchlist": store.watchlist_get()})
 
+@app.route("/api/watchlist/cards")
+def api_watchlist_cards():
+    """登入功能關閉（單人模式）時，總覽自選股卡改讀站內自選股，欄位與 /api/my/watchlist?view=cards 相同。"""
+    from state_store import store
+    import members as _m
+    items = []
+    for w in store.watchlist_get() or []:
+        t = str(w.get("ticker") or "")
+        c = str(w.get("code") or t.split(".")[0]).upper()
+        if c:
+            items.append({"code": c, "name": w.get("name", ""), "market": "OTC" if t.upper().endswith(".TWO") else "TSE"})
+    return jsonify({"items": _m.build_rows(items[:12], "cards")})
+
+
 @app.route("/api/positions")
 def api_positions():
     from state_store import store
@@ -1423,11 +1437,15 @@ def api_index_history():
     except (TypeError, ValueError):
         months = 12
     try:
-        from data_fetcher import twse_index_history
+        from data_fetcher import twse_index_history, twse_market_value
         pts = twse_index_history(months)
+        try:
+            val = twse_market_value(2)   # 成交金額（元），只補近兩個月，其餘留 None
+        except Exception:
+            val = {}
         return jsonify({"ok": bool(pts), "months": max(1, min(months, 24)),
-                        "source": "臺灣證券交易所 MI_5MINS_HIST（加權指數每日開高低收）",
-                        "series": [{"d": d, "o": o, "h": h, "l": l, "c": c} for d, o, h, l, c in pts]})
+                        "source": "臺灣證券交易所 MI_5MINS_HIST（加權指數每日開高低收）、FMTQIK（成交金額）",
+                        "series": [{"d": d, "o": o, "h": h, "l": l, "c": c, "v": val.get(d)} for d, o, h, l, c in pts]})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "series": []}), 500
 
