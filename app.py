@@ -382,6 +382,18 @@ def job_warm_instrument():
     logger.info("個股頁預熱：" + "，".join(done))
 
 
+def job_econ_warm():
+    """預熱首頁美國財經日曆（FMP＋FRED），讓訪客開首頁直接命中快取；未設金鑰時直接略過。"""
+    try:
+        import econ_calendar
+        if not (econ_calendar._fmp_key() or econ_calendar._fred_key()):
+            return
+        d = econ_calendar.fetch_economic_calendar(force=True)
+        logger.info(f"財經日曆已預熱：{len(d.get('events', []))} 筆（來源 {d.get('sources')}）")
+    except Exception as e:
+        logger.warning(f"job_econ_warm: {e}")
+
+
 def job_world_warm():
     """預熱首頁全球市場看板（指數期貨／全球指數／商品／外匯／債券），讓訪客開首頁直接命中快取。"""
     try:
@@ -562,6 +574,9 @@ def setup_scheduler():
     # 全球市場看板：全球/美股在台灣晚上到清晨才交易，所以不分平日假日、全天每 10 分鐘預熱一次；開機後 75 秒先暖一次。
     scheduler.add_job(job_world_warm, "interval", minutes=10, id="world_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_world_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=75), id="world_warm_boot", replace_existing=True)
+    # 財經日曆：每 30 分鐘預熱一次（FMP 免費版有每日次數上限，快取 1 小時、預熱頻率保守）＋開機後 90 秒暖一次。
+    scheduler.add_job(job_econ_warm, "interval", minutes=30, id="econ_warm", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_econ_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="econ_warm_boot", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
     scheduler.add_job(job_report_boot_catchup, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=120), id="report_boot_catchup", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "interval", minutes=20, id="warm_instrument", replace_existing=True, max_instances=1, coalesce=True)
@@ -1135,6 +1150,17 @@ def api_world():
         return jsonify(fetch_world_board())
     except Exception as e:
         logger.warning(f"api_world: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/econ-calendar")
+def api_econ_calendar():
+    """首頁美國財經日曆（FMP＋FRED，兩者結合）。讀快取，由排程預熱；未設金鑰回 status=no_source。"""
+    try:
+        import econ_calendar
+        return jsonify(econ_calendar.fetch_economic_calendar())
+    except Exception as e:
+        logger.warning(f"api_econ_calendar: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/watchlist", methods=["GET", "POST", "DELETE"])

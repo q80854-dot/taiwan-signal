@@ -1044,6 +1044,17 @@ html[data-theme=dark] .wtabs button.on{background:var(--navy2);border-color:var(
 .wcard .wc{font-size:12.5px;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wsub{font-size:12.5px;color:var(--t3);margin:14px 0 7px;font-weight:600}
 .wsub:first-child{margin-top:2px}
+/* 美國財經日曆 */
+#econ-tabs button{padding:4px 12px;font-size:12px}
+.econ-day{font-size:12.5px;font-weight:700;color:var(--t2);background:var(--wash);padding:6px 14px}
+.econ-row{display:grid;grid-template-columns:50px 1fr;gap:10px;align-items:start;padding:9px 14px;border-bottom:1px solid var(--line)}
+.econ-row:last-child{border-bottom:none}
+.econ-tm{font-size:12px;color:var(--t3);font-variant-numeric:tabular-nums;padding-top:1px}
+.econ-ev{min-width:0}
+.econ-ev .nm{font-size:13.5px;line-height:1.35}
+.econ-ev .mt{font-size:11.5px;color:var(--t3);margin-top:3px;font-variant-numeric:tabular-nums}
+.econ-ev .mt b{color:var(--t1)}
+.econ-imp{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .acct-h{padding:14px 16px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
 .acct-h b{color:var(--ink);font-size:15px}.acct-h span{color:var(--t3);font-size:12px;word-break:break-all}
 .acct-h em{align-self:flex-start;margin-top:6px;font-style:normal;font-size:11px;font-weight:700;background:var(--navy);color:#fff;border-radius:999px;padding:2px 9px}
@@ -1803,6 +1814,9 @@ html.force-mobile .v3-top{grid-template-columns:1fr}html.force-mobile .v3-sigs{g
       <button data-wt="cfx" onclick="worldTab('cfx')">商品·外匯·債券</button>
     </div>
     <div class="panel"><div class="panel-body" id="world-body" style="padding:12px"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
+    <div class="sec-label"><div class="bar" style="background:var(--alert)"></div><div class="tx">美國財經日曆</div>
+      <div class="wtabs" id="econ-tabs" style="margin:0 0 0 auto"><button class="on" data-ef="key" onclick="econFilter('key')">重要</button><button data-ef="all" onclick="econFilter('all')">全部</button></div></div>
+    <div class="panel"><div class="panel-body" id="econ-body" style="padding:0"><div class="skel-wrap" style="padding:12px"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">今日大盤</div></div>
     <div class="panel">
       <div class="panel-body" id="market-summary"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div>
@@ -5905,6 +5919,7 @@ async function fetchOverviewDash(){
   }catch(e){setHtml('ovd-chip','<div class="empty" style="padding:18px">載入失敗，稍後自動重試</div>');}
   try{loadMarketInstFlow('ovd-inst-flow');}catch(e){}
   try{loadWorld();}catch(e){}
+  try{loadEcon();}catch(e){}
 }
 // 全球市場看板（指數期貨／全球指數／商品·外匯·債券）——資料來自 /api/world（yfinance，排程預熱）
 var _world={data:null,tab:'futures'};
@@ -5930,6 +5945,35 @@ function worldDraw(){
   try{setEl('world-at',d.at?('更新 '+(toTaipeiStr(new Date(d.at*1000).toISOString())||'')):'');}catch(e){}
 }
 function worldTab(t){_world.tab=t;document.querySelectorAll('#world-tabs button').forEach(b=>b.classList.toggle('on',b.dataset.wt===t));worldDraw();}
+// 美國財經日曆（FMP＋FRED，兩者結合）——/api/econ-calendar（排程預熱）。時間為台北時間。
+var _econ={data:null,filter:'key'};
+async function loadEcon(){
+  try{const r=await fetch('/api/econ-calendar',{cache:'no-store'});if(!r.ok)return;_econ.data=await r.json();econDraw();}catch(e){}
+}
+function econFilter(f){_econ.filter=f;document.querySelectorAll('#econ-tabs button').forEach(b=>b.classList.toggle('on',b.dataset.ef===f));econDraw();}
+function econDraw(){
+  const el=document.getElementById('econ-body');if(!el||!_econ.data)return;
+  const d=_econ.data;
+  if(d.status==='no_source'){
+    const owner=_me&&_me.user&&_me.user.owner;
+    el.innerHTML=`<div class="empty" style="padding:20px">財經日曆尚未設定資料來源${owner?'<br><span style="font-size:12px;color:var(--t3)">站主請到 Render 環境變數設定 FMP_API_KEY（必要）與 FRED_API_KEY（備援）</span>':''}</div>`;
+    return;
+  }
+  let evs=d.events||[];
+  if(_econ.filter==='key')evs=evs.filter(e=>e.importance==='高'||e.importance==='中');
+  if(!evs.length){el.innerHTML='<div class="empty" style="padding:20px">近期暫無符合條件的事件</div>';return;}
+  const dot=i=>`<span class="econ-imp" style="background:${i==='高'?'var(--alert)':i==='中'?'var(--warn)':'var(--t3)'}" title="重要度：${i}"></span>`;
+  const fmt=v=>v==null?'—':_fmtN(v,2);
+  let html='',last='';
+  evs.forEach(e=>{
+    if(e.date!==last){last=e.date;html+=`<div class="econ-day">${escH(e.date)}（${escH(e.weekday||'')}）</div>`;}
+    const actual=e.actual!=null?`　<b>公佈 ${fmt(e.actual)}</b>`:'';
+    html+=`<div class="econ-row"><div class="econ-tm">${escH(e.time||'—')}</div>`
+      +`<div class="econ-ev"><div class="nm">${dot(e.importance)}${escH(e.zh)}</div>`
+      +`<div class="mt">前值 ${fmt(e.prev)}　預測 ${fmt(e.estimate)}${actual}</div></div></div>`;
+  });
+  el.innerHTML=html;
+}
 function updateStatusBar(){
   const tw=new Date(Date.now()+8*3600e3),h=tw.getUTCHours()*60+tw.getUTCMinutes(),wd=tw.getUTCDay(),open=wd>=1&&wd<=5&&h>=540&&h<=810;
   const pad=n=>String(n).padStart(2,'0');
