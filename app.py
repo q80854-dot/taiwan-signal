@@ -1794,6 +1794,46 @@ def api_quote(code):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/public/summary")
+def api_public_summary():
+    """2026-10-28 未登入首頁（Design 定稿 Main.dc.html）用：只公開彙總數字，不含任何個股名稱或價位。
+    掃描漏斗（全市場→預篩→通過→候選→最終訊號）、訊號追蹤績效彙總、加權指數近 20 日開高低收。全部讀快取。"""
+    out = {"ok": True}
+    try:
+        from state_store import store
+        a = store.get_meta("last_scan_audit") or {}
+        h = (store.get_scan_history(1) or [{}])[0]
+        out["scan"] = {"date": a.get("date"), "universe": a.get("universe"), "examined": a.get("examined"),
+                       "passed": a.get("passed"), "found": h.get("signals_found"), "sent": h.get("signals_sent"),
+                       "duration_min": h.get("duration_min")}
+    except Exception as e:
+        out["scan"] = {}; logger.warning(f"public summary scan: {e}")
+    try:   # 還沒有掃描紀錄時，涵蓋標的改用上市櫃完整清單檔數（已快取）
+        from stock_universe import build_full_universe
+        out["listed"] = len(build_full_universe() or [])
+    except Exception:
+        out["listed"] = None
+    try:
+        from state_store import store
+        p = store.get_performance_summary() or {}
+        eq = [x for x in (p.get("equity_curve") or []) if isinstance(x, dict)]
+        out["perf"] = {k: p.get(k) for k in ("total", "closed", "wins", "losses", "win_rate", "max_drawdown", "avg_win", "avg_loss")}
+        out["perf"]["equity"] = [{"d": x.get("date"), "v": x.get("balance")} for x in eq][-120:]
+    except Exception as e:
+        out["perf"] = {}; logger.warning(f"public summary perf: {e}")
+    try:
+        from data_fetcher import twse_index_history
+        out["index"] = [{"d": d, "o": o, "h": h, "l": l, "c": c} for d, o, h, l, c in twse_index_history(2)][-20:]
+    except Exception as e:
+        out["index"] = []; logger.warning(f"public summary index: {e}")
+    try:
+        from config import MAX_RISK_PER_TRADE, MAX_DAILY_RISK
+        out["risk"] = {"per_trade_pct": round(MAX_RISK_PER_TRADE * 100, 1), "portfolio_pct": round(MAX_DAILY_RISK * 100, 1)}
+    except Exception:
+        out["risk"] = {}
+    return jsonify(out)
+
+
 @app.route("/api/public/pulse")
 def api_public_pulse():
     """未登入首頁用：只公開加權指數的最近快照與當日走勢（唯讀、讀快取、不打外部來源）。其餘資料都要登入。"""
