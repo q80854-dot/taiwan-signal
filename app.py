@@ -2520,8 +2520,13 @@ def api_instrument(ticker: str):
         import company_info; return company_info.get_board_holding(code)
     def _news():
         import finmind; return finmind.news(code)
+    def _efficiency():
+        import finmind; return finmind.efficiency_days(code)
+    def _analyst():
+        import data_fetcher; return data_fetcher.fetch_analyst_consensus(t)
     _jobs = {"ex_dividend": _ex_div, "company_profile": _profile, "foreign_holding": _foreign,
-             "dispersion": _disp, "board_holding": _board, "news_items": _news}
+             "dispersion": _disp, "board_holding": _board, "news_items": _news,
+             "efficiency_days": _efficiency, "analyst_consensus": _analyst}
     _futs = {k: _INST_POOL.submit(fn) for k, fn in _jobs.items()}
     # ★ 2026-10-16 加速：每個子區塊最多等 _SECT 秒就先回，不讓最慢的一塊（集保分散／
     # 董監持股／外資持股這些較慢的官方端點）把整頁拖到 20 幾秒（手機 4G 常在載完前就逾時、
@@ -2551,6 +2556,8 @@ def api_instrument(ticker: str):
     _resolve("foreign_holding")
     _resolve("dispersion")
     _resolve("board_holding")
+    _resolve("efficiency_days")
+    _resolve("analyst_consensus")
     try:   # 財務指標時間序列：月營收年增率＋季毛利率／營益率，皆取自本系統自官方 TWSE 綜合損益表解析、已累積的 DB 歷史。
         # ★ 2026-10-12：FinMind 衍生財務比率（EPS/ROE/ROA/淨利率/流動比率/股東權益比率/自由現金流）在未能確認
         # FinMind 綜合損益表 type 欄位實際名稱前，用別名比對會對到錯誤科目、算出錯誤數字（使用者回報廣達毛利率、

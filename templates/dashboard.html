@@ -3467,6 +3467,32 @@ function _ownershipHtml(d){
   </div>
   <div style="font-size:11px;color:var(--t3);margin-top:6px">外資持股：證交所 MI_QFIIS。董監持股：TWSE／TPEx 董監事持股彙總表（官方免費逐檔資料有限，部分個股無資料故不顯示）。大戶／散戶：集保股權分散表（每週；大戶＝≥400 張級距合計）。僅供研究參考，非投資建議。</div>`;
 }
+function _analystHtml(d){
+  // 法人目標價與評等（Yahoo 分析師共識）。無覆蓋就整塊不顯示（不留空殼、不編造）。
+  const A=d.analyst_consensus;if(!A||A.target_mean==null)return '';
+  const cur=A.current,up=(cur&&A.target_mean)?((A.target_mean-cur)/cur*100):null;
+  const kpis=[['目標均價',_fmtN(A.target_mean,1),(A.n_analysts?A.n_analysts+' 位分析師':'')]];
+  if(A.target_high!=null&&A.target_low!=null)kpis.push(['目標區間',_fmtN(A.target_low,1)+'–'+_fmtN(A.target_high,1),'']);
+  if(A.rating_zh||A.rating_mean!=null)kpis.push(['綜合評等',safe(A.rating_zh||'—'),A.rating_mean!=null?'均值 '+A.rating_mean+'（1買–5賣）':'']);
+  if(up!=null)kpis.push(['距現價',_sg(+up.toFixed(1))+'%',cur!=null?'現價 '+_fmtN(cur,1):'']);
+  const cols=kpis.length;
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">法人目標價與評等</div></div>
+  <div class="hero-row" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">
+    ${kpis.map((c,i)=>`<div class="kpi"${i===0?' style="border-left:none"':''}><div class="kpi-label">${safe(c[0])}</div><div class="kpi-val" style="font-size:20px">${safe(c[1])}</div><div class="kpi-sub">${safe(c[2])}</div></div>`).join('')}
+  </div>
+  <div style="font-size:11px;color:var(--t3);margin-top:6px">來源：${safe(A.source)}（彙整分析師估計；台股僅部分個股有覆蓋，無覆蓋即不顯示）。僅供研究參考，非投資建議。</div>`;
+}
+function _efficiencyHtml(d){
+  // 經營效率天數（FinMind 官方財報，TTM）。必要科目不齊就整塊不顯示。
+  const E=d.efficiency_days;if(!E||E.ccc==null)return '';
+  const kpis=[['存貨週轉天數',_fmtN(E.dio,1)+' 天',''],['應收週轉天數',_fmtN(E.dso,1)+' 天',''],
+              ['應付週轉天數',_fmtN(E.dpo,1)+' 天',''],['現金轉換循環',_fmtN(E.ccc,1)+' 天',E.period||'']];
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">經營效率天數</div></div>
+  <div class="hero-row" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+    ${kpis.map((c,i)=>`<div class="kpi"${i===0?' style="border-left:none"':''}><div class="kpi-label">${safe(c[0])}</div><div class="kpi-val" style="font-size:20px">${safe(c[1])}</div><div class="kpi-sub">${safe(c[2])}</div></div>`).join('')}
+  </div>
+  <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(E.source)}；資料截至 ${safe(E.as_of||'')}。現金轉換循環＝存貨＋應收−應付，天數越短周轉越快。僅供研究參考。</div>`;
+}
 function _shortAnalysisHtml(d){
   const M=d.margin,SH=(d.flags||{}).short;if(!M&&!SH)return '';
   const parts=[];
@@ -3568,8 +3594,10 @@ function instExtraHtml(d){
       <div class="kpi"><div class="kpi-label">資券互抵</div><div class="kpi-val" style="font-size:17px">${M.offsetting==null?'—':_fmtN(M.offsetting,0)}</div><div class="kpi-sub">張</div></div>
     </div><div style="font-size:11px;color:var(--t3);margin-top:6px">來源：${M.source==='tpex_openapi'?'櫃買中心 OpenAPI':'證交所 OpenAPI MI_MARGN'}（每日收盤後更新）</div>`;
   }
+  h+=_analystHtml(d);
   h+=_shortAnalysisHtml(d);
   h+=_ownershipHtml(d);
+  h+=_efficiencyHtml(d);
   h+=_finChartHtml(d);
   h+=_indicatorReadingHtml(d);
   h+=_newsHtml(d);

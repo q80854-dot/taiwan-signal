@@ -174,3 +174,57 @@ def test_institutional_db_fallback_when_blocked(monkeypatch):
     saved = [{"date": "2026-10-15", "foreign": 100, "trust": 5, "dealer": 1, "total": 106}]
     monkeypatch.setattr(FM, "_db_get", lambda k: {"at": FM.time.time(), "data": saved})
     assert FM.institutional("2330") == saved
+
+
+def _eff_rows(dataset, data_id, start):
+    """mock FinMind：資產負債表（時點，最近一季期末）＋綜合損益表（單季，4 季）。"""
+    if dataset == "TaiwanStockBalanceSheet":
+        return [{"date": "2026-06-30", "type": "Inventories", "origin_name": "存貨", "value": 100.0},
+                {"date": "2026-06-30", "type": "AccountsReceivableNet", "origin_name": "應收帳款淨額", "value": 200.0},
+                {"date": "2026-06-30", "type": "AccountsPayable", "origin_name": "應付帳款", "value": 50.0}]
+    if dataset == "TaiwanStockFinancialStatements":
+        rows = []
+        for d in ("2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30"):
+            rows += [{"date": d, "type": "Revenue", "origin_name": "營業收入合計", "value": 300.0},
+                     {"date": d, "type": "CostOfGoodsSold", "origin_name": "營業成本合計", "value": 150.0}]
+        return rows
+    return []
+
+
+def test_efficiency_days_ttm(monkeypatch):
+    monkeypatch.setenv("FINMIND_TOKEN", "x")
+    FM._cache.pop("eff:2330", None)
+    monkeypatch.setattr(FM, "_fetch", _eff_rows)
+    out = FM.efficiency_days("2330")
+    assert out is not None
+    # DIO=100/600*365=60.8、DSO=200/1200*365=60.8、DPO=50/600*365=30.4、CCC=91.2
+    assert out["dio"] == 60.8 and out["dso"] == 60.8 and out["dpo"] == 30.4 and out["ccc"] == 91.2
+    assert out["period"] == "2026Q2" and out["as_of"] == "2026-06-30"
+
+
+def test_efficiency_days_missing_account_returns_none(monkeypatch):
+    # 缺「應付帳款」→ 嚴格 gating 回 None（寧可暫無，也不算錯）
+    monkeypatch.setenv("FINMIND_TOKEN", "x")
+    FM._cache.pop("eff:9999", None)
+    monkeypatch.setattr(FM, "_db_get", lambda k: None)
+
+    def rows(dataset, data_id, start):
+        r = _eff_rows(dataset, data_id, start)
+        return [x for x in r if x.get("origin_name") != "應付帳款"] if dataset == "TaiwanStockBalanceSheet" else r
+    monkeypatch.setattr(FM, "_fetch", rows)
+    assert FM.efficiency_days("9999") is None
+
+
+def test_efficiency_days_insufficient_quarters_returns_none(monkeypatch):
+    # 單季損益不足 4 季 → 回 None
+    monkeypatch.setenv("FINMIND_TOKEN", "x")
+    FM._cache.pop("eff:8888", None)
+    monkeypatch.setattr(FM, "_db_get", lambda k: None)
+
+    def rows(dataset, data_id, start):
+        if dataset == "TaiwanStockFinancialStatements":
+            return [{"date": "2026-06-30", "type": "Revenue", "origin_name": "營業收入合計", "value": 300.0},
+                    {"date": "2026-06-30", "type": "CostOfGoodsSold", "origin_name": "營業成本合計", "value": 150.0}]
+        return _eff_rows(dataset, data_id, start)
+    monkeypatch.setattr(FM, "_fetch", rows)
+    assert FM.efficiency_days("8888") is None
