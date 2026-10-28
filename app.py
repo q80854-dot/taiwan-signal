@@ -372,7 +372,9 @@ def job_warm_instrument():
              ("月營收", lambda: __import__("fundamentals").fetch_monthly_revenue_map()),
              ("重大訊息", lambda: __import__("fundamentals").fetch_material_news_risk_map()),
              ("股票清單", lambda: __import__("stock_universe").get_stock_info_any("2330.TW")),
-             ("獲利品質", lambda: __import__("fundamentals").get_profitability_quality("2330")))
+             ("獲利品質", lambda: __import__("fundamentals").get_profitability_quality("2330")),
+             ("經營效率", lambda: __import__("finmind").efficiency_days("2330")),
+             ("法人目標價", lambda: __import__("data_fetcher").fetch_analyst_consensus("2330.TW")))
     for name, fn in steps:
         try:
             fn()
