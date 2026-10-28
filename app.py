@@ -1243,7 +1243,7 @@ def api_fundamentals_radar():
             if "金融" in (r.get("sector_name") or ""):   # 金融保險業營收隨證券／投資損益波動，年增率不具可比性
                 continue
             base = r.get("revenue_ly")
-            if kind in ("growth", "accel") and ((base is not None and base < 80000) or yoy > 300):
+            if kind in ("growth", "accel", "all") and ((base is not None and base < 80000) or yoy > 300):
                 continue
             v = val.get(code) or {}
             pe, y = v.get("pe"), v.get("yield_pct")
@@ -1255,6 +1255,7 @@ def api_fundamentals_radar():
             if kind == "growth":  ok = yoy >= 20 and (cum is None or cum >= 10)
             elif kind == "accel": ok = yoy >= 15 and cum is not None and (yoy - cum) >= 8 and (mom is None or mom > 0)
             elif kind == "value": ok = yoy > 0 and pe is not None and 0 < pe <= 15 and (y or 0) >= 4
+            elif kind == "all": ok = True   # 2026-10-28 基本面雷達（Design 定稿）：前端自行套用六種預設篩選
             if not ok: continue
             g = _growth(r, []); vv = _valuation(v)
             lite = round((g["got"] + (vv["got"] if vv else 0)) / (g["max"] + (vv["max"] if vv else 0)) * 100) if g else None
@@ -1262,7 +1263,7 @@ def api_fundamentals_radar():
                          "revenue_yi": round(amt / 100000, 1), "yoy": yoy, "mom": mom, "cum_yoy": cum,
                          "pe": pe, "yield": y, "score": lite, "has_signal": code in sig_codes})
         rows.sort(key=lambda x: ((x.get("score") or 0), (x.get("yoy") if kind != "value" else x.get("yield")) or 0), reverse=True)
-        return jsonify({"kind": kind, "count": len(rows), "rows": rows[:60]})
+        return jsonify({"kind": kind, "count": len(rows), "rows": rows[:(400 if kind == "all" else 60)]})
     except Exception as e:
         logger.error(f"api_fundamentals_radar: {e}"); return jsonify({"error": str(e)}), 500
 
@@ -1881,12 +1882,27 @@ def api_report(kind):
     if kind not in ("premarket", "postmarket"):
         return jsonify({"error": "unknown report"}), 404
     try:
-        import reports
-        rep = reports.get_report(kind)
+        import reports, re as _re
+        d = request.args.get("date", "")
+        d = d if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", d or "") else None
+        rep = reports.get_report(kind, date=d)
+        if request.args.get("with_dates") == "1":
+            try:
+                dates = reports.list_report_dates(kind)
+            except Exception:
+                dates = []
+        else:
+            dates = None
         if not rep:
+            if dates is not None:
+                return jsonify({"ok": False, "report": None, "dates": dates,
+                                "msg": "這一天沒有報告（盤前約每日 08:35、盤後約 21:35 自動產生）"})
             return jsonify({"ok": False, "report": None,
                             "msg": "報告尚未產生（盤前約每日 08:35、盤後約 21:35 自動產生）"})
-        return jsonify({"ok": True, "report": rep})
+        out = {"ok": True, "report": rep}
+        if dates is not None:
+            out["dates"] = dates
+        return jsonify(out)
     except Exception as e:
         logger.error(f"api_report({kind}): {e}", exc_info=True)
         return jsonify({"ok": False, "error": "報告載入失敗"}), 500
@@ -2183,7 +2199,12 @@ def api_calendar():
         for k in ("disposal", "attention"):
             for x in wt.get(k, []):
                 x["mine"] = x["code"] in mine
-        return jsonify({"ex": ex, "watch": wt})
+        try:   # 2026-10-28 財經日曆：月營收公布進度（已公布家數／應公布家數、期別、法定期限）
+            from fundamentals import revenue_status
+            rv = revenue_status()
+        except Exception:
+            rv = None
+        return jsonify({"ex": ex, "watch": wt, "revenue": rv})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2520,13 +2541,8 @@ def api_instrument(ticker: str):
         import company_info; return company_info.get_board_holding(code)
     def _news():
         import finmind; return finmind.news(code)
-    def _efficiency():
-        import finmind; return finmind.efficiency_days(code)
-    def _analyst():
-        import data_fetcher; return data_fetcher.fetch_analyst_consensus(t)
     _jobs = {"ex_dividend": _ex_div, "company_profile": _profile, "foreign_holding": _foreign,
-             "dispersion": _disp, "board_holding": _board, "news_items": _news,
-             "efficiency_days": _efficiency, "analyst_consensus": _analyst}
+             "dispersion": _disp, "board_holding": _board, "news_items": _news}
     _futs = {k: _INST_POOL.submit(fn) for k, fn in _jobs.items()}
     # ★ 2026-10-16 加速：每個子區塊最多等 _SECT 秒就先回，不讓最慢的一塊（集保分散／
     # 董監持股／外資持股這些較慢的官方端點）把整頁拖到 20 幾秒（手機 4G 常在載完前就逾時、
@@ -2556,8 +2572,6 @@ def api_instrument(ticker: str):
     _resolve("foreign_holding")
     _resolve("dispersion")
     _resolve("board_holding")
-    _resolve("efficiency_days")
-    _resolve("analyst_consensus")
     try:   # 財務指標時間序列：月營收年增率＋季毛利率／營益率，皆取自本系統自官方 TWSE 綜合損益表解析、已累積的 DB 歷史。
         # ★ 2026-10-12：FinMind 衍生財務比率（EPS/ROE/ROA/淨利率/流動比率/股東權益比率/自由現金流）在未能確認
         # FinMind 綜合損益表 type 欄位實際名稱前，用別名比對會對到錯誤科目、算出錯誤數字（使用者回報廣達毛利率、
@@ -2751,6 +2765,16 @@ def api_backtest_full_run():
     note = "TW50成分股（50檔），背景執行" if universe_mode == "tw50" else "完整即時掃描池（約1000+檔，跟scanner.py同一份股票池），背景執行，檔數較多會明顯較慢"
     return jsonify({"status": "started", "min_score": min_score, "universe": universe_mode,
                      "note": f"{note}，用 /api/backtest/full/result 查進度"})
+
+@app.route("/api/backtest/config")
+def api_backtest_config():
+    """2026-10-28 績效回測頁（Design 定稿）左側「回測設定」：顯示回測實際使用的參數（站主，路徑前綴已限站主）。"""
+    import config as C
+    return jsonify({"initial_balance": C.ACCOUNT_BALANCE_TWD, "risk_per_trade_pct": round(C.MAX_RISK_PER_TRADE * 100, 2),
+                    "portfolio_risk_pct": round(C.MAX_DAILY_RISK * 100, 2), "commission_rate_pct": round(C.COMMISSION_RATE * 100, 4),
+                    "min_commission": C.MIN_COMMISSION, "tax_sell_pct": round(C.TAX_RATE_SELL * 100, 3),
+                    "slippage_pct": round(getattr(C, "SLIPPAGE_RATE", 0) * 100, 3), "default_min_score": 65.0})
+
 
 @app.route("/api/backtest/full/result")
 def api_backtest_full_result():

@@ -385,18 +385,45 @@ def build_report(kind: str, store=None) -> dict:
     return report
 
 
-def get_report(kind: str, store=None) -> dict | None:
+def get_report(kind: str, store=None, date: str | None = None) -> dict | None:
+    """date=None 取最新一份；指定 YYYY-MM-DD 取當日那份（每日報告頁切換歷史日期用）。"""
     if store is None:
         from state_store import store as _store
         store = _store
     try:
-        raw = store.get_meta(f"report_{kind}_latest", "")
+        raw = store.get_meta(_meta_key(kind, date) if date else f"report_{kind}_latest", "")
         if not raw:
             return None
         return json.loads(raw)
     except Exception as e:
         logger.warning(f"get_report({kind}): {e}")
         return None
+
+
+def list_report_dates(kind: str, days: int = 14, store=None) -> list:
+    """近 days 天內有存檔的報告日期（新到舊），附加權漲跌與第一句摘要，供每日報告頁的日期列與歷史清單。"""
+    if store is None:
+        from state_store import store as _store
+        store = _store
+    out = []
+    today = datetime.now(TZ8).date()
+    for i in range(days):
+        d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        try:
+            raw = store.get_meta(_meta_key(kind, d), "")
+            if not raw:
+                continue
+            rep = json.loads(raw)
+            tw = next((s for s in (rep.get("facts") or {}).get("sections", []) if s.get("id") == "taiwan"), {})
+            ix = next((it for it in tw.get("items", []) if "加權" in str(it.get("label", ""))), {})
+            import re as _re
+            first = next((_re.sub(r"^【[^】]*】", "", ln.strip()) for ln in str(rep.get("narrative") or "").split("\n")
+                          if ln.strip() and not ln.strip().startswith("（")), "")
+            out.append({"date": d, "generated_at": rep.get("generated_at"), "twii_chg": ix.get("raw_chg"),
+                        "headline": first[:40]})
+        except Exception as e:
+            logger.warning(f"list_report_dates {d}: {e}")
+    return out
 
 
 # ────────────────────────────────────────────────
