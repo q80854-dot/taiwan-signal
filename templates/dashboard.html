@@ -1456,7 +1456,6 @@ html.sb9-mini[data-theme]:not(.force-mobile) .side:not(:hover):not(:focus-within
 html.sb9-mini[data-theme]:not(.force-mobile) .side:not(:hover):not(:focus-within) .side-scroll{scrollbar-width:none}
 html.sb9-mini[data-theme]:not(.force-mobile) .side:not(:hover):not(:focus-within) .side-scroll::-webkit-scrollbar{display:none}
 }
-}
 html[data-theme] .is9{display:flex!important;flex-direction:row!important;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px!important;margin-bottom:4px}
 html[data-theme] .is9-box{flex:1 1 320px!important;box-sizing:border-box;max-width:520px;display:flex;align-items:center;gap:8px;height:42px;padding:0 14px;border:1px solid var(--line2);border-radius:var(--rp,999px);background:var(--s2);color:var(--t3);cursor:text}
 html[data-theme] .is9-box:focus-within{background:var(--s1);border-color:var(--ink)}
@@ -1755,6 +1754,43 @@ html[data-theme] .c9-focus{flex-basis:100%;display:grid!important;grid-template-
 .r9-ud small,.r9-ut small{display:block;font-size:11.5px;color:var(--t3);line-height:1.5}
 .r9-ut b{font:500 14px/20px var(--sans);color:var(--ink)}
 @media(max-width:640px){html[data-theme]:not(.force-desktop) .r9-hero{grid-template-columns:1fr}html[data-theme]:not(.force-desktop) .r9-ks{grid-template-columns:repeat(2,minmax(0,1fr))}html[data-theme]:not(.force-desktop) .r9-ks>div{border-left:0;border-top:1px solid var(--line)}html[data-theme]:not(.force-desktop) .r9-ks>div:nth-child(even){border-left:1px solid var(--line)}}
+
+/* v9：市場體質卡 */
+.e9 .o-ch{align-items:flex-start}
+.e9-pill{padding:5px 12px;border-radius:999px;font:600 12.5px/1 var(--sans);color:var(--c);background:color-mix(in srgb,var(--c) 16%,transparent)}
+.e9-b{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(0,1.5fr) minmax(260px,1fr);gap:0;padding-top:20px!important}
+.e9-b>div{padding:0 24px;min-width:0}
+.e9-b>div+div{border-left:1px solid #2a2a2e}
+.e9-b>div:first-child{padding-left:0}.e9-b>div:last-child{padding-right:0}
+.e9-l{display:flex;flex-direction:column;align-items:center;gap:6px}
+.e9-g{width:100%;max-width:240px;height:auto}
+.e9-sc{display:flex;align-items:baseline;gap:10px;margin-top:-8px}
+.e9-sc b{font:600 44px/48px var(--sans);letter-spacing:-.03em;color:#fff;font-variant-numeric:tabular-nums}
+.e9-sc span{font:600 15px/20px var(--sans)}
+.e9-sys{display:flex;align-items:center;gap:6px;font-size:12px;color:#a1a1a8;text-align:center}
+.e9-sys i,.e9-adv i{flex:none;width:7px;height:7px;border-radius:50%}
+.e9-fx{display:flex;flex-direction:column;gap:4px}
+.e9-f{display:grid;grid-template-columns:44px 1fr 40px;gap:14px;align-items:center;padding:9px 0;border-top:1px solid #1f1f23}
+.e9-f:first-child{border-top:0;padding-top:0}
+.e9-fn{font:600 13px/18px var(--sans);color:#fff}
+.e9-fb{display:flex;flex-direction:column;gap:6px;min-width:0}
+.e9-fb small{font-size:11.5px;line-height:1.5;color:#a1a1a8}
+.e9-tr{position:relative;height:6px;border-radius:6px;background:#2a2a2e}
+.e9-tr i{position:absolute;left:0;top:0;bottom:0;border-radius:6px}
+.e9-tr em{position:absolute;top:-3px;bottom:-3px;width:1px;background:#4a4a52}
+.e9-f>b{font:600 15px/20px var(--mono);text-align:right}
+.e9-r{display:flex;flex-direction:column;gap:10px}
+.e9-rh{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;color:#a1a1a8}
+.e9-rh span:first-child{color:#fff;font-weight:500}
+.e9-rb{display:block;width:100%;height:110px}
+.e9-rbx{display:flex;justify-content:space-between;font:400 11px/14px var(--mono);color:#8a8a92;margin-top:-4px}
+.e9-lg{display:flex;flex-wrap:wrap;gap:12px;font-size:11.5px;color:#a1a1a8}
+.e9-lg span{display:inline-flex;align-items:center;gap:5px}
+.e9-lg i{width:9px;height:9px;border-radius:2px}
+.e9-adv{display:flex;align-items:flex-start;gap:8px;padding:12px 14px;border-radius:12px;background:#1c1c1f;font-size:12.5px;line-height:1.6;color:#c9c9cf}
+.e9-adv i{margin-top:7px}
+@media(max-width:1100px){.e9-b{grid-template-columns:1fr 1fr;row-gap:20px}.e9-b>div:last-child{grid-column:1/-1;border-left:0;padding-left:0;border-top:1px solid #2a2a2e;padding-top:18px}.e9-b>div:nth-child(2){padding-right:0}}
+@media(max-width:640px){html[data-theme]:not(.force-desktop) .e9-b{grid-template-columns:1fr}html[data-theme]:not(.force-desktop) .e9-b>div{padding:0!important;border-left:0!important}html[data-theme]:not(.force-desktop) .e9-b>div+div{border-top:1px solid #2a2a2e;padding-top:18px!important}}
 </style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
@@ -5310,7 +5346,7 @@ function e6Factors(){
   const cl=v=>Math.max(0,Math.min(100,Math.round(v)));
   const out=[];
   if(n>=65){const m20=sma(20),m60=sma(60),m60p=sma(60,n-6),px=c[n-1];let v=50+(px>m20?15:-15)+(px>m60?15:-15)+(m60>m60p?10:-10)+(m20>m60?10:-10);out.push(['趨勢',cl(v),`收盤 ${v5F(px,0)} ${px>m20?'站上':'跌破'} 20 日線 ${v5F(m20,0)}，${px>m60?'站上':'跌破'} 60 日線 ${v5F(m60,0)}`]);}
-  const b=brd||{};if(b.advancers!=null){const r=b.advancers/((b.advancers+b.decliners)||1)*100;out.push(['廣度',cl(r),`上漲 ${b.advancers}、下跌 ${b.decliners}（上市＋上櫃，不含 ETF）`]);}
+  const b=brd||{};if(b.advancers!=null&&((b.advancers||0)+(b.decliners||0))>0){const r=b.advancers/((b.advancers+b.decliners)||1)*100;out.push(['廣度',cl(r),`上漲 ${b.advancers}、下跌 ${b.decliners}（上市＋上櫃，不含 ETF）`]);}
   if(n>=21){const r=(c[n-1]/c[n-21]-1)*100;out.push(['動能',cl(50+r*5),`加權指數近 20 日 ${x6Pct(r)}`]);}
   const hd=(inf&&inf.headline)||{},f5=(hd.foreign||{}).sum5,t5=(hd.total||{}).sum5;if(f5!=null){out.push(['資金',cl(50+(f5>0?20:-20)+(t5>0?15:-15)),`外資 5 日 ${v5S(f5)} 張、三大法人合計 ${v5S(t5)} 張（上市）`]);}
   const vix=((mo.index||{}).vix||{}).price;if(vix!=null)out.push(['波動',cl((35-vix)/25*100),`VIX ${v5F(vix,1)}，${vix<20?'低於 20，波動平穩':vix<30?'20–30，波動偏高':'高於 30，恐慌'}`]);
@@ -5329,13 +5365,21 @@ function e6Draw(){
   const c=H.map(p=>p.c),sma=(k,i)=>i+1>=k?c.slice(i-k+1,i+1).reduce((a,b)=>a+b,0)/k:null;
   const reg=[];for(let i=Math.max(60,c.length-30);i<c.length;i++){const m20=sma(20,i),m60=sma(60,i),x=c[i];reg.push(x>m20&&m20>m60?'#ffffff':x>m60?'#8a8a92':x<m60&&m20<m60?'#2a2a2e':'#4a4a52');}
   const advice=sys.stop_buy?'系統目前暫停新多單（大盤風控觸發）':sys.can_trade===false?'系統目前不建議新進場':'系統可正常產生新訊號';
-  const bodyC=`<section class="o-card o-dark o-c12" data-e="mood"><div class="o-ch"><div><h2>市場體質</h2><span class="o-mt">五項因子綜合判斷 · 本頁規則計算</span></div></div><div class="o-cb x6-body3">
-    <div style="display:flex;flex-direction:column;align-items:center;gap:4px"><svg viewBox="0 0 240 136" style="width:260px;max-width:100%;height:148px" role="img" aria-label="市場體質 ${score??'—'} 分，${lab}">${arc(0,20,'#2a2a2e')+arc(20,40,'#3a3a40')+arc(40,60,'#5a5a62')+arc(60,80,'#9a9aa2')+arc(80,100,'#ffffff')}<path d="M120 120 L${nd[0].toFixed(1)} ${nd[1].toFixed(1)}" stroke="#fff" stroke-width="3" stroke-linecap="round"/><circle cx="120" cy="120" r="7" fill="#fff"/><text x="18" y="134" style="font:400 10px var(--sans);fill:#a1a1a8">空頭</text><text x="222" y="134" text-anchor="end" style="font:400 10px var(--sans);fill:#a1a1a8">多頭</text></svg>
-      <div style="font:500 40px/44px var(--sans);letter-spacing:-.03em">${score??'—'}</div><div style="font:600 15px/20px var(--sans)">${lab}</div><div style="font-size:12px;color:#a1a1a8">系統風控狀態：${v5E(sys.env_status||'—')}${sys.env_score!=null?' · '+sys.env_score+' 分':''}</div></div>
-    <div style="display:flex;flex-direction:column;gap:14px">${fac.map(([n,v,m])=>`<div class="x6-fx"><span>${n}</span><div><div class="o-bar" style="height:8px;background:#2a2a2e"><i style="flex:${v};background:${v>=50?'#fff':'#8a8a92'}"></i><i style="flex:${100-v}"></i></div><div style="font-size:11px;color:#a1a1a8;margin-top:5px">${v5E(m)}</div></div><span class="o-mono" style="text-align:right">${v}</span></div>`).join('')||'<div class="o-lbl">資料不足</div>'}</div>
-    <div style="display:flex;flex-direction:column;gap:12px"><div class="o-lbl">近 ${reg.length} 個交易日型態</div><div style="display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:4px">${reg.map(col=>`<i style="display:block;aspect-ratio:1;border-radius:4px;background:${col}${col==='#2a2a2e'?';box-shadow:inset 0 0 0 1px #4a4a52':''}"></i>`).join('')}</div>
-      <div style="display:flex;gap:12px;font-size:11px;color:#a1a1a8;flex-wrap:wrap">${[['#fff','多頭排列'],['#8a8a92','站上季線'],['#4a4a52','盤整'],['#2a2a2e','空頭排列']].map(([cc,n])=>`<span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${cc};margin-right:4px;vertical-align:middle${cc==='#2a2a2e'?';box-shadow:inset 0 0 0 1px #4a4a52':''}"></i>${n}</span>`).join('')}</div>
-      <div class="o-inset" style="font-size:12px;line-height:18px;color:#a1a1a8">${advice}。${v5E(sys.foreign_signal||'')}</div></div></div></section>`;
+  // 2026-10-28 v9：市場體質卡重做——台股配色（紅多綠空）的儀表、彩色因子列、近 30 日收盤線＋型態色帶
+  const E9=v=>v==null?'#6b6c74':v>=80?'#e5484d':v>=60?'#f08b8e':v>=40?'#8a8a92':v>=20?'#5fbf86':'#18a957';
+  const segs=[[0,20,'#18a957'],[20,40,'#5fbf86'],[40,60,'#5a5a62'],[60,80,'#f08b8e'],[80,100,'#e5484d']];
+  const gauge=`<svg viewBox="0 0 240 132" class="e9-g" role="img" aria-label="市場體質 ${score??'—'} 分，${lab}">${segs.map(([x0,x1,cc])=>{const p=P(x0+1.2,96),q=P(x1-1.2,96);return `<path d="M${p[0].toFixed(1)} ${p[1].toFixed(1)} A96 96 0 0 1 ${q[0].toFixed(1)} ${q[1].toFixed(1)}" fill="none" stroke="${cc}" stroke-width="14" stroke-linecap="round" opacity="${score!=null&&score>=x0&&score<x1+(x1===100?1:0)?1:.35}"/>`;}).join('')}<path d="M120 120 L${nd[0].toFixed(1)} ${nd[1].toFixed(1)}" stroke="#fff" stroke-width="3" stroke-linecap="round"/><circle cx="120" cy="120" r="6.5" fill="#fff"/><text x="22" y="131" style="font:400 10px var(--sans);fill:#8a8a92">空頭</text><text x="218" y="131" text-anchor="end" style="font:400 10px var(--sans);fill:#8a8a92">多頭</text></svg>`;
+  const RC={bull:['#e5484d','多頭排列'],up:['#f08b8e','站上季線'],flat:['#5a5a62','盤整'],bear:['#18a957','空頭排列']};
+  const reg2=[];for(let i=Math.max(60,c.length-30);i<c.length;i++){const m20=sma(20,i),m60=sma(60,i),x=c[i];reg2.push({d:H[i].d,c:x,k:x>m20&&m20>m60?'bull':x>m60?'up':x<m60&&m20<m60?'bear':'flat'});}
+  let ribbon='';if(reg2.length>1){const W=300,lo=Math.min(...reg2.map(r=>r.c)),hi=Math.max(...reg2.map(r=>r.c)),rg=(hi-lo)||1,xw=W/reg2.length,ln=reg2.map((r,i)=>(i?'L':'M')+((i+.5)*xw).toFixed(1)+','+(6+(1-(r.c-lo)/rg)*70).toFixed(1)).join(' ');
+    ribbon=`<svg viewBox="0 0 ${W} 104" preserveAspectRatio="none" class="e9-rb" role="img" aria-label="近 ${reg2.length} 個交易日收盤與型態"><path d="M0 6H${W} M0 41H${W} M0 76H${W}" stroke="#2a2a2e" vector-effect="non-scaling-stroke"/><path d="${ln}" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${reg2.map((r,i)=>`<rect x="${(i*xw+.6).toFixed(1)}" y="86" width="${(xw-1.2).toFixed(1)}" height="18" rx="2" fill="${RC[r.k][0]}"><title>${r.d} 收 ${v5F(r.c,0)} · ${RC[r.k][1]}</title></rect>`).join('')}</svg><div class="e9-rbx"><span>${v5E(reg2[0].d.slice(5).replace('-','/'))}</span><span>收盤 ${v5F(reg2[reg2.length-1].c,0)}</span><span>${v5E(reg2[reg2.length-1].d.slice(5).replace('-','/'))}</span></div>`;}
+  const cnt=k=>reg2.filter(r=>r.k===k).length;
+  const bodyC=`<section class="o-card o-dark o-c12 e9" data-e="mood"><div class="o-ch"><div><h2>市場體質</h2><span class="o-mt">五項因子綜合判斷 · 本頁規則計算</span></div><span class="e9-pill" style="--c:${E9(score)}">${lab}</span></div><div class="o-cb e9-b">
+    <div class="e9-l">${gauge}<div class="e9-sc"><b>${score??'—'}</b><span style="color:${E9(score)}">${lab}</span></div><div class="e9-sys"><i style="background:${sys.stop_buy||sys.can_trade===false?'#e8c35a':'#34d27b'}"></i>${v5E(sys.env_status||'—')}${sys.env_score!=null?' · 系統風控 '+sys.env_score+' 分':''}</div></div>
+    <div class="e9-fx">${fac.map(([n,v,m])=>`<div class="e9-f"><span class="e9-fn">${n}</span><div class="e9-fb"><div class="e9-tr"><i style="width:${v}%;background:${E9(v)}"></i><em style="left:50%"></em></div><small>${v5E(m)}</small></div><b style="color:${E9(v)}">${v}</b></div>`).join('')||'<div class="o-lbl">資料不足</div>'}</div>
+    <div class="e9-r"><div class="e9-rh"><span>近 ${reg2.length} 個交易日</span><span>多頭 ${cnt('bull')} · 站上季線 ${cnt('up')} · 盤整 ${cnt('flat')} · 空頭 ${cnt('bear')}</span></div>${ribbon||'<div class="o-lbl">日 K 資料不足</div>'}
+      <div class="e9-lg">${Object.values(RC).map(([cc,n])=>`<span><i style="background:${cc}"></i>${n}</span>`).join('')}</div>
+      <div class="e9-adv"><i style="background:${sys.stop_buy||sys.can_trade===false?'#e8c35a':'#34d27b'}"></i><span>${advice}。${v5E(sys.foreign_signal||'')}</span></div></div></div></section>`;
   // 廣度
   const b=brd||{},tot=(b.advancers||0)+(b.decliners||0)+(b.unchanged||0);
   const brC=v5Card('o-c4','市場廣度',`上市＋上櫃 ${tot||'—'} 檔`,`<div style="display:flex;flex-direction:column;gap:16px">${x6BarHtml(b)}<div class="o-inset" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px"><div class="o-stat">漲停<b class="up">${b.limit_up??'—'}</b></div><div class="o-stat">跌停<b class="down">${b.limit_down??'—'}</b></div><div class="o-stat">上市 漲／跌<b><span class="up">${(b.tse||{}).advancers??'—'}</span> / <span class="down">${(b.tse||{}).decliners??'—'}</span></b></div><div class="o-stat">上櫃 漲／跌<b><span class="up">${(b.otc||{}).advancers??'—'}</span> / <span class="down">${(b.otc||{}).decliners??'—'}</span></b></div></div>
