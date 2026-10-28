@@ -204,6 +204,8 @@ def _ai_narrative(kind: str, facts: dict) -> str | None:
         f"以下是今天蒐集到、已驗證的市場數據與消息（你只能根據這些內容撰寫，"
         f"不得引用任何沒有提供的數字、事件或新聞）：\n\n"
         f"{_facts_as_text(facts)}\n\n"
+        + (f"注意：今天台股休市，上面的台股數字是最近交易日（{facts.get('tw_data_date')}）的收盤，"
+           "撰寫時必須明寫「台股休市」並標註該日期，不可寫成今天的台股表現。\n\n" if facts.get("tw_closed") else "") +
         "請寫出一份『有觀點、有脈絡、讀起來像專業投顧晨報／收盤報告』的詳細分析，"
         "而不是把數字再唸一次。用以下結構，每段都要把數字之間的關聯、因果與對台股的意涵講清楚：\n\n"
         "【今日重點摘要】3-5 句，先講今天最關鍵的 2-3 件事與整體基調（偏多／偏空／中性）。\n"
@@ -271,8 +273,13 @@ def _rule_narrative(kind: str, facts: dict) -> str:
         bits.append(f"外資{'買超' if foreign['raw']>=0 else '賣超'} {abs(foreign['raw']):,.0f} 億")
     if sent and sent.get("raw") is not None:
         bits.append(f"市場情緒 {sent['value']}")
-    out.append(f"【今日重點摘要】綜合研判今日台股盤面基調偏向「{tone_zh}」。" +
-               ("主要觀察：" + "、".join(bits) + "。" if bits else ""))
+    _dd = str(facts.get("tw_data_date") or "")[5:].replace("-", "/")
+    if facts.get("tw_closed"):
+        out.append(f"【今日重點摘要】今日台股休市，以下台股數字為最近交易日{('（' + _dd + '）') if _dd else ''}收盤；"
+                   f"國際市場為最新行情，整體基調偏向「{tone_zh}」。" + ("主要觀察：" + "、".join(bits) + "。" if bits else ""))
+    else:
+        out.append(f"【今日重點摘要】綜合研判今日台股盤面基調偏向「{tone_zh}」。" +
+                   ("主要觀察：" + "、".join(bits) + "。" if bits else ""))
 
     if sp and sp.get("raw_chg") is not None:
         s = (f"【國際股市】標普 500 {sp['value']}（{sp['chg']}），{_trend_word(sp['raw_chg'])}；"
@@ -313,7 +320,7 @@ def _rule_narrative(kind: str, facts: dict) -> str:
     if adv and adv.get("value"):
         seg2.append(f"上漲／下跌家數 {adv['value']}")
     if seg2:
-        out.append(f"【台股{label}解讀】" + "；".join(seg2) + "。")
+        out.append((f"【台股最近交易日（{_dd}）】" if facts.get("tw_closed") else f"【台股{label}解讀】") + "；".join(seg2) + "。")
 
     # 消息面：列出今日重大訊息公告
     news = facts.get("news") or []
@@ -361,6 +368,24 @@ def build_report(kind: str, store=None) -> dict:
     now = datetime.now(TZ8)
     date_str = now.strftime("%Y-%m-%d")
     facts = _collect_facts(kind)
+    # ★ 2026-10-28：台股休市日（週末、國定假日、颱風假）照常產生報告（國際市場仍有行情），但台股數字
+    # 其實是「最近一個交易日」的收盤——標註清楚，避免把前一交易日的漲跌寫成「今日台股」。
+    tw_trading, tw_last = True, None
+    try:
+        from freshness import is_trading_day
+        tw_trading = bool(is_trading_day(now.replace(tzinfo=None)))
+    except Exception:
+        pass
+    try:
+        from data_fetcher import twse_index_history
+        pts = twse_index_history(1) or []
+        tw_last = pts[-1][0] if pts else None
+    except Exception:
+        pass
+    if tw_last and kind == "postmarket" and tw_last < date_str and now.hour >= 15:
+        tw_trading = False          # 收盤後仍無官方當日收盤 → 視為休市（含颱風等臨時休市）
+    facts["tw_closed"] = (not tw_trading) and kind == "postmarket"
+    facts["tw_data_date"] = tw_last
     narrative = _ai_narrative(kind, facts)
     narrative_source = "ai"
     if not narrative:
@@ -375,6 +400,8 @@ def build_report(kind: str, store=None) -> dict:
         "narrative_source": narrative_source,
         "model": (_provider() if narrative_source == "ai" else None),
         "missing": facts.get("missing", []),
+        "tw_trading_day": tw_trading,
+        "tw_data_date": tw_last,
     }
     try:
         store.set_meta(_meta_key(kind, date_str), json.dumps(report, ensure_ascii=False))

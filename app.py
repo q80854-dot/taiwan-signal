@@ -143,6 +143,30 @@ def job_report_boot_catchup():
     except Exception as e:
         logger.error(f"job_report_boot_catchup: {e}", exc_info=True)
 
+def job_rescale_open_once():
+    """2026-10-28 使用者要求：把舊規則（單檔 30%）開出的追蹤部位，依新規則（單檔 ≤ 資金÷持倉上限、
+    成本合計 ≤ 資金、組合風險 ≤ 6%）縮小股數。只執行一次（meta 旗標），並留下前後對照紀錄與系統通知。"""
+    try:
+        from state_store import store
+        import risk_manager
+        key = "rescale_open_2026_10_28"
+        if store.get_meta(key):
+            return
+        rows = store.get_pending_signals()
+        plan = risk_manager.plan_rescale(rows)
+        done = []
+        for p in plan:
+            if p["after"] >= 1 and store.resize_signal(p["id"], p["after"], p["risk_twd"], p["risk_pct"], p["position_value"]):
+                done.append(p)
+        store.set_meta(key, {"at": datetime.now(TZ_TAIPEI).isoformat(timespec="seconds"), "changes": done,
+                             "skipped": [p for p in plan if p["after"] < 1]})
+        if done:
+            msg = "、".join(f"{p['code']} {p['before']:,}→{p['after']:,} 股" for p in done)
+            store.add_event("system", "持倉股數已依新部位規則調整", msg)
+        logger.info(f"job_rescale_open_once: 調整 {len(done)} 檔 {done}")
+    except Exception as e:
+        logger.error(f"job_rescale_open_once: {e}", exc_info=True)
+
 def job_premarket_cache_refresh():
     # ★ 新增：2026-09-24——見 data_fetcher.premarket_cache_refresh() 說明。
     # 排在 08:00（早於 09:00 開盤、晚於前一天收盤資料在 yfinance 定案的時間），
@@ -580,6 +604,7 @@ def setup_scheduler():
     scheduler.add_job(job_econ_warm, "interval", minutes=30, id="econ_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_econ_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="econ_warm_boot", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
+    scheduler.add_job(job_rescale_open_once, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=60), id="rescale_open_once", replace_existing=True)
     scheduler.add_job(job_report_boot_catchup, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=120), id="report_boot_catchup", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "interval", minutes=20, id="warm_instrument", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
@@ -646,6 +671,13 @@ def _db_today_signals():
             try: d = _j.loads(r.get("raw_json") or "{}")
             except Exception: d = {}
             d.update({k: r.get(k) for k in ("id","ticker","code","name","direction","score","grade","entry_price","stop_loss","tp1","tp2","tp3","sl_pct","status","result","generated_at") if r.get(k) is not None})
+            # 部位大小以 DB 欄位為準（2026-10-28 依新規則調整股數後，raw_json 仍是發訊號當下的舊數字）
+            if r.get("suggested_lots") is not None:
+                d["suggested_shares"] = int(r["suggested_lots"])
+                d["suggested_lots"] = round(int(r["suggested_lots"]) / 1000, 3)
+                for k in ("risk_twd", "risk_pct", "position_value"):
+                    if r.get(k) is not None:
+                        d[k] = r[k]
             # inst_signal 取自 raw_json（上面的欄位同步清單不含它），這裡同樣做舊單位校正，
             # 否則 2026-10-10 換算修正之前產生的訊號卡會顯示「股」量級的數字卻標成「張」。
             out.append(normalize_legacy_inst_signal(d))
@@ -672,7 +704,9 @@ def _position_view(r):
            "generated_at": r.get("generated_at"), "result": r.get("result"), "status": r.get("status"),
            "pnl_pct": r.get("pnl_pct"), "pnl_twd": r.get("pnl_twd"),
            "sector": r.get("sector"), "risk_twd": r.get("risk_twd"), "risk_pct": r.get("risk_pct"),
-           "lots": r.get("suggested_lots")}
+           # DB 欄位 suggested_lots 歷史遺留，實際存的是「股數」；shares＝股數、lots＝張數（÷1000）
+           "shares": r.get("suggested_lots"),
+           "lots": round((r.get("suggested_lots") or 0) / 1000, 3) if r.get("suggested_lots") is not None else None}
     risk = abs(entry - sl) if entry and sl else 0
     out["risk_per_share"] = round(risk, 2)
     try:
@@ -1199,8 +1233,12 @@ def api_positions():
     rows = store.get_recent_signals(limit=60, days_back=30)
     open_rows = [r for r in rows if r.get("result") == "pending" and r.get("status") == "active"]
     closed = [r for r in rows if r.get("result") not in ("pending", None)]
-    return jsonify({"open": [_position_view(r) for r in open_rows[:12]],
-                    "closed": [_position_view(r) for r in closed[:12]]})
+    from config import ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS
+    # account_balance 只給站主（members._PRIVATE_KEYS 會對一般會員移除）；前端用它算資金使用率，
+    # 不再從 risk_twd ÷ risk_pct 反推（四捨五入後會出現 499,371 這種錯誤本金）
+    return jsonify({"open": [_position_view(r) for r in open_rows],
+                    "closed": [_position_view(r) for r in closed[:30]],
+                    "account_balance": ACCOUNT_BALANCE_TWD, "max_positions": MAX_SIMULTANEOUS_POSITIONS})
 
 @app.route("/api/autopsy")
 def api_autopsy():
@@ -1866,12 +1904,24 @@ def api_public_pulse():
         series = (cur.get("series") or {}).get(name, []) if cur.get("date") == today else []
         prev = v.get("prev_close")
         price = v.get("price")
+        vdate = v.get("date")
+        # ★ 2026-10-28：收盤後以證交所官方當日收盤為準（盤中快照可能停在最後一次輪詢，例如 10:30），
+        # 避免側欄／首頁顯示的加權指數與總覽 K 線的官方收盤不一致。
+        if not realtime.market_open() and name == "TAIEX":
+            try:
+                from data_fetcher import twse_index_history
+                pts = twse_index_history(1) or []
+                if pts and pts[-1][0] >= (vdate or ""):
+                    vdate, price = pts[-1][0], pts[-1][4]
+                    prev = pts[-2][4] if len(pts) > 1 else prev
+            except Exception:
+                pass
         chg = round(price - prev, 2) if price is not None and prev else None
         pct = round(chg / prev * 100, 2) if chg is not None and prev else None
         from data_fetcher import get_market_session
         sess = get_market_session()
         return jsonify({"ok": bool(v), "name": name, "price": price, "prev": prev, "chg": chg, "pct": pct,
-                        "date": v.get("date"), "series": series[-80:], "market_open": realtime.market_open(),
+                        "date": vdate, "series": series[-80:], "market_open": realtime.market_open(),
                         "session": sess.get("session"), "session_zh": sess.get("session_zh")})
     except Exception:
         return jsonify({"ok": False})

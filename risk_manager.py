@@ -165,6 +165,32 @@ def check_max_positions(active_signals: List[Dict]) -> Dict:
                 "message":f"⚠️ 已有 {count} 個持倉，暫停新增（上限 {MAX_SIMULTANEOUS_POSITIONS}）"}
     return {"exceeded":False,"count":count,"max":MAX_SIMULTANEOUS_POSITIONS,"remaining":MAX_SIMULTANEOUS_POSITIONS-count}
 
+def plan_rescale(open_rows: List[Dict], balance: float = None, max_positions: int = None, max_risk: float = None) -> List[Dict]:
+    """2026-10-28：依新部位規則重算追蹤中部位的股數（只會縮小、不會放大）。
+    依發出時間由舊到新分配：每檔 ≤ 資金 ÷ 同時持倉上限、進場成本合計 ≤ 資金、停損風險合計 ≤ 資金 × MAX_DAILY_RISK。
+    回傳需要變更的清單 [{id, code, before, after, risk_twd, risk_pct, position_value}]；after=0 代表放不下（保留原樣交由使用者判斷）。"""
+    import math
+    bal = balance or ACCOUNT_BALANCE_TWD
+    mp = max(1, max_positions or MAX_SIMULTANEOUS_POSITIONS)
+    cash, risk_left = bal, bal * (max_risk if max_risk is not None else MAX_DAILY_RISK)
+    out = []
+    for r in sorted(open_rows or [], key=lambda x: str(x.get("generated_at") or "")):
+        px = float(r.get("entry_price") or 0); sh = int(r.get("suggested_lots") or 0)
+        rps = abs(px - float(r.get("stop_loss") or px))
+        if px <= 0 or sh <= 0:
+            continue
+        lim = min(sh, math.floor(bal / mp / px), math.floor(max(0.0, cash) / px))
+        if rps > 0:
+            lim = min(lim, math.floor(max(0.0, risk_left) / rps))
+        lim = max(0, lim)
+        if lim >= 1:
+            cash -= lim * px; risk_left -= lim * rps
+        if lim != sh:
+            out.append({"id": r.get("id"), "code": r.get("code"), "before": sh, "after": lim,
+                        "risk_twd": round(lim * rps, 0), "risk_pct": round(lim * rps / bal * 100, 2),
+                        "position_value": round(lim * px, 0)})
+    return out
+
 def check_margin_usage(active_signals: List[Dict]) -> Dict:
     total_risk_pct=sum(s.get("risk_pct",0) for s in active_signals)
     total_risk_twd=sum(s.get("risk_twd",0) for s in active_signals)

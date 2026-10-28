@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict
 from config import (
     SIGNAL_THRESHOLDS as THRESH, SWING_PARAMS,
-    CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD,
+    CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS,
     COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION,
     MAX_RISK_PER_TRADE, ENABLE_SHORT_SIGNALS, SHORT_EXECUTABLE,
     SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, SHORT_REQUIRE_WEEKLY_BEARISH,
@@ -51,7 +51,11 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
         return {"shares":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,"breakeven_pct":0}
     risk_per_share = sl_dist
     raw_shares = max_risk / risk_per_share
-    max_shares_by_cap = (balance * 0.30) / price
+    # ★ 修正：2026-10-28——使用者回報持倉追蹤「下單金額加起來超過 50 萬」。查證：單一部位上限
+    # 原為資金 30%，同時最多 5 檔＝最多 150% 資金，帳上根本沒有這麼多錢。改成「資金 ÷ 同時持倉
+    # 上限」（5 檔＝每檔 20%），5 檔全滿時進場成本合計也不會超過帳戶資金；另外 scanner 發訊號前
+    # 還會用 fit_to_cash() 依「實際剩餘現金」再壓一次（處理極高信心例外等超過 5 檔的情況）。
+    max_shares_by_cap = (balance / max(1, MAX_SIMULTANEOUS_POSITIONS)) / price
     raw_shares = min(raw_shares, max_shares_by_cap)
     max_shares_map = {"大型股":20000,"中型股":10000,"小型股":5000,"ETF":30000}
     shares = min(max_shares_map.get(size_cat,10000), math.floor(raw_shares))
@@ -90,6 +94,33 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
         "breakeven_pct":  round(roundtrip / position_value * 100, 3) if position_value else 0,
         "liquidity_capped": liquidity_capped,
     }
+
+
+def fit_to_cash(sig, cash, risk_left=None):
+    """把訊號的建議股數壓到「剩餘現金」以內（以進場價計），並可同時壓到「組合剩餘風險額度」以內
+    （risk_left＝帳戶資金 × MAX_DAILY_RISK − 既有部位風險）。回傳調整後的 sig；放不下 1 股回傳 None。
+    進場成本＝股數 × 進場價（未含手續費），確保所有追蹤部位的進場成本合計不超過帳戶資金。"""
+    price = sig.get("entry_price") or sig.get("current_price") or 0
+    shares = int(sig.get("suggested_shares") or 0)
+    if price <= 0 or shares <= 0:
+        return sig
+    rps = abs(price - (sig.get("stop_loss") or price))
+    lim = math.floor(max(0.0, cash) / price)
+    if risk_left is not None and rps > 0:
+        lim = min(lim, math.floor(max(0.0, risk_left) / rps))
+    if shares <= lim:
+        return sig
+    new = lim
+    if new < 1:
+        return None
+    bal = ACCOUNT_BALANCE_TWD
+    pv = new * price
+    rt = calc_trade_cost(price, new, "buy")["total_cost"] + calc_trade_cost(price, new, "sell")["total_cost"]
+    sig.update({"suggested_shares": new, "suggested_lots": round(new / SHARES_PER_LOT, 3),
+                "risk_twd": round(new * rps, 0), "risk_pct": round(new * rps / bal * 100, 2),
+                "position_value": round(pv, 0), "roundtrip_cost": round(rt, 0),
+                "breakeven_pct": round(rt / pv * 100, 3) if pv else 0, "cash_capped": True})
+    return sig
 
 def calc_stop_loss_tw(direction, price, atr, indicators, size_cat="中型股", low_5d=None, high_5d=None):
     params  = SWING_PARAMS.get(size_cat, SWING_PARAMS["中型股"])

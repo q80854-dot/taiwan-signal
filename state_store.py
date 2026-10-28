@@ -418,6 +418,16 @@ class StateStore:
         except Exception as e:
             logger.error(f"record_actual_fill: {e}"); return False
 
+    # ★ 新增：2026-10-28——依新部位規則調整追蹤中部位的股數（DB 欄位 suggested_lots 實際存股數）。
+    def resize_signal(self, sig_id, shares: int, risk_twd: float, risk_pct: float, position_value: float) -> bool:
+        try:
+            with self._conn() as conn:
+                conn.execute("UPDATE signals SET suggested_lots=?, risk_twd=?, risk_pct=?, position_value=? WHERE id=?",
+                             (int(shares), float(risk_twd), float(risk_pct), float(position_value), sig_id))
+            return True
+        except Exception as e:
+            logger.error(f"resize_signal: {e}"); return False
+
     def get_slippage_stats(self) -> Dict:
         """統計目前累積到的「訊號參考價 vs 使用者實際成交價」滑價資料。
         買進時，實際成交價高於參考價＝多付（正滑價）；賣出(放空)時，實際成交價

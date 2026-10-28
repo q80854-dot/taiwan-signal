@@ -405,6 +405,32 @@ class TWScanEngine:
             logger.info(f"run_daily_scan: 市場情緒 {_sent:.0f}（偏弱），單次訊號上限由 {signal_cap} 降為 {_regime_cap}")
             signal_cap = _regime_cap
         final_signals = filtered[:signal_cap]
+        # ★ 新增：2026-10-28——資金上限：所有追蹤部位的進場成本合計不得超過帳戶資金。
+        # 先扣掉既有未平倉部位（DB 的 suggested_lots 欄位實際存股數）的進場成本，再依序把新訊號
+        # 壓到剩餘現金以內；放不下 1 股的訊號不發。
+        try:
+            from signal_engine import fit_to_cash
+            from config import ACCOUNT_BALANCE_TWD, MAX_DAILY_RISK
+            _cash = ACCOUNT_BALANCE_TWD - sum((p.get("entry_price") or 0) * (p.get("suggested_lots") or 0)
+                                              for p in (active_positions or []))
+            # 組合風險上限（config.MAX_DAILY_RISK，網站顯示的「組合上限 6%」）：扣掉既有部位的停損風險
+            _risk_left = ACCOUNT_BALANCE_TWD * MAX_DAILY_RISK - sum(float(p.get("risk_twd") or 0)
+                                                                   for p in (active_positions or []))
+            _kept = []
+            for _s in final_signals:
+                _before = _s.get("suggested_shares")
+                _s2 = fit_to_cash(_s, _cash, _risk_left)
+                if _s2 is None:
+                    logger.info(f"[{_s.get('ticker')}] 剩餘現金 {_cash:,.0f}／剩餘風險額度 {_risk_left:,.0f} 不足買進 1 股，本次不發訊號")
+                    continue
+                if _s2.get("suggested_shares") != _before:
+                    logger.info(f"[{_s.get('ticker')}] 建議股數依剩餘現金由 {_before} 下修為 {_s2.get('suggested_shares')}")
+                _cash -= (_s2.get("entry_price") or _s2.get("current_price") or 0) * (_s2.get("suggested_shares") or 0)
+                _risk_left -= float(_s2.get("risk_twd") or 0)
+                _kept.append(_s2)
+            final_signals = _kept
+        except Exception as e:
+            logger.warning(f"資金上限檢查失敗（不影響其餘流程）: {e}")
         if len(filtered) > signal_cap:
             logger.info(
                 f"run_daily_scan: 篩選後 {len(filtered)} 檔候選，但持倉上限只剩 "
