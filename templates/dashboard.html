@@ -4983,11 +4983,20 @@ function v5Chart(){
   const mv=e=>{const r=sv.getBoundingClientRect(),px=((e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width*W,i=Math.max(0,Math.min(N-1,Math.floor(px/(PX/N))));cr.setAttribute('d',`M${cx(i).toFixed(1)} 12V430`);ibx.innerHTML=ib(i);};
   hit.addEventListener('mousemove',mv);hit.addEventListener('touchmove',mv,{passive:true});hit.addEventListener('mouseleave',()=>{cr.setAttribute('d','');ibx.innerHTML=ib(N-1);});
 }
+// 三大法人逐日買賣超：證交所 T86（僅上市，歷史常有缺日）與 FinMind（上市櫃、連續）依日期合併，同日以 T86 為準；單位皆為張
+function v5Inst(){
+  const d=_v5.d||{},fm=_v5.fm||{},by={};
+  ((fm.chips&&fm.chips.days)||[]).forEach(x=>{if(x&&x.date)by[x.date]=x;});
+  (((d.inst||{}).days)||[]).forEach(x=>{if(x&&x.date)by[x.date]=x;});
+  const days=Object.keys(by).sort().map(k=>by[k]),sum=n=>{const a=days.slice(-n);return a.length?{foreign:a.reduce((t,x)=>t+(x.foreign||0),0),trust:a.reduce((t,x)=>t+(x.trust||0),0),dealer:a.reduce((t,x)=>t+(x.dealer||0),0),total:a.reduce((t,x)=>t+(x.total||0),0),n:a.length}:null;};
+  const st=(fm.chips&&fm.chips.streak)||((d.inst||{}).streak)||{};
+  return {days,sum5:sum(5)||{},sum20:sum(20)||{},streak:st,latest:days.length?days[days.length-1].date:null};
+}
 // 系統評分（本頁規則計算，非訊號掃描分數）：技術 40% · 籌碼 30% · 基本面 30%
 function v5Score(){
   const d=_v5.d||{},it=((d.indicator_reading||{}).items||[]);
   const tech=it.length?Math.round(it.reduce((a,x)=>a+(x.tone==='up'?1:x.tone==='neutral'?.5:0),0)/it.length*100):null;
-  const s20=((d.inst||{}).sum20||{}),s5=((d.inst||{}).sum5||{}),st=((d.inst||{}).streak||{});
+  const IV=v5Inst(),s20=IV.sum20,s5=IV.sum5,st=IV.streak;
   let chip=null;if(s20.total!=null){chip=50+(s20.total>0?15:s20.total<0?-15:0)+(s5.total>0?10:s5.total<0?-10:0)+((st.trust||0)>=3?10:(st.trust||0)<=-3?-10:0)+((st.foreign||0)>=3?15:(st.foreign||0)<=-3?-15:0);chip=Math.max(0,Math.min(100,chip));}
   const fund=(d.fundamental_profile||{}).score??null;
   const parts=[[tech,.4],[chip,.3],[fund,.3]].filter(x=>x[0]!=null),w=parts.reduce((a,x)=>a+x[1],0);
@@ -5079,7 +5088,7 @@ function v5TabOv(){
   if(pv)rk.push(pv.pctile>=80?['◆ 留意','warn','估值偏高',`本益比位於近一年 ${pv.pctile} 百分位`]:['正常','up','估值位置',`本益比位於近一年 ${pv.pctile} 百分位`]);
   if(C){const oc=C.v('ocf_ni');if(oc!=null)rk.push(oc>=80?['良好','up','盈餘品質',`營業現金流／淨利 ${v5F(oc,0)}%`]:['◆ 留意','warn','盈餘品質',`營業現金流／淨利 ${v5F(oc,0)}%`]);}
   if(mg.margin_use_pct!=null)rk.push(mg.margin_use_pct>=30?['◆ 留意','warn','融資使用率偏高',v5F(mg.margin_use_pct,1)+'%']:['正常','up','融資使用率',v5F(mg.margin_use_pct,1)+'%']);
-  const stf=((d.inst||{}).streak||{}).foreign;if(stf!=null&&Math.abs(stf)>=5)rk.push(stf<0?['◆ 留意','warn','外資連續賣超',`${Math.abs(stf)} 日`]:['良好','up','外資連續買超',`${stf} 日`]);
+  const stf=(v5Inst().streak||{}).foreign;if(stf!=null&&Math.abs(stf)>=5)rk.push(stf<0?['◆ 留意','warn','外資連續賣超',`${Math.abs(stf)} 日`]:['良好','up','外資連續買超',`${stf} 日`]);
   if(sh.sbl_short_chg_lots!=null&&sh.sbl_short_chg_lots>0&&sh.sbl_short_lots)rk.push(['◆ 留意','warn','借券賣出增加',`${sh.chg_days} 日 +${v5F(sh.sbl_short_chg_lots,0)} 張，餘額 ${v5F(sh.sbl_short_lots,0)} 張`]);
   const riskC=v5Card('o-c4','風險警示','交易與財報異常檢查',rk.slice(0,7).map(([s,c,n,m])=>`<div class="o-row2" style="padding:9px 0;align-items:center"><span class="o-tag ${c}" style="min-width:52px;justify-content:center">${s}</span><span style="flex:1;font-size:13px">${n}${m?`<span style="display:block;font-size:11px;color:var(--t3)">${m}</span>`:''}</span></div>`).join(''));
   // 事件時間軸：過去 30 天與未來 60 天
@@ -5134,13 +5143,13 @@ function v5TabTech(){
 }
 function v5TabChip(){
   const asc=a=>(a||[]).slice().sort((x,y)=>x.date<y.date?-1:x.date>y.date?1:0);   // 來源有的新到舊，統一舊到新
-  const d=_v5.d,fm=_v5.fm,inst=d.inst||{},allD=asc(inst.days),days=allD.slice(-20),k=_v5.cflow;
+  const d=_v5.d,fm=_v5.fm,IV=v5Inst(),allD=IV.days,days=allD.slice(-20),k=_v5.cflow;
   const val=x=>k==='total'?x.total:x[k];
   const mx=Math.max(1,...days.map(x=>Math.abs(val(x)||0)));
   const flows=days.length?`<div style="display:flex;gap:5px;height:170px">${days.map(x=>{const v=val(x)||0,h=Math.abs(v)/mx*80;return `<div style="flex:1;display:flex;flex-direction:column" title="${v5E(x.date)} ${v5S(v)} 張"><div style="flex:1;display:flex;align-items:flex-end"><i style="display:block;width:100%;height:${v>0?h:0}px;border-radius:3px 3px 1px 1px;background:var(--chart-up)"></i></div><div style="height:1px;background:var(--line2)"></div><div style="flex:1;display:flex;align-items:flex-start"><i style="display:block;width:100%;height:${v<0?h:0}px;border-radius:1px 1px 3px 3px;background:var(--chart-down)"></i></div></div>`;}).join('')}</div>`:'';
-  const s20=inst.sum20||{},fh=(fm&&fm.foreign_hold)||{};
-  const flowC=v5Card('o-c8','三大法人買賣超',`近 ${days.length} 日 · 張${inst.latest_market_date?' · '+v5E(inst.latest_market_date.slice(5).replace('-','/')):''}`,days.length?`<div style="display:flex;flex-direction:column;gap:14px">${flows}
-    <div class="o-inset" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px"><div class="o-stat">外資 20 日<b class="${v5C(s20.foreign)}">${v5S(s20.foreign)}</b></div><div class="o-stat">投信 20 日<b class="${v5C(s20.trust)}">${v5S(s20.trust)}</b></div><div class="o-stat">外資持股<b>${fh.latest?v5F(fh.latest.ratio,2)+'%':'—'}${fh.chg5!=null?` <span class="${v5C(fh.chg5)}" style="font-size:11px">${v5S(fh.chg5,2)}</span>`:''}</b></div><div class="o-stat">自營 20 日<b class="${v5C(s20.dealer)}">${v5S(s20.dealer)}</b></div></div></div>`:v5Empty('沒有法人資料','目前沒有這檔的三大法人買賣超資料（部分上櫃股票不在來源內，或今日尚未公布）。'),
+  const s20=IV.sum20,fh=(fm&&fm.foreign_hold)||{};
+  const flowC=v5Card('o-c8','三大法人買賣超',`近 ${days.length} 日 · 張${IV.latest?' · '+v5E(IV.latest.slice(5).replace('-','/')):''}`,days.length?`<div style="display:flex;flex-direction:column;gap:14px">${flows}
+    <div class="o-inset" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px"><div class="o-stat">外資 ${s20.n||0} 日<b class="${v5C(s20.foreign)}">${v5S(s20.foreign)}</b></div><div class="o-stat">投信 ${s20.n||0} 日<b class="${v5C(s20.trust)}">${v5S(s20.trust)}</b></div><div class="o-stat">外資持股<b>${fh.latest?v5F(fh.latest.ratio,2)+'%':'—'}${fh.chg5!=null?` <span class="${v5C(fh.chg5)}" style="font-size:11px">${v5S(fh.chg5,2)}</span>`:''}</b></div><div class="o-stat">自營 ${s20.n||0} 日<b class="${v5C(s20.dealer)}">${v5S(s20.dealer)}</b></div></div></div>`:v5Empty('沒有法人資料','目前沒有這檔的三大法人買賣超資料（部分上櫃股票不在來源內，或今日尚未公布）。'),
     `<div class="o-tabs">${[['foreign','外資'],['trust','投信'],['dealer','自營'],['total','合計']].map(([kk,n])=>`<button class="tab${kk===k?' on':''}" onclick="v5Set('cflow','${kk}')">${n}</button>`).join('')}</div>`);
   const d5=allD.slice(-5).reverse();
   const detC=v5Card('o-c4','三大法人明細','近 5 日 · 張',d5.length?`<table class="r-t"><thead><tr><th>日期</th><th>外資</th><th>投信</th><th>自營</th><th>合計</th></tr></thead><tbody>${d5.map(x=>`<tr><td class="o-mono">${v5E(x.date.slice(5).replace('-','/'))}</td><td class="${v5C(x.foreign)}">${v5S(x.foreign)}</td><td class="${v5C(x.trust)}">${v5S(x.trust)}</td><td class="${v5C(x.dealer)}">${v5S(x.dealer)}</td><td class="${v5C(x.total)}" style="font-weight:500">${v5S(x.total)}</td></tr>`).join('')}</tbody></table>`:'<div class="o-lbl">—</div>');
