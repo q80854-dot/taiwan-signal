@@ -3572,6 +3572,32 @@ function _ownershipHtml(d){
   </div>
   <div style="font-size:11px;color:var(--t3);margin-top:6px">外資持股：證交所 MI_QFIIS。董監持股：TWSE／TPEx 董監事持股彙總表（官方免費逐檔資料有限，部分個股無資料故不顯示）。大戶／散戶：集保股權分散表（每週；大戶＝≥400 張級距合計）。僅供研究參考，非投資建議。</div>`;
 }
+function _analystHtml(d){
+  // 法人目標價與評等（Yahoo 分析師共識）。無覆蓋就整塊不顯示（不留空殼、不編造）。
+  const A=d.analyst_consensus;if(!A||A.target_mean==null)return '';
+  const cur=A.current,up=(cur&&A.target_mean)?((A.target_mean-cur)/cur*100):null;
+  const kpis=[['目標均價',_fmtN(A.target_mean,1),(A.n_analysts?A.n_analysts+' 位分析師':'')]];
+  if(A.target_high!=null&&A.target_low!=null)kpis.push(['目標區間',_fmtN(A.target_low,1)+'–'+_fmtN(A.target_high,1),'']);
+  if(A.rating_zh||A.rating_mean!=null)kpis.push(['綜合評等',safe(A.rating_zh||'—'),A.rating_mean!=null?'均值 '+A.rating_mean+'（1買–5賣）':'']);
+  if(up!=null)kpis.push(['距現價',_sg(+up.toFixed(1))+'%',cur!=null?'現價 '+_fmtN(cur,1):'']);
+  const cols=kpis.length;
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">法人目標價與評等</div></div>
+  <div class="hero-row" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">
+    ${kpis.map((c,i)=>`<div class="kpi"${i===0?' style="border-left:none"':''}><div class="kpi-label">${safe(c[0])}</div><div class="kpi-val" style="font-size:20px">${safe(c[1])}</div><div class="kpi-sub">${safe(c[2])}</div></div>`).join('')}
+  </div>
+  <div style="font-size:11px;color:var(--t3);margin-top:6px">來源：${safe(A.source)}（彙整分析師估計；台股僅部分個股有覆蓋，無覆蓋即不顯示）。僅供研究參考，非投資建議。</div>`;
+}
+function _efficiencyHtml(d){
+  // 經營效率天數（FinMind 官方財報，TTM）。必要科目不齊就整塊不顯示。
+  const E=d.efficiency_days;if(!E||E.ccc==null)return '';
+  const kpis=[['存貨週轉天數',_fmtN(E.dio,1)+' 天',''],['應收週轉天數',_fmtN(E.dso,1)+' 天',''],
+              ['應付週轉天數',_fmtN(E.dpo,1)+' 天',''],['現金轉換循環',_fmtN(E.ccc,1)+' 天',E.period||'']];
+  return `<div class="sec-label"><div class="bar"></div><div class="tx">經營效率天數</div></div>
+  <div class="hero-row" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+    ${kpis.map((c,i)=>`<div class="kpi"${i===0?' style="border-left:none"':''}><div class="kpi-label">${safe(c[0])}</div><div class="kpi-val" style="font-size:20px">${safe(c[1])}</div><div class="kpi-sub">${safe(c[2])}</div></div>`).join('')}
+  </div>
+  <div style="font-size:11px;color:var(--t3);margin-top:6px">${safe(E.source)}；資料截至 ${safe(E.as_of||'')}。現金轉換循環＝存貨＋應收−應付，天數越短周轉越快。僅供研究參考。</div>`;
+}
 function _shortAnalysisHtml(d){
   const M=d.margin,SH=(d.flags||{}).short;if(!M&&!SH)return '';
   const parts=[];
@@ -3673,8 +3699,10 @@ function instExtraHtml(d){
       <div class="kpi"><div class="kpi-label">資券互抵</div><div class="kpi-val" style="font-size:17px">${M.offsetting==null?'—':_fmtN(M.offsetting,0)}</div><div class="kpi-sub">張</div></div>
     </div><div style="font-size:11px;color:var(--t3);margin-top:6px">來源：${M.source==='tpex_openapi'?'櫃買中心 OpenAPI':'證交所 OpenAPI MI_MARGN'}（每日收盤後更新）</div>`;
   }
+  h+=_analystHtml(d);
   h+=_shortAnalysisHtml(d);
   h+=_ownershipHtml(d);
+  h+=_efficiencyHtml(d);
   h+=_finChartHtml(d);
   h+=_indicatorReadingHtml(d);
   h+=_newsHtml(d);
@@ -4949,7 +4977,16 @@ function v5TabChip(){
   const sblC=v5Card('o-c4','借券與當沖','近 5 日',`<div style="display:flex;flex-direction:column;gap:14px">${ld.length?`<div style="display:flex;gap:6px;height:70px;align-items:flex-end">${ld.map(x=>`<i style="flex:1;display:block;height:${Math.max(4,(x.lots||0)/lmx*100).toFixed(0)}%;border-radius:2px;background:var(--acc)" title="${v5E(x.date)} ${v5F(x.lots,0)} 張"></i>`).join('')}</div><div style="font-size:11px;color:var(--t3);margin-top:-8px">借券成交量（張）</div>`:''}
     <div class="o-inset" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px"><div class="o-stat">借券賣出餘額<b>${v5F(sh.sbl_short_lots,0)}</b></div><div class="o-stat">${v5E(sh.chg_days||5)} 日變化<b class="${v5C(-(sh.sbl_short_chg_lots||0))}">${v5S(sh.sbl_short_chg_lots)}</b></div><div class="o-stat">當沖比例<b>${dt.length?v5F(dt[dt.length-1].ratio,1)+'%':'—'}</b></div></div>
     <div style="font-size:12px;line-height:18px;color:var(--t2)">${(d.flags||{}).daytrade_ok?'可現股當沖':'不可現股當沖'}${(d.flags||{}).sbl_avail_lots!=null?`；可借券賣出 ${v5F(d.flags.sbl_avail_lots,0)} 張`:''}。</div></div>`);
-  const tgtC=v5Card('o-c4','法人目標價與評等','近 90 天',v5NA('券商目標價與評等沒有免費公開來源，尚未接上。'));
+  // 法人目標價與評等：/api/instruments 的 analyst_consensus（#83，Yahoo 分析師共識）；沒有覆蓋時標示無資料
+  const A=d.analyst_consensus;let tgtB;
+  if(A&&A.target_mean!=null){const cur=A.current??(d.info||{}).close,up=cur?(A.target_mean-cur)/cur*100:null,lo=A.target_low,hi=A.target_high,rg=(hi!=null&&lo!=null&&hi>lo)?hi-lo:null,P=v=>rg?Math.max(0,Math.min(100,(v-lo)/rg*100)).toFixed(1)+'%':'50%';
+    tgtB=`<div style="display:flex;flex-direction:column;gap:16px"><div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="o-big">${v5F(A.target_mean,1)}</span>${up!=null?`<span class="o-tag ${v5C(up)}">潛在 ${v5S(up,1)}%</span>`:''}</div>
+      ${rg?`<div><div style="position:relative;height:8px;border-radius:8px;background:linear-gradient(90deg,var(--s3),var(--acc-soft) 40%,var(--acc))">${cur!=null?`<i style="position:absolute;left:${P(cur)};top:-5px;width:3px;height:18px;margin-left:-1.5px;border-radius:2px;background:var(--ink)"></i>`:''}<i style="position:absolute;left:${P(A.target_mean)};top:-4px;width:16px;height:16px;margin-left:-8px;border-radius:50%;background:var(--s1);box-shadow:0 0 0 2px var(--acc)"></i></div>
+      <div style="display:flex;justify-content:space-between;font:400 10px/14px var(--mono);color:var(--t3);margin-top:10px"><span>最低 ${v5F(lo,1)}</span><span>現價 ${v5F(cur,1)} ┃ 平均 ${v5F(A.target_mean,1)}</span><span>最高 ${v5F(hi,1)}</span></div></div>`:''}
+      <div class="o-inset" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px"><div class="o-stat">綜合評等<b>${v5E(A.rating_zh||'—')}</b></div><div class="o-stat">評等均值<b>${A.rating_mean!=null?v5F(A.rating_mean,2)+'（1 買–5 賣）':'—'}</b></div></div>
+      <div class="o-lbl">來源：${v5E(A.source||'分析師共識')}（台股僅部分個股有覆蓋）。僅供研究參考。</div></div>`;}
+  else tgtB=v5Empty('沒有分析師覆蓋','這檔股票目前沒有可用的分析師目標價共識資料。');
+  const tgtC=v5Card('o-c4','法人目標價與評等',A&&A.n_analysts?`${A.n_analysts} 位分析師`:'分析師共識',tgtB);
   return flowC+detC+brkC+brdC+mgC+sblC+tgtC;
 }
 function v5TabFin(){
@@ -4991,7 +5028,12 @@ function v5TabFin(){
   const debtC=v5Card('o-c6','償債與資本結構',v5E(B.date||''),B.assets?`<div style="display:flex;flex-direction:column;gap:16px"><div class="o-inset" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px"><div class="o-stat">負債比<b>${v5F(B.debt_ratio,1)}%</b></div><div class="o-stat">流動比<b>${v5F(B.current_ratio,0)}%</b></div><div class="o-stat">速動比<b>${v5F(B.quick_ratio,0)}%</b></div><div class="o-stat">現金占資產<b>${v5F(B.cash/assets*100,1)}%</b></div></div>
     <div><div class="o-lbl" style="margin-bottom:8px">負債與權益</div><div class="o-bar" style="height:14px"><i style="flex:${li};background:var(--chart-down)"></i><i style="flex:${eq};background:var(--ink)"></i></div><div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--t3)"><span>負債 ${v5F(li/assets*100,0)}% · ${v5Yi(li)}</span><span>股東權益 ${v5F(eq/assets*100,0)}% · ${v5Yi(eq)}</span></div></div>
     <div><div class="o-lbl" style="margin-bottom:8px">資產組成</div><div class="o-bar" style="height:14px"><i style="flex:${B.cash};background:var(--acc)"></i><i style="flex:${assets-B.cash};background:var(--s3)"></i></div><div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--t3)"><span>現金 ${v5F(B.cash/assets*100,0)}%</span><span>其他資產 ${v5F(100-B.cash/assets*100,0)}%</span><span>總資產 ${v5Yi(assets)}</span></div></div></div>`:v5Empty('沒有資產負債資料',''));
-  const effC=v5Card('o-c6','經營效率','存貨、應收、現金轉換天數',v5NA('需要資產負債表的存貨、應收、應付明細，FinMind 資料尚未接上這幾個科目。'));
+  // 經營效率天數：/api/instruments 的 efficiency_days（#83，FinMind 官方財報，近四季）；科目不齊時標示無資料
+  const E=(_v5.d||{}).efficiency_days;
+  const effC=v5Card('o-c6','經營效率',E&&E.ccc!=null?`天數 · ${v5E(E.period||'近四季')}`:'存貨、應收、現金轉換天數',E&&E.ccc!=null?`<div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;flex-direction:column;gap:10px">${[['存貨週轉',E.dio,'var(--acc)'],['應收週轉',E.dso,'var(--amber)'],['應付週轉',E.dpo,'var(--t3)']].map(([n,v,c])=>{const mx=Math.max(1,E.dio||0,E.dso||0,E.dpo||0);return `<div class="r-sc" style="grid-template-columns:72px 1fr 64px"><span style="color:var(--t2)">${n}</span><div class="o-bar" style="height:8px;background:var(--s3)"><i style="flex:${v||0};background:${c}"></i><i style="flex:${mx-(v||0)}"></i></div><span class="o-mono" style="text-align:right">${v5F(v,1)} 天</span></div>`;}).join('')}</div>
+    <div class="o-inset" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px"><div class="o-stat">存貨週轉<b>${v5F(E.dio,1)} 天</b></div><div class="o-stat">應收週轉<b>${v5F(E.dso,1)} 天</b></div><div class="o-stat">應付週轉<b>${v5F(E.dpo,1)} 天</b></div><div class="o-stat">現金轉換週期<b>${v5F(E.ccc,1)} 天</b></div></div>
+    <div class="o-lbl">${v5E(E.source||'FinMind 財報')}${E.as_of?'；資料截至 '+v5E(E.as_of):''}。現金轉換週期＝存貨＋應收－應付，越短周轉越快。</div></div>`:v5Empty('暫無周轉天數','財報缺少存貨、應收或應付科目，或資料暫時取不到。'));
   const ckC=C?v5Card('o-c12','財報體質體檢',`FinMind 財報資料 · 通過 ${C.pass} / ${C.n} 項`,`<div class="r-4">${C.G.map(([n,items])=>`<div style="display:flex;flex-direction:column;gap:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font:600 13px/18px var(--sans)">${n}</span><span class="o-mono" style="font-size:11px;color:var(--t3)">${items.filter(c=>c.ok).length}/${items.filter(c=>c.ok!=null).length}</span></div>${items.map(c=>`<div class="r-ck"><span class="m ${c.ok===true?'ok':c.ok===false?'no':''}">${c.ok===true?'✓':c.ok===false?'✕':'—'}</span><span><b>${c.n}</b><span style="color:var(--t3)">${c.rule}</span></span><em>${c.val}</em></div>`).join('')}</div>`).join('')}</div>`,`<span class="o-tag">資料來源 FinMind · ${v5E(C.period||'')}</span>`):'';
   // 本益比河流圖：近四季 EPS × 倍數（近一年本益比最低到最高分 5 條）
   let rivC='';
