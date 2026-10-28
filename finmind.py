@@ -311,6 +311,113 @@ def schema_probe(code: str = "2382") -> dict:
     return out
 
 
+# ── 經營效率天數（存貨/應收/應付週轉天數 + 現金轉換循環）──────────────────
+# 使用者要求個股研究顯示經營效率天數，且資料須 100% 正確。做法：用 FinMind 官方三表，
+# 以「精確中文科目名(origin_name)」比對（不用易誤抓的英文 type 別名），任一必要科目缺、
+# 或單季損益不足 4 季、或分母 ≤0，一律回 None（前端顯示「暫無」）——寧可沒有，也不要錯。
+# 公式（TTM 年化，天數用 365）：
+#   存貨週轉天數 DIO = 期末存貨 / 近四季營業成本 × 365
+#   應收帳款週轉天數 DSO = 期末應收帳款 / 近四季營業收入 × 365
+#   應付帳款週轉天數 DPO = 期末應付帳款 / 近四季營業成本 × 365
+#   現金轉換循環 CCC = DIO + DSO − DPO
+# 資產負債表為「時點數」取最近一季期末；綜合損益表之營收/成本為「單季數」(FinMind 已單季)
+# 取最近連續四季加總。金融／營建等無這些科目的個股自然回 None（效率天數對其亦無意義）。
+_EFF_BS_NAMES = {           # origin_name 精確候選（依序取第一個命中）
+    "inventory":  ["存貨"],
+    "receivable": ["應收帳款淨額", "應收帳款", "應收票據及帳款淨額", "應收票據及帳款"],
+    "payable":    ["應付帳款", "應付票據及帳款"],
+}
+_EFF_IS_NAMES = {
+    "revenue": ["營業收入合計", "營業收入淨額", "營業收入"],
+    "cogs":    ["營業成本合計", "營業成本"],
+}
+
+
+def _by_origin(rows: List[dict]) -> Dict[str, Dict[str, float]]:
+    """{date: {origin_name: value}}（精確中文科目名，不做模糊比對）。"""
+    byd: Dict[str, Dict[str, float]] = {}
+    for r in rows:
+        d = r.get("date"); nm = str(r.get("origin_name") or "").strip(); v = _num(r.get("value"))
+        if not d or not nm or v is None:
+            continue
+        byd.setdefault(d, {}).setdefault(nm, v)   # 同日同科目取第一個（避免合併報表重複列覆蓋）
+    return byd
+
+
+def _pick_exact(slot: Dict[str, float], names: List[str]) -> Optional[float]:
+    for nm in names:
+        if nm in slot:
+            return slot[nm]
+    return None
+
+
+def efficiency_days(code: str) -> Optional[dict]:
+    """個股經營效率天數（DIO/DSO/DPO/CCC，TTM）。未啟用、資料不足或科目不齊回 None。"""
+    if not enabled():
+        return None
+    code = str(code).strip()
+    ck = f"eff:{code}"
+    dbkey = f"finmind_eff_{code}"
+    with _lock:
+        ent = _cache.get(ck)
+        if ent and (ent.get("fallback") and time.time() - ent["at"] < _FALLBACK_TTL
+                    or not ent.get("fallback") and time.time() - ent["at"] < _TTL):
+            return ent["data"]
+    start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 2 * 365 * 86400))
+    bs = _by_origin(_fetch("TaiwanStockBalanceSheet", code, start))
+    inc = _by_origin(_fetch("TaiwanStockFinancialStatements", code, start))
+
+    def _compute():
+        if not bs or not inc:
+            return None
+        bdate = max(bs.keys())                       # 最近一季期末（時點）
+        bslot = bs[bdate]
+        inv = _pick_exact(bslot, _EFF_BS_NAMES["inventory"])
+        recv = _pick_exact(bslot, _EFF_BS_NAMES["receivable"])
+        pay = _pick_exact(bslot, _EFF_BS_NAMES["payable"])
+        # 近四季單季營收/成本（需連續四季齊全）
+        q_dates = sorted(inc.keys(), reverse=True)
+        rev_q, cogs_q = [], []
+        for d in q_dates:
+            rv = _pick_exact(inc[d], _EFF_IS_NAMES["revenue"])
+            cg = _pick_exact(inc[d], _EFF_IS_NAMES["cogs"])
+            if rv is None or cg is None:
+                continue
+            rev_q.append(rv); cogs_q.append(cg)
+            if len(rev_q) >= 4:
+                break
+        if len(rev_q) < 4:
+            return None
+        rev_ttm = sum(rev_q[:4]); cogs_ttm = sum(cogs_q[:4])
+        # 嚴格 gating：分母須為正、必要科目齊全；缺一律不顯示
+        if not (rev_ttm and rev_ttm > 0 and cogs_ttm and cogs_ttm > 0):
+            return None
+        if inv is None or recv is None or pay is None:
+            return None
+        dio = round(inv / cogs_ttm * 365, 1)
+        dso = round(recv / rev_ttm * 365, 1)
+        dpo = round(pay / cogs_ttm * 365, 1)
+        ccc = round(dio + dso - dpo, 1)
+        if any(x < 0 for x in (dio, dso, dpo)):      # 天數不應為負，出現即視為科目對錯 → 不顯示
+            return None
+        return {"period": _period(bdate), "as_of": str(bdate)[:10],
+                "dio": dio, "dso": dso, "dpo": dpo, "ccc": ccc,
+                "source": "FinMind 官方財報（資產負債表時點＋近四季損益 TTM）"}
+
+    data = _compute()
+    if data:
+        with _lock:
+            _cache[ck] = {"at": time.time(), "data": data}
+        _db_put(dbkey, data)
+        return data
+    cached = _db_get(dbkey)                           # 回退最近一次正確季報結果
+    if cached and cached.get("data"):
+        with _lock:
+            _cache[ck] = {"at": time.time(), "data": cached["data"], "fallback": True}
+        return cached["data"]
+    return None
+
+
 # ── 三大法人（個股逐日買賣超）：補上櫃(.TWO)個股，並在證交所 T86 失效時作為上市的備援顯示來源 ──
 # FinMind 資料集 TaiwanStockInstitutionalInvestorsBuySell：date / stock_id / buy / sell / name。
 # name 為機構別，相容英文代碼與中文名稱；買賣超(net)＝buy−sell（股），再換算成「張」。

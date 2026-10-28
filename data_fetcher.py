@@ -536,6 +536,66 @@ def _fetch_yf_single(sym: str, valid_range: tuple = None) -> Optional[Dict]:
 
 
 # ════════════════════════════════════════════════
+# 法人目標價與評等（Yahoo Finance 分析師共識）
+# ════════════════════════════════════════════════
+# 使用者要個股研究顯示「法人目標價與評等」，且資料須 100% 正確。台股無免費官方逐檔分析師
+# 資料；唯一真實、非編造的免費替代＝Yahoo Finance 彙整的「分析師共識」(yfinance .info)。
+# 覆蓋：大型股（如台積電）有、多數中小型股無或偏少。嚴格 gating：分析師數 < 3 或無目標均價
+# 一律回 None（前端顯示「暫無」），並明白標示來源為 Yahoo 分析師共識——寧可沒有，也不要錯。
+_ANALYST_CACHE = {}
+_ANALYST_TTL = 6 * 3600
+_RATING_ZH = {
+    "strong_buy": "強力買進", "buy": "買進", "outperform": "優於大盤",
+    "hold": "持有", "neutral": "中立", "underperform": "劣於大盤",
+    "sell": "賣出", "strong_sell": "強力賣出",
+}
+
+
+def fetch_analyst_consensus(sym: str) -> Optional[Dict]:
+    """個股分析師共識（Yahoo Finance）。無覆蓋/分析師太少/抓取失敗一律回 None（不臆測）。"""
+    if not YFINANCE_OK:
+        return None
+    sym = str(sym).strip()
+    ent = _ANALYST_CACHE.get(sym)
+    if ent and time.time() - ent[0] < _ANALYST_TTL:
+        return ent[1]
+
+    def _f(v):
+        try:
+            return round(float(v), 2)
+        except Exception:
+            return None
+
+    data = None
+    try:
+        info = yf.Ticker(sym).get_info() or {}
+        n = info.get("numberOfAnalystOpinions")
+        tm = info.get("targetMeanPrice")
+        try:
+            n = int(n)
+        except Exception:
+            n = 0
+        if n >= 3 and tm is not None:                 # 嚴格 gating：至少 3 位分析師且有目標均價
+            key = str(info.get("recommendationKey") or "").lower()
+            data = {
+                "target_mean": _f(tm), "target_high": _f(info.get("targetHighPrice")),
+                "target_low": _f(info.get("targetLowPrice")),
+                "rating_key": key or None, "rating_zh": _RATING_ZH.get(key),
+                "rating_mean": _f(info.get("recommendationMean")),
+                "n_analysts": n, "currency": info.get("currency"),
+                "current": _f(info.get("currentPrice") or info.get("regularMarketPrice")),
+                "source": "Yahoo Finance 分析師共識",
+            }
+            if data["target_mean"] is None:
+                data = None
+    except Exception as e:
+        logger.warning(f"analyst_consensus {sym}: {type(e).__name__}")
+        data = None
+    _ANALYST_CACHE[sym] = (time.time(), data)
+    return data
+
+
+# ════════════════════════════════════════════════
 # BTC 價格
 # ════════════════════════════════════════════════
 def _fetch_btc() -> Optional[Dict]:
