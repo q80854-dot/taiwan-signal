@@ -331,6 +331,7 @@ _EFF_IS_NAMES = {
     "revenue": ["營業收入合計", "營業收入淨額", "營業收入"],
     "cogs":    ["營業成本合計", "營業成本"],
 }
+_EFF_DIAG = set()           # 每個代號只印一次「算不出」的實際科目名，供核對後精準補候選
 
 
 def _by_origin(rows: List[dict]) -> Dict[str, Dict[str, float]]:
@@ -405,6 +406,13 @@ def efficiency_days(code: str) -> Optional[dict]:
                 "source": "FinMind 官方財報（資產負債表時點＋近四季損益 TTM）"}
 
     data = _compute()
+    if data is None and (bs or inc):                 # 診斷：有抓到資料卻算不出 → 印出實際科目名供核對
+        dk = f"effdiag:{code}"
+        if dk not in _EFF_DIAG:
+            _EFF_DIAG.add(dk)
+            bn = sorted(bs[max(bs)].keys()) if bs else []
+            inms = sorted({n for d in inc for n in inc[d]}) if inc else []
+            logger.info(f"efficiency_days({code}) 算不出；資產負債表科目={bn}；損益表科目={inms}")
     if data:
         with _lock:
             _cache[ck] = {"at": time.time(), "data": data}

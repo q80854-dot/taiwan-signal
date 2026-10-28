@@ -543,6 +543,7 @@ def _fetch_yf_single(sym: str, valid_range: tuple = None) -> Optional[Dict]:
 # 覆蓋：大型股（如台積電）有、多數中小型股無或偏少。嚴格 gating：分析師數 < 3 或無目標均價
 # 一律回 None（前端顯示「暫無」），並明白標示來源為 Yahoo 分析師共識——寧可沒有，也不要錯。
 _ANALYST_CACHE = {}
+_ANALYST_DIAG = set()        # 每個代號只印一次 Yahoo 分析師欄位診斷，供核對覆蓋情況
 _ANALYST_TTL = 6 * 3600
 _RATING_ZH = {
     "strong_buy": "強力買進", "buy": "買進", "outperform": "優於大盤",
@@ -588,8 +589,14 @@ def fetch_analyst_consensus(sym: str) -> Optional[Dict]:
             }
             if data["target_mean"] is None:
                 data = None
+        if data is None and sym not in _ANALYST_DIAG:    # 診斷：印出 Yahoo 實際給了哪些分析師欄位
+            _ANALYST_DIAG.add(sym)
+            logger.info(f"analyst_consensus({sym}) 無共識：n={info.get('numberOfAnalystOpinions')} "
+                        f"targetMean={info.get('targetMeanPrice')} recKey={info.get('recommendationKey')} "
+                        f"recMean={info.get('recommendationMean')} cur={info.get('currentPrice')} "
+                        f"has_info={bool(info)}")
     except Exception as e:
-        logger.warning(f"analyst_consensus {sym}: {type(e).__name__}")
+        logger.warning(f"analyst_consensus {sym}: {type(e).__name__}: {str(e)[:120]}")
         data = None
     _ANALYST_CACHE[sym] = (time.time(), data)
     return data
