@@ -377,13 +377,13 @@ def test_member_cannot_see_capital_fields_but_owner_can(cl, monkeypatch):
     login(cl)
     j = cl.get("/api/positions").get_json()
     p = j["open"][0]
-    assert "risk_twd" not in p and "lots" not in p and "pnl_twd" not in p and p["risk_pct"] == 1.0
+    assert "risk_twd" not in p and "lots" not in p and "shares" not in p and "pnl_twd" not in p and p["risk_pct"] == 1.0
     # 站主（同一路徑剛被會員版快取過）仍拿到完整欄位：快取依身分分開
     monkeypatch.setenv("OWNER_EMAILS", "boss@example.com")
     members.upsert_member("boss", "boss@example.com", "站主")
     cl.set_cookie(members.COOKIE, members.sign({"sub": "boss", "exp": int(time.time()) + 3600}))
     p2 = cl.get("/api/positions").get_json()["open"][0]
-    assert p2["risk_twd"] == 35000 and p2["lots"] == 7
+    assert p2["risk_twd"] == 35000 and p2["shares"] == 7 and p2["lots"] == 0.007
     protect.clear_cache()
 
 
