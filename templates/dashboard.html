@@ -5253,6 +5253,8 @@ function r7Draw(){
 async function c7Load(){
   const [ec,cal,s,wl]=await Promise.all([x6Get('/api/econ-calendar',600e3),x6Get('/api/calendar',600e3),x6Get('/api/state',30e3),k6Watch()]);
   _x7.c={ec,cal,s,wl:new Set(wl||[])};if(window.innerWidth<640)_x7.cv='list';c7Draw();
+  // 伺服器剛啟動時總經日曆尚未預熱（回 no_source／空清單）：30 秒後強制重抓，最多 3 次，拿到就重畫
+  if(!((ec&&ec.events)||[]).length&&!_x7.ecRetry){let k=0;_x7.ecRetry=setInterval(async()=>{k++;const e2=await x6Get('/api/econ-calendar',0);if(((e2&&e2.events)||[]).length){_x7.c.ec=e2;if(window._curPage==='calendar')c7Draw();}if(((e2&&e2.events)||[]).length||k>=3){clearInterval(_x7.ecRetry);_x7.ecRetry=null;}},30e3);}
   if(!_x7.cdT)_x7.cdT=setInterval(()=>{if(window._curPage==='calendar')c7Cd();},1000);
 }
 // 聯準會官網公布的 2026 年 FOMC 會議日程（會議第二天＝美東公布決議日）
