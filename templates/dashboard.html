@@ -1815,6 +1815,33 @@ html[data-theme] .c9-focus{flex-basis:100%;display:grid!important;grid-template-
 .e9-kp b{font:600 14px/18px var(--sans);font-variant-numeric:tabular-nums}
 .e9 .up{color:var(--o-up,var(--up))}.e9 .down{color:var(--o-dn,var(--down))}
 .o-dark [stroke="#2a2a2e"]{stroke:var(--line)}
+
+/* v10：財經日曆——全寬週視圖、事件卡數字改上下列排、無菱形 */
+html[data-theme] #c7 .c7-week{flex:1 1 100%!important;min-width:0}
+html[data-theme] #c7 .c7-aside{flex:1 1 100%;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;align-items:start}
+html[data-theme] .c7-board .c7-grid{min-width:880px;grid-template-columns:repeat(5,minmax(160px,1fr)) 128px}
+.c10-ev{gap:8px!important}
+.c10-et{display:flex;align-items:center;gap:6px;font:500 11px/14px var(--mono);color:var(--t3)}
+.c10-et .o-cc{background:var(--s2);color:var(--t2)}
+.c10-hi{margin-left:auto;padding:2px 7px;border-radius:999px;background:color-mix(in srgb,var(--cc,var(--acc)) 14%,transparent);color:var(--cc,var(--acc));font:600 10.5px/14px var(--sans)}
+.c10-tt{font:600 13.5px/19px var(--sans);color:var(--ink)}
+.c10-tt small{display:inline-block;margin-left:2px;padding:0 5px;border-radius:5px;background:var(--s2);font:500 10.5px/16px var(--sans);color:var(--t3);vertical-align:1px}
+.c10-nm{display:flex;flex-direction:column;border-radius:10px;background:var(--s2);padding:4px 10px}
+.c10-nm>div{display:flex;align-items:baseline;gap:6px;padding:5px 0;border-top:1px dashed var(--line2)}
+.c10-nm>div:first-child{border-top:0}
+.c10-nm span{font-size:11px;color:var(--t3);flex:none}
+.c10-nm b{margin-left:auto;font:600 13px/17px var(--sans);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.c10-nm b.c10-na{font-weight:400;color:var(--t3)}
+.c10-nm i{font-style:normal;font-size:10.5px;color:var(--t3);white-space:nowrap}
+.c10-cd .o-cb{display:flex;flex-direction:column;gap:12px;padding-top:20px!important}
+.c10-cdh{display:flex;justify-content:space-between;align-items:center;font:500 12px/16px var(--sans);color:var(--t3)}
+.c10-cdh .o-cc{background:var(--acc-soft);color:var(--acc)}
+.c10-cdt{font:600 18px/24px var(--sans);color:var(--ink)}
+.c10-cdf{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--t3)}
+.c10-cd .c7-cd div{background:var(--acc-soft)}
+.c10-cd .c7-cd b{color:var(--acc)}
+@media(max-width:1100px){html[data-theme] #c7 .c7-aside{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){html[data-theme]:not(.force-desktop) #c7 .c7-aside{grid-template-columns:1fr}}
 </style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
@@ -5234,7 +5261,7 @@ const C9_FOMC=['2026-01-28','2026-03-18','2026-04-29','2026-06-17','2026-07-29',
 function c9Per(p){const m=String(p||'').match(/\d{3}[\/.]?\d{2}[\/.]?\d{2}/g);if(!m)return v5E(p||'');const f=x=>{const d=x.replace(/\D/g,'');return d.slice(3,5)+'/'+d.slice(5,7);};return m.map(f).join(' – ');}
 function c7Events(){
   const {ec,cal,s,wl}=_x7.c||{},out=[],sig=new Set((((s||{}).active_signals)||[]).map(x=>String(x.code||String(x.ticker||'').split('.')[0])));
-  (((ec||{}).events)||[]).forEach(e=>out.push({date:e.date,time:e.time||'',cc:'US',imp:e.importance==='高'?3:e.importance==='中'?2:1,t:e.zh,cat:/利率|FOMC|聯準|Fed|央行|ECB|日銀/.test(e.zh||'')?'cb':'macro',p:e.prev,f:e.estimate,a:e.actual,u:e.unit||'',nums:true}));
+  (((ec||{}).events)||[]).forEach(e=>out.push({date:e.date,time:e.time||'',cc:'US',imp:e.importance==='高'?3:e.importance==='中'?2:1,t:e.zh,cat:/利率決議|FOMC|央行|理監事|ECB|日銀/.test(e.zh||'')?'cb':'macro',p:e.prev,f:e.estimate,a:e.actual,u:e.unit||'',nums:true}));
   ((((cal||{}).ex)||{}).items||[]).forEach(x=>{const mine=x.mine||sig.has(String(x.code))||wl.has(String(x.code).toUpperCase());out.push({date:x.date,time:'',cc:x.code,imp:mine?3:1,t:`${x.name} ${x.type?(String(x.type).length===1?'除'+x.type:x.type):'除權息'}`,note:(+x.cash>0?`現金 ${v5F(x.cash,2)} 元`:'股票股利')+(x.market==='OTC'?' · 上櫃':''),cat:'ex',mine});});
   const t=x7Today();for(let k=-1;k<3;k++){const d=new Date(Date.UTC(+t.slice(0,4),+t.slice(5,7)-1+k,10)).toISOString().slice(0,10);out.push({date:d,time:'',cc:'TW',imp:2,t:'上市櫃月營收公布截止',note:'法定期限：每月 10 日前公布上月營收',cat:'rev'});}
   // 2026-10-28 v9：不需外部資料源的固定事件——期交所結算規則推算、聯準會官網公布的 FOMC 會議日程
@@ -5244,9 +5271,14 @@ function c7Events(){
   for(let i=-7;i<=35;i++){const d=x7Add(t,i);if(new Date(d+'T00:00:00Z').getUTCDay()!==3)continue;const f=new Date(d+'T00:00:00Z'),third=f.getUTCDate()>=15&&f.getUTCDate()<=21;if(third)continue;
     out.push({date:d,time:'13:30',cc:'TXO',imp:1,t:'台指選擇權週結算',note:'每週三到期的週選擇權結算',cat:'fut'});}
   const usDst=d=>{const y=+d.slice(0,4),a=new Date(Date.UTC(y,2,1)),b=new Date(Date.UTC(y,10,1)),s1=1+((7-a.getUTCDay())%7)+7,e1=1+((7-b.getUTCDay())%7);return d>=`${y}-03-${String(s1).padStart(2,'0')}`&&d<`${y}-11-${String(e1).padStart(2,'0')}`;};
-  C9_FOMC.forEach(d=>{const ann=x7Add(d,1);out.push({date:ann,time:usDst(d)?'02:00':'03:00',cc:'US',imp:3,t:'美國 FOMC 利率決議',note:`聯準會 ${+d.slice(5,7)}/${+d.slice(8)} 會議結束後公布（台北時間），資料來源：聯準會官網會議日程`,cat:'cb'});});
+  C9_FOMC.forEach(d=>{const ann=x7Add(d,1);if(out.some(e=>e.cat==='cb'&&e.date===ann&&/FOMC/.test(e.t||'')))return;out.push({date:ann,time:usDst(d)?'02:00':'03:00',cc:'US',imp:3,t:'美國 FOMC 利率決議',note:`聯準會 ${+d.slice(5,7)}/${+d.slice(8)} 會議結束後公布（台北時間），資料來源：聯準會官網會議日程`,cat:'cb'});});
   return out.sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1);
 }
+// 總經數字格式：「人」超過萬改用萬人、% 兩位小數、整數不帶 .00
+function c10N(v,u){const n=Number(v);if(v==null||!isFinite(n))return '—';u=u||'';
+  if(u==='人'&&Math.abs(n)>=1e4)return v5F(n/1e4,1)+' 萬人';
+  if(u.startsWith('%'))return v5F(n,2)+'%';
+  return (Number.isInteger(n)?v5F(n,0):v5F(n,2))+(u?' '+u:'');}
 function c7Set(k,v){_x7[k]=v;c7Draw();}
 function c7Cd(){
   const box=document.getElementById('c7-cd');if(!box||!_x7.cdE)return;
@@ -5262,10 +5294,14 @@ function c7Draw(){
   bar.innerHTML=`<span class="o-mt">${mon.slice(0,4)} 第 ${Math.ceil(((new Date(mon+'T00:00:00Z')-new Date(Date.UTC(+mon.slice(0,4),0,1)))/864e5+1)/7)} 週 · 台北時間</span><span style="flex:1"></span>
     <div class="c7-nav"><button onclick="c7Set('cw',${_x7.cw-1})" aria-label="上一週">‹</button><span>${mon.slice(5).replace('-','/')} – ${sun.slice(5).replace('-','/')}</span><button onclick="c7Set('cw',${_x7.cw+1})" aria-label="下一週">›</button></div>
     <button class="btn" onclick="c7Set('cw',0)">本週</button><div class="o-tabs">${[['week','週'],['list','列表']].map(([k,n])=>`<button class="tab${_x7.cv===k?' on':''}" onclick="c7Set('cv','${k}')">${n}</button>`).join('')}</div>`;
-  ch.innerHTML=`<div class="c7-cl">${C.map(c=>`<button class="${c[0]===_x7.cf?'on':''}" onclick="c7Set('cf','${c[0]}')">${c[1]} <b>${inWk.filter(c[2]).length}</b></button>`).join('')}</div><div class="c7-leg"><span>重要度</span><span><i style="color:var(--ink)">◆◆◆</i> 高</span><span><i style="color:var(--t2)">◆◆</i> 中</span><span><i style="color:var(--t3)">◆</i> 低</span><span><i class="sq"></i> 持股／自選相關</span></div>`;
-  const evH=e=>`<article data-c="${e.cat}" class="c7-ev${e.imp===3&&!e.mine?' hi':''}${e.mine?' mine':''}${e.date<t?' past':''}"><div class="c7-top"><span>${v5E(_x7.cv==='list'?e.date.slice(5).replace('-','/')+' ':'')}${v5E(e.time||'—')}</span><span class="o-cc">${v5E(e.cc)}</span><span class="c7-imp i${e.imp}">${'◆'.repeat(e.imp)}</span></div><div class="c7-tt">${v5E(e.t)}</div>${e.nums?`<div class="c7-nums"><span>前值<b>${e.p!=null?v5F(e.p,2)+v5E(e.u):'—'}</b></span><span>預測<b>${e.f!=null?v5F(e.f,2):'—'}</b></span><span>實際<b class="${e.a!=null&&e.f!=null?v5C(e.a-e.f):''}">${e.a!=null?v5F(e.a,2)+v5E(e.u):'—'}</b></span></div>`:''}${e.note?`<div class="c7-note">${v5E(e.note)}</div>`:''}</article>`;
+  ch.innerHTML=`<div class="c7-cl">${C.map(c=>`<button class="${c[0]===_x7.cf?'on':''}" onclick="c7Set('cf','${c[0]}')">${c[1]} <b>${inWk.filter(c[2]).length}</b></button>`).join('')}</div>`;
+  // 2026-10-29 v10：事件卡重做——不用菱形，重要事件標「重要」；數字改上下列排、大數字縮寫、空值不顯示
+  const evH=e=>{const um=/^(.*?)（(.+)）$/.exec(e.u||''),ub=um?um[1]:(e.u||''),ut=um?um[2]:'';
+    const nums=e.nums&&[e.p,e.f,e.a].some(v=>v!=null)?[['前值',e.p],['預測',e.f],['實際',e.a]].filter((r,i)=>r[1]!=null||i===2):[];
+    const dv=e.nums&&e.a!=null&&e.p!=null?e.a-e.p:null;
+    return `<article data-c="${e.cat}" class="c7-ev c10-ev${e.mine?' mine':''}${e.date<t?' past':''}"><div class="c10-et"><span class="c10-tm">${v5E(e.time||'全日')}</span><span class="o-cc">${v5E(e.cc)}</span>${e.imp===3?'<span class="c10-hi">重要</span>':''}</div><div class="c10-tt">${v5E(e.t)}${ut?` <small>${v5E(ut)}</small>`:''}</div>${nums.length?`<div class="c10-nm">${nums.map(([l,v])=>`<div><span>${l}</span><b class="${l==='實際'&&v==null?'c10-na':''}">${v==null?'待公布':c10N(v,ub)}</b>${l==='實際'&&dv!=null?`<i>${dv>0?'▲':dv<0?'▼':''} ${c10N(Math.abs(dv),ub)}</i>`:''}</div>`).join('')}</div>`:''}${e.note?`<div class="c7-note">${v5E(e.note)}</div>`:''}</article>`;};
   const hm=new Date(Date.now()+8*3600e3).toISOString().slice(11,16);
-  const exH=g=>{const it=g.items.slice().sort((a,b)=>(b.mine?1:0)-(a.mine?1:0)),N=_x7.cv==='list'?8:4;return `<article data-c="ex" class="c7-ev c9-exg${it.some(x=>x.mine)?' mine':''}${g.date<t?' past':''}"><div class="c7-top"><span>全日</span><span class="o-cc">TW</span><span class="c7-imp i${it.some(x=>x.mine)?3:1}">${it.some(x=>x.mine)?'◆◆◆':'◆'}</span></div><div class="c7-tt">除權息 ${it.length} 檔</div><div class="c9-exl">${it.slice(0,N).map(x=>`<span class="${x.mine?'mn':''}" title="${v5E(x.t)} · ${v5E(x.note||'')}" onclick="event.stopPropagation();goToInstrument('${v5E(x.cc)}')"><b>${v5E(x.cc)}</b><em>${v5E(String(x.t).replace(/ (除權息|除息|除權)$/,''))}</em><i>${v5E((x.note||'').replace(/^現金 /,'').replace(/ · 上櫃$/,''))}</i></span>`).join('')}${it.length>N?`<span class="c9-more">另 ${it.length-N} 檔，切到「列表」或「除權息」查看全部</span>`:''}</div></article>`;};
+  const exH=g=>{const it=g.items.slice().sort((a,b)=>(b.mine?1:0)-(a.mine?1:0)),N=_x7.cv==='list'?8:4;return `<article data-c="ex" class="c7-ev c9-exg${it.some(x=>x.mine)?' mine':''}${g.date<t?' past':''}"><div class="c10-et"><span class="c10-tm">全日</span><span class="o-cc">TW</span>${it.some(x=>x.mine)?'<span class="c10-hi">持股相關</span>':''}</div><div class="c10-tt">除權息 ${it.length} 檔</div><div class="c9-exl">${it.slice(0,N).map(x=>`<span class="${x.mine?'mn':''}" title="${v5E(x.t)} · ${v5E(x.note||'')}" onclick="event.stopPropagation();goToInstrument('${v5E(x.cc)}')"><b>${v5E(x.cc)}</b><em>${v5E(String(x.t).replace(/ (除權息|除息|除權)$/,''))}</em><i>${v5E((x.note||'').replace(/^現金 /,'').replace(/ · 上櫃$/,''))}</i></span>`).join('')}${it.length>N?`<span class="c9-more">另 ${it.length-N} 檔，切到「列表」或「除權息」查看全部</span>`:''}</div></article>`;};
   const c9G=evs=>{const ex=evs.filter(e=>e.cat==='ex'),rest=evs.filter(e=>e.cat!=='ex');if(ex.length<2||_x7.cf==='ex'&&_x7.cv==='list')return evs;return [{cat:'exg',date:ex[0].date,time:'',items:ex},...rest];};
   const anyH=e=>e.cat==='exg'?exH(e):evH(e);
   const dayCol=evs=>{const g=c9G(evs),ad=g.filter(e=>!e.time),tm=g.filter(e=>e.time);return {ad,tm};};
@@ -5281,7 +5317,7 @@ function c7Draw(){
   main=focus+main;
   // 側欄
   const nx=all.find(e=>e.imp===3&&e.cat!=='ex'&&(e.date>t||(e.date===t&&(e.time||'')>hm)));_x7.cdE=nx;
-  const cd=`<section class="o-card o-dark"><div class="o-cb" style="display:flex;flex-direction:column;gap:14px;padding-top:20px">${nx?`<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#a1a1a8"><span>下一個 ◆◆◆ 事件</span><span class="o-cc">${v5E(nx.cc)}</span></div><div style="font:600 18px/24px var(--sans)">${v5E(nx.t)}</div><div class="c7-cd" id="c7-cd"></div><div style="font-size:12px;color:#a1a1a8">${v5E(nx.date.slice(5).replace('-','/'))}（${x7Wk(nx.date)}）${v5E(nx.time||'')}${nx.p!=null?' · 前值 '+v5F(nx.p,2)+v5E(nx.u||''):''}</div>`:`<div style="font-size:12px;color:#a1a1a8">下一個 ◆◆◆ 事件</div><div style="font:600 16px/22px var(--sans)">${((_x7.c.ec||{}).status==='no_source')?'總經日曆尚未設定資料來源':'近期沒有高重要度事件'}</div>`}</div></section>`;
+  const cd=`<section class="o-card c10-cd"><div class="o-cb">${nx?`<div class="c10-cdh"><span>下一個重要事件</span><span class="o-cc">${v5E(nx.cc)}</span></div><div class="c10-cdt">${v5E(nx.t)}</div><div class="c7-cd" id="c7-cd"></div><div class="c10-cdf"><span>${v5E(nx.date.slice(5).replace('-','/'))}（${x7Wk(nx.date)}）${v5E(nx.time||'全日')}</span>${nx.p!=null?`<span>前值 ${c10N(nx.p,(/^(.*?)（/.exec(nx.u||'')||[0,nx.u||''])[1])}</span>`:''}</div>`:`<div class="c10-cdh"><span>下一個重要事件</span></div><div class="c10-cdt">近期沒有重要事件</div>`}</div></section>`;
   const mine=all.filter(e=>e.mine&&e.date>=t).slice(0,5);
   const mC=v5Card('','與我相關',`自選 ${_x7.c.wl.size} 檔 · 訊號 ${(((_x7.c.s||{}).active_signals)||[]).length} 檔`,mine.length?mine.map(e=>`<div class="c7-rel"><span class="c7-db">${+e.date.slice(8)}<small>週${x7Wk(e.date)}</small></span><span style="min-width:0"><span style="display:block;font:500 13px/18px var(--sans)">${v5E(e.t)}</span><span style="display:block;font-size:12px;color:var(--t3)">${v5E(e.note||'')}</span></span><span class="o-tag">${e.cat==='ex'?'除權息':'事件'}</span></div>`).join(''):'<div class="o-lbl" style="padding:8px 0">近期沒有與自選股或訊號相關的事件</div>');
   const rv=(_x7.c.cal||{}).revenue||{},pct=rv.n_expected?Math.min(100,rv.n_total/rv.n_expected*100):0;
@@ -8228,7 +8264,7 @@ function v4oCal(){
   const hi=evs.filter(e=>e.importance==='高').length;
   if(mt)mt.textContent=`${days[0].iso.slice(5).replace('-','/')} – ${days[4].iso.slice(5).replace('-','/')} · 高重要度 ${hi} 則 · 時間為台北時間`;
   el.innerHTML=`<div class="o-week">${days.map(x=>{const de=evs.filter(e=>e.date===x.iso);return `<div class="o-day"><div class="o-dh${x.iso===today?' today':''}"><span>${x.wk}</span><b>${x.n}</b></div>
-    ${de.length?de.slice(0,4).map(e=>`<div class="o-ev${e.importance==='高'?' hi':''}${x.iso<today?' past':''}"><div class="m"><span>${v4oE(e.time||'—')}</span><span class="o-cc">US</span><i>${e.importance==='高'?'◆◆◆':'◆◆'}</i></div><div class="t">${v4oE(e.zh)}</div></div>`).join(''):'<div class="o-lbl" style="padding:4px 10px">—</div>'}</div>`;}).join('')}</div>`;
+    ${de.length?de.slice(0,4).map(e=>`<div class="o-ev${e.importance==='高'?' hi':''}${x.iso<today?' past':''}"><div class="m"><span>${v4oE(e.time||'—')}</span><span class="o-cc">US</span>${e.importance==='高'?'<i class="c10-hi" style="--cc:var(--acc)">重要</i>':''}</div><div class="t">${v4oE(e.zh)}</div></div>`).join(''):'<div class="o-lbl" style="padding:4px 10px">—</div>'}</div>`;}).join('')}</div>`;
 }
 
 // 類股資金流向：/api/market/rankings 的產業平均漲跌（前 4＋後 4）
