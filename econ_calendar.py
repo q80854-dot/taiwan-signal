@@ -31,6 +31,7 @@ _TPE = timezone(timedelta(hours=8))
 _UTC = timezone.utc
 _cache = {}
 _TTL = 3600
+_FAIL_TTL = 120
 
 # FMP 已於 2024–2025 將 API 遷移到 /stable；新申請的金鑰打舊 /api/v3 會回 403「Legacy Endpoint」，
 # 故採官方現行端點。參數（from/to/apikey）與回傳欄位（date/country/event/previous/estimate/actual/impact）
@@ -236,7 +237,8 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
     estimate（市場共識）無免費來源恆為 None。"""
     if not force:
         c = _cache.get("econ")
-        if c and time.time() - c[0] < _TTL:
+        # 成功結果快取 1 小時；來源全部失敗（no_source）只快取 2 分鐘，避免一次逾時就整小時沒資料
+        if c and time.time() - c[0] < (_TTL if c[1].get("status") == "ok" else _FAIL_TTL):
             return c[1]
 
     now_utc = datetime.now(_UTC)
@@ -376,5 +378,27 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
     status = "ok" if (sources["fmp"] or sources["fred"]) else "no_source"
     out = {"events": events, "status": status, "sources": sources,
            "window": {"from": frm, "to": to}, "tz": "Asia/Taipei", "at": time.time()}
+    if status != "ok" and (_fmp_key() or _fred_key()):
+        good = _cache.get("econ_good")
+        if not good:
+            try:                                        # 重啟後記憶體清空 → 讀資料庫存的上一份成功資料
+                from state_store import store
+                g = store.get_meta("econ_last_good")
+                if g and g.get("at"):
+                    good = (float(g["at"]), g)
+            except Exception:
+                pass
+        if good and time.time() - good[0] < 12 * 3600:
+            # 2026-10-29：已設金鑰但這次抓取失敗（逾時／限流）→ 沿用最近一次成功的資料，不讓頁面變空
+            stale = dict(good[1], stale=True)
+            _cache["econ"] = (time.time(), stale)
+            return stale
     _cache["econ"] = (time.time(), out)
+    if status == "ok":
+        _cache["econ_good"] = (time.time(), out)
+        try:
+            from state_store import store
+            store.set_meta("econ_last_good", out)
+        except Exception:
+            pass
     return out
