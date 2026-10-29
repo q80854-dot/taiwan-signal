@@ -1842,6 +1842,22 @@ html[data-theme] .c7-board .c7-grid{min-width:880px;grid-template-columns:repeat
 .c10-cd .c7-cd b{color:var(--acc)}
 @media(max-width:1100px){html[data-theme] #c7 .c7-aside{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){html[data-theme]:not(.force-desktop) #c7 .c7-aside{grid-template-columns:1fr}}
+
+/* v11：財經日曆細節 */
+.c11-hd{display:flex;flex-direction:column;gap:2px}
+.c11-hd b{font:600 20px/26px var(--sans);letter-spacing:-.02em;color:var(--ink)}
+.c11-hd span{font-size:12px;color:var(--t3)}
+.c11-n{display:inline-grid;place-items:center;min-width:18px;height:18px;margin-left:6px;padding:0 5px;border-radius:999px;background:var(--s2);color:var(--t2);font:600 10.5px/1 var(--sans);font-style:normal}
+.c7-h.today .c11-n{background:var(--acc);color:#fff}
+.c11-why{font-size:11.5px;line-height:1.55;color:var(--t2);padding-left:8px;border-left:2px solid var(--line2)}
+.c10-cd .c11-why{font-size:12.5px}
+.c11-src{padding:12px 16px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.6;color:var(--t3)}
+.c11-src b{color:var(--t2);font-weight:600}
+html[data-theme] .c7-board .c7-col{padding-top:0;padding-bottom:16px}
+html[data-theme] .c7-board .c7-h span{display:inline-flex;align-items:center}
+html[data-theme] .c7-board .c7-ev{transition:box-shadow .15s,transform .15s}
+html[data-theme] .c7-board .c7-ev:hover{box-shadow:0 6px 18px rgba(17,17,19,.08);transform:translateY(-1px)}
+.c7-none{border-style:dashed;opacity:.8}
 </style>
 <style id="role-guard">html:not(.is-owner) .own-only{display:none!important}</style>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
@@ -5276,11 +5292,16 @@ function c7Events(){
   C9_FOMC.forEach(d=>{const ann=x7Add(d,1);if(out.some(e=>e.cat==='cb'&&e.date===ann&&/FOMC/.test(e.t||'')))return;out.push({date:ann,time:usDst(d)?'02:00':'03:00',cc:'US',imp:3,t:'美國 FOMC 利率決議',note:`聯準會 ${+d.slice(5,7)}/${+d.slice(8)} 會議結束後公布（台北時間），資料來源：聯準會官網會議日程`,cat:'cb'});});
   return out.sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1);
 }
+// 美國重要指標一句話說明（固定知識，非數據）
+const C11_WHY=[[/FOMC|利率決議/,'決定聯邦基金利率，牽動美元、美債殖利率與全球資金流向'],[/PCE/,'聯準會最重視的通膨指標，偏高會降低降息機率'],[/CPI|消費者物價/,'美國通膨主要指標，高於前值通常壓抑降息預期、對成長股不利'],[/PPI|生產者物價/,'企業端通膨，常領先 CPI'],[/非農|NFP/,'美國就業最重要數據，強於預期利率易走高'],[/初領|失業救濟/,'每週公布的勞動市場即時溫度計，增加代表就業轉弱'],[/失業率/,'就業市場強弱，影響聯準會政策方向'],[/GDP/,'美國經濟成長速度'],[/零售銷售/,'美國消費動能，占經濟約七成'],[/ISM|PMI/,'製造／服務業景氣，50 以上為擴張'],[/台指期.*結算/,'結算日前後權值股易有大單進出，波動放大'],[/週結算/,'週選擇權到期，盤中可能有短線波動']];
+const c11Why=t=>{const m=C11_WHY.find(([r])=>r.test(t||''));return m?m[1]:'';};
 // 總經數字格式：「人」超過萬改用萬人、% 兩位小數、整數不帶 .00
 function c10N(v,u){const n=Number(v);if(v==null||!isFinite(n))return '—';u=u||'';
   if(u==='人'&&Math.abs(n)>=1e4)return v5F(n/1e4,1)+' 萬人';
   if(u.startsWith('%'))return v5F(n,2)+'%';
   return (Number.isInteger(n)?v5F(n,0):v5F(n,2))+(u?' '+u:'');}
+function c11Src(){const ec=(_x7.c||{}).ec||{},src=ec.sources||{};
+  return `美國總經數據：${src.fmp?'FMP 財經日曆（含市場預測值）':src.fred?'FRED 聯準會經濟資料庫（提供前值與公布值；<b>市場預測值需設定 FMP 金鑰</b>，目前未提供）':'尚未設定資料來源'} · 期權結算依期交所規則推算 · FOMC 依聯準會公布日程 · 除權息、營收：證交所／櫃買中心`;}
 function c7Set(k,v){_x7[k]=v;c7Draw();}
 function c7Cd(){
   const box=document.getElementById('c7-cd');if(!box||!_x7.cdE)return;
@@ -5293,7 +5314,8 @@ function c7Draw(){
   const all=c7Events(),t=x7Today(),wd=(new Date(t+'T00:00:00Z').getUTCDay()+6)%7,mon=x7Add(t,-wd+_x7.cw*7),sun=x7Add(mon,6);
   const C=[['all','全部',e=>true],['mine','與我相關',e=>e.mine],['macro','總經數據',e=>e.cat==='macro'],['cb','央行',e=>e.cat==='cb'],['ex','除權息',e=>e.cat==='ex'],['rev','營收',e=>e.cat==='rev'],['fut','期權結算',e=>e.cat==='fut']];
   const f=C.find(c=>c[0]===_x7.cf)[2],inWk=all.filter(e=>e.date>=mon&&e.date<=sun);
-  bar.innerHTML=`<span class="o-mt">${mon.slice(0,4)} 第 ${Math.ceil(((new Date(mon+'T00:00:00Z')-new Date(Date.UTC(+mon.slice(0,4),0,1)))/864e5+1)/7)} 週 · 台北時間</span><span style="flex:1"></span>
+  const wkN=Math.ceil(((new Date(mon+'T00:00:00Z')-new Date(Date.UTC(+mon.slice(0,4),0,1)))/864e5+1)/7);
+  bar.innerHTML=`<div class="c11-hd"><b>${+mon.slice(0,4)} 年 ${+mon.slice(5,7)} 月</b><span>第 ${wkN} 週 · ${mon.slice(5).replace('-','/')} – ${sun.slice(5).replace('-','/')} · 台北時間${_x7.cw===0?' · 本週':_x7.cw<0?' · '+(-_x7.cw)+' 週前':' · '+_x7.cw+' 週後'}</span></div><span style="flex:1"></span>
     <div class="c7-nav"><button onclick="c7Set('cw',${_x7.cw-1})" aria-label="上一週">‹</button><span>${mon.slice(5).replace('-','/')} – ${sun.slice(5).replace('-','/')}</span><button onclick="c7Set('cw',${_x7.cw+1})" aria-label="下一週">›</button></div>
     <button class="btn" onclick="c7Set('cw',0)">本週</button><div class="o-tabs">${[['week','週'],['list','列表']].map(([k,n])=>`<button class="tab${_x7.cv===k?' on':''}" onclick="c7Set('cv','${k}')">${n}</button>`).join('')}</div>`;
   ch.innerHTML=`<div class="c7-cl">${C.map(c=>`<button class="${c[0]===_x7.cf?'on':''}" onclick="c7Set('cf','${c[0]}')">${c[1]} <b>${inWk.filter(c[2]).length}</b></button>`).join('')}</div>`;
@@ -5301,7 +5323,7 @@ function c7Draw(){
   const evH=e=>{const um=/^(.*?)（(.+)）$/.exec(e.u||''),ub=um?um[1]:(e.u||''),ut=um?um[2]:'';
     const nums=e.nums&&[e.p,e.f,e.a].some(v=>v!=null)?[['前值',e.p],['預測',e.f],['實際',e.a]].filter((r,i)=>r[1]!=null||i===2):[];
     const dv=e.nums&&e.a!=null&&e.p!=null?e.a-e.p:null;
-    return `<article data-c="${e.cat}" class="c7-ev c10-ev${e.mine?' mine':''}${e.date<t?' past':''}"><div class="c10-et"><span class="c10-tm">${v5E(e.time||'全日')}</span><span class="o-cc">${v5E(e.cc)}</span>${e.imp===3?'<span class="c10-hi">重要</span>':''}</div><div class="c10-tt">${v5E(e.t)}${ut?` <small>${v5E(ut)}</small>`:''}</div>${nums.length?`<div class="c10-nm">${nums.map(([l,v])=>`<div><span>${l}</span><b class="${l==='實際'&&v==null?'c10-na':''}">${v==null?'待公布':c10N(v,ub)}</b>${l==='實際'&&dv!=null?`<i>${dv>0?'▲':dv<0?'▼':''} ${c10N(Math.abs(dv),ub)}</i>`:''}</div>`).join('')}</div>`:''}${e.note?`<div class="c7-note">${v5E(e.note)}</div>`:''}</article>`;};
+    return `<article data-c="${e.cat}" class="c7-ev c10-ev${e.mine?' mine':''}${e.date<t?' past':''}"><div class="c10-et"><span class="c10-tm">${v5E(e.time||'全日')}</span><span class="o-cc">${v5E(e.cc)}</span>${e.imp===3?'<span class="c10-hi">重要</span>':''}</div><div class="c10-tt">${v5E(e.t)}${ut?` <small>${v5E(ut)}</small>`:''}</div>${nums.length?`<div class="c10-nm">${nums.map(([l,v])=>`<div><span>${l}</span><b class="${l==='實際'&&v==null?'c10-na':''}">${v==null?'待公布':c10N(v,ub)}</b>${l==='實際'&&dv!=null?`<i>${dv>0?'▲':dv<0?'▼':''} ${c10N(Math.abs(dv),ub)}</i>`:''}</div>`).join('')}</div>`:''}${(e.cat==='macro'||(e.cat==='cb'&&e.nums))&&c11Why(e.t)?`<div class="c11-why">${v5E(c11Why(e.t))}</div>`:e.note?`<div class="c7-note">${v5E(e.note)}</div>`:''}</article>`;};
   const hm=new Date(Date.now()+8*3600e3).toISOString().slice(11,16);
   const exH=g=>{const it=g.items.slice().sort((a,b)=>(b.mine?1:0)-(a.mine?1:0)),N=_x7.cv==='list'?8:4;return `<article data-c="ex" class="c7-ev c9-exg${it.some(x=>x.mine)?' mine':''}${g.date<t?' past':''}"><div class="c10-et"><span class="c10-tm">全日</span><span class="o-cc">TW</span>${it.some(x=>x.mine)?'<span class="c10-hi">持股相關</span>':''}</div><div class="c10-tt">除權息 ${it.length} 檔</div><div class="c9-exl">${it.slice(0,N).map(x=>`<span class="${x.mine?'mn':''}" title="${v5E(x.t)} · ${v5E(x.note||'')}" onclick="event.stopPropagation();goToInstrument('${v5E(x.cc)}')"><b>${v5E(x.cc)}</b><em>${v5E(String(x.t).replace(/ (除權息|除息|除權)$/,''))}</em><i>${v5E((x.note||'').replace(/^現金 /,'').replace(/ · 上櫃$/,''))}</i></span>`).join('')}${it.length>N?`<span class="c9-more">另 ${it.length-N} 檔，切到「列表」或「除權息」查看全部</span>`:''}</div></article>`;};
   const c9G=evs=>{const ex=evs.filter(e=>e.cat==='ex'),rest=evs.filter(e=>e.cat!=='ex');if(ex.length<2||_x7.cf==='ex'&&_x7.cv==='list')return evs;return [{cat:'exg',date:ex[0].date,time:'',items:ex},...rest];};
@@ -5309,8 +5331,8 @@ function c7Draw(){
   const dayCol=evs=>{const g=c9G(evs),ad=g.filter(e=>!e.time),tm=g.filter(e=>e.time);return {ad,tm};};
   let main;
   if(_x7.cv==='week'){const days=[0,1,2,3,4].map(i=>x7Add(mon,i));
-    main=`<section class="c7-week o-card c7-board" aria-label="本週行事曆"><div class="c7-grid">${days.map(d=>{const ev=inWk.filter(e=>e.date===d&&f(e)),{ad,tm}=dayCol(ev);let nowDone=d!==t;return `<div class="c7-col${d===t?' today':''}"><div class="c7-h${d===t?' today':''}"><span>週${x7Wk(d)}</span><b>${+d.slice(8)}</b></div>${ad.map(anyH).join('')}${tm.map(e=>{let pre='';if(!nowDone&&e.time>hm){nowDone=true;pre=`<div class="c7-now"><span>現在 ${hm}</span><i></i></div>`;}return pre+anyH(e);}).join('')}${!nowDone?`<div class="c7-now"><span>現在 ${hm}</span><i></i></div>`:''}${ev.length?'':'<div class="c7-none">無事件</div>'}</div>`;}).join('')}
-      <div class="c7-col"><div class="c7-h wk"><span>週末</span><b style="font-size:15px">${+x7Add(mon,5).slice(8)}–${+sun.slice(8)}</b></div>${c9G(inWk.filter(e=>e.date>=x7Add(mon,5)&&f(e))).map(anyH).join('')||'<div class="c7-none">休市</div>'}</div></div></section>`;}
+    main=`<section class="c7-week o-card c7-board" aria-label="本週行事曆"><div class="c7-grid">${days.map(d=>{const ev=inWk.filter(e=>e.date===d&&f(e)),{ad,tm}=dayCol(ev);let nowDone=d!==t;return `<div class="c7-col${d===t?' today':''}"><div class="c7-h${d===t?' today':''}"><span>週${x7Wk(d)}${d===t?' · 今天':''}${ev.length?`<em class="c11-n">${ev.length}</em>`:''}</span><b>${+d.slice(8)}</b></div>${ad.map(anyH).join('')}${tm.map(e=>{let pre='';if(!nowDone&&e.time>hm){nowDone=true;pre=`<div class="c7-now"><span>現在 ${hm}</span><i></i></div>`;}return pre+anyH(e);}).join('')}${!nowDone?`<div class="c7-now"><span>現在 ${hm}</span><i></i></div>`:''}${ev.length?'':'<div class="c7-none">無事件</div>'}</div>`;}).join('')}
+      <div class="c7-col"><div class="c7-h wk"><span>週末</span><b style="font-size:15px">${+x7Add(mon,5).slice(8)}–${+sun.slice(8)}</b></div>${c9G(inWk.filter(e=>e.date>=x7Add(mon,5)&&f(e))).map(anyH).join('')||'<div class="c7-none">休市</div>'}</div></div><div class="c11-src">${c11Src()}</div></section>`;}
   else{const ev=inWk.filter(f),ds=[...new Set(ev.map(e=>e.date))];main=`<section class="c7-week"><div class="c7-list">${ds.length?ds.map(d=>{const g=c9G(ev.filter(e=>e.date===d));return `<div class="c9-day"><div class="c9-dh${d===t?' today':''}"><b>${+d.slice(5,7)}/${+d.slice(8)}</b><span>週${x7Wk(d)}${d===t?' · 今天':''}</span><em>${ev.filter(e=>e.date===d).length} 項</em></div><div class="c9-de">${g.map(anyH).join('')}</div></div>`;}).join(''):`<div class="o-card"><div class="o-cb">${v5Empty('這週沒有符合條件的事件','')}</div></div>`}</div></section>`;}
   // 本週焦點
   const nxSet=all.find(e=>e.cat==='fut'&&e.cc==='TX'&&e.date>=t),nxCb=all.find(e=>e.cat==='cb'&&(e.date>t||(e.date===t&&(e.time||'')>hm)));
@@ -5319,7 +5341,7 @@ function c7Draw(){
   main=focus+main;
   // 側欄
   const nx=all.find(e=>e.imp===3&&e.cat!=='ex'&&(e.date>t||(e.date===t&&(e.time||'')>hm)));_x7.cdE=nx;
-  const cd=`<section class="o-card c10-cd"><div class="o-cb">${nx?`<div class="c10-cdh"><span>下一個重要事件</span><span class="o-cc">${v5E(nx.cc)}</span></div><div class="c10-cdt">${v5E(nx.t)}</div><div class="c7-cd" id="c7-cd"></div><div class="c10-cdf"><span>${v5E(nx.date.slice(5).replace('-','/'))}（${x7Wk(nx.date)}）${v5E(nx.time||'全日')}</span>${nx.p!=null?`<span>前值 ${c10N(nx.p,(/^(.*?)（/.exec(nx.u||'')||[0,nx.u||''])[1])}</span>`:''}</div>`:`<div class="c10-cdh"><span>下一個重要事件</span></div><div class="c10-cdt">近期沒有重要事件</div>`}</div></section>`;
+  const cd=`<section class="o-card c10-cd"><div class="o-cb">${nx?`<div class="c10-cdh"><span>下一個重要事件</span><span class="o-cc">${v5E(nx.cc)}</span></div><div class="c10-cdt">${v5E(nx.t)}</div>${c11Why(nx.t)?`<div class="c11-why">${v5E(c11Why(nx.t))}</div>`:''}<div class="c7-cd" id="c7-cd"></div><div class="c10-cdf"><span>${v5E(nx.date.slice(5).replace('-','/'))}（${x7Wk(nx.date)}）${v5E(nx.time||'全日')}</span>${nx.p!=null?`<span>前值 ${c10N(nx.p,(/^(.*?)（/.exec(nx.u||'')||[0,nx.u||''])[1])}</span>`:''}</div>`:`<div class="c10-cdh"><span>下一個重要事件</span></div><div class="c10-cdt">近期沒有重要事件</div>`}</div></section>`;
   const mine=all.filter(e=>e.mine&&e.date>=t).slice(0,5);
   const mC=v5Card('','與我相關',`自選 ${_x7.c.wl.size} 檔 · 訊號 ${(((_x7.c.s||{}).active_signals)||[]).length} 檔`,mine.length?mine.map(e=>`<div class="c7-rel"><span class="c7-db">${+e.date.slice(8)}<small>週${x7Wk(e.date)}</small></span><span style="min-width:0"><span style="display:block;font:500 13px/18px var(--sans)">${v5E(e.t)}</span><span style="display:block;font-size:12px;color:var(--t3)">${v5E(e.note||'')}</span></span><span class="o-tag">${e.cat==='ex'?'除權息':'事件'}</span></div>`).join(''):'<div class="o-lbl" style="padding:8px 0">近期沒有與自選股或訊號相關的事件</div>');
   const rv=(_x7.c.cal||{}).revenue||{},pct=rv.n_expected?Math.min(100,rv.n_total/rv.n_expected*100):0;
