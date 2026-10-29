@@ -146,6 +146,22 @@ def test_fomc_only_from_official_schedule(monkeypatch):
 def test_graceful_on_bad_fmp(monkeypatch):
     monkeypatch.setenv("FMP_API_KEY", "k")
     monkeypatch.delenv("FRED_API_KEY", raising=False)
+    from state_store import store
+    ec._cache.clear()
+    monkeypatch.setattr(store, "get_meta", lambda k, d=None: None)
     monkeypatch.setattr(ec.requests, "get", lambda url, **k: _Resp({"Error Message": "limit"}))
     out = ec.fetch_economic_calendar(force=True)
     assert out["status"] == "no_source" and out["events"] == []     # 非 list → 當作沒來源，不崩潰
+
+
+def test_failed_fetch_falls_back_to_last_good(monkeypatch):
+    """2026-10-29：已設金鑰但這次抓取失敗 → 沿用最近一次成功的資料（標 stale），不讓頁面變空。"""
+    import time as _t
+    monkeypatch.setenv("FMP_API_KEY", "k")
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    ec._cache.clear()
+    good = {"events": [{"date": "2026-10-29", "zh": "PCE"}], "status": "ok", "sources": {"fmp": True, "fred": False}, "at": _t.time()}
+    ec._cache["econ_good"] = (_t.time(), good)
+    monkeypatch.setattr(ec.requests, "get", lambda url, **k: _Resp({"Error Message": "limit"}))
+    out = ec.fetch_economic_calendar(force=True)
+    assert out["status"] == "ok" and out["events"] == good["events"] and out.get("stale") is True
