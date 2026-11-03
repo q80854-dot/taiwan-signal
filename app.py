@@ -408,10 +408,37 @@ def job_warm_instrument():
     logger.info("個股頁預熱：" + "，".join(done))
 
 
-def job_learning_backup():
-    """策略學習資料保全：每週把 shadow_signals 匯出並送到站主 Telegram（異地備援，
-    Render DB 之外多一份），同時在日誌印出「資料就緒度」（總筆數／已結算／日期範圍），
-    供判斷是否可開始訓練勝率模型。未設 Telegram 或無資料則只記錄、不送。"""
+def _send_backup_email(data: bytes, filename: str, subject: str, body: str) -> bool:
+    """用 Gmail SMTP 寄出每月備份（含附件）。需環境變數 BACKUP_SMTP_USER／BACKUP_SMTP_PASS
+    （Gmail 應用程式密碼），收件者 BACKUP_EMAIL_TO（未設則寄給自己）。未設則回 False。"""
+    user = os.environ.get("BACKUP_SMTP_USER", "").strip()
+    pwd = os.environ.get("BACKUP_SMTP_PASS", "").strip()
+    to = os.environ.get("BACKUP_EMAIL_TO", "").strip() or user
+    if not (user and pwd and to):
+        return False
+    host = os.environ.get("BACKUP_SMTP_HOST", "smtp.gmail.com").strip()
+    port = int(os.environ.get("BACKUP_SMTP_PORT", "465") or "465")
+    try:
+        import smtplib
+        from email.message import EmailMessage
+        msg = EmailMessage()
+        msg["From"], msg["To"], msg["Subject"] = user, to, subject
+        msg.set_content(body)
+        msg.add_attachment(data, maintype="text", subtype="csv", filename=filename)
+        with smtplib.SMTP_SSL(host, port, timeout=30) as s:
+            s.login(user, pwd)
+            s.send_message(msg)
+        return True
+    except Exception as e:
+        logger.warning(f"_send_backup_email: {e}")
+        return False
+
+
+def job_learning_backup(send: bool = True):
+    """策略學習資料保全：每月把 shadow_signals 匯出備份（異地，Render DB 之外多一份），
+    並在日誌印出「資料就緒度」（總筆數／已結算／日期範圍）供判斷能否開始訓練。
+    送出優先 Gmail（含附件），未設 SMTP 才退回 Telegram。send=False 只記錄就緒度、不送
+    （開機時用，避免每次部署都寄）。無資料或兩種管道都沒設則只記錄。"""
     try:
         import shadow
         ov = shadow.overview() or {}
@@ -420,21 +447,27 @@ def job_learning_backup():
         closed = sum((d.get("closed") or 0) for d in summary.values())
         logger.info(f"策略學習資料就緒度：總 {meta.get('total')} 筆、已結算 {closed}、"
                     f"日期 {meta.get('first_d')}～{meta.get('last_d')}、特徵約 {meta.get('feat_bytes')} bytes")
-        try:
-            from config import TELEGRAM_CHAT_ID
-        except Exception:
-            TELEGRAM_CHAT_ID = None
-        if not TELEGRAM_CHAT_ID:
+        if not send:
             return
         body, n = shadow.export_csv()
         if not n:
             return
-        import telegram_bot as tg
         ds = datetime.now(TZ_TAIPEI).strftime("%Y%m%d")
-        ok = tg.send_document(str(TELEGRAM_CHAT_ID), body.encode("utf-8"),
-                              f"shadow_signals_{ds}.csv",
-                              caption=f"策略學習資料每週備份：{n} 筆（{meta.get('first_d')}～{meta.get('last_d')}）")
-        logger.info(f"策略學習資料備份{'已送達' if ok else '傳送失敗'} Telegram（{n} 筆）")
+        fname = f"shadow_signals_{ds}.csv"
+        caption = f"策略學習資料每月備份：{n} 筆（{meta.get('first_d')}～{meta.get('last_d')}）"
+        if _send_backup_email(body.encode("utf-8"), fname, "台股系統｜策略學習資料每月備份", caption):
+            logger.info(f"策略學習資料備份已寄送 Gmail（{n} 筆）")
+            return
+        try:
+            from config import TELEGRAM_CHAT_ID
+        except Exception:
+            TELEGRAM_CHAT_ID = None
+        if TELEGRAM_CHAT_ID:
+            import telegram_bot as tg
+            ok = tg.send_document(str(TELEGRAM_CHAT_ID), body.encode("utf-8"), fname, caption=caption)
+            logger.info(f"策略學習資料備份{'已送達' if ok else '傳送失敗'} Telegram（{n} 筆）")
+        else:
+            logger.warning("策略學習資料備份：未設 Gmail(BACKUP_SMTP_*) 也未設 Telegram，未送出（資料仍在 DB＋可後台下載）")
     except Exception as e:
         logger.warning(f"job_learning_backup: {e}")
 
@@ -632,8 +665,8 @@ def setup_scheduler():
     scheduler.add_job(job_world_warm, "interval", minutes=10, id="world_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_world_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=75), id="world_warm_boot", replace_existing=True)
     # 財經日曆：每 30 分鐘預熱一次（FMP 免費版有每日次數上限，快取 1 小時、預熱頻率保守）＋開機後 90 秒暖一次。
-    scheduler.add_job(job_learning_backup, CronTrigger(day_of_week="sun", hour=18, minute=20, timezone=TZ_TAIPEI), id="learning_backup", replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
-    scheduler.add_job(job_learning_backup, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=160), id="learning_backup_boot", replace_existing=True)
+    scheduler.add_job(job_learning_backup, CronTrigger(day=1, hour=18, minute=20, timezone=TZ_TAIPEI), id="learning_backup", replace_existing=True, misfire_grace_time=6 * 3600, coalesce=True, max_instances=1)
+    scheduler.add_job(lambda: job_learning_backup(send=False), "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=160), id="learning_backup_boot", replace_existing=True)
     scheduler.add_job(job_econ_warm, "interval", minutes=30, id="econ_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_econ_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="econ_warm_boot", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
