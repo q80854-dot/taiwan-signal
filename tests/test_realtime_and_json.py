@@ -177,3 +177,36 @@ def test_snap_is_final_after_close_same_day():
     assert su.snap_is_final({"at": ts(2026, 10, 7, 13, 35)}, ts(2026, 10, 7, 15, 10))
     assert not su.snap_is_final({"at": ts(2026, 10, 7, 13, 0)}, ts(2026, 10, 7, 15, 10))      # 盤中拍的不算最終
     assert not su.snap_is_final({"at": ts(2026, 10, 7, 13, 35)}, ts(2026, 10, 8, 9, 5))        # 隔天作廢
+
+
+class _FakeResp:
+    status_code = 200
+    def json(self):
+        return {"msgArray": []}          # MIS 回空（模擬逾時後無資料）
+
+
+class _FakeSession:
+    def get(self, *a, **k):
+        return _FakeResp()
+
+
+def test_fetch_indices_official_fallback(monkeypatch):
+    # MIS 取不到時，櫃買/加權改用官方日線值備援（首頁與走勢圖不整塊空白），並標 stale。
+    import data_fetcher as df
+    monkeypatch.setattr(realtime, "_get_session", lambda: _FakeSession())
+    monkeypatch.setattr(df, "_fetch_tpex", lambda: {"price": 220.5, "prev": 218.0, "chg": 1.15, "chg_pt": 2.5, "source": "tpex_openapi"})
+    monkeypatch.setattr(df, "_fetch_twii", lambda: {"price": 23000.0, "prev": 22900.0, "chg": 0.44, "chg_pt": 100.0, "source": "fugle"})
+    out = realtime.fetch_indices()
+    assert out["OTC"]["price"] == 220.5 and out["OTC"]["change_pct"] == 1.15
+    assert out["OTC"]["stale"] is True and out["OTC"]["source"] == "tpex_openapi"
+    assert out["TAIEX"]["price"] == 23000.0 and out["TAIEX"]["stale"] is True
+
+
+def test_fetch_indices_no_fallback_when_source_error(monkeypatch):
+    # 官方備援也失敗（source=error / None）→ 不塞假值（維持空，不編造）。
+    import data_fetcher as df
+    monkeypatch.setattr(realtime, "_get_session", lambda: _FakeSession())
+    monkeypatch.setattr(df, "_fetch_tpex", lambda: None)
+    monkeypatch.setattr(df, "_fetch_twii", lambda: {"price": 0, "prev": 0, "chg": 0, "chg_pt": 0, "source": "error"})
+    out = realtime.fetch_indices()
+    assert "OTC" not in out and "TAIEX" not in out
