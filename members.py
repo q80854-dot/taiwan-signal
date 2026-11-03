@@ -744,7 +744,12 @@ def auth_callback():
             "code": code, "client_id": client_id(), "client_secret": _client_secret(),
             "redirect_uri": _redirect_uri(), "grant_type": "authorization_code"}, timeout=15)
         if r.status_code != 200:
-            logger.warning(f"Google token HTTP {r.status_code}: {r.text[:200]}")
+            # 只記錄 Google 回傳的錯誤代碼／描述，不記整包原始回應（資安：避免萬一記到敏感內容）
+            try:
+                _ej = r.json(); _emsg = f"{_ej.get('error')}: {str(_ej.get('error_description'))[:120]}"
+            except Exception:
+                _emsg = "(非 JSON 回應)"
+            logger.warning(f"Google token HTTP {r.status_code}: {_emsg}")
             record_login("", "", False, f"token_http_{r.status_code}")
             return redirect("/?login=failed")
         claims = verify_id_token(r.json().get("id_token", ""), ck.get("n"))

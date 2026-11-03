@@ -116,6 +116,26 @@ def get_subscriber_counts() -> Dict:
         "admin_includes_owner": bool(TELEGRAM_CHAT_ID) and str(TELEGRAM_CHAT_ID) in [str(a) for a in subs.get("admin", [])],
     }
 
+def send_document(chat_id: str, data: bytes, filename: str, caption: str = "") -> bool:
+    """送檔案給 Telegram（策略學習資料每週異地備份用）。"""
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
+        logger.error("send_document: 缺 TELEGRAM_BOT_TOKEN 或 chat_id，無法備份")
+        return False
+    try:
+        r = requests.post(
+            f"{BASE_URL}/sendDocument",
+            data={"chat_id": str(chat_id), "caption": (caption or "")[:1000]},
+            files={"document": (filename, data)}, timeout=60,
+        )
+        if r.status_code == 200 and (r.json() or {}).get("ok"):
+            return True
+        logger.error(f"send_document 失敗：status={r.status_code} body={r.text[:300]}")
+        return False
+    except Exception as e:
+        logger.error(f"send_document: {e}")
+        return False
+
+
 def send_message(chat_id: str, text: str, parse_mode: str = "HTML", _max_retries: int = 3) -> bool:
     # ★ 修正：2026-09-03——原本非 200 的回應完全沒有記錄任何內容，只回傳
     # False，導致「訊號有沒有真的送到 Telegram」這件事在 log 裡完全看不到、

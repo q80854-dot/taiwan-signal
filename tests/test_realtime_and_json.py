@@ -210,3 +210,30 @@ def test_fetch_indices_no_fallback_when_source_error(monkeypatch):
     monkeypatch.setattr(df, "_fetch_twii", lambda: {"price": 0, "prev": 0, "chg": 0, "chg_pt": 0, "source": "error"})
     out = realtime.fetch_indices()
     assert "OTC" not in out and "TAIEX" not in out
+
+
+def test_job_learning_backup_sends_export(monkeypatch):
+    # 每週學習資料備份：有資料＋有 Telegram 設定 → 匯出 CSV 並送檔；流程不拋錯。
+    import shadow, telegram_bot, config
+    monkeypatch.setattr(shadow, "overview", lambda: {"meta": {"total": 1200, "first_d": "2026-01-02", "last_d": "2026-11-03", "feat_bytes": 999},
+                                                     "summary": {"candidate": {"closed": 800, "pending": 50}, "reject": {"closed": 300}}})
+    monkeypatch.setattr(shadow, "export_csv", lambda kind=None, status=None: ("col1,col2\n1,2\n", 1100))
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123456")
+    sent = {}
+    monkeypatch.setattr(telegram_bot, "send_document",
+                        lambda chat, data, fn, caption="": sent.update(chat=chat, fn=fn, n=len(data)) or True)
+    app_module.job_learning_backup()
+    assert sent.get("chat") == "123456" and sent.get("fn", "").startswith("shadow_signals_") and sent["fn"].endswith(".csv")
+    assert sent.get("n", 0) > 0
+
+
+def test_job_learning_backup_skips_without_telegram(monkeypatch):
+    # 未設 Telegram → 不送檔、只記錄，不拋錯。
+    import shadow, telegram_bot, config
+    monkeypatch.setattr(shadow, "overview", lambda: {"meta": {"total": 0}, "summary": {}})
+    monkeypatch.setattr(shadow, "export_csv", lambda kind=None, status=None: ("", 0))
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    called = {"n": 0}
+    monkeypatch.setattr(telegram_bot, "send_document", lambda *a, **k: called.update(n=called["n"] + 1) or True)
+    app_module.job_learning_backup()
+    assert called["n"] == 0

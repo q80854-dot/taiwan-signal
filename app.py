@@ -408,6 +408,37 @@ def job_warm_instrument():
     logger.info("個股頁預熱：" + "，".join(done))
 
 
+def job_learning_backup():
+    """策略學習資料保全：每週把 shadow_signals 匯出並送到站主 Telegram（異地備援，
+    Render DB 之外多一份），同時在日誌印出「資料就緒度」（總筆數／已結算／日期範圍），
+    供判斷是否可開始訓練勝率模型。未設 Telegram 或無資料則只記錄、不送。"""
+    try:
+        import shadow
+        ov = shadow.overview() or {}
+        meta = ov.get("meta") or {}
+        summary = ov.get("summary") or {}
+        closed = sum((d.get("closed") or 0) for d in summary.values())
+        logger.info(f"策略學習資料就緒度：總 {meta.get('total')} 筆、已結算 {closed}、"
+                    f"日期 {meta.get('first_d')}～{meta.get('last_d')}、特徵約 {meta.get('feat_bytes')} bytes")
+        try:
+            from config import TELEGRAM_CHAT_ID
+        except Exception:
+            TELEGRAM_CHAT_ID = None
+        if not TELEGRAM_CHAT_ID:
+            return
+        body, n = shadow.export_csv()
+        if not n:
+            return
+        import telegram_bot as tg
+        ds = datetime.now(TZ_TAIPEI).strftime("%Y%m%d")
+        ok = tg.send_document(str(TELEGRAM_CHAT_ID), body.encode("utf-8"),
+                              f"shadow_signals_{ds}.csv",
+                              caption=f"策略學習資料每週備份：{n} 筆（{meta.get('first_d')}～{meta.get('last_d')}）")
+        logger.info(f"策略學習資料備份{'已送達' if ok else '傳送失敗'} Telegram（{n} 筆）")
+    except Exception as e:
+        logger.warning(f"job_learning_backup: {e}")
+
+
 def job_econ_warm():
     """預熱首頁美國財經日曆（FMP＋FRED），讓訪客開首頁直接命中快取；未設金鑰時直接略過。"""
     try:
@@ -601,6 +632,8 @@ def setup_scheduler():
     scheduler.add_job(job_world_warm, "interval", minutes=10, id="world_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_world_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=75), id="world_warm_boot", replace_existing=True)
     # 財經日曆：每 30 分鐘預熱一次（FMP 免費版有每日次數上限，快取 1 小時、預熱頻率保守）＋開機後 90 秒暖一次。
+    scheduler.add_job(job_learning_backup, CronTrigger(day_of_week="sun", hour=18, minute=20, timezone=TZ_TAIPEI), id="learning_backup", replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
+    scheduler.add_job(job_learning_backup, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=160), id="learning_backup_boot", replace_existing=True)
     scheduler.add_job(job_econ_warm, "interval", minutes=30, id="econ_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_econ_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="econ_warm_boot", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
