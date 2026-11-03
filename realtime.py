@@ -244,20 +244,51 @@ def compute_breadth(quotes: Dict[str, Dict], today: Optional[str] = None, skip: 
 
 
 def fetch_indices() -> Dict[str, Dict]:
-    """加權指數與櫃買指數（MIS：t00 / o00）。"""
+    """加權指數與櫃買指數（MIS：t00 / o00）。
+    MIS（mis.twse.com.tw）從雲端主機偶發連線逾時，造成首頁指數與走勢圖「一下有一下沒有」。
+    這裡放寬逾時並重試一次；MIS 仍取不到的指數，改用官方日線值備援（加權＝富果/證交所、
+    櫃買＝TPEx OpenAPI），確保首頁不整塊空白（備援值為官方收盤、非盤中即時，標 stale）。"""
     out = {}
     for key, ex, nm in (("TAIEX", "tse_t00.tw", "加權指數"), ("OTC", "otc_o00.tw", "櫃買指數")):
+        q = None
+        for attempt in range(2):                      # MIS 偶發逾時 → 重試一次
+            try:
+                r = _get_session().get(MIS_URL, params={"ex_ch": ex, "json": "1", "delay": "0",
+                                                        "_": int(time.time() * 1000)}, timeout=(8, 10))
+                rows = (r.json().get("msgArray") or []) if r.status_code == 200 else []
+                q = parse_mis_row(rows[0]) if rows else None
+                if q and q.get("price"):
+                    break
+            except Exception as e:
+                _stats["last_error"] = f"指數: {e}"
+                q = None
+            if attempt == 0:
+                time.sleep(0.5)
+        if q and q.get("price"):
+            out[key] = {"name": nm, "price": q["price"], "prev_close": q["prev_close"], "change": q["change"],
+                        "change_pct": q["change_pct"], "high": q["high"], "low": q["low"],
+                        "time": q["time"], "date": q["date"]}
+    # 備援：MIS 取不到的指數改用官方日線值（避免首頁指數／走勢圖整塊空白）。
+    missing = [k for k in ("TAIEX", "OTC") if k not in out]
+    if missing:
         try:
-            r = _get_session().get(MIS_URL, params={"ex_ch": ex, "json": "1", "delay": "0",
-                                                    "_": int(time.time() * 1000)}, timeout=(4, 8))
-            rows = (r.json().get("msgArray") or []) if r.status_code == 200 else []
-            q = parse_mis_row(rows[0]) if rows else None
-            if q and q.get("price"):
-                out[key] = {"name": nm, "price": q["price"], "prev_close": q["prev_close"], "change": q["change"],
-                            "change_pct": q["change_pct"], "high": q["high"], "low": q["low"],
-                            "time": q["time"], "date": q["date"]}
+            import data_fetcher as _df
+            if "OTC" in missing:
+                t = _df._fetch_tpex()                 # TPEx OpenAPI 官方日線（穩定，不受 MIS 影響）
+                if t and t.get("price"):
+                    out["OTC"] = {"name": "櫃買指數", "price": t["price"], "prev_close": t.get("prev"),
+                                  "change": t.get("chg_pt"), "change_pct": t.get("chg"),
+                                  "high": None, "low": None, "time": None, "date": None,
+                                  "source": t.get("source", "tpex"), "stale": True}
+            if "TAIEX" in missing:
+                tw = _df._fetch_twii()                # 加權：富果／證交所官方（輕量，不觸發整包行情）
+                if isinstance(tw, dict) and tw.get("price") and tw.get("source") != "error":
+                    out["TAIEX"] = {"name": "加權指數", "price": tw["price"], "prev_close": tw.get("prev"),
+                                    "change": tw.get("chg_pt"), "change_pct": tw.get("chg"),
+                                    "high": None, "low": None, "time": None, "date": None,
+                                    "source": tw.get("source", "official"), "stale": True}
         except Exception as e:
-            _stats["last_error"] = f"指數: {e}"
+            _stats["last_error"] = f"指數備援: {e}"
     return out
 
 
