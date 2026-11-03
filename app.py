@@ -1065,6 +1065,25 @@ def api_learning():
         logger.error(f"api_learning: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning/train")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_train():
+    """站主：用已累積 shadow 資料訓練暖啟動勝率模型並回報評估（交叉驗證 AUC vs 規則基準、
+    十分位勝率/平均 R、重要特徵）。只訓練＋評估＋存模型係數，不改即時訊號。"""
+    try:
+        import learning_model
+        out = learning_model.train_and_eval()
+        if out.get("ok"):
+            logger.info(f"勝率模型訓練：n={out['n']} AUC={out.get('model_auc')} "
+                        f"基準(規則分數)={out.get('baseline_auc_rule_score')} 提升={out.get('auc_lift')}")
+        else:
+            logger.info(f"勝率模型訓練略過：{out.get('reason')}（n={out.get('n')}）")
+        return jsonify(out)
+    except Exception as e:
+        logger.error(f"api_learning_train: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/admin/shadow")
 @members.owner_required
 @admin_auth.admin_required
