@@ -457,7 +457,7 @@ def get_market_index_fubon() -> Dict:
         # ★ 修正：跟 data_fetcher.py 同一個問題——2026-08-29 實測 ^TWOII 用 period="5d"
         #   會持續性失敗（連續 3 小時以上每次都失敗，^TWII 卻正常），這裡是這條備援路徑
         #   最後的機會，一樣加上 period fallback，不然 tpex 永遠拿不到資料。
-        for key, sym in {"twii":"^TWII","tpex":"^TWOII"}.items():
+        for key, sym in {"twii":"^TWII"}.items():    # ★ 2026-11-03 移除 ^TWOII：Yahoo 已標 delisted、持續回無資料並洗 ERROR 日誌；櫃買指數改以 data_fetcher._fetch_tpex（TPEx 官方 OpenAPI）為準
             h = None
             for fallback_period in ("5d", "1mo", "3mo"):
                 t = yf.Ticker(sym, session=_sess) if _sess else yf.Ticker(sym)
