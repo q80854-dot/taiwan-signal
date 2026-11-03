@@ -484,28 +484,11 @@ def _fetch_tpex() -> Optional[Dict]:
     except Exception as e:
         logger.warning(f"TPEX official: {e}")
 
-    # 方法三：yfinance 備用 —— ★ 修正：2026-08-31 移除確認不存在的 "^TPEX"
-    # （Yahoo 回 404 Quote not found），只保留 "^TWOII" 嘗試。
-    # 注意：已知 ^TWOII 跟官方櫃買指數有約 5~6% 落差（例如 2026-08-28 官方
-    # 收盤 402.83，^TWOII 同期只有 389.41），只是最後一道保底、不完全準確；
-    # 2026-09-26 起 ^TWOII 開始回「No data found, symbol may be delisted」，
-    # 這道 yfinance 保底目前形同失效。不過這已經不是問題了——上面新增的
-    # tpex_openapi 第一優先來源才是真正的修法（見上方 2026-09-27 註解），
-    # 這裡的 yfinance 分支純粹保留當最後一道保底，即使長期回 None 也無妨。
-    if YFINANCE_OK:
-        for sym in ["^TWOII"]:
-            try:
-                h = yf.Ticker(sym).history(period="3mo", interval="1d")
-                if h is not None and not h.empty and len(h) >= 2:
-                    p  = float(h["Close"].iloc[-1])
-                    pv = float(h["Close"].iloc[-2])
-                    if 50 < p < 5000:
-                        return {"price": round(p,2), "prev": round(pv,2),
-                                "chg": round((p-pv)/pv*100,2), "chg_pt": round(p-pv,2),
-                                "source": f"yfinance_{sym}_approx"}
-                time.sleep(0.2)
-            except Exception as e:
-                logger.warning(f"TPEX yfinance {sym}: {e}")
+    # ★ 2026-11-03 移除原「方法三：yfinance ^TWOII 備用」：Yahoo 自 2026-09-26 起把 ^TWOII
+    # 標為 delisted（持續回 "No data found, symbol may be delisted"），且該值本就與官方櫃買
+    # 指數有約 5~6% 落差，不準確。它已無法取得資料、只是在洗 yfinance 的 ERROR 日誌（會蓋掉
+    # 真正的錯誤），而上方 tpex_openapi（官方逐日 OHLC）才是主來源、運作正常。故整段移除，
+    # 不再呼叫 yfinance 這個死代號；取不到就回 None（上層與首頁已有官方備援與優雅降級）。
     return None
 
 
