@@ -1084,6 +1084,27 @@ def api_learning_train():
         logger.error(f"api_learning_train: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning/backup")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_backup_now():
+    """站主：立即執行一次策略學習資料備份並寄送（Gmail 優先，未設 SMTP 退回 Telegram）。
+    用於「現在先備份」；每月 1 號仍會自動執行。回報就緒度與送出管道。"""
+    try:
+        import shadow
+        ov = shadow.overview() or {}
+        meta = ov.get("meta") or {}
+        has_smtp = bool(os.environ.get("BACKUP_SMTP_USER") and os.environ.get("BACKUP_SMTP_PASS"))
+        job_learning_backup(send=True)
+        return jsonify({"ok": True, "total": meta.get("total"), "first_d": meta.get("first_d"),
+                        "last_d": meta.get("last_d"),
+                        "channel": "gmail" if has_smtp else "telegram_or_none",
+                        "note": "已觸發備份；Gmail 需先設 BACKUP_SMTP_USER／BACKUP_SMTP_PASS／BACKUP_EMAIL_TO，"
+                                "未設則改走 Telegram 或只記錄。實際結果見伺服器日誌。"})
+    except Exception as e:
+        logger.error(f"api_learning_backup_now: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/admin/shadow")
 @members.owner_required
 @admin_auth.admin_required
