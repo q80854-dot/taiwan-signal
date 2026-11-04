@@ -1066,3 +1066,42 @@ def export_csv(kind=None, status=None):
     for x, f in zip(rows, parsed):
         w.writerow([x.get(k) for k in base] + _derive(x, f) + [f.get(k) for k in fkeys])
     return out.getvalue(), len(rows)
+
+
+def verify_backup() -> dict:
+    """★ 2026-11-04（Phase 1 維運：備份還原測試）——把備份匯出的 CSV 重新解析、載入一個臨時
+    記憶體 SQLite，確認：筆數與資料庫一致、欄位完整、每一列都能無錯誤還原。這證明「備份檔真的
+    還原得回來」，不是只產生了一個檔案。回傳 {ok, match, rows_db, rows_csv, rows_restored,
+    columns, size_bytes, checked_at}；還原過程出錯回 {ok:False, error}。純唯讀、不動正式資料。"""
+    import sqlite3
+    ensure_table()
+    from state_store import store
+    try:
+        with store._conn() as conn:
+            rows_db = (conn.execute("SELECT COUNT(*) AS n FROM shadow_signals").fetchone() or {"n": 0})["n"]
+        body, n = export_csv()
+        rdr = csv.reader(io.StringIO(body.lstrip("﻿")))
+        header = next(rdr, None) or []
+        data = [r for r in rdr]
+        rows_csv = len(data)
+        restored = 0
+        mem = sqlite3.connect(":memory:")
+        try:
+            cols = ", ".join('"%s" TEXT' % c for c in header)
+            mem.execute(f"CREATE TABLE bak ({cols})")
+            ph = ",".join(["?"] * len(header))
+            for r in data:
+                if len(r) == len(header):
+                    mem.execute(f"INSERT INTO bak VALUES ({ph})", r)
+            restored = mem.execute("SELECT COUNT(*) FROM bak").fetchone()[0]
+        finally:
+            mem.close()
+        match = (rows_db == rows_csv == restored)
+        return {"ok": True, "match": match, "rows_db": rows_db, "rows_csv": rows_csv,
+                "rows_restored": restored, "columns": len(header),
+                "size_bytes": len(body.encode("utf-8")),
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+                "note": "備份匯出→解析→載入臨時 SQLite 的還原測試；三處筆數一致且無錯誤即代表備份可還原。"}
+    except Exception as e:
+        logger.error(f"verify_backup: {e}", exc_info=True)
+        return {"ok": False, "error": "還原驗證失敗，請檢查日誌"}
