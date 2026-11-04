@@ -178,18 +178,22 @@ def _auc(scores, y):
     return float(auc)
 
 
-def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
-    """訓練＋時間序列 walk-forward 交叉驗證＋和規則分數基準比較；可選擇把最終模型存進 meta。
+def _walkforward_eval(parsed, y, scores, rmult, k: int = 5, l2: float = 1.0, mode: str = "all") -> dict:
+    """★ F-06／Phase 2（2026-11-04）：共用的 expanding-window walk-forward 評估核心。
+    把依時間排序的樣本切成 k+1 段，第 j 次用「前 j 段」訓練、對「第 j+1 段」預測（1≤j≤k）；
+    每個 fold 的特徵選擇、中位數填補、標準化都只 fit 在該次訓練段，杜絕未來資料洩漏。
+    mode 決定特徵組合（供多模型競賽用）：
+      - "all"     ：規則分數 score ＋ 全部覆蓋率足夠的特徵
+      - "features"：只用特徵、不含規則分數
+      - "rule"    ：只用規則分數（＝規則基準當成一個模型）
+    回傳 out-of-fold 指標與「用全資料擬合的最終模型」係數（供解釋與落地）。"""
+    def _mode_keys(keys, use_score):
+        if mode == "rule":
+            return [], True
+        if mode == "features":
+            return keys, False
+        return keys, use_score
 
-    ★ F-06（2026-11-04）：評估改為 expanding-window walk-forward。把依時間排序的樣本切成
-    k+1 段，第 j 次用「前 j 段」訓練、對「第 j+1 段」預測（1≤j≤k）；每個 fold 的特徵選擇、
-    中位數填補、標準化都只 fit 在該次的訓練段。如此驗證樣本的任何資訊都不會回流到訓練前處理，
-    報出的 AUC 才是對「未來、未見過」資料的誠實估計。最終落地模型仍用全部資料擬合（供日後評分）。"""
-    ds = build_dataset()
-    if not ds.get("ok"):
-        return {"ok": False, "reason": ds.get("reason", "insufficient"), "n": ds.get("n", 0),
-                "min_samples": MIN_SAMPLES}
-    parsed = ds["parsed"]; y = ds["y"]; scores = ds["score"]; rmult = ds["rmult"]
     n = len(parsed)
     kk = max(2, k)
     block = n // (kk + 1)
@@ -199,21 +203,20 @@ def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
             tr_end = j * block
             va_end = (j + 1) * block if j < kk else n
             train = parsed[:tr_end]
-            keys, use_score = _select_keys(train)           # 只在訓練段選特徵
+            keys, use_score = _mode_keys(*_select_keys(train))   # 只在訓練段選特徵
             if not keys and not use_score:
                 continue
-            med, score_med = _fit_prep(train, keys, use_score)   # 只在訓練段算填補值
+            med, score_med = _fit_prep(train, keys, use_score)    # 只在訓練段算填補值
             Xtr, _ = _build_X(train, keys, use_score, med, score_med)
             Xva, _ = _build_X(parsed[tr_end:va_end], keys, use_score, med, score_med)
-            Xtr_s, mean, std = _standardize(Xtr)                 # 只在訓練段算標準化參數
+            Xtr_s, mean, std = _standardize(Xtr)                  # 只在訓練段算標準化參數
             w, b = _fit_logreg(Xtr_s, y[:tr_end], l2=l2)
-            Xva_s, _, _ = _standardize(Xva, mean, std)           # 驗證段只套用
+            Xva_s, _, _ = _standardize(Xva, mean, std)            # 驗證段只套用
             oof[tr_end:va_end] = _sigmoid(Xva_s @ w + b)
     val = np.isfinite(oof)
     model_auc = _auc(oof[val], y[val]) if val.any() else None
     base_auc = _auc(scores[val], y[val]) if val.any() else None   # 基準：同一批驗證樣本、只用規則分數
     brier = round(float(np.mean((oof[val] - y[val]) ** 2)), 4) if val.any() else None
-    # 十分位增益：依模型（out-of-fold）分數分組看勝率與平均 R（只用驗證段）
     deciles = []
     vidx = np.where(val)[0]
     if len(vidx) >= 10:
@@ -225,30 +228,49 @@ def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
                 deciles.append({"decile": g + 1, "n": int(len(gi)),
                                 "win_rate": round(float(y[gi].mean()) * 100, 1),
                                 "avg_r": round(float(rmult[gi].mean()), 3)})
-    # ── 最終模型（全資料）＋係數（標準化空間）供解釋與日後 shadow 評分 ──
-    keys_all, use_score_all = _select_keys(parsed)
+    # ── 最終模型（全資料，同 mode）＋係數（標準化空間） ──
+    keys_all, use_score_all = _mode_keys(*_select_keys(parsed))
     med_all, score_med_all = _fit_prep(parsed, keys_all, use_score_all)
     Xall, cols = _build_X(parsed, keys_all, use_score_all, med_all, score_med_all)
-    Xs, mean, std = _standardize(Xall)
-    w, b = _fit_logreg(Xs, y, l2=l2)
+    if cols:
+        Xs, mean, std = _standardize(Xall)
+        w, b = _fit_logreg(Xs, y, l2=l2)
+    else:
+        mean = std = w = np.zeros(0); b = 0.0
+    return {"n_eval": int(val.sum()), "model_auc": model_auc, "base_auc": base_auc, "brier": brier,
+            "deciles": deciles, "cols": cols, "mean": mean, "std": std, "w": w, "b": b}
+
+
+def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
+    """訓練＋時間序列 walk-forward 交叉驗證＋和規則分數基準比較；可選擇把最終模型存進 meta。
+    最終落地模型用全部資料擬合（供日後 shadow 評分）；persist 時另把本次版本追加進版本歷史。"""
+    ds = build_dataset()
+    if not ds.get("ok"):
+        return {"ok": False, "reason": ds.get("reason", "insufficient"), "n": ds.get("n", 0),
+                "min_samples": MIN_SAMPLES}
+    parsed = ds["parsed"]; y = ds["y"]; scores = ds["score"]; rmult = ds["rmult"]
+    n = len(parsed)
+    ev = _walkforward_eval(parsed, y, scores, rmult, k=k, l2=l2, mode="all")
+    cols, w = ev["cols"], ev["w"]
     coef = sorted([{"feature": cols[i], "weight": round(float(w[i]), 4)} for i in range(len(cols))],
                   key=lambda z: -abs(z["weight"]))
-    out = {"ok": True, "n": n, "n_eval": int(val.sum()),
-           "eval_method": "time_series_walkforward",
+    ma, ba = ev["model_auc"], ev["base_auc"]
+    out = {"ok": True, "n": n, "n_eval": ev["n_eval"], "eval_method": "time_series_walkforward",
            "win_base_rate": round(float(y.mean()) * 100, 1),
-           "model_auc": round(model_auc, 4) if model_auc is not None else None,
-           "baseline_auc_rule_score": round(base_auc, 4) if base_auc is not None else None,
-           "auc_lift": round(model_auc - base_auc, 4) if (model_auc is not None and base_auc is not None) else None,
-           "brier": brier, "deciles": deciles, "top_features": coef[:15],
+           "model_auc": round(ma, 4) if ma is not None else None,
+           "baseline_auc_rule_score": round(ba, 4) if ba is not None else None,
+           "auc_lift": round(ma - ba, 4) if (ma is not None and ba is not None) else None,
+           "brier": ev["brier"], "deciles": ev["deciles"], "top_features": coef[:15],
            "n_features": len(cols), "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")}
     if persist:
         try:
             from state_store import store
-            store.set_meta(META_KEY, {"keys": cols, "mean": mean.tolist(), "std": std.tolist(),
-                                      "w": w.tolist(), "b": float(b), "trained_at": out["trained_at"],
+            store.set_meta(META_KEY, {"keys": cols, "mean": ev["mean"].tolist(), "std": ev["std"].tolist(),
+                                      "w": w.tolist(), "b": float(ev["b"]), "trained_at": out["trained_at"],
                                       "n": n, "model_auc": out["model_auc"],
                                       "baseline_auc": out["baseline_auc_rule_score"]})
             out["persisted"] = True
+            _save_version_safe(out)      # Phase 2：追加版本歷史（失敗不影響訓練本身）
         except Exception as e:
             out["persisted"] = False; out["persist_error"] = str(e)
     return out
@@ -277,3 +299,144 @@ def score_features(feat: dict, score: Optional[float] = None) -> Optional[float]
     except Exception as e:
         logger.warning(f"score_features: {e}")
         return None
+
+
+# ═══════════════════════ Phase 2：量化研究升級（2026-11-04） ═══════════════════════
+# 全部屬「離線評估／比較／記錄」，不改動即時訊號、不自動把任何模型晉升為正式champion
+# （維持使用者「用 c」暫停自動進化的決定）。晉升與否仍由使用者手動決定。
+
+# 多模型競賽的參賽設定：同一批資料、同一套時序 walk-forward，只改特徵組合與正則強度。
+_COMPETITION_CONFIGS = [
+    {"id": "rule_only",      "label": "純規則分數（基準）",      "mode": "rule",     "l2": 1.0},
+    {"id": "features_only",  "label": "只用特徵（不含規則分數）", "mode": "features", "l2": 1.0},
+    {"id": "rule_feats_l2_1", "label": "規則＋特徵（標準正則）",  "mode": "all",      "l2": 1.0},
+    {"id": "rule_feats_l2_03", "label": "規則＋特徵（較弱正則）", "mode": "all",      "l2": 0.3},
+    {"id": "rule_feats_l2_3", "label": "規則＋特徵（較強正則）",  "mode": "all",      "l2": 3.0},
+]
+
+
+def run_competition(k: int = 5) -> dict:
+    """多模型競賽：用同一批已結算 shadow 資料與同一套時序 walk-forward，評估多種特徵組合／
+    正則強度，產出排行榜（依 out-of-fold AUC 由高到低，平手比 Brier 低者）。只評估比較、
+    不改 champion、不自動晉升。"""
+    ds = build_dataset()
+    if not ds.get("ok"):
+        return {"ok": False, "reason": ds.get("reason", "insufficient"), "n": ds.get("n", 0),
+                "min_samples": MIN_SAMPLES}
+    parsed, y, scores, rmult = ds["parsed"], ds["y"], ds["score"], ds["rmult"]
+    entries, base_auc, n_eval = [], None, 0
+    for cfg in _COMPETITION_CONFIGS:
+        ev = _walkforward_eval(parsed, y, scores, rmult, k=k, l2=cfg["l2"], mode=cfg["mode"])
+        if base_auc is None:
+            base_auc = ev["base_auc"]       # 同一批驗證樣本的規則基準，各參賽者一致
+            n_eval = ev["n_eval"]
+        ma = ev["model_auc"]
+        entries.append({"id": cfg["id"], "label": cfg["label"], "mode": cfg["mode"], "l2": cfg["l2"],
+                        "model_auc": round(ma, 4) if ma is not None else None,
+                        "brier": ev["brier"], "n_features": len(ev["cols"]),
+                        "auc_lift": round(ma - base_auc, 4) if (ma is not None and base_auc is not None) else None})
+    entries.sort(key=lambda e: (-(e["model_auc"] if e["model_auc"] is not None else -1),
+                                e["brier"] if e["brier"] is not None else 1.0))
+    for i, e in enumerate(entries):
+        e["rank"] = i + 1
+    return {"ok": True, "n": ds["n"], "n_eval": n_eval,
+            "win_base_rate": round(float(y.mean()) * 100, 1),
+            "baseline_auc_rule_score": round(base_auc, 4) if base_auc is not None else None,
+            "entries": entries, "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+
+
+# 模型版本管理：每次正式訓練（persist）就把該版本的評估摘要追加進歷史，供排行榜與回溯。
+HISTORY_KEY = "learning_models_history"
+MAX_HISTORY = 50
+
+
+def _save_version_safe(result: dict):
+    """把一次訓練結果的摘要追加進版本歷史；任何失敗都只記 log，不影響訓練本身。"""
+    try:
+        from state_store import store
+        st, hist = store.read_meta(HISTORY_KEY)
+        hist = hist if (st == "ok" and isinstance(hist, list)) else []
+        rec = {"version": len(hist) + 1, "trained_at": result.get("trained_at"),
+               "n": result.get("n"), "n_eval": result.get("n_eval"),
+               "model_auc": result.get("model_auc"),
+               "baseline_auc": result.get("baseline_auc_rule_score"),
+               "auc_lift": result.get("auc_lift"), "brier": result.get("brier"),
+               "n_features": result.get("n_features"), "eval_method": result.get("eval_method"),
+               "top_features": (result.get("top_features") or [])[:5]}
+        hist.append(rec)
+        store.set_meta(HISTORY_KEY, hist[-MAX_HISTORY:])
+    except Exception as e:
+        logger.warning(f"_save_version_safe: {e}")
+
+
+def list_model_versions() -> dict:
+    """回傳已訓練模型的版本歷史與排行榜（依 out-of-fold AUC 由高到低）。"""
+    try:
+        from state_store import store
+        st, hist = store.read_meta(HISTORY_KEY)
+        if st == "error":
+            return {"ok": False, "reason": "risk_state_unavailable", "versions": [], "leaderboard": []}
+        hist = hist if (st == "ok" and isinstance(hist, list)) else []
+    except Exception as e:
+        logger.warning(f"list_model_versions: {e}")
+        hist = []
+    leaderboard = sorted([h for h in hist if h.get("model_auc") is not None],
+                         key=lambda h: -h["model_auc"])
+    return {"ok": True, "count": len(hist), "versions": hist, "leaderboard": leaderboard}
+
+
+def explain_signal(feat: dict, score: Optional[float] = None) -> Optional[dict]:
+    """AI 決策解釋：用現行 champion 模型解釋單筆訊號——回傳預測勝率、截距、以及各特徵在
+    標準化空間的貢獻（weight × z），依絕對值排序。正貢獻＝推升勝率、負貢獻＝拉低。無模型回 None。"""
+    try:
+        from state_store import store
+        m = store.get_meta(META_KEY)
+        if not m or not m.get("keys"):
+            return None
+        keys, mean, std = m["keys"], np.array(m["mean"]), np.array(m["std"])
+        w, b = np.array(m["w"]), float(m["b"])
+        std = np.where(std < 1e-9, 1.0, std)
+        x = np.zeros(len(keys))
+        for j, k in enumerate(keys):
+            v = _num(score) if k == "score" else _num((feat or {}).get(k))
+            x[j] = v if v is not None else mean[j]
+        z = (x - mean) / std
+        contrib = w * z
+        prob = float(_sigmoid(float(z @ w) + b))
+        items = sorted([{"feature": keys[i], "value": round(float(x[i]), 4),
+                         "contribution": round(float(contrib[i]), 4)} for i in range(len(keys))],
+                       key=lambda d: -abs(d["contribution"]))
+        return {"prob": round(prob, 4), "bias": round(b, 4), "n_features": len(keys),
+                "trained_at": m.get("trained_at"), "contributions": items}
+    except Exception as e:
+        logger.warning(f"explain_signal: {e}")
+        return None
+
+
+def explain_latest() -> dict:
+    """解釋最近一筆 shadow 訊號（champion 模型）。供儀表板一眼看「模型為何這樣評分」。"""
+    try:
+        from state_store import store
+        import shadow
+        shadow.ensure_table()
+        with store._conn() as conn:
+            row = conn.execute(
+                "SELECT code, name, direction, score, features, bar_date FROM shadow_signals "
+                "ORDER BY created_at DESC LIMIT 1").fetchone()
+        if not row:
+            return {"ok": False, "reason": "no_signal"}
+        row = dict(row)
+        try:
+            feats = json.loads(row.get("features") or "{}")
+        except Exception:
+            feats = {}
+        ex = explain_signal(feats if isinstance(feats, dict) else {}, score=row.get("score"))
+        if ex is None:
+            return {"ok": False, "reason": "no_model"}
+        ex.update({"ok": True, "code": row.get("code"), "name": row.get("name"),
+                   "direction": row.get("direction"), "bar_date": row.get("bar_date"),
+                   "rule_score": row.get("score")})
+        return ex
+    except Exception as e:
+        logger.warning(f"explain_latest: {e}")
+        return {"ok": False, "reason": "error"}

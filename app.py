@@ -1105,6 +1105,44 @@ def api_learning_backup_now():
         logger.error(f"api_learning_backup_now: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning/compete")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_compete():
+    """站主：多模型競賽——同一批 shadow 資料、同一套時序 walk-forward，比較多種特徵組合／
+    正則強度，產出排行榜。只評估比較，不改 champion、不自動晉升（維持暫停自動進化）。"""
+    try:
+        import learning_model
+        out = learning_model.run_competition()
+        return jsonify(out)
+    except Exception as e:
+        logger.error(f"api_learning_compete: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/learning/models")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_models():
+    """站主：模型版本管理——列出歷次訓練的版本摘要與排行榜（依 out-of-fold AUC）。"""
+    try:
+        import learning_model
+        return jsonify(learning_model.list_model_versions())
+    except Exception as e:
+        logger.error(f"api_learning_models: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/learning/explain")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_explain():
+    """站主：AI 決策解釋——用現行 champion 模型解釋最近一筆 shadow 訊號的各特徵貢獻。"""
+    try:
+        import learning_model
+        return jsonify(learning_model.explain_latest())
+    except Exception as e:
+        logger.error(f"api_learning_explain: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/admin/shadow")
 @members.owner_required
 @admin_auth.admin_required
