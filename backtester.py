@@ -686,6 +686,158 @@ def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_mac
                             "by_direction":r.get("by_direction",{})} for r in results],"details":results}
 
 
+# ★ 新增：2026-11-04——組合級回測（使用者選定 5 項功能之一）。
+# run_full_backtest_tw 是「每檔各自用一個獨立帳戶」跑完再加總，看不到真實帳戶在
+# 「同時持倉上限＋共享資金＋組合風險上限」下的樣子。這支改成「單一共享帳戶、跨檔逐日
+# 模擬」：每個交易日先處理出場，再從所有尚未持有的個股找當日候選訊號、依分數排序，在
+# 「同時持倉數≤上限、進場成本≤剩餘資金、全部最壞同時停損≤組合硬上限」三個限制下開倉，
+# 逐日 mark-to-market 出一條真實的帳戶權益曲線。只用當日(含)以前的資料，無未來函數。
+def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
+                          max_portfolio_risk=None, progress_cb=None) -> Dict:
+    from data_fetcher  import fetch_ohlcv
+    from signal_engine import check_multi_timeframe_tw, calc_stop_loss_tw, calc_take_profits_tw, calc_position_size
+    from stock_universe import get_tw50_components, get_stock_info
+    from scoring_engine import calc_performance_metrics
+    from config import ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_PORTFOLIO_RISK
+    LOOKBACK = 130
+    min_score = min_score if min_score is not None else THRESH["min_score"]
+    max_pos   = int(max_positions or MAX_SIMULTANEOUS_POSITIONS)
+    port_risk = float(max_portfolio_risk if max_portfolio_risk is not None else MAX_PORTFOLIO_RISK)
+    targets = tickers or get_tw50_components()
+    # 1) 載入各檔日線＋基本資料；建日期→索引對照
+    data = {}
+    for idx, t in enumerate(targets):
+        try:
+            d = fetch_ohlcv(t, "daily")
+            if d and len(d.get("closes", [])) > LOOKBACK + 20:
+                info = get_stock_info(t) or {}
+                data[t] = {"d": d, "size_cat": info.get("size_cat", "中型股"),
+                           "vol_lots": info.get("volume_lots"),
+                           "idx": {dt: i for i, dt in enumerate(d["dates"])}}
+            if progress_cb:
+                try: progress_cb(idx + 1, len(targets), t)
+                except Exception: pass
+        except Exception as e:
+            logger.warning(f"[PortBT] {t} 載入失敗：{e}")
+    if not data:
+        return {"error": "資料不足以進行組合級回測"}
+    all_dates = sorted({dt for v in data.values() for dt in v["d"]["dates"]})
+
+    balance = float(ACCOUNT_BALANCE_TWD)
+    invested = 0.0
+    open_pos = {}
+    trades, equity, axis, concur = [], [], [], []
+
+    def _close(t, cp, res, day):
+        nonlocal balance, invested
+        p = open_pos.pop(t)
+        pnl = calc_tw_pnl(p["fill_price"], cp, p["direction"], p["shares"])
+        balance += pnl; invested -= p["value"]
+        try:
+            hold = (datetime.strptime(day[:10], "%Y-%m-%d") - datetime.strptime(p["bar_date"][:10], "%Y-%m-%d")).days
+        except Exception:
+            hold = 0
+        trades.append({"ticker": t, "direction": p["direction"], "entry": p["fill_price"], "close": round(cp, 2),
+                       "result": res, "pnl_twd": round(pnl, 0), "shares": p["shares"], "score": p["score"],
+                       "bar_in": p["bar_date"], "bar_out": day, "hold_days": hold})
+
+    for day in all_dates:
+        # 2a) 出場（保守：同根同時觸停損停利取停損）
+        for t in list(open_pos.keys()):
+            di = data[t]["idx"].get(day)
+            if di is None:
+                continue
+            dd = data[t]["d"]; p = open_pos[t]; d_ = p["direction"]
+            hi, lo = dd["highs"][di], dd["lows"][di]
+            hit_sl = (d_ == "buy" and lo <= p["sl"]) or (d_ == "sell" and hi >= p["sl"])
+            hit_tp = (d_ == "buy" and hi >= p["tp1"]) or (d_ == "sell" and lo <= p["tp1"])
+            if hit_sl or hit_tp:
+                res, cp = ("sl", p["sl"]) if hit_sl else ("tp1", p["tp1"])
+                _close(t, cp, res, day)
+        # 2b) 進場：找當日候選、依分數排序，在三個限制下開倉
+        if len(open_pos) < max_pos:
+            cands = []
+            for t, v in data.items():
+                if t in open_pos:
+                    continue
+                di = v["idx"].get(day)
+                if di is None or di < LOOKBACK:
+                    continue
+                dd = v["d"]
+                window = {k: dd[k][:di] for k in ("closes", "highs", "lows", "opens", "volumes")}
+                mtf = check_multi_timeframe_tw({"daily": window})
+                dir_ = mtf.get("direction", "none"); sc = mtf.get("score", 0)
+                if dir_ == "none" or sc < min_score or mtf.get("adx_value", 0) < THRESH["min_adx"]:
+                    continue
+                price = dd["closes"][di]
+                dind = mtf.get("entry_indicators", {}); atr = dind.get("atr", {}).get("value", 0) or price * 0.02
+                if not atr or price <= 0:
+                    continue
+                lo5 = min(dd["lows"][max(0, di - 5):di]) if di >= 5 else None
+                hi5 = max(dd["highs"][max(0, di - 5):di]) if di >= 5 else None
+                sl = calc_stop_loss_tw(dir_, price, atr, dind, v["size_cat"], lo5, hi5)
+                if abs(price - sl) / price * 100 > 12:
+                    continue
+                tp = calc_take_profits_tw(dir_, price, sl, v["size_cat"])
+                if tp["rr1"] < THRESH["min_rr"]:
+                    continue
+                cands.append((sc, t, dir_, price, sl, tp["tp1"]))
+            cands.sort(key=lambda z: -z[0])
+            risk_open = sum(p["risk"] for p in open_pos.values())
+            for sc, t, dir_, price, sl, tp1 in cands:
+                if len(open_pos) >= max_pos:
+                    break
+                pos = calc_position_size(price, sl, balance=balance, size_cat=data[t]["size_cat"],
+                                         avg_volume_lots=data[t]["vol_lots"])
+                sh = pos["shares"]
+                if sh <= 0:
+                    continue
+                value = sh * price; risk = sh * abs(price - sl)
+                if invested + value > balance:            # 買力不足
+                    continue
+                if risk_open + risk > balance * port_risk:  # 組合風險硬上限
+                    continue
+                open_pos[t] = {"direction": dir_, "fill_price": price, "sl": sl, "tp1": tp1, "shares": sh,
+                               "risk": risk, "value": value, "bar_date": day, "score": sc}
+                invested += value; risk_open += risk
+        # 2c) 逐日 mark-to-market
+        unreal = 0.0
+        for t, p in open_pos.items():
+            di = data[t]["idx"].get(day)
+            cl = data[t]["d"]["closes"][di] if di is not None else p["fill_price"]
+            unreal += calc_tw_pnl(p["fill_price"], cl, p["direction"], p["shares"])
+        equity.append(round(balance + unreal, 0)); axis.append(day); concur.append(len(open_pos))
+    # 3) 期末強制平倉剩餘部位（以各檔最後一根收盤）
+    for t in list(open_pos.keys()):
+        dd = data[t]["d"]
+        _close(t, dd["closes"][-1], "eow", dd["dates"][-1])
+    # 4) 指標
+    metrics = calc_performance_metrics(equity, trades)
+    wins = len([x for x in trades if x["pnl_twd"] > 0]); losses = len([x for x in trades if x["pnl_twd"] <= 0])
+    def _dir(dd):
+        ts = [x for x in trades if x["direction"] == dd]
+        w = len([x for x in ts if x["pnl_twd"] > 0])
+        return {"n_trades": len(ts), "n_wins": w, "n_losses": len(ts) - w,
+                "win_rate": round(w / max(len(ts), 1) * 100, 1),
+                "total_pnl_twd": round(sum(x["pnl_twd"] for x in ts), 0)}
+    return {"method": "portfolio", "n_tickers": len(data), "n_days": len(axis),
+            "initial_balance": round(ACCOUNT_BALANCE_TWD, 0), "final_balance": round(balance, 0),
+            "return_pct": round((balance - ACCOUNT_BALANCE_TWD) / ACCOUNT_BALANCE_TWD * 100, 2),
+            "n_trades": len(trades), "n_wins": wins, "n_losses": losses,
+            "win_rate": round(wins / max(wins + losses, 1) * 100, 1),
+            "total_pnl_twd": round(sum(x["pnl_twd"] for x in trades), 0),
+            "sharpe": metrics.get("sharpe", 0), "max_drawdown": metrics.get("max_drawdown", 0),
+            "calmar": metrics.get("calmar", 0), "annual_return": metrics.get("annual_return", 0),
+            "max_concurrent": max(concur) if concur else 0,
+            "avg_concurrent": round(sum(concur) / max(len(concur), 1), 2),
+            "max_positions": max_pos, "max_portfolio_risk_pct": round(port_risk * 100, 1),
+            "min_score_used": min_score, "by_direction": {"buy": _dir("buy"), "sell": _dir("sell")},
+            "equity_curve": equity, "dates": axis, "trades": trades[-50:],
+            "note": "單一共享帳戶、跨檔逐日模擬，受同時持倉上限／買力／組合風險硬上限約束；"
+                    "成本含手續費、證交稅、滑價（calc_tw_pnl）。只用當日(含)以前資料，無未來函數。",
+            "completed_at": datetime.now(timezone.utc).isoformat()}
+
+
 # ★ 新增：2026-09-24——使用者要求「用新增的東西做詳細回測，跟過去策略比較
 # 勝率/準確度有沒有提升」，並在看到第一版（只有TWII一項）差異很小之後，
 # 明確要求「用真實資料回測，不要假數據，能補的都補上」。這裡把「有沒有套用

@@ -3311,6 +3311,8 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-11-04（組合級回測）</b></p>
+          <p><b>單一共享帳戶的真實回測</b><br>・績效回測頁新增「組合級回測」：有別於「各檔各用一個獨立帳戶」的加總，這是用<b>單一共享資金</b>跨檔逐日模擬——每天先處理出場，再從所有個股找當日訊號、依分數排序，在<b>同時持倉上限、買力、組合風險硬上限</b>三個限制下開倉，產出一條真實的帳戶權益曲線（總報酬、最大回撤、夏普、最大/平均同時持倉、多空勝率），成本含手續費／證交稅／滑價。只用當日(含)以前資料、無未來函數。</p>
           <p><b>2026-11-04（事件濾網：重大訊息與除權息自動影響訊號）</b></p>
           <p><b>重大訊息風險自動扣分</b><br>・個股若命中重大訊息風險關鍵字（財報預警、訴訟、裁罰等），產生訊號時自動扣分；扣完低於進場門檻就不發訊號（＝自動影響分數，非一律全擋）。</p>
           <p><b>近日除權息自動擋單</b><br>・近 2 個日曆日內除權息的個股暫不發新訊號——除權息當日股價會跳空，用除權息前收盤算出的進場／停損／停利價位會失真、不適合據以進場。<br>・兩者皆已納入影子追蹤，可在策略學習頁驗證這些濾網到底有沒有幫到勝率。</p>
@@ -5151,8 +5153,8 @@ function f7Side(){
 
 // ---------- 績效回測（站主） ----------
 async function b7Load(){
-  const [cfg,full]=await Promise.all([x6Get('/api/backtest/config',600e3),x6Get('/api/backtest/full/result',20e3)]);
-  _x7.cfg=cfg||{};_x7.full=full||{};
+  const [cfg,full,port]=await Promise.all([x6Get('/api/backtest/config',600e3),x6Get('/api/backtest/full/result',20e3),x6Get('/api/backtest/portfolio/result',20e3)]);
+  _x7.cfg=cfg||{};_x7.full=full||{};_x7.port=port||{};
   if(!_x7.bt){let t='2330';try{t=localStorage.getItem('b7-ticker')||t;}catch(e){}b7Run(t,true);}
   b7Draw();
 }
@@ -5167,19 +5169,25 @@ async function b7Full(){
   try{const r=await(await fetch('/api/backtest/full/run?universe=tw50',{method:'POST',headers:{'X-TS':'1'}})).json();toast(r.status==='already_running'?'全市場回測已在執行中':'已開始 TW50 回測，完成後自動更新');}catch(e){toast('啟動失敗');}
   const poll=async()=>{_x7.full=await x6Get('/api/backtest/full/result',0);b7Draw();const st=((_x7.full||{}).progress||{}).status;if(st==='running'&&window._curPage==='backtest')setTimeout(poll,5000);};setTimeout(poll,2000);
 }
+async function b7Portfolio(){
+  try{const r=await(await fetch('/api/backtest/portfolio/run?universe=tw50',{method:'POST',headers:{'X-TS':'1'}})).json();toast(r.status==='already_running'?'組合級回測已在執行中':'已開始組合級回測（共享帳戶），完成後自動更新');}catch(e){toast('啟動失敗');}
+  const poll=async()=>{_x7.port=await x6Get('/api/backtest/portfolio/result',0);b7Draw();const st=((_x7.port||{}).progress||{}).status;if(st==='running'&&window._curPage==='backtest')setTimeout(poll,5000);};setTimeout(poll,2000);
+}
 function b7Draw(){
   const el=document.getElementById('b7-body');if(!el)return;
   const c=_x7.cfg||{},d=_x7.bt||{},ok=d&&!d.error&&d.n_trades!=null,tr=(d.trades||[]),wins=tr.filter(x=>x.pnl_pct>0),loss=tr.filter(x=>x.pnl_pct<0);
   const avg=a=>a.length?a.reduce((s,x)=>s+x.pnl_pct,0)/a.length:null,aw=avg(wins),al=avg(loss);
   const fld=(k,v)=>`<div class="b7-fld"><span>${k}</span><b>${v}</b></div>`;
   const fp=(_x7.full||{}).progress||{},fr=(_x7.full||{}).result;
+  const pp=(_x7.port||{}).progress||{},pr=(_x7.port||{}).result;
   const set=`<section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>回測設定</h2><span class="o-mt">系統實際使用的參數</span></div></div><div class="o-cb" style="display:flex;flex-direction:column;gap:6px">
     <div class="o-lbl">單檔回測</div><div class="b7-fld"><span>股票代號</span><input id="b7-t" value="${v5E(_x7.btT||'')}" onkeydown="if(event.key==='Enter')b7Run()" aria-label="股票代號"></div>
     ${fld('資料期間','日線近 1 年')}${fld('最低訊號分數',v5F(d.min_score_used??c.default_min_score,0))}
     <div class="o-lbl" style="margin-top:10px">資金與風控</div>${fld('初始資金',v5F(d.initial_balance??c.initial_balance,0))}${fld('單筆風險',v5F(c.risk_per_trade_pct,1)+'%')}${fld('組合風險上限',v5F(c.portfolio_risk_pct,1)+'%')}${fld('出場規則','停損 · 目標 1／2')}
     <div class="o-lbl" style="margin-top:10px">交易成本</div>${fld('手續費',v5F(c.commission_rate_pct,4)+'%（最低 '+v5F(c.min_commission,0)+' 元）')}${fld('證交稅（賣出）',v5F(c.tax_sell_pct,1)+'%')}${fld('滑價（每邊）',v5F(c.slippage_pct,2)+'%')}
     <button class="btn lg" style="margin-top:10px;background:#fff;color:#111113;border-color:#fff" onclick="b7Run()"${_x7.btLoading?' disabled':''}>${_x7.btLoading?'回測中…':'執行單檔回測'}</button>
-    <button class="btn" style="background:transparent;color:#fff;border-color:#2a2a2e" onclick="b7Full()"${fp.status==='running'?' disabled':''}>${fp.status==='running'?`TW50 回測中 ${fp.done||0}/${fp.total||'—'}`:'執行 TW50 全市場回測'}</button></div></section>`;
+    <button class="btn" style="background:transparent;color:#fff;border-color:#2a2a2e" onclick="b7Full()"${fp.status==='running'?' disabled':''}>${fp.status==='running'?`TW50 回測中 ${fp.done||0}/${fp.total||'—'}`:'執行 TW50 全市場回測'}</button>
+    <button class="btn" style="background:transparent;color:#fff;border-color:#2a2a2e" onclick="b7Portfolio()"${pp.status==='running'?' disabled':''}>${pp.status==='running'?`組合回測中 ${pp.done||0}/${pp.total||'—'}`:'執行組合級回測（共享帳戶）'}</button></div></section>`;
   // 結果
   let res;
   if(_x7.btLoading&&!ok)res=v5Empty('回測中…','首次回測需要下載日線，約數秒到數十秒。');
@@ -5208,7 +5216,22 @@ function b7Draw(){
   const senC=v5Card('o-c6','依出場結果分類',`最近 ${tr.length} 筆`,ok&&tr.length?`<div class="b7-rg" style="padding-top:0;font-size:11px;color:var(--t3)"><span>結果</span><span>筆數</span><span>平均報酬</span><span>總損益（元）</span></div>${Object.entries(grp).sort((a,b)=>b[1].length-a[1].length).map(([k,a])=>{const av=a.reduce((x,t)=>x+t.pnl_pct,0)/a.length,sm=a.reduce((x,t)=>x+t.pnl_twd,0);return `<div class="b7-rg"><span>${v5E(res2[k]||k)}</span><span>${a.length}</span><span class="${v5C(av)}" style="font-weight:500">${v5S(av,2)}%</span><span class="${v5C(sm)}" style="font-weight:500">${v5S(sm)}</span></div>`;}).join('')}`:'<div class="o-lbl">—</div>');
   const ft=_x7.btF||'all',tl=tr.filter(t=>ft==='win'?t.pnl_pct>0:ft==='loss'?t.pnl_pct<0:true).slice().reverse();
   const tC=v5Card('o-c12','交易明細',`最近 ${tr.length} 筆`,tl.length?`<div style="overflow-x:auto"><table class="r-t"><thead><tr><th>進場（第幾根）</th><th>方向</th><th>股數</th><th>進場</th><th>出場</th><th>停損</th><th>損益（含成本）</th><th>報酬</th><th>天數</th><th>出場原因</th><th>評分</th></tr></thead><tbody>${tl.map(t=>`<tr><td class="o-mono">${t.bar_in}→${t.bar_out}</td><td><span class="o-tag solid-${t.direction==='buy'?'up':'dn'}">${t.direction==='buy'?'多':'空'}</span></td><td>${v5F(t.shares,0)}</td><td>${v5F(t.entry)}</td><td>${v5F(t.close)}</td><td>${v5F(t.sl)}</td><td class="${v5C(t.pnl_twd)}" style="font-weight:500">${v5S(t.pnl_twd)}</td><td><span class="o-tag ${v5C(t.pnl_pct)}">${v5S(t.pnl_pct,2)}%</span></td><td>${v5E(t.hold_days)}</td><td>${v5E(res2[t.result]||t.result)}</td><td>${v5E(t.score)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="o-lbl">—</div>',`<div class="o-tabs">${[['all','全部'],['win','獲利'],['loss','虧損']].map(([k,n])=>`<button class="tab${k===ft?' on':''}" onclick="_x7.btF='${k}';b7Draw()">${n}</button>`).join('')}</div>`);
-  el.innerHTML=set+resC+fullC+distC+dirC+senC+tC;
+  const pbd=(pr&&pr.by_direction)||{};
+  const portC=v5Card('o-c8','組合級回測（單一共享帳戶）',
+    pr?`${pr.n_tickers} 檔 · ${pr.n_days} 交易日 · ${pr.n_trades} 筆 · 同時持倉上限 ${pr.max_positions} · ${v5E(String(pr.completed_at||'').slice(0,10))}`
+      :(pp.status==='running'?`執行中 ${pp.done||0}/${pp.total||'—'}（${v5E(pp.ticker||'')}）`:(pp.status==='error'?'上次執行失敗':'尚未執行')),
+    pr?`<div class="o-inset" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px">
+        <div class="o-stat">總報酬<b class="${v5C(pr.return_pct)}">${v5S(pr.return_pct,2)}%</b></div>
+        <div class="o-stat">最大回撤<b class="down">−${v5F(Math.abs(pr.max_drawdown),1)}%</b></div>
+        <div class="o-stat">夏普值<b>${v5F(pr.sharpe,2)}</b></div>
+        <div class="o-stat">勝率<b>${v5F(pr.win_rate,1)}%</b></div>
+        <div class="o-stat">最大同時持倉<b>${pr.max_concurrent}/${pr.max_positions}</b></div>
+        <div class="o-stat">平均同時持倉<b>${v5F(pr.avg_concurrent,2)}</b></div>
+        <div class="o-stat">多／空勝率<b>${v5F((pbd.buy||{}).win_rate,1)}% / ${v5F((pbd.sell||{}).win_rate,1)}%</b></div>
+        <div class="o-stat">組合風險上限<b>${v5F(pr.max_portfolio_risk_pct,0)}%</b></div></div>
+      <div class="o-lbl">${v5E(pr.note||'')}</div>`
+      :v5Empty('還沒有組合級回測結果','按左側「執行組合級回測」：模擬單一共享帳戶，在同時持倉上限、買力、組合風險硬上限下跨檔逐日交易，產出一條真實的帳戶權益曲線（有別於各檔獨立回測的加總）。'));
+  el.innerHTML=set+resC+fullC+portC+distC+dirC+senC+tC;
 }
 
 // ---------- 每日報告 ----------
