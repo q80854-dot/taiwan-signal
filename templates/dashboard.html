@@ -4867,7 +4867,7 @@ function renderInstrument(d){
 
 // ===== 2026-10-28 v8：今日訊號／持倉追蹤依 Design 定稿（Signals／Holdings.dc.html，手機 MSignals／MHoldings） =====
 // 持倉＝系統依訊號自動追蹤的部位（照訊號價位、建議張數計算），不是券商帳戶；「接近觸發」名單目前沒有資料來源。
-var _x8={sd:null,si:0,inst:{}};
+var _x8={sd:null,si:0,inst:{},exp:{},sum:null};
 const x8Date=s=>s?new Date(new Date(s).getTime()+8*3600e3).toISOString().slice(0,10):'';
 const x8Res={tp1:'達目標 1',tp2:'達目標 2',tp3:'達目標 3',sl:'停損',expired:'到期出場',pending:'持有中'};
 // 部位股數：API 的 shares 為股數（DB 欄位 suggested_lots 實際存股數，舊版前端誤乘 1000）
@@ -4876,8 +4876,8 @@ function x8Bal(list){const x=(list||[]).find(r=>r.risk_twd&&r.risk_pct);return x
 
 // ---------- 今日訊號 ----------
 async function s8Load(){
-  const [st,sg,pf]=await Promise.all([x6Get('/api/state',30e3),x6Get('/api/signals?limit=300',60e3),x6Get('/api/performance',120e3)]);
-  _x8.s={st,sg:(sg&&sg.signals)||[],pf};
+  const [st,sg,pf,sum]=await Promise.all([x6Get('/api/state',30e3),x6Get('/api/signals?limit=300',60e3),x6Get('/api/performance',120e3),x6Get('/api/summary/today',60e3)]);
+  _x8.s={st,sg:(sg&&sg.signals)||[],pf};_x8.sum=sum;
   if(!_x8.sd){const act=(st&&st.active_signals)||[];_x8.sd=act.length?x8Date(act[0].generated_at):(_x8.s.sg[0]?x8Date(_x8.s.sg[0].generated_at):x7Today());}
   s8Draw();
 }
@@ -4886,6 +4886,36 @@ async function s8Inst(code){
   if(_x8.inst[code])return;_x8.inst[code]='loading';
   try{_x8.inst[code]=await(await fetch('/api/instruments/'+encodeURIComponent(code),{cache:'no-store'})).json();}catch(e){_x8.inst[code]={};}
   s8Draw();
+}
+async function s8Explain(code,dir){
+  const k=code+'|'+(dir||'');if(_x8.exp[k])return;_x8.exp[k]='loading';
+  try{_x8.exp[k]=await(await fetch('/api/explain/signal?code='+encodeURIComponent(code)+'&direction='+encodeURIComponent(dir||''),{cache:'no-store'})).json();}catch(e){_x8.exp[k]={ok:false};}
+  s8Draw();
+}
+function s8ExpBlock(s,code){
+  const k=code+'|'+(s.direction||'');if(!_x8.exp[k])s8Explain(code,s.direction);
+  const ex=_x8.exp[k];
+  if(!ex||ex==='loading')return `<div><div class="o-lbl" style="margin-bottom:8px">AI 解釋</div><div class="o-lbl">解釋載入中…</div></div>`;
+  if(!ex.ok)return `<div><div class="o-lbl" style="margin-bottom:8px">AI 解釋</div><div class="o-lbl">此訊號暫無可解釋資料。</div></div>`;
+  const why=(ex.why||[]).map(w=>`<div class="s8-cond"><span class="m">＋</span><span><b>${v5E(w)}</b></span></div>`).join('');
+  const watch=(ex.watch||[]).map(w=>`<div class="s8-cond"><span class="m no">⚠</span><span><b>${v5E(w)}</b></span></div>`).join('');
+  return `<div><div class="o-lbl" style="margin-bottom:8px">AI 解釋 · ${v5E(ex.headline||'')}</div>
+    <div class="s8-cg">${why}${watch}</div>
+    ${ex.risk&&ex.risk!=='暫無'?`<div class="s8-note" style="background:var(--s2);color:var(--t2);margin-top:10px"><span>¥</span><div>風險／報酬：${v5E(ex.risk)}</div></div>`:''}
+    <div class="o-lbl" style="margin-top:8px;color:var(--t3)">${v5E(ex.disclaimer||'')}</div></div>`;
+}
+function s8SumCard(){
+  const sm=_x8.sum;if(!sm||!sm.ok)return '';
+  const pts=(sm.points||[]).map(p=>`<li>${v5E(p)}</li>`).join('');
+  const cav=(sm.caveats||[]).map(c=>`<div class="s8-note" style="margin-top:6px"><span>◆</span><div>${v5E(c)}</div></div>`).join('');
+  const body=`<div style="display:flex;flex-direction:column;gap:12px">
+    <div style="font:600 15px/22px var(--sans);color:var(--ink)">${v5E(sm.headline||'')}</div>
+    <div style="font-size:13px;color:var(--t2)">市場環境：${v5E(sm.market||'暫無')}</div>
+    ${pts?`<ul style="margin:0;padding-left:18px;font-size:13px;color:var(--t2);display:flex;flex-direction:column;gap:4px">${pts}</ul>`:''}
+    <div class="s8-note" style="background:var(--s2);color:var(--t2)"><span>→</span><div>${v5E(sm.posture||'')}</div></div>
+    ${cav}
+    <div class="o-lbl" style="color:var(--t3)">${v5E(sm.disclaimer||'')}</div></div>`;
+  return v5Card('o-c12','當日摘要',`${v5E(sm.date||'')} ${v5E(sm.time||'')} · 系統規則整理`,body);
 }
 function s8K(s,d){
   const o=d&&d.ohlcv;if(!o||!o.closes)return `<div class="o-empty" style="min-height:260px"><b>${d==='loading'||!d?'K 線載入中…':'K 線資料不足'}</b><p>首次查詢這檔需要下載日線，約數秒。</p></div>`;
@@ -4928,7 +4958,7 @@ function s8Draw(){
     const chase=s.chase_level==='high'?`<div class="s8-note"><span>◆</span><div><b>追高風險高</b>：離 20 日線 ${v5F(s.ext_atr,1)} ATR，建議分批或等回檔進場。</div></div>`:'';
     main=`<section class="o-card o-c8"><div class="o-ch"><div style="display:flex;align-items:center;gap:12px">${v4oAv(s.name,0).replace('o-av','o-av s8-av44')}<div><h2 style="font-size:17px">${v5E(s.name)} <span class="o-mono" style="font-size:13px;color:var(--t3);font-weight:500">${v5E(code)} · ${v5E(s.sector||'')}</span></h2><span class="o-mt">觸發 ${v5E(toTaipeiStr(s.generated_at)||'')}${s.expire_days?' · 有效 '+s.expire_days+' 個交易日':''}</span></div></div><div class="o-row" style="gap:8px"><span class="o-tag solid-${buy?'up':'dn'}">${buy?'多方':'空方'} · 評分 ${v5E(s.score)}</span><span class="o-lk" onclick="goToInstrument('${v5E(code)}')">個股研究 →</span></div></div>
       <div class="o-cb" style="display:flex;flex-direction:column;gap:16px">${tabs}<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><span class="o-big">${v5F(s.current_price)}</span>${v4oTag(s.change_pct)}<span style="font-size:12px;color:var(--t3)">量比 ${v5F(s.vol_ratio,1)}x · RSI ${v5F(s.rsi_value,0)} · ADX ${v5F(s.adx_value,0)}${s.weekly_bias?' · 週線 '+v5E(s.weekly_bias):''}</span></div>
-      ${s8K(s,_x8.inst[code])}${conds}${chase}${s.reason_brief?`<div class="s8-note" style="background:var(--s2);color:var(--t2)"><span>i</span><div>${v5E(s.reason_brief)}</div></div>`:''}</div></section>`;
+      ${s8K(s,_x8.inst[code])}${conds}${chase}${s.reason_brief?`<div class="s8-note" style="background:var(--s2);color:var(--t2)"><span>i</span><div>${v5E(s.reason_brief)}</div></div>`:''}${s8ExpBlock(s,code)}</div></section>`;
     const sh=s.suggested_shares||((s.suggested_lots||0)*1000),bal=s.risk_twd&&s.risk_pct?s.risk_twd/(s.risk_pct/100):null,px=+s.current_price,stp=+s.stop_loss,rps=Math.abs(px-stp),inv=px*sh;
     const g=tp=>tp?Math.abs(tp-px)*sh:null,rr=tp=>tp&&rps?Math.abs(tp-px)/rps:null;
     const fld=(k,v,c)=>`<div class="b7-fld"><span>${k}</span><b${c?` class="${c}"`:''}>${v}</b></div>`,out=(k,v,c)=>`<div class="s8-out"><span>${k}</span><b${c?` style="color:${c}"`:''}>${v}</b></div>`;
@@ -4947,7 +4977,7 @@ function s8Draw(){
   const ms=Object.keys(mon).sort().slice(-12);
   const pfC=v5Card('o-c5','策略績效',`實際追蹤 · 已平倉 ${P.closed||0} 筆`,(P.closed||0)>0?`<div style="display:flex;flex-direction:column;gap:16px"><div class="s8-k6"><div class="o-inset"><div class="o-stat">勝率<b>${v5F(P.win_rate,1)}%</b></div></div><div class="o-inset"><div class="o-stat">勝／負<b>${P.wins||0} / ${P.losses||0}</b></div></div><div class="o-inset"><div class="o-stat">盈虧比<b>${P.avg_loss?v5F(Math.abs(P.avg_win/P.avg_loss),2):'—'}</b></div></div><div class="o-inset"><div class="o-stat">總損益<b class="${v5C(P.total_pnl)}">${v5S(P.total_pnl)}</b></div></div><div class="o-inset"><div class="o-stat">最大回撤<b class="down">${P.max_drawdown?'−'+v5F(Math.abs(P.max_drawdown),1)+'%':'—'}</b></div></div><div class="o-inset"><div class="o-stat">夏普值<b>${P.sharpe==null?'樣本不足':v5F(P.sharpe,2)}</b></div></div></div>
     ${ms.length?`<div><div class="o-lbl" style="margin-bottom:8px">月勝率</div><div style="display:flex;gap:6px;height:100px;align-items:flex-end">${ms.map(m=>{const r=mon[m].w/mon[m].n*100;return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px" title="${m} ${mon[m].w}/${mon[m].n}"><i style="display:block;width:100%;height:${Math.max(3,r*.9).toFixed(0)}px;border-radius:4px 4px 2px 2px;background:${r>=60?'var(--ink)':'var(--s3)'}"></i><span style="font-size:9px;color:var(--t3)">${+m.slice(5)}月</span></div>`;}).join('')}</div><div style="font-size:11px;color:var(--t3);margin-top:8px">深色為勝率 ≥ 60% 的月份（依近期已平倉紀錄）</div></div>`:''}</div>`:v5Empty('樣本累積中',`目前追蹤中 ${P.total||0} 筆、尚無已平倉訊號。`),`<span class="o-lk" onclick="go('perf')">績效分析 →</span>`);
-  el.innerHTML=fnC+main+calc+recC+pfC;
+  el.innerHTML=s8SumCard()+fnC+main+calc+recC+pfC;
 }
 
 // ---------- 持倉追蹤 ----------
