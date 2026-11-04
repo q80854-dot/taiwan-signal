@@ -7667,7 +7667,11 @@ async function renderPortfolioRisk(){
     const r=await fetch('/api/risk/portfolio',{cache:'no-store'});
     if(!r.ok){hide();return;}                 // 非機主(403)/未登入(401)→ 不顯示
     const d=await r.json();
-    if(!d||!d.ok||!d.n){hide();return;}        // 無開倉部位→ 不顯示
+    if(!d||!d.ok){hide();return;}              // 非機主/計算失敗→ 不顯示
+    if(!d.n){                                   // 無開倉部位→ 仍顯示面板與空狀態說明（讓站主知道此功能存在）
+      box.innerHTML='<div class="panel card"><div class="panel-body"><div class="empty" style="margin:0">目前無開倉部位，暫無組合風險可計算。有進行中訊號時，這裡會顯示最壞同時停損、曝險、產業集中度與大盤 −3/−5/−10% 壓力測試。</div></div></div>';
+      lab.style.display='';box.style.display='';return;
+    }
     const f=(v,u)=>v===null||v===undefined?'—':v+(u||'');
     const col=v=>(v||0)>=0?'var(--up)':'var(--down)';
     const kpi=(lab,val,sub,c)=>`<div class="kpi" style="border:1px solid var(--line);border-radius:8px;padding:10px 12px"><div class="kpi-label">${lab}</div><div class="kpi-val" style="font-size:20px;color:${c||'var(--t1)'}">${val}</div><div class="kpi-sub">${sub||''}</div></div>`;
