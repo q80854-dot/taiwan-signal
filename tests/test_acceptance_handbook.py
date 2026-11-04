@@ -234,3 +234,10 @@ def test_backtest_same_bar_sl_tp_is_conservative():
     src = inspect.getsource(backtester.walk_forward_backtest_tw)
     # 保守規則：先判斷 hit_sl，命中即以停損價成交（不因同時觸及停利而取較樂觀的 tp1）
     assert '("sl",sl) if hit_sl else ("tp1",tp1)' in src
+
+
+def test_notify_prefs_endpoint_owner_only(cl):
+    """通知偏好端點：未登入 401、一般會員 403。"""
+    assert cl.get("/api/admin/notify_prefs").status_code == 401
+    _login(cl, email="tester@example.com")
+    assert cl.get("/api/admin/notify_prefs").status_code == 403

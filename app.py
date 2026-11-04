@@ -1402,6 +1402,28 @@ def api_admin_health_watch():
         logger.error(f"api_admin_health_watch: {e}", exc_info=True); return jsonify({"error": "無法讀取健檢狀態"}), 500
 
 
+@app.route("/api/admin/notify_prefs", methods=["GET", "POST"])
+@members.owner_required
+@admin_auth.admin_required
+def api_admin_notify_prefs():
+    """站主：通知偏好細化（只影響逐檔訊號推播，不影響每日總結報告）。
+    GET 回目前設定；POST（需 X-TS）更新 {min_grade:A/B/C, direction:all/buy/sell, watchlist_only:bool}。"""
+    from state_store import store
+    default = {"min_grade": "C", "direction": "all", "watchlist_only": False}
+    if request.method == "POST":
+        if request.headers.get("X-TS") != "1":
+            return jsonify({"error": "請求來源不正確"}), 403
+        data = request.get_json(silent=True) or {}
+        mg = data.get("min_grade"); d = data.get("direction")
+        prefs = {"min_grade": mg if mg in ("A", "B", "C") else "C",
+                 "direction": d if d in ("all", "buy", "sell") else "all",
+                 "watchlist_only": bool(data.get("watchlist_only"))}
+        store.set_meta("notify_prefs", prefs)
+        _audit("notify_prefs_update")
+        return jsonify({"ok": True, "prefs": prefs})
+    return jsonify(store.get_meta("notify_prefs") or default)
+
+
 @app.route("/api/admin/backup/verify")
 @members.owner_required
 @admin_auth.admin_required
