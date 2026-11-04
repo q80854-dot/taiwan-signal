@@ -107,6 +107,57 @@ def test_explain_signal_contributions(monkeypatch):
     assert f1["contribution"] > 0
 
 
+def _synth_rows_dated(n=800, seed=5, days=120):
+    import datetime as dt
+    rng = np.random.default_rng(seed)
+    base = dt.date(2026, 6, 1)
+    rows = []
+    for i in range(n):
+        x = float(rng.standard_normal())
+        rm = x + 0.3 * float(rng.standard_normal())
+        off = int(i * days / n)
+        rows.append({"bar_date": (base + dt.timedelta(days=off)).isoformat(),
+                     "exit_date": (base + dt.timedelta(days=off + 3)).isoformat(),
+                     "score": x * 0.9 + 0.5 * float(rng.standard_normal()),
+                     "r_multiple": rm, "kind": "candidate", "features": json.dumps({"f1": x})})
+    return rows
+
+
+def test_challengers_insufficient_blocks_promote(monkeypatch):
+    # B：單一日期（無行情多樣性）→ 資料關卡不過，不建議晉升
+    import state_store
+    monkeypatch.setattr(state_store, "store", _MemStore())
+    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows())      # 無 bar_date → holdout 交易日=0
+    out = lm.run_challengers()
+    assert out["ok"] and out["gates_ok"] is False
+    assert out["recommendation"]["promote"] is None
+
+
+def test_challengers_with_dates_ranks_and_gates(monkeypatch):
+    # B：跨多個交易日 → 通過資料關卡、依 holdout AUC 排名
+    import state_store
+    monkeypatch.setattr(state_store, "store", _MemStore())
+    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows_dated(n=800, days=120))
+    out = lm.run_challengers()
+    assert out["ok"] and out["gates_ok"] is True
+    assert out["n_holdout"] >= lm.MIN_HOLDOUT and out["holdout_days"] >= lm.MIN_HOLDOUT_DAYS
+    assert len(out["entries"]) == len(lm._COMPETITION_CONFIGS)
+    ranks = [e["rank"] for e in out["entries"]]
+    assert ranks == list(range(1, len(ranks) + 1))
+    aucs = [e["holdout_auc"] for e in out["entries"] if e["holdout_auc"] is not None]
+    assert aucs == sorted(aucs, reverse=True)      # holdout AUC 由高到低
+    assert "promote" in out["recommendation"]
+
+
+def test_promote_refused_when_gates_fail(monkeypatch):
+    # B：資料關卡未過時，手動晉升也會被拒（守「不要資訊錯誤」）
+    import state_store
+    monkeypatch.setattr(state_store, "store", _MemStore())
+    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows())
+    out = lm.promote_champion("rule_feats_l2_1")
+    assert out["ok"] is False and "關卡" in out["reason"]
+
+
 def test_persist_and_score_features(monkeypatch):
     saved = {}
     import state_store

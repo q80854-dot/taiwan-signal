@@ -47,7 +47,7 @@ REASONS = {
 }
 
 _COLS = ("bar_date,ticker,code,name,kind,direction,score,entry,stop,tp1,tp2,tp3,size_cat,sector,"
-         "sent,features,status,created_at")
+         "sent,features,status,created_at,model_prob")
 
 # ───────────── 一次掃描的收集狀態 ─────────────
 _run = None
@@ -110,6 +110,12 @@ def ensure_table():
                 store._migrate_add_column("shadow_signals", col, "REAL" if col in ("r1", "r20") else "INTEGER")
             except Exception as e:
                 logger.debug(f"shadow migrate {col}: {e}")
+        # 2026-11-04（方案 B shadow 平行記錄）：記錄 champion 模型對該筆訊號的預測勝率，
+        # 純對帳用、不影響訊號產生。
+        try:
+            store._migrate_add_column("shadow_signals", "model_prob", "REAL")
+        except Exception as e:
+            logger.debug(f"shadow migrate model_prob: {e}")
         _ready = True
 
 
@@ -407,11 +413,12 @@ def _insert(rows):
         for r in rows:
             try:
                 conn.execute(
-                    f"INSERT INTO shadow_signals ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    f"INSERT INTO shadow_signals ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT (bar_date, ticker) DO NOTHING",
                     (r["bar_date"], r["ticker"], r["code"], r["name"], r["kind"], r["direction"], r["score"],
                      r["entry"], r["stop"], r["tp1"], r["tp2"], r["tp3"], r["size_cat"], r["sector"],
-                     0, json.dumps(r["features"], ensure_ascii=False), "pending", r["created_at"]))
+                     0, json.dumps(r["features"], ensure_ascii=False), "pending", r["created_at"],
+                     r.get("model_prob")))
             except Exception as e:
                 logger.warning(f"shadow insert {r.get('ticker')}: {e}")
                 _err(f"insert {r.get('ticker')}: {e}")
@@ -439,6 +446,14 @@ def capture_candidates(signals, market_overview):
     try:
         now = datetime.now(timezone.utc).isoformat()
         cache = r["fund"] if r is not None else {}
+        # 方案 B shadow 平行記錄：一次載入 champion 模型，對每筆候選算預測勝率；
+        # 任何失敗都不影響候選記錄（沒有模型就留空）。不影響訊號產生。
+        _champ = None
+        try:
+            import learning_model
+            _champ = learning_model.load_champion()
+        except Exception:
+            _champ = None
         rows = []
         for s in signals or []:
             if not s.get("ticker") or not s.get("stop_loss"):
@@ -450,11 +465,18 @@ def capture_candidates(signals, market_overview):
             feats = dict(snap)
             feats.update(_scalar_features(s))
             feats.update(_fund_features(s.get("code") or s["ticker"].split(".")[0], cache))
+            mp = None
+            if _champ is not None:
+                try:
+                    import learning_model
+                    mp = learning_model.prob_with_model(_champ, feats, s.get("score"))
+                except Exception:
+                    mp = None
             rows.append({"bar_date": bd, "ticker": s["ticker"], "code": s.get("code"), "name": s.get("name"),
                          "kind": "candidate", "direction": s.get("direction"), "score": s.get("score"),
                          "entry": s.get("entry_price"), "stop": s.get("stop_loss"), "tp1": s.get("tp1"),
                          "tp2": s.get("tp2"), "tp3": s.get("tp3"), "size_cat": s.get("size_cat"),
-                         "sector": s.get("sector"), "created_at": now, "features": feats})
+                         "sector": s.get("sector"), "created_at": now, "features": feats, "model_prob": mp})
         n = _insert(rows)
         logger.info(f"shadow: 候選已記錄 {n}/{len(rows)} 筆（其餘為當日已記錄過）")
         if r is not None:
