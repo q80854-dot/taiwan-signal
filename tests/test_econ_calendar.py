@@ -165,3 +165,35 @@ def test_failed_fetch_falls_back_to_last_good(monkeypatch):
     monkeypatch.setattr(ec.requests, "get", lambda url, **k: _Resp({"Error Message": "limit"}))
     out = ec.fetch_economic_calendar(force=True)
     assert out["status"] == "ok" and out["events"] == good["events"] and out.get("stale") is True
+
+
+def test_et_release_handles_dst():
+    # ★ 2026-11-04：公佈時刻須依美東夏令/冬令正確換算成 UTC／台北時間
+    # 冬令（11/1 後 EST=UTC-5）：08:30 ET → 13:30 UTC → 21:30 台北
+    u, t = ec._et_release("2026-11-05", 8, 30)
+    assert (u.hour, u.minute) == (13, 30)
+    assert t.strftime("%H:%M") == "21:30"
+    # 夏令（EDT=UTC-4）：08:30 ET → 12:30 UTC → 20:30 台北
+    u2, t2 = ec._et_release("2026-07-29", 8, 30)
+    assert (u2.hour, u2.minute) == (12, 30)
+    assert t2.strftime("%H:%M") == "20:30"
+    # 關鍵指標都有已知發布時刻（不再是「全日」）
+    for z in ("非農就業人數（NFP）", "初領失業救濟金人數", "消費者物價指數（CPI）",
+              "生產者物價指數（PPI）", "零售銷售"):
+        assert z in ec._RELEASE_TIME_ET
+
+
+def test_calendar_fills_release_time(monkeypatch):
+    # FRED 來源原本只給日期；修正後應補上實際公佈時刻（台北 HH:MM）與 time_et
+    monkeypatch.setenv("FMP_API_KEY", "")
+    monkeypatch.setenv("FRED_API_KEY", "k")
+    monkeypatch.setattr(ec, "_fmp_events", lambda f, t: None)
+    # 一筆未來的 CPI 發布（release_id 10 已在白名單）
+    future = (ec.datetime.now(ec._UTC) + timedelta(days=3)).strftime("%Y-%m-%d")
+    monkeypatch.setattr(ec, "_fred_future_releases", lambda f, t: [(future, 10, "Consumer Price Index")])
+    monkeypatch.setattr(ec, "_fred_series_release", lambda sid: None)
+    monkeypatch.setattr(ec, "_fred_obs_latest", lambda sid, units="lin", n=4: [])
+    out = ec.fetch_economic_calendar(force=True)
+    cpi = [e for e in out["events"] if e["zh"] == "消費者物價指數（CPI）"]
+    assert cpi and cpi[0]["time"] and cpi[0]["time"] != ""     # 不再是全日
+    assert cpi[0].get("time_et") == "08:30 ET"
