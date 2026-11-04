@@ -40,7 +40,7 @@ def _rows():
     shadow.ensure_table()
     with store._conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT bar_date, score, r_multiple, kind, features FROM shadow_signals "
+            "SELECT bar_date, exit_date, score, r_multiple, kind, features FROM shadow_signals "
             "WHERE status='closed' AND r_multiple IS NOT NULL "
             "ORDER BY bar_date ASC, created_at ASC").fetchall()]
 
@@ -62,7 +62,7 @@ def build_dataset():
     rows = _rows()
     if len(rows) < MIN_SAMPLES:
         return {"ok": False, "reason": "insufficient", "n": len(rows)}
-    parsed, ys, scores, rmults = [], [], [], []
+    parsed, ys, scores, rmults, bar_dates, end_dates = [], [], [], [], [], []
     for r in rows:
         rm = _num(r.get("r_multiple"))
         if rm is None:
@@ -85,11 +85,14 @@ def build_dataset():
         ys.append(1 if rm > 0 else 0)
         scores.append(sc if sc is not None else np.nan)
         rmults.append(rm)
+        bar_dates.append((r.get("bar_date") or "")[:10])
+        end_dates.append((r.get("exit_date") or r.get("bar_date") or "")[:10])   # 標籤實現日（持有到出場）
     n = len(parsed)
     if n < MIN_SAMPLES:
         return {"ok": False, "reason": "insufficient", "n": n}
     return {"ok": True, "parsed": parsed, "y": np.array(ys, dtype=float),
-            "score": np.array(scores, dtype=float), "rmult": np.array(rmults, dtype=float), "n": n}
+            "score": np.array(scores, dtype=float), "rmult": np.array(rmults, dtype=float),
+            "bar_dates": bar_dates, "end_dates": end_dates, "n": n}
 
 
 def _select_keys(parsed):
@@ -276,29 +279,42 @@ def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
     return out
 
 
-def score_features(feat: dict, score: Optional[float] = None) -> Optional[float]:
-    """用已存的模型對一筆特徵算勝率（0~1）。供日後 shadow 並行評分用；無模型回 None。
-    注意：此函式不被即時訊號引用，需等 shadow 驗證通過、使用者同意後才接。"""
+def load_champion() -> Optional[dict]:
+    """載入目前 champion 模型（META_KEY）。供 shadow 平行評分一次載入、批次使用。無模型回 None。"""
     try:
         from state_store import store
         m = store.get_meta(META_KEY)
         if not m or not m.get("keys"):
             return None
+        return m
+    except Exception as e:
+        logger.warning(f"load_champion: {e}")
+        return None
+
+
+def prob_with_model(m: Optional[dict], feat: dict, score: Optional[float] = None) -> Optional[float]:
+    """用「已載入」的模型 dict 對一筆特徵算勝率（0~1）。無模型回 None。"""
+    try:
+        if not m or not m.get("keys"):
+            return None
         keys, mean, std = m["keys"], np.array(m["mean"]), np.array(m["std"])
         w, b = np.array(m["w"]), float(m["b"])
+        std = np.where(std < 1e-9, 1.0, std)
         x = np.zeros(len(keys))
         for j, k in enumerate(keys):
-            if k == "score":
-                v = _num(score)
-            else:
-                v = _num((feat or {}).get(k))
+            v = _num(score) if k == "score" else _num((feat or {}).get(k))
             x[j] = v if v is not None else mean[j]      # 缺值用訓練均值（標準化後≈0）
-        std = np.where(std < 1e-9, 1.0, std)
         z = (x - mean) / std
-        return float(_sigmoid(z @ w + b))
+        return float(_sigmoid(float(z @ w) + b))
     except Exception as e:
-        logger.warning(f"score_features: {e}")
+        logger.warning(f"prob_with_model: {e}")
         return None
+
+
+def score_features(feat: dict, score: Optional[float] = None) -> Optional[float]:
+    """用已存的 champion 模型對一筆特徵算勝率（0~1）。無模型回 None。
+    注意：此函式不影響即時訊號的產生；僅供 shadow 平行記錄 model_prob 與解釋用。"""
+    return prob_with_model(load_champion(), feat, score)
 
 
 # ═══════════════════════ Phase 2：量化研究升級（2026-11-04） ═══════════════════════
@@ -440,3 +456,182 @@ def explain_latest() -> dict:
     except Exception as e:
         logger.warning(f"explain_latest: {e}")
         return {"ok": False, "reason": "error"}
+
+
+# ═══════════════ B：半自動挑戰者框架（2026-11-04，使用者選定方案 B） ═══════════════
+# 設計原則：
+# - 更嚴謹的驗證：Purged（清掉與驗證期重疊持有的樣本）＋ Embargo（隔離帶）walk-forward，
+#   外加「獨立 holdout」（最近一段完全不參與訓練/挑選）做最終檢驗——因為每筆標籤要持有數日，
+#   不做 purge 會讓重疊持有期洩漏，plain walk-forward 仍可能偏樂觀。
+# - 資料關卡：holdout 樣本數／獨立交易日數不足時直接標「資料不足、不建議晉升」，框架拒絕推薦。
+# - 手動晉升：挑戰者只有通過關卡、在 holdout 勝過現任 champion 與規則基準，且站主按下採用才上位。
+# - champion 僅供 shadow 平行記錄（model_prob）與解釋，絕不影響即時訊號的產生。
+CHAMPION_KEY = "learning_champion"
+HOLDOUT_FRAC = 0.2
+EMBARGO_DAYS = 3
+MIN_HOLDOUT = 100
+MIN_HOLDOUT_DAYS = 8
+PROMOTE_MARGIN = 0.01      # holdout AUC 至少要贏現任/基準這麼多才建議晉升
+
+
+def _apply_mode(keys, use_score, mode):
+    if mode == "rule":
+        return [], True
+    if mode == "features":
+        return keys, False
+    return keys, use_score
+
+
+def _date_ord(s):
+    try:
+        import datetime as _dt
+        return _dt.date.fromisoformat((s or "")[:10]).toordinal()
+    except Exception:
+        return None
+
+
+def _eval_config(ds, dev_n, k, l2, mode, embargo):
+    """對單一設定做 Purged+Embargo walk-forward（dev 段）＋ 獨立 holdout 檢驗。
+    回傳 dev_auc（開發段 out-of-fold）與 holdout_auc/holdout_brier（最終獨立檢驗）。"""
+    parsed, y, scores = ds["parsed"], ds["y"], ds["score"]
+    bar_ords = [_date_ord(d) for d in ds["bar_dates"]]
+    end_ords = [_date_ord(d) for d in ds["end_dates"]]
+    n = len(parsed)
+
+    def _fit_eval(tr_idx, te_idx):
+        if not tr_idx or not te_idx:
+            return None, []
+        train = [parsed[i] for i in tr_idx]
+        keys, use_score = _apply_mode(*_select_keys(train), mode)
+        if not keys and not use_score:
+            return None, []
+        med, score_med = _fit_prep(train, keys, use_score)
+        Xtr, cols = _build_X(train, keys, use_score, med, score_med)
+        Xte, _ = _build_X([parsed[i] for i in te_idx], keys, use_score, med, score_med)
+        Xtr_s, mean, std = _standardize(Xtr)
+        w, b = _fit_logreg(Xtr_s, np.array([y[i] for i in tr_idx]), l2=l2)
+        Xte_s, _, _ = _standardize(Xte, mean, std)
+        return _sigmoid(Xte_s @ w + b), cols
+
+    # ── dev 段：Purged + Embargo expanding walk-forward ──
+    dev_oof = np.full(dev_n, np.nan)
+    kk = max(2, k); block = dev_n // (kk + 1)
+    if block >= 1:
+        for j in range(1, kk + 1):
+            tr_end = j * block
+            va_end = (j + 1) * block if j < kk else dev_n
+            val_ords = [bar_ords[i] for i in range(tr_end, va_end) if bar_ords[i] is not None]
+            cut = (min(val_ords) - embargo) if val_ords else None     # 隔離帶：出場日 < 驗證起日−embargo 才可當訓練
+            tr_idx = [i for i in range(0, tr_end)
+                      if cut is None or end_ords[i] is None or end_ords[i] < cut]
+            p, _ = _fit_eval(tr_idx, list(range(tr_end, va_end)))
+            if p is not None:
+                dev_oof[tr_end:va_end] = p
+    dv = np.isfinite(dev_oof)
+    dev_auc = _auc(dev_oof[dv], y[:dev_n][dv]) if dv.any() else None
+
+    # ── 獨立 holdout：用 dev 段（對 holdout 做 purge）訓練最終模型、評在 holdout ──
+    hold_idx = list(range(dev_n, n))
+    hold_auc = hold_brier = None; n_features = 0
+    if hold_idx:
+        hold_ords = [bar_ords[i] for i in hold_idx if bar_ords[i] is not None]
+        hcut = (min(hold_ords) - embargo) if hold_ords else None
+        dev_idx = [i for i in range(0, dev_n)
+                   if hcut is None or end_ords[i] is None or end_ords[i] < hcut]
+        ph, cols = _fit_eval(dev_idx, hold_idx)
+        if ph is not None:
+            yh = y[hold_idx]
+            hold_auc = _auc(ph, yh)
+            hold_brier = round(float(np.mean((ph - yh) ** 2)), 4)
+            n_features = len(cols)
+    return {"dev_auc": dev_auc, "holdout_auc": hold_auc, "holdout_brier": hold_brier, "n_features": n_features}
+
+
+def get_champion() -> Optional[dict]:
+    """目前已採用的 champion 中繼資料（不含權重；權重在 META_KEY）。無則回 None。"""
+    try:
+        from state_store import store
+        st, c = store.read_meta(CHAMPION_KEY)
+        return c if (st == "ok" and isinstance(c, dict)) else None
+    except Exception as e:
+        logger.warning(f"get_champion: {e}")
+        return None
+
+
+def run_challengers(k: int = 5, embargo_days: int = EMBARGO_DAYS) -> dict:
+    """半自動挑戰者評估：對多種設定做 Purged+Embargo walk-forward＋獨立 holdout，依 holdout AUC
+    排名，並判斷是否「建議」晉升（通過資料關卡、勝過現任 champion 與規則基準）。不自動晉升。"""
+    ds = build_dataset()
+    if not ds.get("ok"):
+        return {"ok": False, "reason": ds.get("reason", "insufficient"), "n": ds.get("n", 0),
+                "min_samples": MIN_SAMPLES}
+    n = ds["n"]
+    dev_n = max(1, int(round(n * (1 - HOLDOUT_FRAC))))
+    n_holdout = n - dev_n
+    hold_days = len(set(d for d in ds["bar_dates"][dev_n:] if d))
+    base = _eval_config(ds, dev_n, k, 1.0, "rule", embargo_days)
+    base_auc = base["holdout_auc"]
+    entries = []
+    for cfg in _COMPETITION_CONFIGS:
+        ev = _eval_config(ds, dev_n, k, cfg["l2"], cfg["mode"], embargo_days)
+        entries.append({"id": cfg["id"], "label": cfg["label"], "mode": cfg["mode"], "l2": cfg["l2"],
+                        "dev_auc": round(ev["dev_auc"], 4) if ev["dev_auc"] is not None else None,
+                        "holdout_auc": round(ev["holdout_auc"], 4) if ev["holdout_auc"] is not None else None,
+                        "holdout_brier": ev["holdout_brier"], "n_features": ev["n_features"]})
+    entries.sort(key=lambda e: -(e["holdout_auc"] if e["holdout_auc"] is not None else -1))
+    for i, e in enumerate(entries):
+        e["rank"] = i + 1
+    gates_ok = (n_holdout >= MIN_HOLDOUT and hold_days >= MIN_HOLDOUT_DAYS)
+    champ = get_champion()
+    champ_auc = (champ or {}).get("holdout_auc")
+    top = entries[0] if entries else None
+    if not gates_ok:
+        rec = {"promote": None, "reason": f"資料不足（holdout {n_holdout} 筆／{hold_days} 個交易日，"
+               f"需 ≥{MIN_HOLDOUT} 筆且 ≥{MIN_HOLDOUT_DAYS} 個交易日），為避免過擬合不建議晉升"}
+    elif top and top["holdout_auc"] is not None:
+        beat_champ = (champ_auc is None) or (top["holdout_auc"] - champ_auc >= PROMOTE_MARGIN)
+        beat_rule = (base_auc is None) or (top["holdout_auc"] - base_auc >= PROMOTE_MARGIN)
+        if beat_champ and beat_rule:
+            rec = {"promote": top["id"], "reason": "通過資料關卡，且在獨立 holdout 上勝過現任 champion 與規則基準；可由站主手動採用"}
+        else:
+            rec = {"promote": None, "reason": "未明顯優於現任 champion 或規則基準，維持不變"}
+    else:
+        rec = {"promote": None, "reason": "holdout 無法評估"}
+    return {"ok": True, "n": n, "dev_n": dev_n, "n_holdout": n_holdout, "holdout_days": hold_days,
+            "gates_ok": gates_ok, "embargo_days": embargo_days,
+            "baseline_holdout_auc": round(base_auc, 4) if base_auc is not None else None,
+            "champion": champ, "entries": entries, "recommendation": rec,
+            "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+
+
+def promote_champion(config_id: str) -> dict:
+    """站主手動採用某挑戰者為新 champion：先驗證資料關卡（不過就拒絕），通過才用全資料重訓該設定、
+    寫入 META_KEY（供 shadow 平行評分）與 CHAMPION_KEY（中繼資料）。不自動、不影響即時訊號。"""
+    cfg = next((c for c in _COMPETITION_CONFIGS if c["id"] == config_id), None)
+    if not cfg:
+        return {"ok": False, "reason": "unknown_config"}
+    res = run_challengers()
+    if not res.get("ok"):
+        return {"ok": False, "reason": res.get("reason", "insufficient")}
+    if not res["gates_ok"]:
+        return {"ok": False, "reason": "資料未通過關卡，為避免過擬合拒絕晉升", "detail": res["recommendation"]["reason"]}
+    ds = build_dataset()
+    if not ds.get("ok"):
+        return {"ok": False, "reason": "insufficient"}
+    ev = _walkforward_eval(ds["parsed"], ds["y"], ds["score"], ds["rmult"], k=5, l2=cfg["l2"], mode=cfg["mode"])
+    entry = next((e for e in res["entries"] if e["id"] == config_id), {})
+    try:
+        from state_store import store
+        trained_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        store.set_meta(META_KEY, {"keys": ev["cols"], "mean": ev["mean"].tolist(), "std": ev["std"].tolist(),
+                                  "w": ev["w"].tolist(), "b": float(ev["b"]), "trained_at": trained_at,
+                                  "n": ds["n"], "model_auc": entry.get("holdout_auc"),
+                                  "baseline_auc": res.get("baseline_holdout_auc")})
+        champ = {"config_id": config_id, "label": cfg["label"], "mode": cfg["mode"], "l2": cfg["l2"],
+                 "holdout_auc": entry.get("holdout_auc"), "baseline_holdout_auc": res.get("baseline_holdout_auc"),
+                 "n": ds["n"], "n_holdout": res["n_holdout"], "promoted_at": trained_at}
+        store.set_meta(CHAMPION_KEY, champ)
+        return {"ok": True, "champion": champ}
+    except Exception as e:
+        logger.error(f"promote_champion: {e}")
+        return {"ok": False, "reason": "寫入失敗"}

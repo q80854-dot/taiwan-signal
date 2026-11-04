@@ -3011,6 +3011,7 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
           <button class="btn" onclick="lmTrain()">訓練＋評估</button>
           <button class="btn" onclick="lmCompete()">多模型競賽</button>
+          <button class="btn" onclick="lmChallengers()">挑戰者評估</button>
           <button class="btn" onclick="lmModels()">版本排行</button>
           <button class="btn" onclick="lmExplain()">解釋最新訊號</button>
         </div>
@@ -3310,6 +3311,7 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
           <p><b>2026-11-04（策略學習・勝率模型實驗室）</b></p>
           <p><b>多模型競賽與版本排行</b><br>・策略學習頁新增「勝率模型實驗室」：可一鍵「訓練＋評估」、「多模型競賽」（同一批資料、同一套時間序列 walk-forward，比較純規則／只用特徵／規則＋特徵不同正則強度），以及「版本排行」（歷次訓練依 out-of-fold AUC 排名）。<br>・<b>只做離線評估與比較，不改動即時訊號、也不會自動把任何模型上線</b>（維持「先累積資料、暫停自動進化」的方向）。</p>
           <p><b>AI 決策解釋</b><br>・新增「解釋最新訊號」：用現行模型拆解最近一筆訊號各特徵的貢獻（正＝推升勝率、負＝拉低），讓評分有依據、可檢視。</p>
+          <p><b>半自動挑戰者框架</b><br>・新增「挑戰者評估」：用更嚴謹的驗證（Purged＋Embargo walk-forward ＋ 獨立 holdout），比較多種模型設定並排名；資料量／交易日數不足時直接標「資料不足、不建議晉升」，避免在薄資料上過擬合。<br>・模型要成為 champion 一律需<b>你手動採用</b>且通過資料關卡；champion 只用來在每筆新訊號旁<b>平行記錄</b>預測勝率（對帳用）與解釋，<b>完全不影響實際發出的訊號</b>。</p>
           <p><b>2026-11-04（系統體質強化）</b></p>
           <p><b>風控更保守（fail-closed）</b><br>・每日虧損熔斷：若當日虧損狀態因資料庫問題讀不到，系統不再假裝「今日無虧損、可交易」，而是暫停新增訊號並明確標示，待恢復後自動解除。<br>・市場環境：只缺 VIX（大盤指數正常）時不再顯示滿分綠燈，改為扣分並標示「VIX 資料缺漏，熔斷判斷不完整」，不再出現「資料缺漏卻顯示適合交易」的矛盾畫面。</p>
           <p><b>策略學習評估更誠實</b><br>・勝率模型的成效評估改用「時間序列 walk-forward」：只用較早的資料訓練、對較晚的資料驗證，並把補值與特徵選擇限制在訓練段內，杜絕先前隨機切分造成的「偷看未來」而高估準確度；新增 Brier 分數等更完整指標。此調整僅影響評估數字的真實性，不改動即時訊號。</p>
@@ -7458,6 +7460,32 @@ async function lmModels(){
     +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>版本</th><th>時間</th><th>樣本</th><th>AUC</th><th>vs 基準</th><th>Brier</th></tr></thead><tbody>'
     +d.leaderboard.map(v=>'<tr><td>v'+lmFmt(v.version)+'</td><td>'+adAgo(v.trained_at)+'</td><td>'+lmFmt(v.n)+'</td><td><b>'+lmFmt(v.model_auc)+'</b></td><td>'+lmFmt(v.auc_lift)+'</td><td>'+lmFmt(v.brier)+'</td></tr>').join('')
     +'</tbody></table></div>';
+}
+async function lmChallengers(){
+  const d=await lmCall('/api/learning/challengers');if(!d)return;const el=document.getElementById('lm-out');
+  if(!d.ok){el.innerHTML='<div class="empty">資料不足（'+lmFmt(d.n)+' 筆，需 '+lmFmt(d.min_samples)+' 筆）</div>';return;}
+  const champ=d.champion?('現任 champion：'+safe(d.champion.label||'')+'（holdout AUC '+lmFmt(d.champion.holdout_auc)+'）'):'目前尚無 champion';
+  let html='<div style="margin-bottom:6px">半自動挑戰者（Purged+Embargo ＋ 獨立 holdout；樣本 '+d.n+'，holdout '+d.n_holdout+' 筆／'+d.holdout_days+' 交易日，規則基準 holdout AUC '+lmFmt(d.baseline_holdout_auc)+'）</div>'
+    +'<div style="color:var(--t3);margin-bottom:6px">'+champ+'</div>'
+    +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>#</th><th>模型</th><th>holdout AUC</th><th>dev AUC</th><th>Brier</th><th>特徵</th></tr></thead><tbody>'
+    +d.entries.map(e=>'<tr><td>'+e.rank+'</td><td>'+safe(e.label||'')+'</td><td><b>'+lmFmt(e.holdout_auc)+'</b></td><td>'+lmFmt(e.dev_auc)+'</td><td>'+lmFmt(e.holdout_brier)+'</td><td>'+lmFmt(e.n_features)+'</td></tr>').join('')
+    +'</tbody></table></div>';
+  const rec=d.recommendation||{};
+  if(!d.gates_ok){html+='<div class="empty" style="margin-top:8px">⚠️ '+safe(rec.reason||'資料不足')+'</div>';}
+  else if(rec.promote){const e=d.entries.find(x=>x.id===rec.promote)||{};html+='<div style="margin-top:8px">建議：'+safe(rec.reason||'')+'</div><button class="btn" style="margin-top:6px" onclick="lmPromote(\''+rec.promote+'\')">採用「'+safe(e.label||'')+'」為 champion</button>';}
+  else{html+='<div style="margin-top:8px;color:var(--t3)">'+safe(rec.reason||'')+'</div>';}
+  html+='<div style="color:var(--t3);margin-top:6px">champion 僅供 shadow 平行記錄（model_prob）與解釋，不影響即時訊號；採用與否由你決定。</div>';
+  el.innerHTML=html;
+}
+async function lmPromote(cid){
+  const el=document.getElementById('lm-out');
+  try{
+    const r=await fetch('/api/learning/promote',{method:'POST',headers:{'X-TS':'1','Content-Type':'application/json'},body:JSON.stringify({config_id:cid})});
+    if(r.status===401){adAuthed=false;adGate('login','登入已逾時，請重新登入。');return;}
+    const d=await r.json();
+    if(!d.ok){el.innerHTML='<div class="empty">採用未成功：'+esc2(d.reason||d.error||'')+'</div>';return;}
+    el.innerHTML='<div style="color:var(--up)">✅ 已採用：'+safe(d.champion.label||'')+'（holdout AUC '+lmFmt(d.champion.holdout_auc)+'）。此模型僅供 shadow 平行記錄與解釋，不影響即時訊號。</div>';
+  }catch(e){el.innerHTML='<div class="empty">採用失敗：'+esc2(e.message)+'</div>';}
 }
 async function lmExplain(){
   const d=await lmCall('/api/learning/explain');if(!d)return;const el=document.getElementById('lm-out');

@@ -1143,6 +1143,39 @@ def api_learning_explain():
         logger.error(f"api_learning_explain: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning/challengers")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_challengers():
+    """站主：半自動挑戰者評估（方案 B）——Purged+Embargo walk-forward＋獨立 holdout，排名並給
+    「是否建議晉升」。只評估，不自動晉升、不影響即時訊號。"""
+    try:
+        import learning_model
+        return jsonify(learning_model.run_challengers())
+    except Exception as e:
+        logger.error(f"api_learning_challengers: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/learning/promote", methods=["POST"])
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_promote():
+    """站主手動採用某挑戰者為新 champion（方案 B）。需通過資料關卡才會寫入；champion 僅供 shadow
+    平行記錄與解釋，不影響即時訊號。CSRF：需 X-TS 標頭。"""
+    if request.headers.get("X-TS") != "1":
+        return jsonify({"error": "請求來源不正確"}), 403
+    try:
+        import learning_model
+        data = request.get_json(silent=True) or {}
+        cid = (data.get("config_id") or "").strip()
+        if not cid:
+            return jsonify({"error": "config_id 必填"}), 400
+        out = learning_model.promote_champion(cid)
+        return jsonify(out), (200 if out.get("ok") else 400)
+    except Exception as e:
+        logger.error(f"api_learning_promote: {e}", exc_info=True); return jsonify({"error": "採用失敗"}), 500
+
+
 @app.route("/api/admin/shadow")
 @members.owner_required
 @admin_auth.admin_required
