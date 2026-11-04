@@ -3,3 +3,17 @@ __pycache__/
 .venv/
 venv/
 instance/
+
+# 2026-11-04 F-14：避免把密鑰／環境設定誤提交進版控。
+# 所有正式 secrets 都放在 Render 環境變數，不應出現在 repo。
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+*.sqlite
+*.sqlite3
+*.db
