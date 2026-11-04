@@ -75,6 +75,21 @@ def test_webhook_wrong_token_401(cl, monkeypatch):
     assert r.status_code == 401
 
 
+def test_webhook_independent_secret_precedence(cl, monkeypatch):
+    """F-03：設了 WEBHOOK_ADMIN_SECRET 後，Bot Token 本身不再能當管理憑證（只收獨立密鑰）。"""
+    monkeypatch.setenv("WEBHOOK_ADMIN_SECRET", "s3cret-admin")
+    monkeypatch.setattr(app_module, "TELEGRAM_BOT_TOKEN", "bot-token-xyz", raising=False)
+    _login(cl, sub="boss", email="boss@example.com")
+    # 用 Bot Token 當 X-Admin-Token → 應被拒（401），因為現在認的是獨立密鑰
+    r1 = cl.post("/api/webhook/set", json={"url": "https://example.com"},
+                 headers={"X-TS": "1", "X-Admin-Token": "bot-token-xyz"})
+    assert r1.status_code == 401
+    # 用獨立密鑰 → 通過授權（接著走網址驗證，合法 HTTPS 外部網址才會往下）
+    r2 = cl.post("/api/webhook/set", json={"url": "http://x"},
+                 headers={"X-TS": "1", "X-Admin-Token": "s3cret-admin"})
+    assert r2.status_code == 400      # 授權過了，卡在網址驗證（非 HTTPS）
+
+
 def test_webhook_illegal_url_400(cl, monkeypatch):
     """非法 Webhook 網址（非 HTTPS／指向內部位址）→ 400。"""
     monkeypatch.setattr(app_module, "TELEGRAM_BOT_TOKEN", "correct-token", raising=False)

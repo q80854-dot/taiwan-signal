@@ -3497,8 +3497,12 @@ def set_webhook():
     # token，一般訪客不會知道）。
     # ★ F-03（2026-11-04）：補上網址白名單式驗證（HTTPS＋非內部位址），並把對外錯誤
     # 改為固定訊息，不再回傳 str(e)（避免內部細節外洩）。
+    # ★ F-03（2026-11-04 續）：改用「獨立管理密鑰」WEBHOOK_ADMIN_SECRET，不再把 Bot Token 本身
+    # 當成管理憑證（降低 token 外洩面）；未設 WEBHOOK_ADMIN_SECRET 時回退為 Bot Token 以維持相容。
+    import hmac as _hmac
+    _secret = (os.environ.get("WEBHOOK_ADMIN_SECRET") or "").strip() or (TELEGRAM_BOT_TOKEN or "")
     auth = request.headers.get("X-Admin-Token", "")
-    if not TELEGRAM_BOT_TOKEN or auth != TELEGRAM_BOT_TOKEN:
+    if not _secret or not _hmac.compare_digest(auth, _secret):
         return jsonify({"error": "unauthorized"}), 401
     data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
