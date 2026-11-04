@@ -11,6 +11,7 @@ from config import (
     COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION,
     MAX_RISK_PER_TRADE, ENABLE_SHORT_SIGNALS, SHORT_EXECUTABLE,
     SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, SHORT_REQUIRE_WEEKLY_BEARISH,
+    EVENT_MATERIAL_NEWS_PENALTY, EVENT_EXDIV_BLOCK_DAYS,
 )
 
 logger = logging.getLogger(__name__)
@@ -493,6 +494,23 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             logger.warning(f"[{ticker}] 總經指標評分調整失敗（不影響本次訊號，維持原始分數）: {e}")
         if score<THRESH["min_score"]:
             _rej("score_after_adj"); return None
+        # ★ 新增：2026-11-04（事件濾網）——把「近日除權息」與「重大訊息風險」接進訊號：
+        #   · 近 EVENT_EXDIV_BLOCK_DAYS 日內除權息 → 直接擋單（除權息當日跳空，進出場價位失真）。
+        #   · 命中重大訊息風險關鍵字 → 扣 EVENT_MATERIAL_NEWS_PENALTY 分；扣完低於門檻就自然淘汰。
+        #   fail-soft：event_filter 內部抓取失敗時回空集合，不會因此擋掉所有訊號。
+        try:
+            import event_filter
+            _ev = event_filter.check(code, within_days=EVENT_EXDIV_BLOCK_DAYS)
+            if _ev.get("exdiv"):
+                logger.info(f"[{ticker}] 近 {EVENT_EXDIV_BLOCK_DAYS} 日除權息，股價將跳空、進出場價位失真，略過本次訊號")
+                _rej("exdiv"); return None
+            if _ev.get("news"):
+                score = max(0, score - int(EVENT_MATERIAL_NEWS_PENALTY))
+                logger.info(f"[{ticker}] 命中重大訊息風險關鍵字，分數 -{int(EVENT_MATERIAL_NEWS_PENALTY)}（現 {score}）")
+                if score < THRESH["min_score"]:
+                    _rej("material_news"); return None
+        except Exception as e:
+            logger.warning(f"[{ticker}] 事件濾網失敗（不影響本次訊號，維持原始分數）: {e}")
         atr_info=daily_ind.get("atr",{}); atr=atr_info.get("value",price*0.02) or price*0.02
         # ★ 新增：2026-10-05——追高防線。實查 9/30~10/1 六檔訊號：進場價就是訊號當日
         # 收盤價，其中 南茂 +9.6%（接近漲停）、艾笛森 +4.0%、台泥 +4.0%，全部是「已經

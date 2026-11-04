@@ -44,6 +44,8 @@ REASONS = {
     "sl_wide": "停損距離過寬（>12%）",
     "rr_low": "盈虧比不足",
     "size_zero": "建議部位為 0",
+    "exdiv": "近日除權息（股價將跳空）",
+    "material_news": "命中重大訊息風險",
 }
 
 _COLS = ("bar_date,ticker,code,name,kind,direction,score,entry,stop,tp1,tp2,tp3,size_cat,sector,"

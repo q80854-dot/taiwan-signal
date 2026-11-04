@@ -26,6 +26,14 @@ MAX_SIMULTANEOUS_POSITIONS = 5
 # 10%（見 risk_manager.check_margin_usage），硬上限設在其上留緩衝；可用環境變數覆寫。
 MAX_PORTFOLIO_RISK         = float(os.getenv("MAX_PORTFOLIO_RISK", "0.15"))
 
+# ★ 2026-11-04（事件濾網）：重大訊息風險與近日除權息自動影響訊號。
+# - 命中重大訊息風險關鍵字（財報預警、訴訟、裁罰等）→ 分數扣 EVENT_MATERIAL_NEWS_PENALTY；
+#   扣完低於進場門檻就自然淘汰（＝自動影響分數，不是硬性全擋，避免過度激進）。
+# - 近 EVENT_EXDIV_BLOCK_DAYS 個日曆日內除權息 → 直接擋單：除權息當日股價會跳空，
+#   以除權息前收盤算出的進場/停損/停利價位會失真，不適合據以進場。
+EVENT_MATERIAL_NEWS_PENALTY = float(os.getenv("EVENT_MATERIAL_NEWS_PENALTY", "20"))
+EVENT_EXDIV_BLOCK_DAYS      = int(os.getenv("EVENT_EXDIV_BLOCK_DAYS", "2"))
+
 COMMISSION_RATE  = 0.001425
 TAX_RATE_SELL    = 0.003
 SHARES_PER_LOT   = 1000
