@@ -48,6 +48,16 @@ def test_train_beats_coin_flip_and_reports_baseline(monkeypatch):
     assert out["deciles"][-1]["win_rate"] > out["deciles"][0]["win_rate"]
 
 
+def test_time_series_walkforward_no_leakage(monkeypatch):
+    # ★ F-06：評估須為時間序列 walk-forward，且最早一段只做訓練（不進驗證），
+    # 因此被評估的樣本數 n_eval 必定小於總樣本數 n（代表沒有把全部樣本都拿來「自評」）。
+    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(n=800))
+    out = lm.train_and_eval(persist=False)
+    assert out["eval_method"] == "time_series_walkforward"
+    assert 0 < out["n_eval"] < out["n"]
+    assert out["brier"] is not None and 0.0 <= out["brier"] <= 1.0
+
+
 def test_persist_and_score_features(monkeypatch):
     saved = {}
     import state_store
