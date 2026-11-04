@@ -28,7 +28,11 @@ META_KEY = "learning_model_v1"
 MIN_SAMPLES = 400          # 低於此樣本數不訓練（避免過擬合、結論不穩）
 MIN_COVERAGE = 0.6         # 特徵在樣本中出現比例低於此者不納入
 # 明顯非預測特徵或會造成雜訊的鍵（文字類、識別類），排除
-_EXCLUDE_KEYS = {"reject", "sector", "code", "ticker", "name", "direction", "kind"}
+# ★ 2026-11-04：排除 month。本系統目前僅累積約 5 週資料，month 只取 2~3 個值、幾乎與時間軸
+# 一一對應，模型會「背時間窗口」而非學規律——這是誠實評估（walk-forward 0.66 → 嚴格 holdout
+# 0.41）落差的過擬合來源之一。weekday(dow) 每週重複、不是時間軸代理，暫予保留。
+# 日後若累積到跨多年資料、month 才可能代表真正的季節性，再評估是否放回。
+_EXCLUDE_KEYS = {"reject", "sector", "code", "ticker", "name", "direction", "kind", "month"}
 
 
 def _rows():
