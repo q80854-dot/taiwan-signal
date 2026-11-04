@@ -3311,6 +3311,9 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-11-04（維運：主動健檢告警 + 備份還原驗證）</b></p>
+          <p><b>異常主動通知</b><br>・系統每交易日 09:17／13:17／17:17 自動跑完整健檢（資料庫、資料來源、記憶體、資料新鮮度、排程、策略），一旦判定異常（fail）主動發 Telegram 通知站主，持續異常每 6 小時最多再提醒一次、恢復正常也通知一次——不必再自己開頁面才發現問題。「系統診斷」頁可按「測試健檢告警」立即跑一次。</p>
+          <p><b>備份還原驗證</b><br>・「系統診斷」頁新增「備份還原驗證」：把備份匯出的 CSV 重新解析並載入臨時資料庫，確認筆數與正式資料一致、每一列都還原得回來——證明備份「真的救得回來」，不是只產生了一個檔案。</p>
           <p><b>2026-11-04（組合風險儀表板）</b></p>
           <p><b>持倉頁新增「組合風險」</b><br>・一眼看到<b>最壞同時停損</b>（所有持倉同時被停損的總損失與佔本金比）、總曝險與多/空方向、最大單一部位、產業集中度。<br>・新增<b>壓力測試</b>：大盤下跌 −3%／−5%／−10% 情境下組合的概估損益（beta=1 簡化假設，明確標示）。<br>・純唯讀分析、不下單；超過每日風險上限、單檔上限或產業過度集中時會紅字示警。</p>
           <p><b>敏感操作防護</b><br>・掃描、回填、重跑回測、資料刷新等站主專屬寫入操作加上路由層權限驗證與審計紀錄（只記動作，不記任何敏感值）。</p>
@@ -3377,9 +3380,12 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
           <button class="btn" onclick="adminTool('warm_finmind',this)">預熱大盤／期貨</button>
           <button class="btn" onclick="adminTool('recheck_holiday',this)">重新判定今日休市</button>
           <button class="btn" onclick="adminTool('clear_cache',this)">清除記憶體快取</button>
+          <button class="btn" onclick="opsBackupVerify(this)">備份還原驗證</button>
+          <button class="btn" onclick="opsHealthWatch(this)">測試健檢告警</button>
           <button class="btn" onclick="fetchAdminTools()">重新整理狀態</button>
         </div>
-        <p class="mut" style="font-size:12px;margin-top:10px">這些都是對既有功能的安全包裝，可重複執行、不會刪資料；遇到資料過期或卡住時可自行處理。</p>
+        <div id="ops-out" style="font-size:12.5px;margin-top:10px"></div>
+        <p class="mut" style="font-size:12px;margin-top:10px">這些都是對既有功能的安全包裝，可重複執行、不會刪資料；遇到資料過期或卡住時可自行處理。「備份還原驗證」會把備份匯出並試著還原、確認筆數一致；「測試健檢告警」立即跑一次健檢，異常時依節流規則發 Telegram（平時每交易日 09:17／13:17／17:17 自動執行）。</p>
       </div></div>
     <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統診斷</span></div><div class="panel-body" id="diag-body"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     </div>
@@ -7809,6 +7815,33 @@ async function adminTool(action,btn){
     if(!r.ok){toast(j.error||'執行失敗');}
     else{toast(j.msg||(j.ok?'完成':'已略過'));fetchAdminTools();}
   }catch(e){toast('執行失敗，請稍後再試');}
+  finally{if(btn){btn.disabled=false;btn.textContent=_t;}}
+}
+// Phase 1 維運：備份還原驗證 / 測試健檢告警
+async function opsBackupVerify(btn){
+  const el=document.getElementById('ops-out');if(btn){btn.disabled=true;var _t=btn.textContent;btn.textContent='驗證中…';}
+  try{
+    const r=await fetch('/api/admin/backup/verify',{cache:'no-store'});
+    if(r.status===401){if(el)el.textContent='登入已逾時，請重新登入。';return;}
+    const d=await r.json();
+    if(!d.ok){if(el)el.innerHTML='<span style="color:var(--down)">備份還原驗證失敗：'+escH(d.error||'')+'</span>';return;}
+    const ok=d.match;
+    if(el)el.innerHTML='<b>備份還原驗證</b>：'+(ok?'<span style="color:var(--up)">✓ 可還原、筆數一致</span>':'<span style="color:var(--down)">⚠️ 筆數不一致，請檢查</span>')
+      +`　資料庫 ${d.rows_db} 筆／CSV ${d.rows_csv} 筆／還原 ${d.rows_restored} 筆・${d.columns} 欄・${(d.size_bytes/1024).toFixed(0)} KB`;
+  }catch(e){if(el)el.textContent='備份還原驗證失敗，請稍後再試。';}
+  finally{if(btn){btn.disabled=false;btn.textContent=_t;}}
+}
+async function opsHealthWatch(btn){
+  const el=document.getElementById('ops-out');if(btn){btn.disabled=true;var _t=btn.textContent;btn.textContent='健檢中…';}
+  try{
+    const r=await fetch('/api/admin/health_watch?run=1',{cache:'no-store'});
+    if(r.status===401){if(el)el.textContent='登入已逾時，請重新登入。';return;}
+    const d=await r.json(),res=(d&&d.result)||{};
+    const v=res.verdict||'—',c={ok:'var(--up)',warn:'var(--warn)',fail:'var(--down)'}[v]||'var(--t2)';
+    if(el)el.innerHTML='<b>健檢告警</b>：結果 <span style="color:'+c+'">'+escH(v)+'</span>　異常項 '+(res.fails!=null?res.fails:'—')
+      +(res.alerted?'　<span style="color:var(--down)">已發出 Telegram 告警</span>':'　未達告警條件（正常或節流中）')
+      +'<div class="mut" style="font-size:11px;margin-top:4px">平時每交易日 09:17／13:17／17:17 自動健檢，異常才通知。</div>';
+  }catch(e){if(el)el.textContent='健檢執行失敗，請稍後再試。';}
   finally{if(btn){btn.disabled=false;btn.textContent=_t;}}
 }
 // ★ 新增：2026-09-29——重大訊息公告（真實 TWSE OpenAPI 資料，見 fundamentals.py

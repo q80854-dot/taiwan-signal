@@ -634,6 +634,62 @@ def job_pre_scan_restart():
     except Exception as e:
         logger.error(f"job_pre_scan_restart: {e}", exc_info=True)
 
+# ★ 2026-11-04（Phase 1 維運：錯誤監控與告警）——run_health() 已是完整的資料品質/系統健檢，
+# 但只是「頁面要你去看」。這裡加主動監控：排程定時跑健檢，verdict=fail 時主動 Telegram 通知站主
+# （去重＋節流：新發生的異常立即通知、持續異常每 6 小時最多再提醒一次、恢復正常通知一次），
+# 讓資料來源掛掉/排程停擺/DB 異常等能第一時間被看見，而不是等到開頁面才發現。
+_HEALTH_WATCH_KEY = "health_watch_state"
+_HEALTH_ALERT_THROTTLE_SEC = 6 * 3600
+
+
+def _notify_owner(message: str, level: str = "info"):
+    """送系統通知給站主（Telegram 優先，另寫入網頁通知中心）。失敗不拋出。"""
+    try:
+        import telegram_bot
+        telegram_bot.send_alert(message, level)
+    except Exception as e:
+        logger.warning(f"_notify_owner: {e}")
+
+
+def job_health_watch():
+    """定時健檢＋異常主動告警。回傳摘要（也供 /api/admin/health_watch 手動觸發檢視）。"""
+    try:
+        import health
+        from state_store import store
+        h = health.run_health()
+        verdict = h.get("verdict")
+        fails = [f"{i.get('name')}：{i.get('detail')}"
+                 for sec in h.get("sections", []) for i in sec.get("items", []) if i.get("status") == "fail"]
+        st, prev_state = store.read_meta(_HEALTH_WATCH_KEY)
+        prev_state = prev_state if (st == "ok" and isinstance(prev_state, dict)) else {}
+        prev, last_alert = prev_state.get("verdict"), prev_state.get("last_alert_at")
+        now = datetime.now(timezone.utc)
+        should_alert = False
+        if verdict == "fail":
+            if prev != "fail" or not last_alert:
+                should_alert = True                       # 新發生的異常：立即通知
+            else:
+                try:
+                    should_alert = (now - datetime.fromisoformat(last_alert)).total_seconds() > _HEALTH_ALERT_THROTTLE_SEC
+                except Exception:
+                    should_alert = True                   # 持續異常：每 6 小時最多再提醒一次
+        recovered = (prev == "fail" and verdict != "fail")
+        if should_alert:
+            _notify_owner("🚨 系統健檢異常（fail {n}）：\n{body}".format(
+                n=h.get("counts", {}).get("fail", 0), body="\n".join("• " + f for f in fails[:8])), "error")
+        elif recovered:
+            _notify_owner(f"✅ 系統健檢已恢復正常（{verdict}）。", "info")
+        store.set_meta(_HEALTH_WATCH_KEY, {
+            "verdict": verdict, "fail_count": h.get("counts", {}).get("fail", 0),
+            "checked_at": now.isoformat(),
+            "last_alert_at": now.isoformat() if should_alert else last_alert})
+        logger.info(f"job_health_watch: verdict={verdict} fails={len(fails)} alerted={should_alert}")
+        return {"ok": True, "verdict": verdict, "fails": len(fails), "alerted": should_alert, "recovered": recovered}
+    except Exception as e:
+        logger.error(f"job_health_watch: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 def setup_scheduler():
     if not SCHEDULER_OK: return
     # ★ 新增：2026-09-24——早盤前K線快取更新+完整性檢查，見 job_premarket_cache_refresh()
@@ -667,6 +723,8 @@ def setup_scheduler():
     # 財經日曆：每 30 分鐘預熱一次（FMP 免費版有每日次數上限，快取 1 小時、預熱頻率保守）＋開機後 90 秒暖一次。
     scheduler.add_job(job_learning_backup, CronTrigger(day=1, hour=18, minute=20, timezone=TZ_TAIPEI), id="learning_backup", replace_existing=True, misfire_grace_time=6 * 3600, coalesce=True, max_instances=1)
     scheduler.add_job(lambda: job_learning_backup(send=False), "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=160), id="learning_backup_boot", replace_existing=True)
+    # Phase 1 維運：定時健檢＋異常主動告警（交易日 09:17／13:17／17:17 台北，分別對應開盤後、盤中、收盤後）
+    scheduler.add_job(job_health_watch, CronTrigger(hour="9,13,17", minute=17, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="health_watch", replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=1800)
     scheduler.add_job(job_econ_warm, "interval", minutes=30, id="econ_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_econ_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="econ_warm_boot", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
@@ -1326,6 +1384,34 @@ def api_health():
         return jsonify(health.run_health())
     except Exception as e:
         logger.error(f"api_health: {e}"); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/health_watch")
+@members.owner_required
+@admin_auth.admin_required
+def api_admin_health_watch():
+    """站主：健檢主動告警的最近狀態；?run=1 可立即跑一次健檢（異常時會依節流規則發 Telegram，供測試）。"""
+    try:
+        from state_store import store
+        if request.args.get("run") == "1":
+            return jsonify({"ran": True, "result": job_health_watch(),
+                            "state": store.get_meta(_HEALTH_WATCH_KEY)})
+        return jsonify({"ran": False, "state": store.get_meta(_HEALTH_WATCH_KEY),
+                        "note": "每交易日 09:17／13:17／17:17（台北）自動健檢；異常會主動 Telegram 通知站主。"})
+    except Exception as e:
+        logger.error(f"api_admin_health_watch: {e}", exc_info=True); return jsonify({"error": "無法讀取健檢狀態"}), 500
+
+
+@app.route("/api/admin/backup/verify")
+@members.owner_required
+@admin_auth.admin_required
+def api_admin_backup_verify():
+    """站主：備份還原驗證——匯出備份 CSV→解析→載入臨時 SQLite，確認筆數一致、可還原。唯讀。"""
+    try:
+        import shadow
+        return jsonify(shadow.verify_backup())
+    except Exception as e:
+        logger.error(f"api_admin_backup_verify: {e}", exc_info=True); return jsonify({"error": "還原驗證失敗"}), 500
 
 
 @app.route("/api/signal_check/<key>")
