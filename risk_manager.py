@@ -5,6 +5,7 @@ risk_manager.py — 台股波段版 v1.0
 新增：check_foreign_flow、台股張數風控
 """
 import logging
+import threading
 import pytz
 from datetime import datetime
 from typing import Dict, List
@@ -145,14 +146,25 @@ def _save_daily(d: Dict):
     except Exception as e:
         logger.error(f"_save_daily：寫入每日虧損發生例外：{e}")
 
+# ★ 修正：2026-11-04（驗收清單「兩執行緒同時累加→不遺失紀錄」）——record_signal_loss 是
+# 讀取→修改→寫回的流程，多執行緒（排程掃描＋前端輪詢觸發）同時進來會互相覆蓋而遺失累計。
+# 本服務為單一 worker，用行程內鎖把整段 read-modify-write 串行化即可保證不遺失。
+_daily_lock = threading.Lock()
+
 def record_signal_loss(loss_twd: float):
     today=datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
-    cur=_load_daily()
-    if cur.get("date")!=today:
-        cur={"date":today,"loss_twd":0.0,"signal_count":0}
-    if loss_twd<0: cur["loss_twd"]+=abs(loss_twd)
-    cur["signal_count"]+=1
-    _save_daily(cur)
+    with _daily_lock:
+        cur=_load_daily()
+        if cur.get("unavailable"):
+            # 風控狀態讀取失敗：不可在未知基準上累加（會得到錯誤的當日虧損），直接略過本次累計，
+            # 由 fail-closed 的 check_daily_loss_limit 擋新單；待資料庫恢復再正常累計。
+            logger.error("record_signal_loss：風控狀態讀取失敗，略過本次累計（fail-closed 由 check 擋單）")
+            return
+        if cur.get("date")!=today:
+            cur={"date":today,"loss_twd":0.0,"signal_count":0}
+        if loss_twd<0: cur["loss_twd"]+=abs(loss_twd)
+        cur["signal_count"]+=1
+        _save_daily(cur)
 
 def check_daily_loss_limit() -> Dict:
     # ★ 修正：2026-09-26（稽核 finding #4）——原本這裡寫死字面常數 0.06，

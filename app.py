@@ -3249,6 +3249,31 @@ def telegram_webhook():
     except Exception as e: logger.error(f"telegram_webhook: {e}")
     return jsonify({"ok": True})
 
+def _webhook_url_ok(url: str) -> bool:
+    """★ F-03（2026-11-04）：Webhook 目標網址必須是 HTTPS 且不得指向內部位址（loopback、
+    私有網段、link-local、雲端 metadata 169.254.169.254 等），避免被設成內部/惡意端點。
+    解析主機名的所有 IP 逐一檢查；無法解析一律拒絕。"""
+    try:
+        import ipaddress
+        import socket
+        from urllib.parse import urlparse
+        u = urlparse(url or "")
+        if u.scheme != "https" or not u.hostname:
+            return False
+        try:
+            infos = socket.getaddrinfo(u.hostname, None)
+        except Exception:
+            return False
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                    or ip.is_multicast or ip.is_unspecified):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 @app.route("/api/webhook/set", methods=["POST"])
 def set_webhook():
     # ★ 修正：2026-09-03——這個路由原本任何人都能呼叫，可以把機器人的 webhook
@@ -3256,18 +3281,28 @@ def set_webhook():
     # 未來若有付費指令等）。加一層極簡驗證：呼叫者必須在 header 帶出跟
     # TELEGRAM_BOT_TOKEN 相同的值，才允許變更 webhook（機主自己已經知道這組
     # token，一般訪客不會知道）。
+    # ★ F-03（2026-11-04）：補上網址白名單式驗證（HTTPS＋非內部位址），並把對外錯誤
+    # 改為固定訊息，不再回傳 str(e)（避免內部細節外洩）。
     auth = request.headers.get("X-Admin-Token", "")
     if not TELEGRAM_BOT_TOKEN or auth != TELEGRAM_BOT_TOKEN:
         return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "url 必填"}), 400
+    if not _webhook_url_ok(url):
+        return jsonify({"error": "網址不合法：僅接受 HTTPS 且非內部位址的網址"}), 400
     try:
         from telegram_bot import set_webhook as _sw
-        data = request.get_json(); url = data.get("url", "")
-        if not url: return jsonify({"error": "url 必填"}), 400
         return jsonify({"ok": _sw(f"{url}/webhook/{TELEGRAM_BOT_TOKEN}")})
-    except Exception as e: return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        logger.error(f"set_webhook: {e}")
+        return jsonify({"error": "設定失敗，請稍後再試"}), 500
 
 @app.route("/api/test/telegram", methods=["POST"])
+@members.owner_required
 def test_telegram():
+    # ★ F-02（2026-11-04）：補上站主專屬縱深防禦（原本僅依賴 before_request 的集中登入牆）。
     from telegram_bot import send_alert
     send_alert(f"✅ 系統測試 {SYSTEM['name']} v{SYSTEM['version']} 運行正常", "info")
     return jsonify({"status": "sent"})

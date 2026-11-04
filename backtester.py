@@ -579,7 +579,10 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
                 hit_sl=(d=="buy" and lows[i]<=sl) or (d=="sell" and highs[i]>=sl)
                 hit_tp1=(d=="buy" and highs[i]>=tp1) or (d=="sell" and lows[i]<=tp1)
                 if hit_sl or hit_tp1:
-                    res="tp1" if hit_tp1 else "sl"; cp=tp1 if hit_tp1 else sl
+                    # ★ 修正：2026-11-04（驗收清單「同日停損及停利同時觸發→保守成交」＋F-11 一致性）——
+                    # 原本同一根 K 棒同時觸及停損與停利時取 tp1（樂觀，會高估勝率）。日K 無法得知盤中
+                    # 先到哪一個，保守假設先觸停損（最壞情況），與主回測 backtest_symbol_tw 的處理一致。
+                    res,cp = ("sl",sl) if hit_sl else ("tp1",tp1)
                     pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,open_trade.get("shares",1))
                     balance+=pnl; t={"result":res,"pnl_twd":pnl,"score":open_trade["score"]}
                     test_trades.append(t); all_test_trades.append(t); open_trade=None; continue
