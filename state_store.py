@@ -645,7 +645,25 @@ class StateStore:
             logger.warning(f"get_meta({key}): {e}")
             return default
 
-    def set_meta(self, key: str, value: Any):
+    def read_meta(self, key: str):
+        """★ F-07/F-04（2026-11-04）：風控等關鍵資料需要區分「資料不存在」與「資料庫讀取失敗」，
+        不能像 get_meta 一樣兩者都回同一個 default。回傳 (status, value)：
+        - ("ok", value)   ：讀到且成功解析
+        - ("missing", None)：連線正常但該 key 不存在（合法的「尚無資料」）
+        - ("error", None) ：資料庫讀取/解析失敗（狀態未知，呼叫端應 fail-closed）"""
+        try:
+            with self._conn() as conn:
+                row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            if row is None:
+                return ("missing", None)
+            return ("ok", json.loads(row["value"]))
+        except Exception as e:
+            logger.warning(f"read_meta({key}): {e}")
+            return ("error", None)
+
+    def set_meta(self, key: str, value: Any) -> bool:
+        """寫入 meta。★ F-07（2026-11-04）：改為回傳是否成功，讓關鍵資料（如每日虧損）
+        的呼叫端能得知寫入失敗、不把失敗當成功；既有忽略回傳值的呼叫端行為不變。"""
         try:
             if USE_PG:
                 sql = ("INSERT INTO meta(key,value,updated_at) VALUES(?,?,?) "
@@ -656,7 +674,10 @@ class StateStore:
                 conn.execute(sql,
                     (key, json.dumps(value,ensure_ascii=False), datetime.now(timezone.utc).isoformat())
                 )
-        except Exception as e: logger.error(f"set_meta: {e}")
+            return True
+        except Exception as e:
+            logger.error(f"set_meta: {e}")
+            return False
 
     # ── 連虧計數 ──
     def get_consec_loss(self, symbol: str) -> int:

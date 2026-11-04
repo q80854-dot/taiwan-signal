@@ -5,6 +5,7 @@ risk_manager.py — 台股波段版 v1.0
 新增：check_foreign_flow、台股張數風控
 """
 import logging
+import threading
 import pytz
 from datetime import datetime
 from typing import Dict, List
@@ -112,33 +113,58 @@ _daily_loss = {"date":"","loss_twd":0.0,"signal_count":0}
 # ★ 修正：2026-10-09——每日虧損熔斷原本只存在記憶體（_daily_loss），Render 一重新部署／
 # 休眠喚醒就歸零，等於 6% 單日停損保護在重啟後形同虛設。改成同時寫入資料庫（meta
 # risk_daily_loss），讀取時以資料庫為準、記憶體為備援，確保跨重啟仍能累計當日虧損。
+# ★ 修正：2026-11-04（F-07 fail-closed）——原本 _load_daily() 無論資料庫讀取成功、key
+# 不存在、還是「讀取失敗」都走同一條退路回記憶體值；而記憶體在 Render 重啟後是空的
+# （date=""），於是「資料庫讀不到 ＋ 進程剛重啟」時，當日累計虧損會被無聲歸零，6% 單日
+# 停損保護等於失效（fail-open）。改用 store.read_meta() 區分三種狀態：讀到就用、key 不
+# 存在＝今天還沒有虧損紀錄（合法）、讀取失敗＝風控狀態未知（標記 unavailable，交由
+# check_daily_loss_limit / run_all_checks 以 fail-closed 擋新單）。
 def _load_daily() -> Dict:
     try:
         from state_store import store
-        d = store.get_meta("risk_daily_loss")
-        if isinstance(d, dict) and d.get("date"):
-            return {"date": d.get("date",""), "loss_twd": float(d.get("loss_twd") or 0),
-                    "signal_count": int(d.get("signal_count") or 0)}
-    except Exception:
-        pass
+        status, d = store.read_meta("risk_daily_loss")
+    except Exception as e:
+        logger.error(f"_load_daily 讀取風控狀態失敗：{e}")
+        return {**_daily_loss, "unavailable": True}
+    if status == "error":
+        logger.error("_load_daily：資料庫讀取失敗，當日虧損狀態未知，將 fail-closed 擋新單")
+        return {**dict(_daily_loss), "unavailable": True}
+    if status == "ok" and isinstance(d, dict) and d.get("date"):
+        return {"date": d.get("date", ""), "loss_twd": float(d.get("loss_twd") or 0),
+                "signal_count": int(d.get("signal_count") or 0)}
+    # status == "missing"（或 ok 但無當日資料）：合法的「今天尚無虧損紀錄」
     return dict(_daily_loss)
 
 def _save_daily(d: Dict):
     _daily_loss.update(d)
     try:
         from state_store import store
-        store.set_meta("risk_daily_loss", d)
-    except Exception:
-        pass
+        if not store.set_meta("risk_daily_loss", d):
+            # ★ F-07：寫入失敗要可見，不可當成功。記憶體仍更新作為當次進程的備援，
+            # 但一旦重啟就會遺失，因此以 error 等級記錄，便於告警/排查。
+            logger.error("_save_daily：每日虧損寫入資料庫失敗，重啟後將遺失當日累計（請檢查 DB）")
+    except Exception as e:
+        logger.error(f"_save_daily：寫入每日虧損發生例外：{e}")
+
+# ★ 修正：2026-11-04（驗收清單「兩執行緒同時累加→不遺失紀錄」）——record_signal_loss 是
+# 讀取→修改→寫回的流程，多執行緒（排程掃描＋前端輪詢觸發）同時進來會互相覆蓋而遺失累計。
+# 本服務為單一 worker，用行程內鎖把整段 read-modify-write 串行化即可保證不遺失。
+_daily_lock = threading.Lock()
 
 def record_signal_loss(loss_twd: float):
     today=datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
-    cur=_load_daily()
-    if cur.get("date")!=today:
-        cur={"date":today,"loss_twd":0.0,"signal_count":0}
-    if loss_twd<0: cur["loss_twd"]+=abs(loss_twd)
-    cur["signal_count"]+=1
-    _save_daily(cur)
+    with _daily_lock:
+        cur=_load_daily()
+        if cur.get("unavailable"):
+            # 風控狀態讀取失敗：不可在未知基準上累加（會得到錯誤的當日虧損），直接略過本次累計，
+            # 由 fail-closed 的 check_daily_loss_limit 擋新單；待資料庫恢復再正常累計。
+            logger.error("record_signal_loss：風控狀態讀取失敗，略過本次累計（fail-closed 由 check 擋單）")
+            return
+        if cur.get("date")!=today:
+            cur={"date":today,"loss_twd":0.0,"signal_count":0}
+        if loss_twd<0: cur["loss_twd"]+=abs(loss_twd)
+        cur["signal_count"]+=1
+        _save_daily(cur)
 
 def check_daily_loss_limit() -> Dict:
     # ★ 修正：2026-09-26（稽核 finding #4）——原本這裡寫死字面常數 0.06，
@@ -150,6 +176,11 @@ def check_daily_loss_limit() -> Dict:
     max_daily=ACCOUNT_BALANCE_TWD*MAX_DAILY_RISK
     today=datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
     cur=_load_daily()
+    # ★ F-07 fail-closed：風控狀態讀取失敗（資料庫未知）時，不可假裝「今日無虧損、可交易」，
+    # 回報 unavailable 讓 run_all_checks 擋新單。
+    if cur.get("unavailable"):
+        return {"exceeded":False,"unavailable":True,"today_loss":None,"max_loss":round(max_daily,0),
+                "message":"🔴 風控狀態暫時無法讀取（資料庫），為安全起見暫停新增訊號"}
     if cur.get("date")!=today:
         return {"exceeded":False,"today_loss":0,"max_loss":round(max_daily,0),"remaining":round(max_daily,0)}
     loss=cur["loss_twd"]
@@ -224,6 +255,8 @@ def run_all_checks(ticker, stock_info, tf_data, market_overview, active_signals=
     warnings=[]; blockers=[]; score_adj=0
     if checks["market"].get("level")=="extreme":  blockers.append(checks["market"]["message"])
     if checks["daily_loss"].get("exceeded"):      blockers.append(checks["daily_loss"]["message"])
+    # ★ F-07 fail-closed：每日虧損風控狀態未知（資料庫讀取失敗）＝不可放行新單
+    if checks["daily_loss"].get("unavailable"):   blockers.append(checks["daily_loss"]["message"])
     if checks["max_pos"].get("exceeded"):         blockers.append(checks["max_pos"]["message"])
     if checks["spike"].get("spike"):              blockers.append(checks["spike"]["message"])
     if checks["market"].get("level")=="high":     warnings.append(checks["market"]["message"]); score_adj-=10
@@ -254,7 +287,14 @@ def get_system_status(market_overview: Dict) -> Dict:
     twii_chg=market_cb.get("twii_chg",0); vix=market_cb.get("vix",20); score=100
     if market_cb.get("level")=="extreme":   score-=50; st="大盤重挫"; cl="red"
     elif market_cb.get("level")=="high":    score-=25; st="大盤偏弱"; cl="orange"
-    elif market_cb.get("level")=="unknown": st="大盤資料異常" if not _twii_ok(market_overview) else "VIX 資料缺漏"; cl="orange"
+    elif market_cb.get("level")=="unknown":
+        # ★ F-08（2026-11-04）：資料不完整不可顯示成乾淨滿分。大盤(TWII)本身抓不到＝
+        # 完全無法判斷（下方 market_unknown 會把分數設 None、不可交易）；只缺 VIX＝熔斷的
+        # VIX 極端保護暫時盲目，仍可參考但要明確扣分並標示，不再出現「100 分／VIX 缺漏／
+        # 適合交易」自相矛盾的畫面。
+        if not _twii_ok(market_overview): st="大盤資料異常"
+        else: st="VIX 資料缺漏（熔斷判斷不完整）"; score-=20
+        cl="orange"
     elif twii_chg>1.0:                      score+=10; st="大盤強勢"; cl="green"
     else:                                   st="正常";  cl="green"
     if foreign.get("level")=="extreme":    score-=20
@@ -265,6 +305,8 @@ def get_system_status(market_overview: Dict) -> Dict:
     # 沒有資料就不給分數（None，前端顯示「—」），也不判定可交易。
     market_unknown = market_cb.get("level")=="unknown" and not _twii_ok(market_overview)
     if market_unknown: score=None
+    # ★ F-08：只缺 VIX（TWII 正常）＝資料不完整但仍可保守參考，不整個停判
+    vix_missing = market_cb.get("level")=="unknown" and _twii_ok(market_overview)
     # ★ 修正：2026-09-29——使用者回報這頁同一畫面「外資賣超632億，暫停多單」
     # 跟「可交易：是」「每個產業✅適合交易」同時出現，互相矛盾。根因：
     # can_trade 跟 cat_advice 原本純粹看 score 門檻（>=50 / >=70），但 score
@@ -277,20 +319,28 @@ def get_system_status(market_overview: Dict) -> Dict:
     # 這裡讓 can_trade／cat_advice 直接看 market_cb/foreign 的 action 是否為
     # "stop_buy"，是就無條件顯示暫停，不再讓分數門檻蓋過這個訊號。
     stop_buy = market_cb.get("action")=="stop_buy" or foreign.get("action")=="stop_buy"
-    can_trade = (not stop_buy) and (not market_unknown) and score>=50
+    # ★ F-07/F-08：每日虧損風控狀態未知（資料庫讀取失敗）時，儀表板也不可顯示「可交易」，
+    # 與 run_all_checks 的 fail-closed 擋單一致。
+    risk_unavailable = bool(daily.get("unavailable"))
+    can_trade = (not stop_buy) and (not market_unknown) and (not risk_unavailable) and (score or 0)>=50
     cat_advice={}
     for cat in ["ETF","半導體業","電子零組件業","金融保險","航運業","生技醫療業"]:
         if market_unknown:
             cat_advice[cat]="⚠️ 大盤資料異常，暫不判斷"
+        elif risk_unavailable:
+            cat_advice[cat]="🔴 風控狀態讀取失敗，暫停判斷"
         elif stop_buy:
             cat_advice[cat]="🔴 暫停多單（大盤/外資熔斷中，僅供研究參考）"
+        elif vix_missing:
+            cat_advice[cat]="⚠️ 謹慎（VIX 資料缺漏，熔斷判斷不完整）"
         else:
             cat_advice[cat]="✅ 適合交易" if score>=70 else "⚠️ 謹慎" if score>=40 else "🔴 觀望"
     # ★ 新增：2026-09-26（稽核發現）——原本這裡完全沒有揭露「這次環境評分是不是
     # 建立在缺資料上」，儀表板/使用者只會看到一個看起來正常的分數，不知道背後
     # 大盤或外資資料其實剛好抓不到。data_issues 讓前端可以額外提示。
     data_issues=[m for m in (market_cb.get("message") if market_cb.get("level")=="unknown" else None,
-                              foreign.get("message") if foreign.get("level")=="unknown" else None) if m]
+                              foreign.get("message") if foreign.get("level")=="unknown" else None,
+                              daily.get("message") if risk_unavailable else None) if m]
     return {"env_score":score,"env_status":st,"env_color":cl,"twii_chg":twii_chg,"vix":vix,
             "can_trade":can_trade,"stop_buy":stop_buy,"category_advice":cat_advice,"daily_loss":daily,
             "foreign_signal":foreign.get("message",""),"data_issues":data_issues}

@@ -12,8 +12,13 @@ def test_daily_loss_persists_across_restart(monkeypatch, tmp_path):
         def get_meta(self, k, default=None):
             return store.get(k, default)
 
+        def read_meta(self, k):
+            # 與真實 store.read_meta 同語意：("ok",v) / ("missing",None)
+            return ("ok", store[k]) if k in store else ("missing", None)
+
         def set_meta(self, k, v):
             store[k] = v
+            return True
     import state_store
     monkeypatch.setattr(state_store, "store", _FakeStore())
 
@@ -26,6 +31,32 @@ def test_daily_loss_persists_across_restart(monkeypatch, tmp_path):
     rm._daily_loss.update({"date": "", "loss_twd": 0.0, "signal_count": 0})
     out = rm.check_daily_loss_limit()
     assert out["today_loss"] == 8000
+
+
+def test_daily_loss_fail_closed_on_db_error(monkeypatch):
+    """★ F-07：風控狀態（每日虧損）資料庫讀取失敗時，不可假裝可交易；
+    check_daily_loss_limit 回報 unavailable，run_all_checks 將其列為 blocker（擋新單）。"""
+    import risk_manager as rm
+
+    class _ErrStore:
+        def read_meta(self, k):
+            return ("error", None)      # 模擬資料庫讀取失敗
+        def get_meta(self, k, default=None):
+            return default
+        def set_meta(self, k, v):
+            return False
+    import state_store
+    monkeypatch.setattr(state_store, "store", _ErrStore())
+
+    out = rm.check_daily_loss_limit()
+    assert out.get("unavailable") is True
+    assert out.get("today_loss") is None          # 不謊稱「今日無虧損」
+
+    res = rm.run_all_checks("2330.TW", {"close": 600}, {"daily": {"closes": [1, 2, 3]}},
+                            {"index": {"twii": {"chg": 0.1, "source": "ok"},
+                                       "vix": {"price": 18, "source": "ok"}}}, active_signals=[])
+    assert res["can_signal"] is False             # fail-closed：擋新單
+    assert any("風控狀態" in b for b in res["blockers"])
 
 
 def test_shadow_simulate_enters_at_next_open():

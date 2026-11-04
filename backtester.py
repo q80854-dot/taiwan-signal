@@ -579,7 +579,10 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
                 hit_sl=(d=="buy" and lows[i]<=sl) or (d=="sell" and highs[i]>=sl)
                 hit_tp1=(d=="buy" and highs[i]>=tp1) or (d=="sell" and lows[i]<=tp1)
                 if hit_sl or hit_tp1:
-                    res="tp1" if hit_tp1 else "sl"; cp=tp1 if hit_tp1 else sl
+                    # ★ 修正：2026-11-04（驗收清單「同日停損及停利同時觸發→保守成交」＋F-11 一致性）——
+                    # 原本同一根 K 棒同時觸及停損與停利時取 tp1（樂觀，會高估勝率）。日K 無法得知盤中
+                    # 先到哪一個，保守假設先觸停損（最壞情況），與主回測 backtest_symbol_tw 的處理一致。
+                    res,cp = ("sl",sl) if hit_sl else ("tp1",tp1)
                     pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,open_trade.get("shares",1))
                     balance+=pnl; t={"result":res,"pnl_twd":pnl,"score":open_trade["score"]}
                     test_trades.append(t); all_test_trades.append(t); open_trade=None; continue
@@ -608,11 +611,22 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
                                     avg_volume_lots=(info.get("volume_lots") if info else None))
             if pos["shares"]<=0: continue
             open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"score":score,"shares":pos["shares"],"bar":i}
-        wins_w=len([t for t in test_trades if t["result"]=="tp1"])
+        # ★ 修正：2026-11-04（F-12）——視窗末端仍未平倉的部位，原本直接被丟棄（不結算、
+        # 不計入 test_trades/all_test_trades），導致每個視窗最後一筆交易的損益與勝負
+        # 完全漏計、回測數字失真。本系統 walk-forward 是「獨立視窗測試」（每個視窗
+        # 開頭都重設 balance），因此在視窗結束時以該視窗最後一根收盤價強制平倉並計入，
+        # 結果標記為 "eow"（end-of-window）。
+        if open_trade:
+            cp=closes[te_end-1]
+            pnl=calc_tw_pnl(open_trade["fill_price"],cp,open_trade["direction"],open_trade.get("shares",1))
+            balance+=pnl; t={"result":"eow","pnl_twd":pnl,"score":open_trade["score"]}
+            test_trades.append(t); all_test_trades.append(t); open_trade=None
+        # 勝率改以「淨損益>0」計（對既有 tp1/sl 等價：tp1→正、sl→負；另可正確涵蓋 eow 強制平倉）
+        wins_w=len([t for t in test_trades if t["pnl_twd"]>0])
         window_results.append({"window":win_idx+1,"n_trades":len(test_trades),
                                 "win_rate":round(wins_w/max(len(test_trades),1)*100,1),
                                 "total_pnl":round(sum(t["pnl_twd"] for t in test_trades),0)})
-    all_wins=len([t for t in all_test_trades if t["result"]=="tp1"])
+    all_wins=len([t for t in all_test_trades if t["pnl_twd"]>0])
     return {"ticker":ticker,"method":"walk_forward","n_windows":len(windows),"train_bars":train_bars,"test_bars":test_bars,
             "total_trades":len(all_test_trades),"overall_win_rate":round(all_wins/max(len(all_test_trades),1)*100,1),
             "total_pnl_twd":round(sum(t["pnl_twd"] for t in all_test_trades),0),
