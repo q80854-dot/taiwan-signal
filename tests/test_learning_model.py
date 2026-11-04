@@ -58,6 +58,55 @@ def test_time_series_walkforward_no_leakage(monkeypatch):
     assert out["brier"] is not None and 0.0 <= out["brier"] <= 1.0
 
 
+class _MemStore:
+    def __init__(self): self.box = {}
+    def read_meta(self, k): return ("ok", self.box[k]) if k in self.box else ("missing", None)
+    def get_meta(self, k, default=None): return self.box.get(k, default)
+    def set_meta(self, k, v): self.box[k] = v; return True
+
+
+def test_competition_ranks_and_rule_baseline(monkeypatch):
+    # Phase 2：多模型競賽——同一批資料跑多種設定、產出排名；規則基準也是其中一個參賽者
+    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(n=800))
+    out = lm.run_competition()
+    assert out["ok"] and len(out["entries"]) == len(lm._COMPETITION_CONFIGS)
+    ranks = [e["rank"] for e in out["entries"]]
+    assert ranks == sorted(ranks) == list(range(1, len(ranks) + 1))   # rank 連續遞增
+    aucs = [e["model_auc"] for e in out["entries"]]
+    assert aucs[0] >= aucs[-1]                                        # 第一名不低於最後一名
+    assert out["baseline_auc_rule_score"] is not None
+    assert any(e["id"] == "rule_only" for e in out["entries"])        # 規則基準有參賽
+
+
+def test_model_version_history(monkeypatch):
+    # Phase 2：模型版本管理——每次 persist 訓練就追加版本，可列出與排行
+    import state_store
+    mem = _MemStore()
+    monkeypatch.setattr(state_store, "store", mem)
+    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(n=800))
+    lm.train_and_eval(persist=True)
+    lm.train_and_eval(persist=True)
+    listing = lm.list_model_versions()
+    assert listing["ok"] and listing["count"] == 2
+    assert listing["versions"][0]["version"] == 1 and listing["versions"][1]["version"] == 2
+    # 排行榜依 AUC 由高到低
+    lb = listing["leaderboard"]
+    assert all(lb[i]["model_auc"] >= lb[i + 1]["model_auc"] for i in range(len(lb) - 1))
+
+
+def test_explain_signal_contributions(monkeypatch):
+    # Phase 2：AI 決策解釋——高 f1＋高 score 應給高勝率，且 f1 貢獻為正
+    import state_store
+    mem = _MemStore()
+    monkeypatch.setattr(state_store, "store", mem)
+    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(n=800))
+    lm.train_and_eval(persist=True)
+    ex = lm.explain_signal({"f1": 2.0, "f2": 0.0}, score=1.8)
+    assert ex is not None and 0.0 <= ex["prob"] <= 1.0 and ex["prob"] > 0.5
+    f1 = next(c for c in ex["contributions"] if c["feature"] == "f1")
+    assert f1["contribution"] > 0
+
+
 def test_persist_and_score_features(monkeypatch):
     saved = {}
     import state_store

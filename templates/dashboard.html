@@ -3005,6 +3005,17 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
       <div class="panel card"><div class="panel-body"><div id="lr-mc"></div>
         <div style="font-size:12px;color:var(--t2);margin:12px 0 6px">權益曲線（已結算候選，累積淨 R）</div>
         <canvas id="lr-equity" height="150" style="width:100%;display:block"></canvas></div></div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">勝率模型實驗室</div></div>
+      <div class="panel card"><div class="panel-body">
+        <div style="font-size:12px;color:var(--t2);margin-bottom:10px">暖啟動勝率模型的離線評估與比較（時間序列 walk-forward，<b>只評估、不改動即時訊號</b>，也不會自動晉升任何模型）。</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <button class="btn" onclick="lmTrain()">訓練＋評估</button>
+          <button class="btn" onclick="lmCompete()">多模型競賽</button>
+          <button class="btn" onclick="lmModels()">版本排行</button>
+          <button class="btn" onclick="lmExplain()">解釋最新訊號</button>
+        </div>
+        <div id="lm-out" style="font-size:12px"></div>
+      </div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">逐月績效</div></div>
       <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>月份</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>累積 R</th></tr></thead><tbody id="lr-monthly"></tbody></table></div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">規則檢驗：被擋下的單後來怎麼了？</div></div>
@@ -3296,6 +3307,9 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-11-04（策略學習・勝率模型實驗室）</b></p>
+          <p><b>多模型競賽與版本排行</b><br>・策略學習頁新增「勝率模型實驗室」：可一鍵「訓練＋評估」、「多模型競賽」（同一批資料、同一套時間序列 walk-forward，比較純規則／只用特徵／規則＋特徵不同正則強度），以及「版本排行」（歷次訓練依 out-of-fold AUC 排名）。<br>・<b>只做離線評估與比較，不改動即時訊號、也不會自動把任何模型上線</b>（維持「先累積資料、暫停自動進化」的方向）。</p>
+          <p><b>AI 決策解釋</b><br>・新增「解釋最新訊號」：用現行模型拆解最近一筆訊號各特徵的貢獻（正＝推升勝率、負＝拉低），讓評分有依據、可檢視。</p>
           <p><b>2026-11-04（系統體質強化）</b></p>
           <p><b>風控更保守（fail-closed）</b><br>・每日虧損熔斷：若當日虧損狀態因資料庫問題讀不到，系統不再假裝「今日無虧損、可交易」，而是暫停新增訊號並明確標示，待恢復後自動解除。<br>・市場環境：只缺 VIX（大盤指數正常）時不再顯示滿分綠燈，改為扣分並標示「VIX 資料缺漏，熔斷判斷不完整」，不再出現「資料缺漏卻顯示適合交易」的矛盾畫面。</p>
           <p><b>策略學習評估更誠實</b><br>・勝率模型的成效評估改用「時間序列 walk-forward」：只用較早的資料訓練、對較晚的資料驗證，並把補值與特徵選擇限制在訓練段內，杜絕先前隨機切分造成的「偷看未來」而高估準確度；新增 Brier 分數等更完整指標。此調整僅影響評估數字的真實性，不改動即時訊號。</p>
@@ -7411,6 +7425,50 @@ var adLogoutP=null;
 function adLogoutQuiet(){adAuthed=false;try{adLogoutP=fetch('/api/admin/logout',{method:'POST',keepalive:true}).catch(()=>{});}catch(e){}}
 addEventListener('pagehide',()=>{if(adAuthed){try{navigator.sendBeacon('/api/admin/logout');}catch(e){}}});
 async function adLogout(){adAuthed=false;try{await fetch('/api/admin/logout',{method:'POST'});}catch(e){}fetchLearning();}
+// ── 勝率模型實驗室（Phase 2，2026-11-04）：訓練/評估、多模型競賽、版本排行、決策解釋 ──
+function lmFmt(v,u){return v===null||v===undefined?'—':v+(u||'');}
+async function lmCall(url){
+  const el=document.getElementById('lm-out');if(el)el.innerHTML='<div class="empty">計算中…</div>';
+  try{
+    const r=await fetch(url,{cache:'no-store'});
+    if(r.status===401){adAuthed=false;adGate('login','登入已逾時，請重新登入。');return null;}
+    const d=await r.json();if(d.error)throw new Error(d.error);return d;
+  }catch(e){if(el)el.innerHTML='<div class="empty">失敗：'+esc2(e.message)+'</div>';return null;}
+}
+async function lmTrain(){
+  const d=await lmCall('/api/learning/train');if(!d)return;const el=document.getElementById('lm-out');
+  if(!d.ok){el.innerHTML='<div class="empty">資料不足（'+lmFmt(d.n)+' 筆，需 '+lmFmt(d.min_samples)+' 筆）</div>';return;}
+  el.innerHTML='<div>樣本 '+d.n+'（評估 '+lmFmt(d.n_eval)+'）・基準勝率 '+lmFmt(d.win_base_rate,'%')+'</div>'
+    +'<div>模型 AUC <b>'+lmFmt(d.model_auc)+'</b>／規則基準 '+lmFmt(d.baseline_auc_rule_score)+'（提升 '+lmFmt(d.auc_lift)+'）・Brier '+lmFmt(d.brier)+'</div>'
+    +'<div style="color:var(--t3);margin-top:4px">評估方式：時間序列 walk-forward（不偷看未來）</div>'
+    +'<div style="margin-top:6px">重要特徵：'+(d.top_features||[]).slice(0,8).map(f=>safe(f.feature)+'('+f.weight+')').join('、')+'</div>';
+}
+async function lmCompete(){
+  const d=await lmCall('/api/learning/compete');if(!d)return;const el=document.getElementById('lm-out');
+  if(!d.ok){el.innerHTML='<div class="empty">資料不足</div>';return;}
+  el.innerHTML='<div style="margin-bottom:6px">多模型競賽（樣本 '+d.n+'、評估 '+lmFmt(d.n_eval)+'、規則基準 AUC '+lmFmt(d.baseline_auc_rule_score)+'）</div>'
+    +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>#</th><th>模型</th><th>AUC</th><th>vs 基準</th><th>Brier</th><th>特徵數</th></tr></thead><tbody>'
+    +d.entries.map(e=>'<tr><td>'+e.rank+'</td><td>'+safe(e.label)+'</td><td><b>'+lmFmt(e.model_auc)+'</b></td><td>'+lmFmt(e.auc_lift)+'</td><td>'+lmFmt(e.brier)+'</td><td>'+lmFmt(e.n_features)+'</td></tr>').join('')
+    +'</tbody></table></div><div style="color:var(--t3);margin-top:6px">只比較、不自動晉升；是否採用由你決定。</div>';
+}
+async function lmModels(){
+  const d=await lmCall('/api/learning/models');if(!d)return;const el=document.getElementById('lm-out');
+  if(!d.ok||!d.count){el.innerHTML='<div class="empty">尚無已訓練版本（先按「訓練＋評估」）</div>';return;}
+  el.innerHTML='<div style="margin-bottom:6px">模型版本排行（依 AUC，共 '+d.count+' 版）</div>'
+    +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>版本</th><th>時間</th><th>樣本</th><th>AUC</th><th>vs 基準</th><th>Brier</th></tr></thead><tbody>'
+    +d.leaderboard.map(v=>'<tr><td>v'+lmFmt(v.version)+'</td><td>'+adAgo(v.trained_at)+'</td><td>'+lmFmt(v.n)+'</td><td><b>'+lmFmt(v.model_auc)+'</b></td><td>'+lmFmt(v.auc_lift)+'</td><td>'+lmFmt(v.brier)+'</td></tr>').join('')
+    +'</tbody></table></div>';
+}
+async function lmExplain(){
+  const d=await lmCall('/api/learning/explain');if(!d)return;const el=document.getElementById('lm-out');
+  if(!d.ok){el.innerHTML='<div class="empty">'+(d.reason==='no_model'?'尚無模型，請先訓練':d.reason==='no_signal'?'尚無 shadow 訊號':'無法解釋')+'</div>';return;}
+  el.innerHTML='<div>最新訊號：'+safe(d.code)+' '+safe(d.name||'')+'（'+safe(d.direction)+'，'+safe(d.bar_date)+'）規則分數 '+lmFmt(d.rule_score)+'</div>'
+    +'<div>模型預測勝率 <b>'+Math.round((d.prob||0)*100)+'%</b></div>'
+    +'<div style="margin-top:6px">各特徵貢獻（正＝推升勝率、負＝拉低）：</div>'
+    +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>特徵</th><th>數值</th><th>貢獻</th></tr></thead><tbody>'
+    +(d.contributions||[]).slice(0,10).map(c=>'<tr><td>'+safe(c.feature)+'</td><td>'+lmFmt(c.value)+'</td><td style="color:'+((c.contribution||0)>=0?'var(--up)':'var(--down)')+'">'+lmFmt(c.contribution)+'</td></tr>').join('')
+    +'</tbody></table></div>';
+}
 function adAgo(iso){if(!iso)return '—';const d=new Date(iso);return isNaN(d)?'—':d.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});}
 async function fetchLearning(){
   try{
