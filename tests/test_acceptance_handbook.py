@@ -86,6 +86,19 @@ def test_webhook_illegal_url_400(cl, monkeypatch):
         assert r.status_code == 400, f"應拒絕的網址未被擋：{bad} → {r.status_code}"
 
 
+def test_sensitive_write_endpoints_owner_only(cl):
+    """敏感寫入操作（掃描、回填、重跑回測、資料刷新）：未登入 → 401；一般會員 → 403。
+    對應第三方 brief §3 權限／§4#4：敏感 API 需嚴格 admin 隔離（含路由層縱深防禦）。"""
+    H = {"X-TS": "1"}
+    endpoints = ["/api/scan/force", "/api/backfill/run", "/api/backtest/full/run",
+                 "/api/revenue/refresh"]
+    for ep in endpoints:
+        assert cl.post(ep, headers=H).status_code == 401, f"{ep} 未登入應 401"
+    _login(cl, email="tester@example.com")      # 一般會員（非機主）
+    for ep in endpoints:
+        assert cl.post(ep, headers=H).status_code == 403, f"{ep} 一般會員應 403"
+
+
 def test_rate_limit_blocks_excess(monkeypatch):
     """大量請求 → 超過上限即擋下（429 的底層計數器行為）。"""
     import protect

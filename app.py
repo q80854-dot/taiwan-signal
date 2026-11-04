@@ -918,6 +918,38 @@ protect.install(app)   # 流量湧入防護：全域限流、參數檢查、短�
 app.after_request(members.scrub_private)   # 一般會員移除本金相關欄位（註冊在 protect 之後＝在快取寫入之前執行）
 
 
+# ★ 2026-11-04（第三方 brief §3 權限 / §4#4）：敏感「寫入」操作（掃描、回填、重跑回測、資料刷新、
+# 報告重建）的縱深防禦。原本這些端點僅靠 before_request 的 members.gate 擋（非機主的寫入一律 403），
+# 這裡再加路由層 owner_required＋審計 log（只記動作、路徑與機主識別雜湊前綴，不記 email/IP/任何敏感值），
+# 讓敏感操作「誰在何時做了什麼」有跡可循，且就算 gate 被誤設也不會放行。
+from functools import wraps as _wraps
+
+
+def _audit(action: str):
+    try:
+        import hashlib
+        m = getattr(request, "member", None)
+        if m is None and members.enabled():
+            m = members.current_member()
+        who = "owner"
+        if m and m.get("email"):
+            who = "u" + hashlib.sha256(m["email"].encode()).hexdigest()[:10]
+        logger.info(f"[AUDIT] action={action} path={request.path} method={request.method} who={who}")
+    except Exception:
+        pass
+
+
+def owner_action(name: str):
+    """機主專屬敏感寫入：owner_required（非機主 403）＋審計 log。"""
+    def deco(f):
+        @_wraps(f)
+        def inner(*a, **k):
+            _audit(name)
+            return f(*a, **k)
+        return members.owner_required(inner)
+    return deco
+
+
 # ════════════════════════════════════════════════
 # 基礎防護：健康檢查、安全標頭、頻率限制、錯誤處理
 # ★ 新增：2026-10-06（第 1 層地基）
@@ -1569,6 +1601,7 @@ def job_revenue_watch():
 
 
 @app.route("/api/revenue/refresh", methods=["POST"])
+@owner_action("revenue_refresh")
 def api_revenue_refresh():
     """個股研究頁的『立即更新營收』：重抓全市場月營收（限流：同一時間最多每 60 秒一次）。"""
     import time as _t
@@ -2138,7 +2171,7 @@ def api_report(kind):
 
 
 @app.route("/api/report/<kind>/rebuild", methods=["POST"])
-@members.owner_required
+@owner_action("report_rebuild")
 def api_report_rebuild(kind):
     """站主專用：立即重建報告（不必等排程），方便驗證與補發。"""
     if kind not in ("premarket", "postmarket"):
@@ -2899,6 +2932,7 @@ def api_instrument(ticker: str):
     return jsonify(out)
 
 @app.route("/api/scan/force", methods=["POST"])
+@owner_action("force_scan")
 def api_force_scan():
     # ★ 修正：2026-09-03——scanner.run_daily_scan() 現在有掃描鎖，重複觸發時
     # 會直接跳過而不是疊加執行；這裡先檢查狀態，讓使用者連點按鈕時看到清楚的
@@ -2990,6 +3024,7 @@ def _run_full_backtest_bg(min_score, universe_mode="tw50"):
         _full_backtest_running.clear()
 
 @app.route("/api/backtest/full/run", methods=["POST"])
+@owner_action("backtest_full_run")
 def api_backtest_full_run():
     if _full_backtest_running.is_set():
         return jsonify({"status": "already_running"})
@@ -3047,6 +3082,7 @@ def _run_compare_backtest_bg(min_score):
         _compare_backtest_running.clear()
 
 @app.route("/api/backtest/compare/run", methods=["POST"])
+@owner_action("backtest_compare_run")
 def api_backtest_compare_run():
     if _compare_backtest_running.is_set():
         return jsonify({"status": "already_running"})
@@ -3092,6 +3128,7 @@ def _run_short_gate_validation_bg(min_score):
         _short_gate_validation_running.clear()
 
 @app.route("/api/backtest/short_gate_validation/run", methods=["POST"])
+@owner_action("backtest_short_gate_validation_run")
 def api_backtest_short_gate_validation_run():
     if _short_gate_validation_running.is_set():
         return jsonify({"status": "already_running"})
@@ -3142,6 +3179,7 @@ def _run_short_gate_validation_bear_bg(min_score, period_start, period_end):
         _short_gate_validation_bear_running.clear()
 
 @app.route("/api/backtest/short_gate_validation_bear/run", methods=["POST"])
+@owner_action("backtest_short_gate_validation_bear_run")
 def api_backtest_short_gate_validation_bear_run():
     if _short_gate_validation_bear_running.is_set():
         return jsonify({"status": "already_running"})
@@ -3198,6 +3236,7 @@ def _run_backfill_bg(margin_days_back, revenue_months_back):
         _backfill_running.clear()
 
 @app.route("/api/backfill/run", methods=["POST"])
+@owner_action("backfill_run")
 def api_backfill_run():
     if _backfill_running.is_set():
         return jsonify({"status": "already_running"})
@@ -3244,6 +3283,7 @@ def _run_partial_exit_bt_bg(min_score):
         _partial_exit_bt_running.clear()
 
 @app.route("/api/backtest/partial_exit/run", methods=["POST"])
+@owner_action("backtest_partial_exit_run")
 def api_backtest_partial_exit_run():
     if _partial_exit_bt_running.is_set():
         return jsonify({"status": "already_running"})
@@ -3286,6 +3326,7 @@ def _run_ablation_bt_bg(min_score):
         _ablation_bt_running.clear()
 
 @app.route("/api/backtest/ablation/run", methods=["POST"])
+@owner_action("backtest_ablation_run")
 def api_backtest_ablation_run():
     if _ablation_bt_running.is_set():
         return jsonify({"status": "already_running"})
