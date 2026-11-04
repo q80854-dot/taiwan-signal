@@ -158,6 +158,28 @@ def test_promote_refused_when_gates_fail(monkeypatch):
     assert out["ok"] is False and "關卡" in out["reason"]
 
 
+def test_month_feature_excluded(monkeypatch):
+    # ★ 2026-11-04：month 屬薄資料下的「背時間」過擬合來源，須被排除，不得進入模型特徵
+    assert "month" in lm._EXCLUDE_KEYS
+    rng = np.random.default_rng(3)
+
+    def _rows():
+        rows = []
+        for i in range(800):
+            x = float(rng.standard_normal())
+            rows.append({"bar_date": "2026-10-01", "score": x,
+                         "r_multiple": x + 0.3 * float(rng.standard_normal()),
+                         "kind": "candidate",
+                         "features": json.dumps({"f1": x, "month": 10, "dow": i % 5})})
+        return rows
+    monkeypatch.setattr(lm, "_rows", _rows)
+    ds = lm.build_dataset()
+    assert ds["ok"]
+    assert all("month" not in f for f, _ in ds["parsed"])          # 不在特徵集
+    out = lm.train_and_eval(persist=False)
+    assert all(t["feature"] != "month" for t in out["top_features"])  # 不在模型係數
+
+
 def test_persist_and_score_features(monkeypatch):
     saved = {}
     import state_store
