@@ -23,12 +23,61 @@ import time
 import logging
 from datetime import datetime, timedelta, timezone
 
+import pytz
 import requests
 
 logger = logging.getLogger(__name__)
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
 _TPE = timezone(timedelta(hours=8))
 _UTC = timezone.utc
+# ★ 2026-11-04：財經日曆改以「實際公佈時刻」為準，而非整日。美國官方數據的固定發布時間以
+# 「美東時間（ET）」排定，而美東會在夏令（EDT=UTC-4，約 3 月第二個週日～11 月第一個週日）與
+# 冬令（EST=UTC-5）之間切換。用 pytz 的 America/New_York 對「該發布日的 ET 時刻」做 localize，
+# 夏令/冬令會自動判斷，轉成 UTC 與台北時間都正確（倒數也倒數到這個時刻）。
+_ET = pytz.timezone("America/New_York")
+
+# 指標中文名 → 美東固定發布時刻 (時, 分)。多數 BLS/BEA/Census 數據為 08:30 ET；
+# 部分調查/報告為 10:00 ET；ADP 08:15、工業生產 09:15、FOMC 會議紀要 14:00。
+# 來源：各發布機構官方行事曆（BLS、BEA、Census、ISM、Conference Board、Fed）。
+# 沒列到的（如 Fed 官員談話，時間不固定）維持無時刻＝顯示「全日」，不編造。
+_RELEASE_TIME_ET = {
+    "非農就業人數（NFP）": (8, 30),
+    "初領失業救濟金人數": (8, 30),
+    "消費者物價指數（CPI）": (8, 30),
+    "生產者物價指數（PPI）": (8, 30),
+    "PCE 物價指數（Fed 最看重）": (8, 30),
+    "零售銷售": (8, 30),
+    "GDP 國內生產毛額": (8, 30),
+    "失業率": (8, 30),
+    "平均時薪": (8, 30),
+    "耐用品訂單": (8, 30),
+    "貿易收支": (8, 30),
+    "新屋開工": (8, 30),
+    "營建許可": (8, 30),
+    "ADP 民間就業人數（小非農）": (8, 15),
+    "工業生產": (9, 15),
+    "ISM 製造業 PMI": (10, 0),
+    "ISM 服務業 PMI": (10, 0),
+    "JOLTS 職位空缺": (10, 0),
+    "密西根大學消費者信心": (10, 0),
+    "消費者信心指數": (10, 0),
+    "新屋銷售": (10, 0),
+    "成屋銷售": (10, 0),
+    "工廠訂單": (10, 0),
+    "FOMC 會議紀要": (14, 0),
+}
+
+
+def _et_release(date_str: str, hh: int, mm: int):
+    """把「美國發布日 date_str（YYYY-MM-DD）的 ET hh:mm」換成 (UTC datetime, 台北 datetime)。
+    pytz 會依該日期自動套用夏令(EDT)或冬令(EST)，不需手動判斷。失敗回 None。"""
+    try:
+        y, m, d = (int(x) for x in date_str[:10].split("-"))
+        et = _ET.localize(datetime(y, m, d, hh, mm))
+        return et.astimezone(_UTC), et.astimezone(_TPE)
+    except Exception as e:
+        logger.warning(f"econ_calendar _et_release({date_str},{hh}:{mm}): {e}")
+        return None
 _cache = {}
 _TTL = 3600
 _FAIL_TTL = 120
@@ -344,6 +393,23 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
         except Exception as e:
             logger.warning(f"econ_calendar FOMC 排程解析失敗：{e}")
             continue
+
+    # 2c) 補「實際公佈時刻」：凡尚無時間（主要是 FRED 來源只給日期）且有已知美東發布時刻者，
+    #     以該發布日的 ET 時刻換算 UTC／台北時間（夏令冬令由 pytz 自動判斷），讓畫面顯示實際
+    #     公佈時間、倒數也倒數到該時刻；沒有已知時刻者維持「全日」，不編造。
+    for e in events:
+        if not e.get("time") and e.get("zh") in _RELEASE_TIME_ET:
+            hh, mm = _RELEASE_TIME_ET[e["zh"]]
+            got = _et_release(e["date"], hh, mm)
+            if got:
+                d_utc, d_tpe = got
+                e["dt"] = d_utc.isoformat()
+                e["date"] = d_tpe.strftime("%Y-%m-%d")
+                e["time"] = d_tpe.strftime("%H:%M")
+                e["weekday"] = "一二三四五六日"[d_tpe.weekday()]
+                e["time_et"] = f"{hh:02d}:{mm:02d} ET"
+        elif e.get("source") == "Fed" and e.get("time"):
+            e["time_et"] = "14:00 ET"      # FOMC 決議：美東 14:00（已換算台北，另標美東時間）
 
     events.sort(key=lambda e: (e["date"], e["time"] or "99:99"))
 
