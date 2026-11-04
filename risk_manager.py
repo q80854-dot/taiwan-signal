@@ -364,6 +364,63 @@ def high_conf_record(closed_trades: List[Dict]) -> Dict:
     return {"n": n, "wins": wins, "perfect": n >= HC_MIN_TRADES and wins == n}
 
 
+def portfolio_risk(open_rows: List[Dict], balance: float = None) -> Dict:
+    """★ 2026-11-04（第三方 brief §4#3）：組合層級風險快照——最壞同時停損、曝險、集中度、
+    方向曝險、情境壓力測試。純唯讀分析、不下單。以開倉部位的 entry/stop/股數/方向/產業計算；
+    市場情境採 beta=1 的簡化假設（部位隨大盤等比變動，明確標示），非精確個股 beta。"""
+    bal = balance or ACCOUNT_BALANCE_TWD
+    rows = []
+    for r in (open_rows or []):
+        sh = int(r.get("suggested_lots") or r.get("shares") or 0)
+        px = float(r.get("entry_price") or r.get("entry") or 0)
+        stop = float(r.get("stop_loss") or r.get("stop") or 0)
+        if sh <= 0 or px <= 0:
+            continue
+        d = "sell" if r.get("direction") == "sell" else "buy"
+        rows.append({"code": r.get("code"), "name": r.get("name"), "direction": d,
+                     "sector": r.get("sector") or "其他", "value": sh * px,
+                     "risk": sh * abs(px - stop) if stop else 0.0})
+    n = len(rows)
+    pct = lambda v: (round(v / bal * 100, 1) if bal else 0.0)
+    if n == 0:
+        return {"ok": True, "n": 0, "balance": round(bal, 0), "message": "目前無開倉部位"}
+    gross = sum(x["value"] for x in rows)
+    long_v = sum(x["value"] for x in rows if x["direction"] == "buy")
+    short_v = sum(x["value"] for x in rows if x["direction"] == "sell")
+    worst = sum(x["risk"] for x in rows)                      # 全部同時觸停損的最壞損失
+    bysec = {}
+    for x in rows:
+        bysec[x["sector"]] = bysec.get(x["sector"], 0.0) + x["value"]
+    sectors = sorted([{"sector": k, "value": round(v, 0), "pct": pct(v)} for k, v in bysec.items()],
+                     key=lambda z: -z["value"])
+    largest = max(rows, key=lambda x: x["value"])
+    scenarios = []
+    for d in (3, 5, 10):                                      # 大盤下跌情境（多單虧、空單賺；beta=1 簡化）
+        pnl = -(long_v * d / 100) + (short_v * d / 100)
+        scenarios.append({"drop_pct": d, "pnl_twd": round(pnl, 0), "pnl_pct": pct(pnl)})
+    hard_daily = bal * MAX_DAILY_RISK
+    single_cap = bal / max(1, MAX_SIMULTANEOUS_POSITIONS)
+    flags = []
+    if worst > hard_daily:
+        flags.append(f"🔴 最壞同時停損 {pct(worst)}%，超過每日風險上限 {round(MAX_DAILY_RISK*100,1)}%")
+    if largest["value"] > single_cap:
+        flags.append(f"⚠️ 單一部位 {largest.get('code')} 佔 {pct(largest['value'])}%，超過單檔上限 {pct(single_cap)}%")
+    if n > MAX_SIMULTANEOUS_POSITIONS:
+        flags.append(f"⚠️ 持倉 {n} 檔，超過同時上限 {MAX_SIMULTANEOUS_POSITIONS}")
+    if sectors and sectors[0]["pct"] >= 50:
+        flags.append(f"⚠️ 產業集中：{sectors[0]['sector']} 佔 {sectors[0]['pct']}%")
+    return {"ok": True, "n": n, "balance": round(bal, 0),
+            "gross_exposure": round(gross, 0), "gross_pct": pct(gross),
+            "long_pct": pct(long_v), "short_pct": pct(short_v), "net_pct": pct(long_v - short_v),
+            "worst_case_loss": round(worst, 0), "worst_case_loss_pct": pct(worst),
+            "max_daily_risk_pct": round(MAX_DAILY_RISK * 100, 1),
+            "sectors": sectors[:8],
+            "largest": {"code": largest.get("code"), "name": largest.get("name"),
+                        "value": round(largest["value"], 0), "pct": pct(largest["value"])},
+            "scenarios": scenarios, "flags": flags,
+            "note": "情境為 beta=1 簡化假設（部位隨大盤等比變動），非精確個股 beta；僅供組合風險概覽，不構成投資建議。"}
+
+
 def high_conf_ok(sig: Dict, record: Dict) -> bool:
     """這一檔訊號是否符合「持倉滿額也可通知」的例外條件。"""
     if not record.get("perfect"):

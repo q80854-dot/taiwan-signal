@@ -59,6 +59,33 @@ def test_daily_loss_fail_closed_on_db_error(monkeypatch):
     assert any("風控狀態" in b for b in res["blockers"])
 
 
+def test_portfolio_risk_basic():
+    # 第三方 brief §4#3：組合風險快照——最壞同時停損、曝險、方向、情境壓力測試
+    import risk_manager as rm
+    rows = [
+        {"code": "2330", "suggested_lots": 1000, "entry_price": 600, "stop_loss": 570, "direction": "buy", "sector": "半導體業"},
+        {"code": "2317", "suggested_lots": 2000, "entry_price": 100, "stop_loss": 95, "direction": "buy", "sector": "電子零組件業"},
+        {"code": "2603", "suggested_lots": 1000, "entry_price": 200, "stop_loss": 210, "direction": "sell", "sector": "航運業"},
+    ]
+    out = rm.portfolio_risk(rows, balance=1_000_000)
+    assert out["ok"] and out["n"] == 3
+    # 最壞同時停損 = 1000*30 + 2000*5 + 1000*10 = 50000（5%）
+    assert out["worst_case_loss"] == 50000 and out["worst_case_loss_pct"] == 5.0
+    # 多單 800k、空單 200k、gross 1,000,000
+    assert out["gross_exposure"] == 1_000_000
+    assert out["long_pct"] == 80.0 and out["short_pct"] == 20.0 and out["net_pct"] == 60.0
+    # 大盤 -5% 情境：-(800k*5%)+(200k*5%) = -30000（-3%）
+    s5 = next(s for s in out["scenarios"] if s["drop_pct"] == 5)
+    assert s5["pnl_twd"] == -30000 and s5["pnl_pct"] == -3.0
+    assert isinstance(out["flags"], list) and out["largest"]["code"] == "2330"
+
+
+def test_portfolio_risk_empty():
+    import risk_manager as rm
+    out = rm.portfolio_risk([], balance=1_000_000)
+    assert out["ok"] and out["n"] == 0
+
+
 def test_shadow_simulate_enters_at_next_open():
     """影子結算進場價要用訊號日後第一根開盤價（與實盤一致），而非訊號日收盤。"""
     import shadow
