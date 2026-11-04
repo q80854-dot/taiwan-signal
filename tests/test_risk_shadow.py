@@ -59,6 +59,23 @@ def test_daily_loss_fail_closed_on_db_error(monkeypatch):
     assert any("風控狀態" in b for b in res["blockers"])
 
 
+def test_portfolio_hard_limit_blocks_new_signals():
+    # ★ F-09：組合「最壞同時停損」總和超過硬上限 → 擋新訊號；介於警告(10%)與硬上限之間 → 只警告不擋
+    import risk_manager as rm
+    mo = {"index": {"twii": {"chg": 0.1, "source": "ok"}, "vix": {"price": 18, "source": "ok"}},
+          "foreign": {"net_buy_twd": 0}, "margin": {"chg_pct": 0}}
+    stock = {"close": 600}
+    tf = {"daily": {"closes": [100, 100, 100]}}      # 無漲跌停尖波，避免 spike 擋單干擾
+    over = [{"risk_pct": 5, "risk_twd": 25000, "position_value": 100000} for _ in range(4)]   # 20% > 15%
+    res = rm.run_all_checks("2330.TW", stock, tf, mo, active_signals=over)
+    assert res["checks"]["margin"]["exceeded"] is True
+    assert res["can_signal"] is False and any("組合總風險" in b for b in res["blockers"])
+    warn = [{"risk_pct": 3, "risk_twd": 15000, "position_value": 60000} for _ in range(4)]    # 12%（>10、<15）
+    res2 = rm.run_all_checks("2330.TW", stock, tf, mo, active_signals=warn)
+    assert res2["checks"]["margin"]["warning"] is True and res2["checks"]["margin"]["exceeded"] is False
+    assert res2["can_signal"] is True                # 警告不擋新單
+
+
 def test_portfolio_risk_basic():
     # 第三方 brief §4#3：組合風險快照——最壞同時停損、曝險、方向、情境壓力測試
     import risk_manager as rm
