@@ -1712,6 +1712,12 @@ def fetch_market_overview() -> Dict:
 # 靜態清單，維持原有的 fail-open 精神，不會讓假日判斷整個掛掉。
 _holiday_warned_years = set()
 _HOLIDAY_API_CACHE_TTL_SEC = 1 * 3600  # 1小時重抓一次（原本6小時）：若證交所把臨時停市公告更新進 holidaySchedule，最慢1小時後就反映
+# ★ 2026-11-04：失敗負快取。TWSE holidaySchedule 偶爾回非 JSON（空/HTML），原本每次呼叫
+# 都重打網路＋噴一次 WARNING；而假日判斷在掃描/盤中會被大量呼叫，造成每秒洗版的
+# 「_fetch_official_holiday_set: Expecting value...」。失敗後在此期間內直接退回靜態清單、
+# 不重打不洗 log（假日判斷正確性由 config.TW_MARKET_HOLIDAYS 靜態清單保證）。
+_holiday_fail_until = 0.0
+_HOLIDAY_FAIL_TTL_SEC = 30 * 60
 
 # ★ 新增：2026-10-23——使用者反映「今天放颱風假」，要系統「自行應對、知道放假所以休市，
 # 但掃描抓資料能力要繼續存在」，並選擇「全自動偵測」。颱風假當天才宣布、天生不可能進
@@ -1794,13 +1800,17 @@ def refresh_typhoon_state(now=None) -> Optional[str]:
 def _fetch_official_holiday_set() -> Optional[set]:
     """向 TWSE 官方 OpenAPI 查詢當年度休市日期，回傳 {'2026-01-01', ...} 格式的
     集合；查不到（含網路失敗、非預期回應格式）回傳 None，呼叫端會退回靜態清單。"""
+    global _holiday_fail_until
     if c := _cache_get("official_holidays", _HOLIDAY_API_CACHE_TTL_SEC):
         return c
+    if time.time() < _holiday_fail_until:
+        return None                      # 近期已失敗 → 直接退回靜態清單，不重打、不洗 log
     try:
         r = requests.get("https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
                           headers=HEADERS, timeout=10)
         if r.status_code != 200:
-            logger.warning(f"_fetch_official_holiday_set: HTTP {r.status_code}")
+            _holiday_fail_until = time.time() + _HOLIDAY_FAIL_TTL_SEC
+            logger.warning(f"_fetch_official_holiday_set: HTTP {r.status_code}（{_HOLIDAY_FAIL_TTL_SEC // 60} 分鐘內改用靜態假日清單）")
             return None
         rows = r.json()
         result = set()
@@ -1811,10 +1821,13 @@ def _fetch_official_holiday_set() -> Optional[set]:
             roc_year, month, day = int(date_raw[:3]), date_raw[3:5], date_raw[5:7]
             result.add(f"{roc_year + 1911}-{month}-{day}")
         if not result:
+            _holiday_fail_until = time.time() + _HOLIDAY_FAIL_TTL_SEC
+            logger.warning(f"_fetch_official_holiday_set: 回應無有效日期（{_HOLIDAY_FAIL_TTL_SEC // 60} 分鐘內改用靜態假日清單）")
             return None
         return _cache_set("official_holidays", result)
     except Exception as e:
-        logger.warning(f"_fetch_official_holiday_set: {e}")
+        _holiday_fail_until = time.time() + _HOLIDAY_FAIL_TTL_SEC
+        logger.warning(f"_fetch_official_holiday_set: {e}（{_HOLIDAY_FAIL_TTL_SEC // 60} 分鐘內改用靜態假日清單）")
         return None
 
 def _is_national_holiday(now) -> bool:
