@@ -3157,6 +3157,60 @@ def api_backtest_full_result():
         "result": store.get_meta("full_backtest_result", None),
     })
 
+
+# ★ 新增：2026-11-04——組合級回測（單一共享帳戶、同時持倉上限、組合風險硬上限、逐日）。
+# 沿用 full_backtest 的背景執行緒＋state_store meta 輪詢模式（跑完整股票池×逐日，必定超過
+# gunicorn 逾時，不能同步做）。
+_portfolio_backtest_running = threading.Event()
+
+def _run_portfolio_backtest_bg(min_score, universe_mode="tw50"):
+    from state_store import store
+    if _portfolio_backtest_running.is_set():
+        return
+    _portfolio_backtest_running.set()
+    try:
+        from backtester import portfolio_backtest_tw
+        if universe_mode == "full":
+            from stock_universe import build_universe
+            tickers = [s["ticker"] for s in build_universe()]
+        else:
+            tickers = None
+        store.set_meta("portfolio_backtest_progress", {"status": "running", "done": 0, "total": 0, "ticker": "", "universe_mode": universe_mode})
+        def _cb(done, total, ticker):
+            store.set_meta("portfolio_backtest_progress", {"status": "running", "done": done, "total": total, "ticker": ticker, "universe_mode": universe_mode})
+        result = portfolio_backtest_tw(tickers=tickers, min_score=min_score, progress_cb=_cb)
+        result["universe_mode"] = universe_mode
+        store.set_meta("portfolio_backtest_result", result)
+        store.set_meta("portfolio_backtest_progress", {"status": "done", "done": result.get("n_tickers", 0), "total": result.get("n_tickers", 0), "ticker": "", "universe_mode": universe_mode})
+        logger.info(f"[PortBT] 組合級回測完成（universe={universe_mode}），{result.get('n_tickers',0)} 檔／{result.get('n_trades',0)} 筆交易")
+    except Exception as e:
+        logger.error(f"_run_portfolio_backtest_bg: {e}", exc_info=True)
+        store.set_meta("portfolio_backtest_progress", {"status": "error", "error": str(e)})
+    finally:
+        _portfolio_backtest_running.clear()
+
+@app.route("/api/backtest/portfolio/run", methods=["POST"])
+@owner_action("backtest_portfolio_run")
+def api_backtest_portfolio_run():
+    if _portfolio_backtest_running.is_set():
+        return jsonify({"status": "already_running"})
+    min_score = request.args.get("min_score", default=65.0, type=float)
+    universe_mode = request.args.get("universe", default="tw50", type=str)
+    if universe_mode not in ("tw50", "full"):
+        return jsonify({"error": "universe 參數必須是 tw50 或 full"}), 400
+    threading.Thread(target=_run_portfolio_backtest_bg, args=(min_score, universe_mode), daemon=True).start()
+    note = "TW50（50檔）" if universe_mode == "tw50" else "完整即時掃描池（約1000+檔，明顯較慢）"
+    return jsonify({"status": "started", "min_score": min_score, "universe": universe_mode,
+                    "note": f"組合級回測（{note}），背景執行，用 /api/backtest/portfolio/result 查進度"})
+
+@app.route("/api/backtest/portfolio/result")
+def api_backtest_portfolio_result():
+    from state_store import store
+    return jsonify({
+        "progress": store.get_meta("portfolio_backtest_progress", {"status": "never_run"}),
+        "result": store.get_meta("portfolio_backtest_result", None),
+    })
+
 # ★ 新增：2026-09-24——使用者要求「用這次新增的東西（K線快取／總經加權／基本面
 # 硬性過濾）做詳細回測，跟過去策略比較勝率有沒有提升」。沿用上面 full_backtest
 # 的背景執行緒＋state_store meta 輪詢模式（同樣道理：這次要跑兩輪TW50回測，
