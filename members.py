@@ -594,6 +594,26 @@ def is_owner(m) -> bool:
     return bool(m) and (m.get("email") or "").strip().lower() in owner_emails()
 
 
+def owner_watch_codes() -> set:
+    """★ 2026-11-04（通知偏好「只自選」用）：機主所有自選股清單裡的代號集合（server 端、
+    無請求情境也能用）。抓不到或無自選回空集合。"""
+    try:
+        ensure_tables()
+        from state_store import store
+        emails = [e for e in owner_emails() if e]
+        if not emails:
+            return set()
+        ph = ",".join(["?"] * len(emails))
+        with store._conn() as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT w.code AS code FROM member_watch w JOIN members m ON w.sub=m.sub "
+                f"WHERE LOWER(m.email) IN ({ph})", tuple(emails)).fetchall()
+        return {str(dict(r)["code"]) for r in rows if dict(r).get("code")}
+    except Exception as e:
+        logger.warning(f"owner_watch_codes: {e}")
+        return set()
+
+
 def _forbid():
     r = jsonify({"error": "此功能僅限站主使用", "forbidden": True})
     r.status_code = 403

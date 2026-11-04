@@ -3394,6 +3394,23 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
         <div id="ops-out" style="font-size:12.5px;margin-top:10px"></div>
         <p class="mut" style="font-size:12px;margin-top:10px">這些都是對既有功能的安全包裝，可重複執行、不會刪資料；遇到資料過期或卡住時可自行處理。「備份還原驗證」會把備份匯出並試著還原、確認筆數一致；「測試健檢告警」立即跑一次健檢，異常時依節流規則發 Telegram（平時每交易日 09:17／13:17／17:17 自動執行）。</p>
       </div></div>
+    <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">通知偏好（Telegram 逐檔訊號）</span></div>
+      <div class="panel-body" id="notify-prefs-body">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
+          <label>最低等級
+            <select id="np-grade" style="margin-left:6px;padding:6px 8px;border:1px solid var(--line2);border-radius:8px;background:var(--s1)">
+              <option value="C">全部（C 以上）</option><option value="B">只 B 級以上</option><option value="A">只 A 級</option>
+            </select></label>
+          <label>方向
+            <select id="np-dir" style="margin-left:6px;padding:6px 8px;border:1px solid var(--line2);border-radius:8px;background:var(--s1)">
+              <option value="all">多空皆推</option><option value="buy">只做多</option><option value="sell">只做空</option>
+            </select></label>
+          <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="np-wl"> 只推自選股</label>
+          <button class="btn" onclick="saveNotifyPrefs(this)">儲存偏好</button>
+          <span id="np-msg" class="mut" style="font-size:12px"></span>
+        </div>
+        <p class="mut" style="font-size:12px;margin-top:10px">只影響「逐檔訊號卡」的 Telegram 推播；每日總結報告仍照完整掃描結果送出。未設定＝全部推播。</p>
+      </div></div>
     <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">系統診斷</span></div><div class="panel-body" id="diag-body"><div class="skel-wrap" role="status" aria-label="載入中"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div>
     </div>
   </div>
@@ -3770,7 +3787,7 @@ function go(id){
   if(id==='events')fetchEvents();
   if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
   if(id==='marketoverview'&&!window._moTimer){window._moTimer=setInterval(()=>{if(document.hidden||window._curPage!=='marketoverview')return;fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();},300000);}
-  if(id==='diag'){fetchDiag();fetchAdminTools();}
+  if(id==='diag'){fetchDiag();fetchAdminTools();loadNotifyPrefs();}
   if(id==='freshness')pollFreshness(true);
   if(id==='feedback')fbLoadMine();
   if(id==='fbadmin')fbLoadAdmin();
@@ -7857,6 +7874,25 @@ async function opsBackupVerify(btn){
     if(el)el.innerHTML='<b>備份還原驗證</b>：'+(ok?'<span style="color:var(--up)">✓ 可還原、筆數一致</span>':'<span style="color:var(--down)">⚠️ 筆數不一致，請檢查</span>')
       +`　資料庫 ${d.rows_db} 筆／CSV ${d.rows_csv} 筆／還原 ${d.rows_restored} 筆・${d.columns} 欄・${(d.size_bytes/1024).toFixed(0)} KB`;
   }catch(e){if(el)el.textContent='備份還原驗證失敗，請稍後再試。';}
+  finally{if(btn){btn.disabled=false;btn.textContent=_t;}}
+}
+async function loadNotifyPrefs(){
+  try{
+    const r=await fetch('/api/admin/notify_prefs',{cache:'no-store'});
+    if(!r.ok)return;const d=await r.json();
+    const g=document.getElementById('np-grade'),dr=document.getElementById('np-dir'),wl=document.getElementById('np-wl');
+    if(g)g.value=d.min_grade||'C';if(dr)dr.value=d.direction||'all';if(wl)wl.checked=!!d.watchlist_only;
+  }catch(e){}
+}
+async function saveNotifyPrefs(btn){
+  const g=document.getElementById('np-grade'),dr=document.getElementById('np-dir'),wl=document.getElementById('np-wl'),msg=document.getElementById('np-msg');
+  if(btn){btn.disabled=true;var _t=btn.textContent;btn.textContent='儲存中…';}
+  try{
+    const r=await fetch('/api/admin/notify_prefs',{method:'POST',headers:TS_H,body:JSON.stringify({min_grade:g.value,direction:dr.value,watchlist_only:wl.checked})});
+    const d=await r.json().catch(()=>({}));
+    if(msg)msg.textContent=r.ok&&d.ok?'✓ 已儲存':('儲存失敗：'+esc2(d.error||''));
+    if(msg)msg.style.color=r.ok&&d.ok?'var(--up)':'var(--down)';
+  }catch(e){if(msg){msg.textContent='儲存失敗，請稍後再試';msg.style.color='var(--down)';}}
   finally{if(btn){btn.disabled=false;btn.textContent=_t;}}
 }
 async function opsHealthWatch(btn){

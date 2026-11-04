@@ -1267,6 +1267,35 @@ class TWScanEngine:
         logger.info(f"_filter_and_rank: 最終輸出 {len(final)} 檔")
         return final
 
+    def _apply_notify_prefs(self, signals: List[Dict]) -> List[Dict]:
+        """★ 2026-11-04（通知偏好細化）：依機主設定（meta notify_prefs）過濾「要逐檔推播」的訊號——
+        最低等級（只甲級/乙級以上）、方向（只多/只空）、只推自選股。未設定＝全推（行為不變）。
+        只影響個別訊號卡的推播，不影響每日總結報告（報告仍反映完整掃描結果）。"""
+        try:
+            from state_store import store
+            prefs = store.get_meta("notify_prefs") or {}
+        except Exception:
+            return signals
+        out = signals
+        order = {"A": 3, "B": 2, "C": 1}
+        mg = prefs.get("min_grade")
+        if mg in order:
+            out = [s for s in out if order.get(s.get("grade", "C"), 1) >= order[mg]]
+        d = prefs.get("direction")
+        if d in ("buy", "sell"):
+            out = [s for s in out if s.get("direction") == d]
+        if prefs.get("watchlist_only"):
+            try:
+                import members
+                codes = members.owner_watch_codes()
+                if codes:
+                    out = [s for s in out if str(s.get("code")) in codes]
+            except Exception as e:
+                logger.warning(f"_apply_notify_prefs watchlist: {e}")
+        if len(out) != len(signals):
+            logger.info(f"通知偏好過濾：{len(signals)} → {len(out)} 檔推播（min_grade={mg}, dir={d}, watchlist_only={prefs.get('watchlist_only')}）")
+        return out
+
     def _push_premarket(self, signals: List[Dict], stats: Dict):
         """盤前掃描的推播：一則簡短摘要＋逐檔新訊號；同一天只推一次（跨重啟也記得）。"""
         try:
@@ -1280,7 +1309,7 @@ class TWScanEngine:
             names = "、".join(f"{x.get('name') or x.get('code')}" for x in signals[:8])
             send_alert(f"🌅 盤前掃描完成（掃 {stats.get('scanned')} 檔，耗時 {stats.get('duration_min')} 分）\n"
                        + (f"新訊號 {len(signals)} 檔：{names}" if signals else "沒有新的符合條件訊號；正式盤後掃描 16:30 仍會照常執行。"), "info")
-            for sig in signals:
+            for sig in self._apply_notify_prefs(signals):
                 try:
                     push_signal(sig)
                 except Exception as e:
@@ -1347,7 +1376,7 @@ class TWScanEngine:
 
         time.sleep(1)
         push_failures = []
-        for sig in signals:
+        for sig in self._apply_notify_prefs(signals):
             try:
                 push_signal(sig)
             except Exception as e:
