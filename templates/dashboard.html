@@ -3816,7 +3816,7 @@ async function fetchInstrument(){
   setTimeout(()=>{const h=document.getElementById('ld-hint');if(h)h.textContent='首次查詢這檔股票需要下載歷史 K 線，約 10–30 秒，之後會很快。';},5000);
   try{
     const d=await(await fetch('/api/instruments/'+encodeURIComponent(ticker),{cache:'no-store'})).json();
-    if(d.error){el.innerHTML=`<div class="empty">${d.error}</div>`;return;}
+    if(d.error){el.innerHTML=`<div class="empty">${esc2(d.error)}</div>`;return;}
     renderInstrument(d);
     mountStockAIReport(d.code);
   }catch(e){el.innerHTML='<div class="empty">查詢失敗，請稍後再試</div>';}
@@ -3849,7 +3849,7 @@ async function loadStockReport(code,build){
   let d;try{d=await fetch('/api/stock_report/'+code+(build?'?build=1':''),{cache:'no-store'}).then(r=>r.json());}
   catch(e){if(build)body.innerHTML='<div class="empty">產生失敗，請稍後再試</div>';if(btn)btn.disabled=false;return;}
   if(btn)btn.disabled=false;
-  if(!d||!d.ok||!d.report){if(build)body.innerHTML='<div class="empty">'+((d&&d.msg)||'產生失敗')+'</div>';return;}
+  if(!d||!d.ok||!d.report){if(build)body.innerHTML='<div class="empty">'+esc2((d&&d.msg)||'產生失敗')+'</div>';return;}
   const r=d.report,esc=x=>String(x==null?'':x).replace(/[<>&]/g,'');
   const badge=r.narrative_source==='ai'?`<span class="rp-badge rp-ai">AI 分析${r.model?'（'+esc(r.model)+'）':''}</span>`:'<span class="rp-badge rp-rule">規則式摘要</span>';
   const miss=(r.missing&&r.missing.length)?`<div class="note-box" style="margin:8px 0">本次無法取得（已標示、未編造）：${r.missing.map(esc).join('、')}</div>`:'';
@@ -7367,7 +7367,7 @@ async function qcRun(key){
   bx.innerHTML='<div class="empty" style="padding:30px">正在用即時資料重新驗證這筆訊號…</div>';
   try{
     const d=await(await fetch('/api/signal_check/'+encodeURIComponent(key),{cache:'no-store'})).json();
-    if(d.error){bx.innerHTML=`<div class="empty" style="padding:30px">${d.error}</div><div style="text-align:center;padding-bottom:16px"><button class="btn" onclick="qcClose()">關閉</button></div>`;return;}
+    if(d.error){bx.innerHTML=`<div class="empty" style="padding:30px">${esc2(d.error)}</div><div style="text-align:center;padding-bottom:16px"><button class="btn" onclick="qcClose()">關閉</button></div>`;return;}
     const V={pass:['可執行','var(--t1)','所有關鍵項目通過'],caution:['謹慎','var(--warn)','有多項需要留意，建議縮小部位或等待'],reject:['不建議','var(--alert)','有關鍵項目未通過，不建議依此下單']}[d.verdict];
     bx.innerHTML=`<div class="qc-h"><div><div style="font-size:11px;color:var(--t3)">下單前質檢</div><div style="font-weight:700;font-size:16px">${d.name||''} ${d.ticker} <span class="sig-badge ${d.direction}">${d.direction==='buy'?'做多':'做空'}</span></div></div><button class="btn" onclick="qcClose()">✕</button></div>
       <div class="qc-v" style="border-color:${V[1]};color:${V[1]}"><b>${V[0]}</b><span>${V[2]}（異常 ${d.fail}、留意 ${d.warn}）</span></div>
@@ -7914,7 +7914,7 @@ async function runBacktest(){
   document.getElementById('bt-result').innerHTML='<div class="empty">回測中（約10秒）…</div>';
   try{
     const d=await(await fetch('/api/backtest/'+ticker)).json();
-    if(d.error){document.getElementById('bt-result').innerHTML=`<div class="empty">${d.error}</div>`;return;}
+    if(d.error){document.getElementById('bt-result').innerHTML=`<div class="empty">${esc2(d.error)}</div>`;return;}
     const bd=d.by_direction||{};
     const dirRow=(label,s)=>s&&s.n_trades?`<div class="kv"><span>${label}（${s.n_trades} 筆）</span><span>勝率 ${s.win_rate}%　損益 ${(s.total_pnl_twd||0).toLocaleString()} TWD</span></div>`:'';
     const trades=(d.trades||[]);
@@ -7965,7 +7965,7 @@ async function runWalkForward(){
   el.innerHTML='<div class="empty">樣本外測試中…</div>';
   try{
     const d=await(await fetch('/api/backtest/'+_btTicker+'/walkforward')).json();
-    if(d.error){el.innerHTML=`<div class="empty">${d.error}</div>`;return;}
+    if(d.error){el.innerHTML=`<div class="empty">${esc2(d.error)}</div>`;return;}
     const windows=(d.window_results||[]).map(w=>`<div class="kv"><span>第 ${w.window} 期（訓練後測試）</span><span>${w.n_trades} 筆　勝率 ${w.win_rate}%　${(w.total_pnl||0)>=0?'+':''}${(w.total_pnl||0).toLocaleString()} TWD</span></div>`).join('');
     el.innerHTML=`
       <div class="kv"><span>整體樣本外勝率</span><span>${d.overall_win_rate}%（${d.total_trades} 筆）</span></div>
