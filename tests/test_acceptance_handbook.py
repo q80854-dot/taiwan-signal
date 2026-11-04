@@ -241,3 +241,23 @@ def test_notify_prefs_endpoint_owner_only(cl):
     assert cl.get("/api/admin/notify_prefs").status_code == 401
     _login(cl, email="tester@example.com")
     assert cl.get("/api/admin/notify_prefs").status_code == 403
+
+
+def test_explain_endpoints_require_login_but_member_readable(cl):
+    """AI 解釋／當日摘要：未登入 401；一般會員可讀（與訊號頁同可見範圍，非站主限定）。"""
+    assert cl.get("/api/summary/today").status_code == 401
+    assert cl.get("/api/explain/signal").status_code == 401
+    _login(cl, email="tester@example.com")      # 一般會員
+    assert cl.get("/api/summary/today").status_code == 200
+    # 無訊號時 explain 回 404（not_found），但不得因權限被擋成 401/403
+    assert cl.get("/api/explain/signal").status_code in (200, 404)
+
+
+def test_explain_never_fabricates_missing_market_data():
+    """當日摘要在市場資料缺失時標『暫無』，不假裝正常（對齊『不要資訊錯誤』鐵則）。"""
+    import explain
+    mo = {"index": {"twii": {"source": "error"}, "vix": {"source": "error"}},
+          "foreign": {}, "market_status": "data_error"}
+    out = explain.daily_summary_text([], mo, {})
+    assert "加權指數：暫無" in out["market"]
+    assert any("大盤指數資料異常" in c for c in out["caveats"])

@@ -1796,6 +1796,49 @@ def api_signals():
     if sector:    signals = [s for s in signals if s.get("sector") == sector]
     return jsonify({"signals": signals[:limit], "count": len(signals[:limit])})
 
+
+@app.route("/api/explain/signal")
+def api_explain_signal():
+    """AI 解釋訊號（#5）：把某檔訊號的評分依據翻成白話。code 指定代號，否則取最近一筆。
+    純規則整理、不接外部 LLM、不虛構數字；供訊號卡「為什麼？」展開使用。"""
+    from state_store import store
+    import explain as _explain
+    code = (request.args.get("code") or "").strip()
+    signals = store.get_recent_signals(limit=60)
+    sig = None
+    if code:
+        direction = (request.args.get("direction") or "").strip()
+        for s in signals:
+            if str(s.get("code")) == code and (not direction or s.get("direction") == direction):
+                sig = s; break
+    elif signals:
+        sig = signals[0]
+    if not sig:
+        return jsonify({"ok": False, "reason": "not_found"}), 404
+    return jsonify(_explain.explain_signal_text(sig))
+
+
+@app.route("/api/summary/today")
+def api_summary_today():
+    """AI 當日摘要（#5）：把今日掃描結果＋大盤環境翻成白話摘要。市場資料缺則標暫無。"""
+    from state_store import store
+    import explain as _explain
+    signals = store.get_recent_signals(limit=60)
+    try:
+        from data_fetcher import fetch_market_overview
+        mo = fetch_market_overview()
+    except Exception as e:
+        logger.warning(f"api_summary_today 市場資料取得失敗（摘要標暫無）: {e}")
+        mo = {}
+    scanned = None
+    try:
+        hist = store.get_scan_history(1)
+        if hist:
+            scanned = hist[0].get("scanned")
+    except Exception:
+        pass
+    return jsonify(_explain.daily_summary_text(signals, mo, {"scanned": scanned}))
+
 @app.route("/api/market")
 def api_market():
     try:
