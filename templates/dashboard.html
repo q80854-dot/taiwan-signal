@@ -2824,6 +2824,8 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
     <!-- 2026-10-28 v8：持倉追蹤依 Design 定稿（Holdings.dc.html） -->
     <div class="x6" id="h8"><div class="r-g" id="h8-body"><div class="o-c12 o-card"><div class="o-cb"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></div></div></div>
     <div class="note-box" style="margin-bottom:16px">每筆訊號從發出那天起持續追蹤：<b>R</b> ＝ 進場到停損的距離。+1R 代表賺了一個風險單位，−1R 就是被停損。這裡不是你的實際持股，而是「如果照訊號進場」的帳。</div>
+    <div class="sec-label" id="pos-risk-label" style="margin-top:0;display:none"><div class="bar"></div><div class="tx">組合風險（最壞情況與壓力測試）</div></div>
+    <div id="pos-risk" style="display:none;margin-bottom:12px"></div>
     <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">進行中</div></div>
     <div id="pos-open"><div class="empty">載入中…</div></div>
     <div class="sec-label"><div class="bar"></div><div class="tx">已結案</div></div>
@@ -3308,6 +3310,9 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
 
       <div class="guide-sec" id="guide-log">
         <div class="panel"><div class="panel-body">
+          <p><b>2026-11-04（組合風險儀表板）</b></p>
+          <p><b>持倉頁新增「組合風險」</b><br>・一眼看到<b>最壞同時停損</b>（所有持倉同時被停損的總損失與佔本金比）、總曝險與多/空方向、最大單一部位、產業集中度。<br>・新增<b>壓力測試</b>：大盤下跌 −3%／−5%／−10% 情境下組合的概估損益（beta=1 簡化假設，明確標示）。<br>・純唯讀分析、不下單；超過每日風險上限、單檔上限或產業過度集中時會紅字示警。</p>
+          <p><b>敏感操作防護</b><br>・掃描、回填、重跑回測、資料刷新等站主專屬寫入操作加上路由層權限驗證與審計紀錄（只記動作，不記任何敏感值）。</p>
           <p><b>2026-11-04（策略學習・勝率模型實驗室）</b></p>
           <p><b>多模型競賽與版本排行</b><br>・策略學習頁新增「勝率模型實驗室」：可一鍵「訓練＋評估」、「多模型競賽」（同一批資料、同一套時間序列 walk-forward，比較純規則／只用特徵／規則＋特徵不同正則強度），以及「版本排行」（歷次訓練依 out-of-fold AUC 排名）。<br>・<b>只做離線評估與比較，不改動即時訊號、也不會自動把任何模型上線</b>（維持「先累積資料、暫停自動進化」的方向）。</p>
           <p><b>AI 決策解釋</b><br>・新增「解釋最新訊號」：用現行模型拆解最近一筆訊號各特徵的貢獻（正＝推升勝率、負＝拉低），讓評分有依據、可檢視。</p>
@@ -7649,6 +7654,44 @@ async function fetchPositions(){
     document.getElementById('pos-open').innerHTML=(d.open||[]).length?d.open.map(p=>posCard(p,false)).join(''):'<div class="empty"><div class="empty-label">持倉</div>目前沒有進行中的訊號</div>';
     document.getElementById('pos-closed').innerHTML=(d.closed||[]).length?d.closed.map(p=>posCard(p,true)).join(''):'<div class="empty">還沒有結案的訊號</div>';
   }catch(e){document.getElementById('pos-open').innerHTML='<div class="empty">載入失敗，請稍後重新整理</div>';}
+  renderPortfolioRisk();
+}
+// 組合風險儀表板（站主；第三方 brief §4#3）：最壞同時停損、曝險、集中度、方向、情境壓力測試
+async function renderPortfolioRisk(){
+  const lab=document.getElementById('pos-risk-label'),box=document.getElementById('pos-risk');
+  if(!lab||!box)return;
+  const hide=()=>{lab.style.display='none';box.style.display='none';};
+  try{
+    const r=await fetch('/api/risk/portfolio',{cache:'no-store'});
+    if(!r.ok){hide();return;}                 // 非機主(403)/未登入(401)→ 不顯示
+    const d=await r.json();
+    if(!d||!d.ok||!d.n){hide();return;}        // 無開倉部位→ 不顯示
+    const f=(v,u)=>v===null||v===undefined?'—':v+(u||'');
+    const col=v=>(v||0)>=0?'var(--up)':'var(--down)';
+    const kpi=(lab,val,sub,c)=>`<div class="kpi" style="border:1px solid var(--line);border-radius:8px;padding:10px 12px"><div class="kpi-label">${lab}</div><div class="kpi-val" style="font-size:20px;color:${c||'var(--t1)'}">${val}</div><div class="kpi-sub">${sub||''}</div></div>`;
+    let html='<div class="panel card"><div class="panel-body">'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">'
+      +kpi('最壞同時停損', f(d.worst_case_loss_pct,'%'), 'TWD '+f(d.worst_case_loss)+'（全部同時觸停損）', col(-1))
+      +kpi('總曝險', f(d.gross_pct,'%'), f(d.n)+' 檔・多 '+f(d.long_pct,'%')+'／空 '+f(d.short_pct,'%'))
+      +kpi('淨方向曝險', f(d.net_pct,'%'), '多−空', col(d.net_pct))
+      +kpi('最大單一部位', f(d.largest&&d.largest.pct,'%'), (d.largest?safe(d.largest.code||''):'—'))
+      +'</div>';
+    // 情境壓力測試
+    html+='<div style="font-size:12px;color:var(--t2);margin:12px 0 6px">大盤下跌情境（beta=1 簡化，部位隨大盤等比變動）</div>'
+      +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>情境</th><th>組合損益</th><th>佔本金</th></tr></thead><tbody>'
+      +(d.scenarios||[]).map(s=>`<tr><td>大盤 −${s.drop_pct}%</td><td style="color:${col(s.pnl_twd)}">TWD ${f(s.pnl_twd)}</td><td style="color:${col(s.pnl_pct)}">${f(s.pnl_pct,'%')}</td></tr>`).join('')
+      +'</tbody></table></div>';
+    // 產業集中度
+    if((d.sectors||[]).length){
+      html+='<div style="font-size:12px;color:var(--t2);margin:12px 0 6px">產業集中度</div>'
+        +'<div class="bars">'+d.sectors.map(s=>`<div class="r"><span>${safe(s.sector||'其他')}</span><div class="t"><i style="width:${Math.min(100,s.pct)}%"></i></div><b>${f(s.pct,'%')}</b></div>`).join('')+'</div>';
+    }
+    if((d.flags||[]).length){
+      html+='<div style="margin-top:10px">'+d.flags.map(x=>`<div style="color:var(--down);font-size:13px">${safe(x)}</div>`).join('')+'</div>';
+    }
+    html+=`<div style="font-size:11px;color:var(--t3);margin-top:8px">${safe(d.note||'')}</div></div></div>`;
+    box.innerHTML=html; lab.style.display=''; box.style.display='';
+  }catch(e){hide();}
 }
 // ===== 停損解剖 =====
 async function fetchAutopsy(){

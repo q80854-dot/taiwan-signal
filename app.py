@@ -1449,6 +1449,22 @@ def api_positions():
                     "closed": [_position_view(r) for r in closed[:30]],
                     "account_balance": ACCOUNT_BALANCE_TWD, "max_positions": MAX_SIMULTANEOUS_POSITIONS})
 
+@app.route("/api/risk/portfolio")
+@members.owner_required
+def api_risk_portfolio():
+    """站主：組合風險儀表板（第三方 brief §4#3）——最壞同時停損、曝險、產業集中度、方向曝險、
+    大盤下跌情境壓力測試。唯讀分析、不下單。因含帳戶本金百分比,限機主。"""
+    try:
+        from state_store import store
+        import risk_manager
+        rows = store.get_recent_signals(limit=60, days_back=30)
+        open_rows = [r for r in rows if r.get("result") == "pending" and r.get("status") == "active"]
+        return jsonify(risk_manager.portfolio_risk(open_rows))
+    except Exception as e:
+        logger.error(f"api_risk_portfolio: {e}", exc_info=True)
+        return jsonify({"error": "無法計算組合風險"}), 500
+
+
 @app.route("/api/autopsy")
 def api_autopsy():
     from state_store import store

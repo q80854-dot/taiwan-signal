@@ -99,6 +99,13 @@ def test_sensitive_write_endpoints_owner_only(cl):
         assert cl.post(ep, headers=H).status_code == 403, f"{ep} 一般會員應 403"
 
 
+def test_portfolio_risk_endpoint_owner_only(cl):
+    """組合風險儀表板端點含帳戶本金百分比 → 限機主：未登入 401、一般會員 403。"""
+    assert cl.get("/api/risk/portfolio").status_code == 401
+    _login(cl, email="tester@example.com")
+    assert cl.get("/api/risk/portfolio").status_code == 403
+
+
 def test_rate_limit_blocks_excess(monkeypatch):
     """大量請求 → 超過上限即擋下（429 的底層計數器行為）。"""
     import protect
