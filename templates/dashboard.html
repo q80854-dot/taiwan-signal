@@ -2805,6 +2805,7 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
     <div class="pad">
     <!-- 2026-10-28 v8：今日訊號依 Design 定稿（Signals.dc.html）；舊區塊保留給既有 JS，CSS 隱藏 -->
     <div class="x6" id="s8"><div class="x6-bar" id="s8-bar"></div><div class="r-g" id="s8-body"><div class="o-c12 o-card"><div class="o-cb"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></div></div></div>
+    <div id="sig-fresh-banner" style="display:none;margin-bottom:14px"></div>
     <div style="display:flex;gap:8px;margin-bottom:18px;align-items:center;flex-wrap:wrap">
       <select id="sig-filter-dir" onchange="renderSignals()" style="padding:7px 10px;border:1px solid var(--line2);border-radius:0;background:var(--s1);color:var(--t2);font-size:11.5px">
         <option value="">全部方向</option><option value="buy">做多</option><option value="sell">做空</option>
@@ -3313,6 +3314,7 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
           <p><b>2026-11-04（組合風險儀表板）</b></p>
           <p><b>持倉頁新增「組合風險」</b><br>・一眼看到<b>最壞同時停損</b>（所有持倉同時被停損的總損失與佔本金比）、總曝險與多/空方向、最大單一部位、產業集中度。<br>・新增<b>壓力測試</b>：大盤下跌 −3%／−5%／−10% 情境下組合的概估損益（beta=1 簡化假設，明確標示）。<br>・純唯讀分析、不下單；超過每日風險上限、單檔上限或產業過度集中時會紅字示警。</p>
           <p><b>敏感操作防護</b><br>・掃描、回填、重跑回測、資料刷新等站主專屬寫入操作加上路由層權限驗證與審計紀錄（只記動作，不記任何敏感值）。</p>
+          <p><b>訊號資料新鮮度醒目化</b><br>・今日訊號頁頂新增「資料基準」橫幅：顯示最後掃描時間（多久前），並在大盤/VIX/風控等市場資料缺漏時<b>醒目標示「資料不完整」</b>並列出原因，資料完整時顯示綠勾。<br>・每張訊號卡底部加註「資料基準日」，提醒訊號以收盤為基準、最早下一交易日開盤成交。</p>
           <p><b>2026-11-04（策略學習・勝率模型實驗室）</b></p>
           <p><b>多模型競賽與版本排行</b><br>・策略學習頁新增「勝率模型實驗室」：可一鍵「訓練＋評估」、「多模型競賽」（同一批資料、同一套時間序列 walk-forward，比較純規則／只用特徵／規則＋特徵不同正則強度），以及「版本排行」（歷次訓練依 out-of-fold AUC 排名）。<br>・<b>只做離線評估與比較，不改動即時訊號、也不會自動把任何模型上線</b>（維持「先累積資料、暫停自動進化」的方向）。</p>
           <p><b>AI 決策解釋</b><br>・新增「解釋最新訊號」：用現行模型拆解最近一筆訊號各特徵的貢獻（正＝推升勝率、負＝拉低），讓評分有依據、可檢視。</p>
@@ -8450,6 +8452,33 @@ function renderLatestSignals(sigs){
     </article>`;}).join('');
 }
 
+// 資料新鮮度／完整度橫幅（第三方 brief §4#2）：醒目標示訊號的資料基準時間與市場資料是否完整/失敗
+function renderSigFreshness(){
+  const el=document.getElementById('sig-fresh-banner');if(!el)return;
+  const st=_state||{},sys=st.system_status||{},issues=sys.data_issues||[];
+  const scan=st.last_scan_time;
+  let when='—';
+  if(scan){const d=new Date(scan);if(!isNaN(d)){
+    const mins=Math.floor((Date.now()-d.getTime())/60000);
+    const ago=mins<1?'剛剛':mins<60?mins+' 分鐘前':mins<1440?Math.floor(mins/60)+' 小時前':Math.floor(mins/1440)+' 天前';
+    when=d.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false})+'（'+ago+'）';
+  }}
+  // 資料不完整：大盤/VIX/風控資料缺漏（data_issues），或大盤資料異常使環境分數為空
+  const incomplete=issues.length>0||sys.env_score===null||sys.env_score===undefined;
+  const c=incomplete?'var(--warn)':'var(--up)';
+  const bg=incomplete?'rgba(234,179,8,.10)':'rgba(34,197,94,.08)';
+  let html='<div style="border:1px solid '+c+';background:'+bg+';border-radius:10px;padding:10px 14px;font-size:12.5px;color:var(--t1)">';
+  html+='<b>資料基準</b>：最後掃描 '+safe(when);
+  if(incomplete){
+    html+='　<span style="color:var(--down)">⚠️ 市場資料不完整</span>';
+    if(issues.length)html+='<div style="margin-top:6px;color:var(--down)">'+issues.map(x=>'• '+safe(x)).join('<br>')+'</div>';
+    else html+='<div style="margin-top:6px;color:var(--down)">• 大盤環境資料異常，環境評分暫不可用</div>';
+  }else{
+    html+='　<span style="color:var(--up)">✓ 市場資料完整</span>';
+  }
+  html+='<div style="font-size:11px;color:var(--t3);margin-top:6px">訊號以收盤為基準、收盤後產生，最早下一交易日開盤成交；此處標示資料新鮮度與完整度，資料缺漏時請降低對訊號的信賴。</div></div>';
+  el.innerHTML=html;el.style.display='';
+}
 function renderSignals(){
   const container=document.getElementById('signals-container');
   const fd=document.getElementById('sig-filter-dir').value;
@@ -8458,6 +8487,9 @@ function renderSignals(){
   if(fd)sigs=sigs.filter(s=>s.direction===fd);
   if(fg)sigs=sigs.filter(s=>s.grade===fg);
   document.getElementById('sig-filter-info').textContent=`顯示 ${sigs.length} / ${_signals.length} 個`;
+  renderSigFreshness();
+  const _sd=(_state&&_state.last_scan_time)?new Date(_state.last_scan_time):null;
+  const scanDateStr=(_sd&&!isNaN(_sd))?_sd.toLocaleDateString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric'}):'—';
   if(!sigs.length){container.innerHTML='<div class="empty"><div class="empty-label">訊號</div>無符合條件訊號</div>';return;}
   container.innerHTML=sigs.map(s=>{
     const isBuy=s.direction==='buy';
@@ -8494,7 +8526,7 @@ function renderSignals(){
       <div style="font-size:11px;margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap">${qnBadge(s.quality_check,'獲利品質')}${qnBadge(s.news_check,'重大訊息')}</div>
       ${cMet?`<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:10px;color:var(--t3);letter-spacing:.3px">條件詳情</summary><div style="margin-top:8px;line-height:2">${cMet}${cFail?'<br>'+cFail:''}</div></details>`:''}
       <div class="note-box" style="border-left-color:var(--line2);color:var(--t2)">${safe(s.reason_brief,'—')}</div>
-      <div style="font-size:10.5px;color:var(--t3);margin-top:10px;display:flex;justify-content:space-between"><span>${safe(s.action)}</span><span>有效 ${safe(s.expire_days,3)} 個交易日</span></div>
+      <div style="font-size:10.5px;color:var(--t3);margin-top:10px;display:flex;justify-content:space-between"><span>${safe(s.action)}</span><span>資料基準 ${scanDateStr} · 有效 ${safe(s.expire_days,3)} 個交易日</span></div>
     </div>`;
   }).join('');
 }
