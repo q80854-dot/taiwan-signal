@@ -21,6 +21,10 @@ ACCOUNT_BALANCE_TWD        = float(os.getenv("ACCOUNT_BALANCE_TWD", "500000"))
 MAX_RISK_PER_TRADE         = 0.02
 MAX_DAILY_RISK             = 0.06
 MAX_SIMULTANEOUS_POSITIONS = 5
+# ★ 2026-11-04（F-09）：組合層級「最壞同時停損」硬上限。所有進行中部位若同時觸停損的總損失
+# 超過帳戶這個比例，視為組合風險過高、暫停新增訊號（只擋新單，不動既有部位）。警告門檻維持
+# 10%（見 risk_manager.check_margin_usage），硬上限設在其上留緩衝；可用環境變數覆寫。
+MAX_PORTFOLIO_RISK         = float(os.getenv("MAX_PORTFOLIO_RISK", "0.15"))
 
 COMMISSION_RATE  = 0.001425
 TAX_RATE_SELL    = 0.003

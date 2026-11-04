@@ -9,7 +9,7 @@ import threading
 import pytz
 from datetime import datetime
 from typing import Dict, List
-from config import CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_DAILY_RISK
+from config import CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_DAILY_RISK, MAX_PORTFOLIO_RISK
 
 logger = logging.getLogger(__name__)
 
@@ -222,15 +222,23 @@ def plan_rescale(open_rows: List[Dict], balance: float = None, max_positions: in
                         "position_value": round(lim * px, 0)})
     return out
 
+# ★ 修正：2026-11-04（F-09）——組合總風險原本只有 10% 的「警告」、never 擋單。補上「硬上限」
+# （config.MAX_PORTFOLIO_RISK，預設 15%）：所有進行中部位的「最壞同時停損」總和超過此比例時，
+# 回 exceeded=True，由 run_all_checks 當 blocker 擋掉新訊號（只擋新單、不動既有部位）。
 def check_margin_usage(active_signals: List[Dict]) -> Dict:
     total_risk_pct=sum(s.get("risk_pct",0) for s in active_signals)
     total_risk_twd=sum(s.get("risk_twd",0) for s in active_signals)
     total_value=sum(s.get("position_value",0) for s in active_signals)
     portfolio_pct=round(total_value/ACCOUNT_BALANCE_TWD*100,1) if ACCOUNT_BALANCE_TWD else 0
+    hard=MAX_PORTFOLIO_RISK*100
+    base={"total_risk_pct":round(total_risk_pct,1),"total_risk_twd":round(total_risk_twd,0),
+          "portfolio_pct":portfolio_pct,"hard_limit_pct":round(hard,1)}
+    if total_risk_pct>hard:
+        return {**base,"warning":True,"exceeded":True,
+                "message":f"🔴 組合總風險 {total_risk_pct:.1f}% 超過硬上限 {hard:.0f}%，暫停新增訊號（不影響既有部位）"}
     if total_risk_pct>10:
-        return {"warning":True,"total_risk_pct":round(total_risk_pct,1),"total_risk_twd":round(total_risk_twd,0),
-                "portfolio_pct":portfolio_pct,"message":f"⚠️ 總風險 {total_risk_pct:.1f}%，建議控制在 6% 以下"}
-    return {"warning":False,"total_risk_pct":round(total_risk_pct,1),"total_risk_twd":round(total_risk_twd,0),"portfolio_pct":portfolio_pct}
+        return {**base,"warning":True,"exceeded":False,"message":f"⚠️ 總風險 {total_risk_pct:.1f}%，建議控制在 6% 以下"}
+    return {**base,"warning":False,"exceeded":False}
 
 def check_price_spike(ticker: str, tf_data: Dict) -> Dict:
     closes=tf_data.get("daily",{}).get("closes",[])
@@ -259,6 +267,8 @@ def run_all_checks(ticker, stock_info, tf_data, market_overview, active_signals=
     if checks["daily_loss"].get("unavailable"):   blockers.append(checks["daily_loss"]["message"])
     if checks["max_pos"].get("exceeded"):         blockers.append(checks["max_pos"]["message"])
     if checks["spike"].get("spike"):              blockers.append(checks["spike"]["message"])
+    # ★ F-09：組合總風險超過硬上限＝擋新單（只擋新增，不影響既有部位）
+    if checks["margin"].get("exceeded"):          blockers.append(checks["margin"]["message"])
     if checks["market"].get("level")=="high":     warnings.append(checks["market"]["message"]); score_adj-=10
     if checks["foreign"].get("level")=="warning": warnings.append(checks["foreign"]["message"]); score_adj-=8
     if checks["foreign"].get("level")=="extreme": warnings.append(checks["foreign"]["message"]); score_adj-=12
@@ -398,11 +408,13 @@ def portfolio_risk(open_rows: List[Dict], balance: float = None) -> Dict:
     for d in (3, 5, 10):                                      # 大盤下跌情境（多單虧、空單賺；beta=1 簡化）
         pnl = -(long_v * d / 100) + (short_v * d / 100)
         scenarios.append({"drop_pct": d, "pnl_twd": round(pnl, 0), "pnl_pct": pct(pnl)})
-    hard_daily = bal * MAX_DAILY_RISK
+    hard_port = bal * MAX_PORTFOLIO_RISK
     single_cap = bal / max(1, MAX_SIMULTANEOUS_POSITIONS)
     flags = []
-    if worst > hard_daily:
-        flags.append(f"🔴 最壞同時停損 {pct(worst)}%，超過每日風險上限 {round(MAX_DAILY_RISK*100,1)}%")
+    if worst > hard_port:
+        flags.append(f"🔴 最壞同時停損 {pct(worst)}% 超過組合硬上限 {round(MAX_PORTFOLIO_RISK*100)}%，已暫停新增訊號")
+    elif worst > bal * MAX_DAILY_RISK:
+        flags.append(f"⚠️ 最壞同時停損 {pct(worst)}%，高於每日風險上限 {round(MAX_DAILY_RISK*100,1)}%（接近組合硬上限 {round(MAX_PORTFOLIO_RISK*100)}%）")
     if largest["value"] > single_cap:
         flags.append(f"⚠️ 單一部位 {largest.get('code')} 佔 {pct(largest['value'])}%，超過單檔上限 {pct(single_cap)}%")
     if n > MAX_SIMULTANEOUS_POSITIONS:
