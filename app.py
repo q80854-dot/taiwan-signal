@@ -77,6 +77,7 @@ app.json = _SafeJSONProvider(app)
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.events import EVENT_JOB_ERROR
     import pytz
     TZ_TAIPEI  = pytz.timezone("Asia/Taipei")
     scheduler  = BackgroundScheduler(timezone=TZ_TAIPEI)
@@ -630,6 +631,12 @@ def job_pre_scan_restart():
             logger.warning("job_pre_scan_restart: 目前有掃描正在進行中，跳過本次重啟")
             return
         logger.info("job_pre_scan_restart: 主動重啟 worker 以重置記憶體基準（16:30 掃描前）")
+        try:    # 標記為「預定重啟」，讓重啟後的 job_boot_restart_notice 不要誤報成異常重啟
+            import time as _t
+            from state_store import store as _st
+            _st.set_meta("planned_restart_ts", _t.time())
+        except Exception as _e:
+            logger.warning(f"job_pre_scan_restart: 寫入預定重啟旗標失敗（不影響重啟）：{_e}")
         os.kill(os.getpid(), signal.SIGTERM)
     except Exception as e:
         logger.error(f"job_pre_scan_restart: {e}", exc_info=True)
@@ -649,6 +656,74 @@ def _notify_owner(message: str, level: str = "info"):
         telegram_bot.send_alert(message, level)
     except Exception as e:
         logger.warning(f"_notify_owner: {e}")
+
+
+def _alert_once(key: str, message: str, level: str = "error", ttl_sec: int = 1800) -> bool:
+    """★ 2026-11-05：去重告警。ttl_sec 秒內同一 key 只發一次 Telegram（跨實例共用 DB 去重），
+    避免反覆失敗的狀況把站主的 Telegram 洗版。send_alert 本身無節流，所以凡是「可能短時間
+    內重複觸發」的自動告警都該走這裡。去重判斷失敗時寧可發送（不漏告警）。回傳是否實際發送。"""
+    try:
+        from state_store import store
+        if not store.claim_notice("alert:" + key, ttl_sec):
+            logger.info(f"_alert_once: {key} 於 {ttl_sec}s 內已通知過，略過重複")
+            return False
+    except Exception as e:
+        logger.warning(f"_alert_once 去重失敗（仍照常發送）：{e}")
+    _notify_owner(message, level)
+    return True
+
+
+def _on_job_error(event):
+    """★ 2026-11-05（主動告警更完善）：排程器全域監聽器。任何排程工作丟出未捕捉例外時，
+    主動 Telegram 通知站主——補上「工作各自 try/except 才會通知、沒包到的例外只進 log」的缺口。
+    去重：同一工作＋同一錯誤型別 30 分鐘最多一則（盤中檢查等每分鐘工作若持續失敗也不會洗版）。"""
+    try:
+        jid = getattr(event, "job_id", "?")
+        exc = getattr(event, "exception", None)
+        if exc is None:
+            return
+        etype = type(exc).__name__
+        msg = (f"排程工作「{jid}」執行失敗\n"
+               f"{etype}：{str(exc)[:200]}\n"
+               f"（30 分鐘內同類錯誤只通知一次；完整堆疊見 Render log）")
+        _alert_once(f"joberr:{jid}:{etype}", msg, "error", ttl_sec=1800)
+    except Exception as e:
+        logger.warning(f"_on_job_error: {e}")
+
+
+def _restart_notice_due(now, planned_ts, now_ts) -> bool:
+    """純函式（可測）：此次啟動是否該通知站主「交易時段非預定重啟」。
+    條件：平日、落在盤前掃描（08:15–08:50）或盤後掃描（16:15–16:45）時段、且非剛剛的預定重啟
+    （job_pre_scan_restart 在 16:15 SIGTERM 前會寫 planned_restart_ts）。這兩個時段重啟最可能
+    造成訊號在掃描中途遺失（見 job_pre_scan_restart 說明的 2026-09-18 OOM 事件）。"""
+    if now.weekday() >= 5:
+        return False
+    if planned_ts and (now_ts - float(planned_ts) < 300):
+        return False                                     # 剛剛是 16:15 的預定重啟，不通知
+    hm = (now.hour, now.minute)
+    return ((8, 15) <= hm <= (8, 50)) or ((16, 15) <= hm <= (16, 45))
+
+
+def job_boot_restart_notice():
+    """★ 2026-11-05：每次啟動約 30 秒後檢查——若是交易掃描時段的非預定重啟（例如 OOM），
+    立即 Telegram 通知站主，而不是等 17:00 的 watchdog 事後才發現。去重：10 分鐘一則。"""
+    try:
+        from state_store import store
+        import time as _t
+        planned = store.get_meta("planned_restart_ts", 0) or 0
+        now = datetime.now(TZ_TAIPEI)
+        if planned and (_t.time() - float(planned) < 300):
+            store.set_meta("planned_restart_ts", 0)       # 預定重啟：清旗標、不通知
+            logger.info("job_boot_restart_notice: 預定重啟，略過通知")
+            return
+        if _restart_notice_due(now, planned, _t.time()):
+            _alert_once("boot_unexpected",
+                        (f"⚠️ 服務在掃描時段（{now.strftime('%H:%M')}）重新啟動了（非預定）。\n"
+                         f"若當下正在掃描，部分訊號可能未完成推播；請留意稍後的盤後報告是否完整，"
+                         f"必要時至網站手動觸發「立即掃描」。"),
+                        "warning", ttl_sec=600)
+    except Exception as e:
+        logger.warning(f"job_boot_restart_notice: {e}")
 
 
 def job_health_watch():
@@ -724,7 +799,11 @@ def setup_scheduler():
     scheduler.add_job(job_learning_backup, CronTrigger(day=1, hour=18, minute=20, timezone=TZ_TAIPEI), id="learning_backup", replace_existing=True, misfire_grace_time=6 * 3600, coalesce=True, max_instances=1)
     scheduler.add_job(lambda: job_learning_backup(send=False), "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=160), id="learning_backup_boot", replace_existing=True)
     # Phase 1 維運：定時健檢＋異常主動告警（交易日 09:17／13:17／17:17 台北，分別對應開盤後、盤中、收盤後）
-    scheduler.add_job(job_health_watch, CronTrigger(hour="9,13,17", minute=17, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="health_watch", replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=1800)
+    # ★ 2026-11-05：健檢頻率由 3 次/日改為交易時段每 2 小時（09–21:17）。有 6 小時告警節流，
+    # 非崩潰型異常（資料來源持續掛、DB 異常等）能更快被看見而不會因此洗版。
+    scheduler.add_job(job_health_watch, CronTrigger(hour="9,11,13,15,17,19,21", minute=17, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="health_watch", replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=1800)
+    # ★ 2026-11-05：啟動後檢查是否為交易時段的非預定重啟（OOM），是則主動通知站主。
+    scheduler.add_job(job_boot_restart_notice, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=30), id="boot_restart_notice", replace_existing=True)
     scheduler.add_job(job_econ_warm, "interval", minutes=30, id="econ_warm", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_econ_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="econ_warm_boot", replace_existing=True)
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
@@ -760,6 +839,12 @@ def setup_scheduler():
     scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     scheduler.add_job(job_collect_inst, CronTrigger(hour="17,19", minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="collect_inst", replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     scheduler.add_job(lambda: logger.debug("❤️ 心跳"), "interval", hours=1, id="heartbeat")
+    # ★ 2026-11-05：全域排程錯誤告警——任何排程工作拋出未捕捉例外都主動 Telegram 通知站主
+    # （_on_job_error 內建去重，30 分鐘同類只一則）。補上「只有自己 try/except 的工作才會通知」的缺口。
+    try:
+        scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
+    except Exception as e:
+        logger.warning(f"排程錯誤告警 listener 註冊失敗：{e}")
     scheduler.start()
     logger.info("✅ 排程器已啟動")
 
