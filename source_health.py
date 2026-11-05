@@ -37,6 +37,20 @@ _FRIENDLY = {
     "api.fugle.tw": "富果 Fugle",
     "api.finmindtrade.com": "FinMind 財報",
     "www.fubon.com": "富邦 公開報價",
+    "generativelanguage.googleapis.com": "Google Gemini（AI 報告，可選）",
+    "api.groq.com": "Groq（AI 報告，可選）",
+    "api.anthropic.com": "Anthropic（AI 報告，可選）",
+}
+
+# ★ 2026-11-05：非關鍵（可選）外部來源。這些只用於「AI 文字版報告」的加值敘述，
+# reports.py 連不上時會自動退回規則式報告（見 llm.complete() 回 None 的降級路徑），
+# 訊號、風控、資料新鮮度完全不依賴它們。因此它們連線異常時，健檢只標「留意(warn)」、
+# 不升級為「異常(fail)」去發紅色 Telegram 告警——避免可選功能的連線問題變成噪音。
+# 關鍵資料來源（證交所／MOPS／TPEX／法人籌碼等）連線異常仍照舊標 fail。
+_OPTIONAL_HOSTS = {
+    "generativelanguage.googleapis.com",
+    "api.groq.com",
+    "api.anthropic.com",
 }
 
 
@@ -152,8 +166,18 @@ def summary():
     if total == 0:
         return "info", "本次啟動後尚未對外抓取任何來源"
     if c["down"]:
-        downs = [r["name"] for r in snap["sources"] if r["state"] == "down"][:4]
-        return "fail", f"{c['down']} 個來源連線異常：{'、'.join(downs)}（共監測 {total} 個來源）"
+        down_src = [r for r in snap["sources"] if r["state"] == "down"]
+        crit = [r for r in down_src if r["host"] not in _OPTIONAL_HOSTS]
+        opt = [r for r in down_src if r["host"] in _OPTIONAL_HOSTS]
+        if crit:
+            names = [r["name"] for r in crit][:4]
+            extra = (f"；另有 {len(opt)} 個非關鍵 AI 報告來源連線異常（報告自動退回規則式，不影響訊號）"
+                     if opt else "")
+            return "fail", f"{len(crit)} 個來源連線異常：{'、'.join(names)}（共監測 {total} 個來源）{extra}"
+        # 只有「可選的 AI 報告來源」連不上 → 不發紅燈，標留意即可（報告自動退回規則式）
+        names = [r["name"] for r in opt][:4]
+        return "warn", (f"{len(opt)} 個非關鍵 AI 報告來源連線異常：{'、'.join(names)}"
+                        f"（報告已自動退回規則式，不影響訊號與風控；共監測 {total} 個來源）")
     if c.get("limited"):
         lims = [r["name"] for r in snap["sources"] if r["state"] == "limited"][:4]
         return "warn", f"{c['limited']} 個來源額度／頻率達上限：{'、'.join(lims)}（連線正常，已改用快取降級；共監測 {total} 個來源）"
