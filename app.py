@@ -485,6 +485,18 @@ def job_econ_warm():
         logger.warning(f"job_econ_warm: {e}")
 
 
+def job_market_overview_warm():
+    """★ 2026-11-06（載入加速）：背景預熱大盤總覽快取。
+    fetch_market_overview() 快取僅 300 秒，冷掉時 /api/state（每頁每 30 秒輪詢）會同步打 4 個外部
+    API（指數／外資／regime／融資）數秒，造成每約 5 分鐘一次的頁面卡頓。這裡每 4 分鐘背景刷新
+    （略短於 TTL），讓 /api/state 永遠讀到熱快取、不再同步冷抓。純預熱、失敗吞例外。"""
+    try:
+        from data_fetcher import fetch_market_overview
+        fetch_market_overview()
+    except Exception as e:
+        logger.warning(f"job_market_overview_warm: {e}")
+
+
 def job_world_warm():
     """預熱首頁全球市場看板（指數期貨／全球指數／商品／外匯／債券），讓訪客開首頁直接命中快取。"""
     try:
@@ -794,6 +806,9 @@ def setup_scheduler():
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
     # 全球市場看板：全球/美股在台灣晚上到清晨才交易，所以不分平日假日、全天每 10 分鐘預熱一次；開機後 75 秒先暖一次。
     scheduler.add_job(job_world_warm, "interval", minutes=10, id="world_warm", replace_existing=True, max_instances=1, coalesce=True)
+    # ★ 2026-11-06（載入加速）：大盤總覽每 4 分鐘背景預熱（快取 TTL 300s），避免 /api/state 冷抓卡頓。
+    scheduler.add_job(job_market_overview_warm, "interval", minutes=4, id="market_overview_warm", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(job_market_overview_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=50), id="market_overview_warm_boot", replace_existing=True)
     scheduler.add_job(job_world_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=75), id="world_warm_boot", replace_existing=True)
     # 財經日曆：每 30 分鐘預熱一次（FMP 免費版有每日次數上限，快取 1 小時、預熱頻率保守）＋開機後 90 秒暖一次。
     scheduler.add_job(job_learning_backup, CronTrigger(day=1, hour=18, minute=20, timezone=TZ_TAIPEI), id="learning_backup", replace_existing=True, misfire_grace_time=6 * 3600, coalesce=True, max_instances=1)
