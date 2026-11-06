@@ -141,6 +141,13 @@ def ensure_table():
             store._migrate_add_column("shadow_signals", "model_prob", "REAL")
         except Exception as e:
             logger.debug(f"shadow migrate model_prob: {e}")
+        # 2026-11-06（P0 sent→delivered 對帳）：sent=1 只代表「候選被排入推播」，不等於 Telegram 真的
+        # 收下。新增 delivered（provider 至少一個目標回 200）與 delivered_at，讓「送出 vs 送達」分開可查。
+        for col, typ in (("delivered", "INTEGER"), ("delivered_at", "TEXT")):
+            try:
+                store._migrate_add_column("shadow_signals", col, typ)
+            except Exception as e:
+                logger.debug(f"shadow migrate {col}: {e}")
         _ready = True
 
 
@@ -724,6 +731,29 @@ def mark_sent(tickers):
                              "(SELECT MAX(bar_date) FROM shadow_signals WHERE ticker=? AND kind='candidate')", (t, t))
     except Exception as e:
         logger.warning(f"shadow.mark_sent 失敗: {e}")
+
+
+def mark_delivered(deliveries):
+    """★ 2026-11-06（sent→delivered 對帳）：記錄每檔的 Telegram 實際送達結果。
+    deliveries：{ticker: bool}，True＝provider 至少一個目標回 200。只有 True 才設 delivered=1；
+    False 保持 delivered=0，使「sent=1 且 delivered=0」＝『排了推播但 TG 沒收下』可被查出。
+    對帳用、不影響訊號產生，吞例外不拖垮推播流程。"""
+    try:
+        if not deliveries:
+            return
+        ensure_table()
+        from state_store import store
+        now = datetime.now(timezone.utc).isoformat()
+        with store._conn() as conn:
+            for t, ok in deliveries.items():
+                if not ok:
+                    continue
+                conn.execute(
+                    "UPDATE shadow_signals SET delivered=1, delivered_at=? WHERE ticker=? AND kind='candidate' "
+                    "AND bar_date=(SELECT MAX(bar_date) FROM shadow_signals WHERE ticker=? AND kind='candidate')",
+                    (now, t, t))
+    except Exception as e:
+        logger.warning(f"shadow.mark_delivered 失敗: {e}")
 
 
 # ───────────── 結算 ─────────────

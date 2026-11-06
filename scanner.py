@@ -1309,12 +1309,20 @@ class TWScanEngine:
             names = "、".join(f"{x.get('name') or x.get('code')}" for x in signals[:8])
             send_alert(f"🌅 盤前掃描完成（掃 {stats.get('scanned')} 檔，耗時 {stats.get('duration_min')} 分）\n"
                        + (f"新訊號 {len(signals)} 檔：{names}" if signals else "沒有新的符合條件訊號；正式盤後掃描 16:30 仍會照常執行。"), "info")
+            deliveries = {}
             for sig in self._apply_notify_prefs(signals):
                 try:
-                    push_signal(sig)
+                    res = push_signal(sig) or {}
+                    deliveries[sig.get("ticker")] = bool(res.get("any_ok"))
                 except Exception as e:
+                    deliveries[sig.get("ticker")] = False
                     logger.error(f"_push_premarket: 訊號推播失敗 {sig.get('ticker')}: {e}")
                 time.sleep(0.5)
+            try:    # sent→delivered 對帳：只有 Telegram 真收下才標 delivered
+                import shadow
+                shadow.mark_delivered(deliveries)
+            except Exception as e:
+                logger.warning(f"_push_premarket: mark_delivered 失敗: {e}")
         except Exception as e:
             logger.error(f"_push_premarket: {e}", exc_info=True)
 
@@ -1376,13 +1384,26 @@ class TWScanEngine:
 
         time.sleep(1)
         push_failures = []
+        deliveries = {}
         for sig in self._apply_notify_prefs(signals):
+            label = sig.get("name") or sig.get("code") or sig.get("ticker") or "?"
             try:
-                push_signal(sig)
+                res = push_signal(sig) or {}
+                ok = bool(res.get("any_ok"))
+                deliveries[sig.get("ticker")] = ok
+                if not ok:      # ★ 2026-11-06：所有目標都沒送出（非例外，但 Telegram 沒收下）也算失敗
+                    push_failures.append(label)
+                    logger.error(f"_push_signals: {label} 推播未送達任何目標（any_ok=False）")
             except Exception as e:
-                push_failures.append(sig.get("name") or sig.get("code") or sig.get("ticker") or "?")
+                deliveries[sig.get("ticker")] = False
+                push_failures.append(label)
                 logger.error(f"_push_signals: 訊號推播失敗 {sig.get('ticker')}: {e}", exc_info=True)
             time.sleep(0.5)
+        try:    # sent→delivered 對帳：只有 Telegram 真收下才標 delivered
+            import shadow
+            shadow.mark_delivered(deliveries)
+        except Exception as e:
+            logger.warning(f"_push_signals: mark_delivered 失敗: {e}")
 
         if push_failures:
             try:

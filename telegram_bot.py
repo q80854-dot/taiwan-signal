@@ -646,29 +646,35 @@ def _generate_tomorrow_plan(signals: List[Dict], market_overview: Dict) -> Dict:
 # ══════════════════════════════════════════════
 # 推播個別訊號
 # ══════════════════════════════════════════════
-def push_signal(sig: Dict):
+def push_signal(sig: Dict) -> Dict:
+    """推播單檔訊號。★ 2026-11-06：回傳送達對帳結果（供 scanner 寫入 shadow.delivered、
+    並在『全部目標都沒送出』時也能被當成推播失敗警示）。any_ok=True 代表至少一個 Telegram
+    目標（免費/付費頻道或站主）回 200。"""
     paid_msg = format_signal_paid(sig)
 
     if TELEGRAM_FREE_CHANNEL:
-        send_message(TELEGRAM_FREE_CHANNEL, paid_msg)
+        free_ok = send_message(TELEGRAM_FREE_CHANNEL, paid_msg)
     else:
-        broadcast(paid_msg, tier="free")
+        free_ok = broadcast(paid_msg, tier="free") > 0
     time.sleep(0.3)
     if TELEGRAM_PAID_CHANNEL:
-        send_message(TELEGRAM_PAID_CHANNEL, paid_msg)
+        paid_ok = send_message(TELEGRAM_PAID_CHANNEL, paid_msg)
     else:
-        broadcast(paid_msg, tier="paid")
+        paid_ok = broadcast(paid_msg, tier="paid") > 0
 
     subs = _load_subscribers()
     admin_ids = subs.get("admin", [])
     admin_ok  = sum(1 for admin_id in admin_ids if send_message(admin_id, paid_msg))
+    any_ok = bool(free_ok or paid_ok or admin_ok > 0)
     # ★ 修正：2026-09-03——把 admin 直送的成功/失敗數量記進 log，這樣機主
     # 之後只要看 Render log 就能確認每一筆訊號到底有沒有真的送到自己手機，
     # 不用再靠猜的。
     logger.info(
         f"訊號推播：{sig.get('name','')} {sig.get('direction','')} score={sig['score']} "
-        f"admin {admin_ok}/{len(admin_ids)}"
+        f"admin {admin_ok}/{len(admin_ids)} any_ok={any_ok}"
     )
+    return {"any_ok": any_ok, "admin_ok": admin_ok, "admin_total": len(admin_ids),
+            "free_ok": bool(free_ok), "paid_ok": bool(paid_ok)}
 
 # ══════════════════════════════════════════════
 # 盤中持倉現況總覽（12:00 台北時間，見 scanner.check_intraday_price_alerts）
