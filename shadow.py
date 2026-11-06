@@ -27,6 +27,29 @@ REJ_TOTAL = 220            # 每次掃描被否決樣本總上限
 _lock = threading.Lock()
 _ready = False
 
+# ★ 2026-11-06（P0 資料可信度）：MAE/MFE/R 爆量防護。
+# 根因：R 以「進場價−停損」(risk) 為分母。當 entry≈stop（浮點微差，risk≈1e-7，多半出現在
+# control 抽樣或退化資料）時，(Δ價/risk) 會炸到 ~1e9，污染 mae_r/mfe_r/r_multiple，進而污染
+# learning 標籤與績效統計（CSV 快照裡的 ±8,999,999,000 即源於此，非 -9e9 初始哨兵）。
+#   · _MIN_RISK_FRAC：risk 至少要是進場價的這個比例，否則視為退化、不產 R（真實波段停損約 2~8%，
+#     0.05% 只會擋到退化列，不影響正常訊號）。
+#   · _ABSURD_R：|R| 超過此界即非物理值（真實波段 R 幾乎都落在 [-3, +10]），用於清洗既有髒列。
+_MIN_RISK_FRAC = 0.0005
+_ABSURD_R = 200.0
+_R_COLS = ("r_multiple", "mae_r", "mfe_r", "r1", "r5", "r10", "r20")
+
+
+def _risk_ok(entry, stop) -> bool:
+    """風險分母是否可用：entry、stop 皆為有效正數，且 |entry−stop| ≥ entry×_MIN_RISK_FRAC。
+    不可用代表 entry≈stop（退化資料），以此為分母算出的 R 無意義。"""
+    try:
+        e, s = float(entry), float(stop)
+    except (TypeError, ValueError):
+        return False
+    if not (e > 0) or not (s > 0):
+        return False
+    return abs(e - s) >= e * _MIN_RISK_FRAC
+
 # 否決原因代碼 → 中文（learning.py / 網頁共用）
 REASONS = {
     "short_off": "放空功能關閉",
@@ -711,7 +734,9 @@ def _simulate(row, bars, expire_days):
     planned_entry, stop = row["entry"], row["stop"]
     buy = row["direction"] == "buy"
     risk = abs(planned_entry - stop)          # 1R 以「訊號當下規劃的風險」為單位（進場價—停損），跨筆可比
-    if not planned_entry or not risk:
+    # ★ 2026-11-06：擋退化風險（entry≈stop）。原本只擋 risk==0，沒擋「極小但非零」，
+    # 會讓 (Δ價/risk) 爆量污染 mae/mfe/R。退化列不產 R（回 None，由 resolve_pending 標 bad_risk）。
+    if not _risk_ok(planned_entry, stop):
         return None
     sgn = 1 if buy else -1
     after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
@@ -816,6 +841,44 @@ def _same(a, b):
     return (a is None and b is None) or (a is not None and b is not None and abs(float(a) - float(b)) < 1e-6)
 
 
+_CLEANUP_META = "shadow_absurd_cleanup_v1"
+_cleanup_done = False
+
+
+def cleanup_absurd_metrics(force: bool = False) -> dict:
+    """★ 2026-11-06（P0 資料可信度）：一次性清洗既有爆量髒列。
+    把任一 R 欄位 |值| > _ABSURD_R（非物理值）的列：R 欄位全部清 NULL、狀態改
+    unresolved/result=bad_risk，使其離開勝率與平均 R 統計、也不再被 learning 當訓練標籤。
+    以 state_store meta 旗標保證整個資料庫只跑一次（force=True 可手動重跑）。回傳處理筆數。"""
+    global _cleanup_done
+    if _cleanup_done and not force:
+        return {"ran": False, "reason": "done_this_process"}
+    try:
+        from state_store import store
+        if not force and store.get_meta(_CLEANUP_META):
+            _cleanup_done = True
+            return {"ran": False, "reason": "done_before"}
+        ensure_table()
+        cond = " OR ".join(f"ABS({c}) > ?" for c in _R_COLS)
+        params = tuple([_ABSURD_R] * len(_R_COLS))
+        null_set = ", ".join(f"{c}=NULL" for c in _R_COLS)
+        with store._conn() as conn:
+            n = conn.execute(f"SELECT COUNT(*) AS n FROM shadow_signals WHERE {cond}", params).fetchone()
+            n = (dict(n).get("n") if n else 0) or 0
+            if n:
+                conn.execute(
+                    f"UPDATE shadow_signals SET {null_set}, status='unresolved', result='bad_risk' "
+                    f"WHERE {cond}", params)
+        store.set_meta(_CLEANUP_META, {"at": datetime.now(timezone.utc).isoformat(), "cleaned": int(n)})
+        _cleanup_done = True
+        if n:
+            logger.info(f"shadow.cleanup_absurd_metrics：清洗 {n} 筆爆量髒列（|R|>{_ABSURD_R:.0f}），已標 bad_risk")
+        return {"ran": True, "cleaned": int(n)}
+    except Exception as e:
+        logger.warning(f"shadow.cleanup_absurd_metrics 失敗（不影響結算）: {e}")
+        return {"ran": False, "error": str(e)}
+
+
 def resolve_pending(max_rows=8000):
     """掃描完成後呼叫：用資料庫已更新的日K快取結算（不對外連線）。
     只寫入『有變動』的列，並把 r5/r10 補齊給近 30 天的列。"""
@@ -826,6 +889,7 @@ def resolve_pending(max_rows=8000):
         ensure_table()
         from state_store import store
         from config import CIRCUIT_BREAKER, COMMISSION_RATE, TAX_RATE_SELL, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL
+        cleanup_absurd_metrics()      # ★ 2026-11-06：首次結算時清洗既有爆量髒列（meta 旗標保證只跑一次）
         expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
         cutoff = (datetime.now(TPE) - timedelta(days=30)).strftime("%Y-%m-%d")
         # 退市／長期無資料的訊號若一直留在 pending，壞結果（下市、停牌）會從統計中消失（存活者偏誤）。
@@ -834,6 +898,7 @@ def resolve_pending(max_rows=8000):
         NODATA_GRACE = 7
         _today = datetime.now(TPE).replace(tzinfo=None)
         unresolved = []
+        bad_risk = []       # ★ 2026-11-06：entry≈stop 退化列，R 無意義，標 unresolved/bad_risk 離開統計
         with store._conn() as conn:
             rows = [dict(x) for x in conn.execute(
                 "SELECT * FROM shadow_signals WHERE status='pending' OR (r10 IS NULL AND bar_date>=?) "
@@ -857,6 +922,9 @@ def resolve_pending(max_rows=8000):
                 continue
             r2, scale = _rescale(row, bars)
             rescaled += scale != 1.0
+            if not _risk_ok(r2.get("entry"), r2.get("stop")):
+                bad_risk.append(row["id"])          # 退化風險：不結算、離開佇列、不入統計
+                continue
             sim = _simulate(r2, bars, expire_days)
             if not sim:
                 continue
@@ -899,8 +967,13 @@ def resolve_pending(max_rows=8000):
                 for _id in unresolved:
                     conn.execute("UPDATE shadow_signals SET status='unresolved', result='nodata' WHERE id=?", (_id,))
             logger.info(f"shadow: {len(unresolved)} 筆訊號逾期仍無 K 棒（疑似退市／停牌），標記 unresolved")
+        if bad_risk:
+            with store._conn() as conn:
+                for _id in bad_risk:
+                    conn.execute("UPDATE shadow_signals SET status='unresolved', result='bad_risk' WHERE id=?", (_id,))
+            logger.info(f"shadow: {len(bad_risk)} 筆訊號進場價≈停損（風險退化、R 無意義），標記 unresolved/bad_risk")
         res = {"updated": len(updates), "closed": closed, "rows": len(rows),
-               "rescaled": int(rescaled), "unresolved": len(unresolved)}
+               "rescaled": int(rescaled), "unresolved": len(unresolved), "bad_risk": len(bad_risk)}
         logger.info(f"shadow: 結算完成，檢查 {len(rows)} 筆、更新 {len(updates)} 筆、新結案 {closed} 筆"
                     f"（除權息還原調整 {int(rescaled)} 筆），耗時 {time.time() - t0:.1f}s")
         if r is not None:
