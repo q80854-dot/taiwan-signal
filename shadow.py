@@ -1013,6 +1013,11 @@ def overview():
         recent = [dict(x) for x in conn.execute(
             "SELECT bar_date,ticker,name,kind,direction,score,entry,stop,status,result,r_multiple,features "
             "FROM shadow_signals ORDER BY id DESC LIMIT 40").fetchall()]
+        # ★ 2026-11-06：sent→delivered 送達對帳（候選列）。sent=1＝排入推播；delivered=1＝Telegram 真收下。
+        _dlv = dict(conn.execute(
+            "SELECT COALESCE(SUM(sent),0) AS sent, "
+            "COALESCE(SUM(CASE WHEN delivered=1 THEN 1 ELSE 0 END),0) AS delivered "
+            "FROM shadow_signals WHERE kind='candidate'").fetchone() or {})
     # 特徵覆蓋率（每種來源各自算）
     cov, cnt = {}, {}
     for x in sample:
@@ -1055,8 +1060,15 @@ def overview():
             alerts.append("最近一次掃描找到候選卻沒有新增寫入（可能是同一天重複掃描，已被去重）")
     except Exception:
         pass
+    _sent = int(_dlv.get("sent") or 0); _deliv = int(_dlv.get("delivered") or 0)
+    delivery = {"sent": _sent, "delivered": _deliv,
+                "rate": round(_deliv / _sent * 100, 1) if _sent else None}
+    if _sent and _deliv < _sent:
+        alerts.append(f"推播送達對帳：排入 {_sent} 筆、Telegram 確認送達 {_deliv} 筆"
+                      f"（{_sent - _deliv} 筆未確認送達，可能是早期資料無對帳欄位，或實際未送達）")
     return {"summary": summary, "per_day": per_day, "runs": runs, "meta": meta, "oldest_pending": oldest,
             "coverage": coverage[:60], "coverage_n": cnt, "recent": recent, "alerts": alerts,
+            "delivery": delivery,
             "reasons": REASONS, "control_rate": CONTROL_RATE,
             "caps": {"per_reason": REJ_PER_REASON, "total": REJ_TOTAL}}
 
