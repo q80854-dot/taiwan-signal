@@ -2988,6 +2988,10 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
       <details class="note-box" style="margin-bottom:14px"><summary style="cursor:pointer;font-weight:700;color:var(--t1)">系統怎麼學習？<span style="font-weight:400;color:var(--t3)">（點開看說明）</span></summary><div style="margin-top:8px">每次盤後掃描，同時記錄三種「假想單」並用和實盤<b>完全相同的停損停利規則</b>追蹤結果：<b>候選</b>（通過全部規則的標的，不論有沒有發出）、<b>被規則擋下的</b>（分數夠高卻被某條規則否決，用來檢驗規則有沒有擋錯）、<b>對照組</b>（沒有訊號、隨機抽樣）。累積足夠樣本後，用統計檢定列出哪些條件真的有效。樣本不足或交易日太少時只顯示、不下結論。</div></details>
       <div id="lr-progress" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:2px"></div>
 
+      <div class="sec-label"><div class="bar"></div><div class="tx">分數 ↔ 淨 R 校準</div></div>
+      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>規則分數提高，有沒有換到更好的淨 R？（Spearman 等級相關＋分桶，多空分開）</span></div>
+        <div class="panel-body" id="sc-calib" style="padding:12px"><div class="empty">載入中…</div></div></div>
+
       <div class="sec-label"><div class="bar"></div><div class="tx">資料收集狀態</div></div>
       <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>每次掃描的收集紀錄</span></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>時間（台北）</th><th>資料日</th><th>候選</th><th>被擋下</th><th>對照</th><th>新結算</th><th>耗時</th><th>錯誤</th></tr></thead><tbody id="ad-runs"></tbody></table></div></div>
       <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>近 14 個資料日的累積量</span></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料日</th><th>候選</th><th>被擋下</th><th>對照</th></tr></thead><tbody id="ad-days"></tbody></table></div></div>
@@ -7601,11 +7605,29 @@ async function fetchLearning(){
     document.getElementById('ad-main').style.display='block';
     adAuthed=true;
     adRender(d,o);
+    loadScoreCalib();
   }catch(e){
     document.getElementById('ad-gate').style.display='none';
     document.getElementById('ad-main').style.display='block';
     setHtml('lr-find','<div class="empty">載入失敗：'+esc2(e.message)+'</div>');
   }
+}
+async function loadScoreCalib(){
+  const el=document.getElementById('sc-calib');if(!el)return;
+  try{
+    const r=await fetch('/api/learning/score_calibration',{cache:'no-store'});
+    if(!r.ok){el.innerHTML='<div class="empty">暫無資料</div>';return;}
+    const d=await r.json();
+    if(!d.ok){el.innerHTML='<div class="empty">暫無資料</div>';return;}
+    const sides=[d.overall,d.buy,d.sell].filter(Boolean);
+    el.innerHTML=sides.map(s=>{
+      if(s.insufficient)return `<div style="margin-bottom:10px"><b>${esc2(s.side)}</b>：${esc2(s.note||'樣本不足')}（n=${s.n}）</div>`;
+      const rows=(s.buckets||[]).map(b=>b.n?`<tr><td>${esc2(b.bucket)}</td><td>${b.n}</td><td>${b.avg_net_r}</td><td>${b.ci_lo==null?'—':b.ci_lo+' ~ '+b.ci_hi}</td><td>${b.win_rate}%</td></tr>`:`<tr><td>${esc2(b.bucket)}</td><td>0</td><td>—</td><td>—</td><td>—</td></tr>`).join('');
+      return `<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:4px">${esc2(s.side)}（n=${s.n}）</div>`+
+        `<div style="font-size:13px;color:var(--t2);margin-bottom:6px">${esc2(s.verdict||'')}</div>`+
+        `<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>分數桶</th><th>n</th><th>平均淨R</th><th>95% CI</th><th>勝率</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+    }).join('')+`<div style="font-size:11px;color:var(--t3)">${esc2(d.disclaimer||'')}</div>`;
+  }catch(e){el.innerHTML='<div class="empty">載入失敗</div>';}
 }
 function renderMonteCarlo(d){
   const f=(v,u='')=>v===null||v===undefined?'—':v+u;

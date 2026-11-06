@@ -1240,6 +1240,19 @@ def api_learning():
         logger.error(f"api_learning: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning/score_calibration")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_score_calibration():
+    """站主：分數↔淨R 校準——規則分數提高有沒有換到更好的淨 R（Spearman＋分桶，多空分開）。
+    純研究、不改評分；排除退化(bad_risk)列、誠實揭露樣本數。"""
+    try:
+        import learning
+        return jsonify(learning.score_calibration())
+    except Exception as e:
+        logger.error(f"api_learning_score_calibration: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/learning/train")
 @members.owner_required
 @admin_auth.admin_required

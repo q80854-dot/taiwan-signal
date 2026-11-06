@@ -14,8 +14,10 @@
 - 對照組（沒有訊號、隨機抽樣、同一套停損停利機制）回答「訊號有沒有比隨便買好」。
 - 被規則擋下的假想單（kind=rejected）回答「這條規則是幫了我、還是擋掉了賺錢的單」。
 """
-import json, math, random
+import json, math, random, logging
 from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger(__name__)
 
 MIN_N = 30
 MIN_DAYS = 10
@@ -269,6 +271,103 @@ def _readable_reason(code):
         return shadow.REASONS.get(code, code)
     except Exception:
         return code
+
+
+# ─────────── 分數 ↔ 淨 R 校準（2026-11-06，P1）───────────
+# 規格 P1/CSV 觀察：「分數提高未呈現更佳 net R，相關性弱且略負，高分不等於高品質」。
+# 這裡用『已結算候選』的規則分數與實際淨 R，算 Spearman 等級相關＋分桶平均淨 R，直接回答
+# 「分數有沒有換到更好的淨 R、是否單調」。純研究、不改評分；多空分開；排除退化(bad_risk)列。
+def _rank_avg(xs):
+    """平均名次（處理同分並列），1 起算。"""
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    ranks = [0.0] * len(xs)
+    i = 0
+    while i < len(xs):
+        j = i
+        while j + 1 < len(xs) and xs[order[j + 1]] == xs[order[i]]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg
+        i = j + 1
+    return ranks
+
+
+def _spearman(xs, ys):
+    """Spearman 等級相關 = 名次上的 Pearson。樣本<3 或零變異回 None。"""
+    n = len(xs)
+    if n < 3:
+        return None
+    rx, ry = _rank_avg(xs), _rank_avg(ys)
+    mx, my = sum(rx) / n, sum(ry) / n
+    cov = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    vx = sum((a - mx) ** 2 for a in rx)
+    vy = sum((b - my) ** 2 for b in ry)
+    if vx <= 0 or vy <= 0:
+        return None
+    return cov / math.sqrt(vx * vy)
+
+
+def _score_verdict(rho, mono):
+    if rho is None:
+        return "樣本不足，無法判定分數與淨 R 的關係"
+    a = abs(rho)
+    strength = "幾乎無" if a < 0.1 else "偏弱" if a < 0.3 else "中等" if a < 0.5 else "偏強"
+    sign = "正" if rho > 0 else "負"
+    tail = f"；{mono}" if mono else ""
+    return f"分數與淨 R 為{sign}相關（Spearman={rho:.2f}，{strength}）{tail}"
+
+
+def _calib_one(side_rows, label):
+    n = len(side_rows)
+    if n < 20:
+        return {"side": label, "n": n, "insufficient": True,
+                "note": "已結算樣本不足 20 筆，暫不判定（樣本累積中）"}
+    scores = [float(r["score"]) for r in side_rows]
+    rr = [float(r["r_multiple"]) for r in side_rows]
+    rho = _spearman(scores, rr)
+    edges, labels = [70, 75, 80, 85], ["65–69", "70–74", "75–79", "80–84", "85+"]
+    buckets = {}
+    for r in side_rows:
+        buckets.setdefault(_band(r.get("score"), edges, labels), []).append(r)
+    brows = []
+    for lb in labels:
+        xs = buckets.get(lb, [])
+        if not xs:
+            brows.append({"bucket": lb, "n": 0})
+            continue
+        m, lo, hi = _boot_ci(xs)
+        wr = sum(1 for r in xs if r["result"] in WIN) / len(xs) * 100
+        brows.append({"bucket": lb, "n": len(xs), "avg_net_r": round(m, 3),
+                      "ci_lo": None if lo is None else round(lo, 3),
+                      "ci_hi": None if hi is None else round(hi, 3),
+                      "win_rate": round(wr, 1)})
+    seq = [b["avg_net_r"] for b in brows if b.get("n", 0) >= 10 and "avg_net_r" in b]
+    mono = None
+    if len(seq) >= 3:
+        inc = all(seq[i] <= seq[i + 1] + 1e-9 for i in range(len(seq) - 1))
+        mono = "分桶平均淨 R 隨分數單調上升" if inc else "非單調：分數更高不保證淨 R 更好"
+    return {"side": label, "n": n, "spearman": None if rho is None else round(rho, 3),
+            "buckets": brows, "monotonic": mono, "verdict": _score_verdict(rho, mono)}
+
+
+def score_calibration():
+    """分數↔淨R 校準主入口。只用已結算、有淨R、非退化(bad_risk)的候選。多空分開。"""
+    try:
+        rows = [r for r in _rows()
+                if r.get("kind") == "candidate" and r.get("status") == "closed"
+                and r.get("r_multiple") is not None and r.get("result") != "bad_risk"
+                and r.get("score") is not None]
+        buy = [r for r in rows if r.get("direction") == "buy"]
+        sell = [r for r in rows if r.get("direction") == "sell"]
+        return {"ok": True,
+                "overall": _calib_one(rows, "全部"),
+                "buy": _calib_one(buy, "做多"),
+                "sell": _calib_one(sell, "做空"),
+                "disclaimer": "樣本期間短、同日市場共振、ticker 重複，非獨立大樣本；僅供觀察，非投資建議。"}
+    except Exception as e:
+        logger.warning(f"score_calibration: {e}")
+        return {"ok": False, "error": str(e)}
 
 
 def _rules(rej_closed, cand_closed):
