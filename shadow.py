@@ -762,76 +762,25 @@ def _simulate(row, bars, expire_days):
     規則與實盤 scanner._resolve_pending_signals 相同：只看訊號日之後的K棒；同日先判停損；
     跳空穿越停損以開盤價成交；逾期（日曆天 ≥ expire_days）以最新收盤價結算為 expired。"""
     planned_entry, stop = row["entry"], row["stop"]
-    buy = row["direction"] == "buy"
     risk = abs(planned_entry - stop)          # 1R 以「訊號當下規劃的風險」為單位（進場價—停損），跨筆可比
     # ★ 2026-11-06：擋退化風險（entry≈stop）。原本只擋 risk==0，沒擋「極小但非零」，
     # 會讓 (Δ價/risk) 爆量污染 mae/mfe/R。退化列不產 R（回 None，由 resolve_pending 標 bad_risk）。
     if not _risk_ok(planned_entry, stop):
         return None
-    sgn = 1 if buy else -1
     after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
-    out = {"result": None, "exit_price": None, "exit_date": None, "bars_held": len(after),
-           "mfe": None, "mae": None, "gap": None, "r1": None, "r5": None, "r10": None, "r20": None,
-           "mae_bars": None, "mfe_bars": None, "tp1_before_sl": None}
     if not after:
-        return out
-    # ★ 修正：2026-10-09——實際進場價改用「訊號日後第一根 K 棒的開盤價」，與實盤 scanner.
-    # _resolve_pending_signals 一致（訊號收盤後才產生，最早只能隔天開盤成交）。原本沿用訊號日
-    # 收盤價當進場，等於假設能用收盤成交，影子 R 會系統性偏樂觀——正是實盤早已修掉的偏差。
-    # 停損/停利價維持原規劃值不變；R 的分母仍是規劃風險，分子改以實際開盤進場計算。
+        return {"result": None, "exit_price": None, "exit_date": None, "bars_held": 0,
+                "mfe": None, "mae": None, "gap": None, "r1": None, "r5": None, "r10": None, "r20": None,
+                "mae_bars": None, "mfe_bars": None, "tp1_before_sl": None}
+    # ★ 2026-11-06 Phase 1：出場判定改用單一權威模擬器 execution.simulate_exit，與（未來的）
+    # 回測/paper 共用同一套保守規則，相同輸入必得相同結果。進場價沿用「訊號日後第一根開盤」
+    # （與實盤 scanner._resolve_pending_signals 一致），停損/停利維持規劃值，R 分母仍為規劃風險。
+    import execution
     entry = after[0].get("open") or planned_entry
-    out["entry_fill"] = entry
-    out["gap"] = round((after[0]["open"] / planned_entry - 1) * 100, 2) if after[0].get("open") else None
-    out["r1"] = round(sgn * (after[0]["close"] - entry) / risk, 3)
-    if len(after) >= 5:
-        out["r5"] = round(sgn * (after[4]["close"] - entry) / risk, 3)
-    if len(after) >= 10:
-        out["r10"] = round(sgn * (after[9]["close"] - entry) / risk, 3)
-    if len(after) >= 20:
-        out["r20"] = round(sgn * (after[19]["close"] - entry) / risk, 3)
-    mfe, mae = -9e9, 9e9
-    mfe_i = mae_i = tp1_i = sl_i = None    # 第一次觸及最佳/最差/到 tp1/到停損的「第幾根」K 棒（1 起算）
-    for i, b in enumerate(after):
-        hi, lo, op = b["high"], b["low"], b.get("open")
-        fav = sgn * ((hi if buy else lo) - entry) / risk
-        adv = sgn * ((lo if buy else hi) - entry) / risk
-        if fav > mfe:
-            mfe, mfe_i = fav, i + 1
-        if adv < mae:
-            mae, mae_i = adv, i + 1
-        sl_hit = lo <= stop if buy else hi >= stop
-        t3 = row.get("tp3"); t2 = row.get("tp2"); t1 = row.get("tp1")
-        h3 = bool(t3) and ((hi >= t3) if buy else (lo <= t3))
-        h2 = bool(t2) and ((hi >= t2) if buy else (lo <= t2))
-        h1 = bool(t1) and ((hi >= t1) if buy else (lo <= t1))
-        if h1 and tp1_i is None:
-            tp1_i = i + 1
-        if sl_hit and sl_i is None:
-            sl_i = i + 1
-        if not (sl_hit or h1 or h2 or h3):
-            continue
-        if sl_hit:
-            res, px = "sl", stop
-            if op and ((buy and op < stop) or (not buy and op > stop)):
-                px = op
-        elif h3: res, px = "tp3", t3
-        elif h2: res, px = "tp2", t2
-        else:    res, px = "tp1", t1
-        out.update(result=res, exit_price=px, exit_date=b["bar_date"][:10], bars_held=i + 1)
-        break
-    out["mfe"], out["mae"] = round(mfe, 3), round(mae, 3)
-    out["mfe_bars"], out["mae_bars"] = mfe_i, mae_i
-    if tp1_i is not None:                      # 有沒有「先摸到第一停利、才碰停損」——正向代表進場點時機佳
-        out["tp1_before_sl"] = int(sl_i is None or tp1_i <= sl_i)
-    elif sl_i is not None:
-        out["tp1_before_sl"] = 0
-    if out["result"] is None:
-        try:
-            age = (datetime.now(TPE).replace(tzinfo=None) - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days
-        except Exception:
-            age = 0
-        if age >= expire_days:
-            out.update(result="expired", exit_price=after[-1]["close"], exit_date=after[-1]["bar_date"][:10])
+    out = execution.simulate_exit(
+        planned_entry=planned_entry, entry_fill=entry, stop=stop, direction=row["direction"],
+        bars_after=after, bar_date=row["bar_date"], expire_days=expire_days, risk=risk,
+        tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"))
     return out
 
 
