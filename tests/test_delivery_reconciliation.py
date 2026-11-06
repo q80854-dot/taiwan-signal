@@ -76,3 +76,21 @@ def test_sent_not_equal_delivered_is_queryable():
             "SELECT COUNT(*) AS n FROM shadow_signals WHERE sent=1 AND (delivered IS NULL OR delivered=0) "
             "AND ticker IN ('QRY1.TW','QRY2.TW')").fetchone()
     assert dict(n)["n"] == 1             # 只有 QRY1 未送達
+
+
+def test_overview_reports_delivery_stats():
+    """overview() 回報送達對帳：sent/delivered/rate，供後台 KPI 顯示。"""
+    import shadow
+    from state_store import store
+    shadow.ensure_table()
+    with store._conn() as conn:
+        conn.execute("DELETE FROM shadow_signals WHERE ticker IN ('OVD1.TW','OVD2.TW','OVD3.TW')")
+        for tk, sent, deliv in (("OVD1.TW", 1, 1), ("OVD2.TW", 1, 0), ("OVD3.TW", 1, 1)):
+            conn.execute("INSERT INTO shadow_signals (bar_date,ticker,kind,direction,score,entry,stop,"
+                         "status,sent,delivered,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         ("2026-11-06", tk, "candidate", "buy", 80, 600, 570, "pending", sent, deliv,
+                          "2026-11-06T00:00:00"))
+    ov = shadow.overview()
+    assert "delivery" in ov
+    assert ov["delivery"]["sent"] >= 3 and ov["delivery"]["delivered"] >= 2
+    assert ov["delivery"]["rate"] is not None
