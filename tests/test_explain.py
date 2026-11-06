@@ -9,7 +9,8 @@ def _sig(**kw):
         "weekly_bias": "strong_bullish", "adx_value": 32, "rsi_value": 62, "vol_ratio": 1.8,
         "inst_signal": "外資買超 +5,000張", "conditions_met": ["EMA多頭排列 ✓", "站上半年線 ✓"],
         "conditions_fail": [], "risk_twd": 12000, "risk_pct": 1.2, "rr1": 1.5,
-        "sl_pct": 4.0, "tp1_pct": 6.0, "suggested_lots": 2, "reason_brief": "多頭確認",
+        # DB signals 列：欄位名 suggested_lots 但實際存「股數」（2500 股＝2.5 張）
+        "sl_pct": 4.0, "tp1_pct": 6.0, "suggested_lots": 2500, "reason_brief": "多頭確認",
     }
     base.update(kw)
     return base
@@ -26,6 +27,19 @@ def test_explain_buy_lists_supporting_factors():
     assert "外資買超" in joined
     assert "EMA多頭排列" in joined and "✓" not in joined          # 勾勾已清掉
     assert "風報比 1:1.5" in out["risk"] and "本金 1.2%" in out["risk"]
+
+
+def test_explain_shares_unit_not_1000x_inflated():
+    """單位稽核：DB 列 suggested_lots 實存股數（2500 股）；不得顯示成「2500 張」。"""
+    out = explain.explain_signal_text(_sig(suggested_lots=2500))
+    assert "2,500 股" in out["risk"] and "約 2.5 張" in out["risk"]
+    assert "2500 張" not in out["risk"] and "2,500 張" not in out["risk"]
+
+
+def test_explain_prefers_suggested_shares_when_present():
+    """記憶體訊號 dict：suggested_shares 才是股數、suggested_lots 是張數——優先取 shares。"""
+    out = explain.explain_signal_text(_sig(suggested_shares=3000, suggested_lots=3))
+    assert "3,000 股" in out["risk"] and "約 3.0 張" in out["risk"]
 
 
 def test_explain_missing_indicators_not_fabricated():
