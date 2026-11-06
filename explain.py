@@ -159,9 +159,18 @@ def explain_signal_text(sig: Dict) -> Dict:
     tp1_pct = _num(sig.get("tp1_pct"))
     if sl_pct is not None and tp1_pct is not None:
         risk_bits.append(f"停損 {sl_pct:.1f}%／首目標 {tp1_pct:.1f}%")
-    lots = sig.get("suggested_lots")
-    if lots is not None:
-        risk_bits.append(f"建議 {lots} 張")
+    # ★ 2026-11-06 單位稽核修正：DB signals 表的欄位名為 suggested_lots，但實際存的是「股數」
+    # （歷史遺留命名，見 state_store 與 scanner/app 多處註解）。記憶體訊號 dict 的 suggested_lots
+    # 才是「張數」、另有 suggested_shares。本函式會被 /api/explain/signal 以 DB 列餵入，若把
+    # suggested_lots 直接當張數顯示會 1000× 放大（2500 股→「2500 張」）。這裡一律以「股數」為準：
+    # 優先取 suggested_shares（記憶體來源），否則把 suggested_lots 當股數（DB 來源），並換算張數。
+    _sh = sig.get("suggested_shares")
+    if _sh is None:
+        _sh = sig.get("suggested_lots")
+    _shn = _num(_sh)
+    if _shn is not None and _shn >= 1:
+        sh_i = int(_shn)
+        risk_bits.append(f"建議 {sh_i:,} 股（約 {sh_i / 1000:.1f} 張）")
     risk = "｜".join(risk_bits) if risk_bits else "暫無"
 
     return {
