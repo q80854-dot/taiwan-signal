@@ -276,8 +276,12 @@ def run_all_checks(ticker, stock_info, tf_data, market_overview, active_signals=
     # ★ F-09：組合總風險超過硬上限＝擋新單（只擋新增，不影響既有部位）
     if checks["margin"].get("exceeded"):          blockers.append(checks["margin"]["message"])
     if checks["market"].get("level")=="high":     warnings.append(checks["market"]["message"]); score_adj-=10
-    if checks["foreign"].get("level")=="warning": warnings.append(checks["foreign"]["message"]); score_adj-=8
-    if checks["foreign"].get("level")=="extreme": warnings.append(checks["foreign"]["message"]); score_adj-=12
+    # 外資賣超三層（2026-11-08 重校，見 config.CIRCUIT_BREAKER）：warning −8 / heavy −12 /
+    # extreme（暫停等級）−12。做多的方向感知硬性攔截在 signal_engine（fc.action=="stop_buy"）；
+    # 本函式方向無關、且為輔助性總經疊加，故 extreme 以重扣分呈現、不直接 blocker（避免誤擋放空）。
+    if checks["foreign"].get("level")=="warning":   warnings.append(checks["foreign"]["message"]); score_adj-=8
+    elif checks["foreign"].get("level")=="heavy":   warnings.append(checks["foreign"]["message"]); score_adj-=12
+    elif checks["foreign"].get("level")=="extreme": warnings.append(checks["foreign"]["message"]); score_adj-=12
     if checks["margin_chg"].get("triggered"):     warnings.append(checks["margin_chg"]["message"]); score_adj-=8
     if not checks["account"].get("sufficient"):   warnings.append(checks["account"]["message"]); score_adj-=20
     if checks["margin"].get("warning"):           warnings.append(checks["margin"]["message"]); score_adj-=5
