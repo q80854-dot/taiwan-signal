@@ -60,9 +60,15 @@ def check_foreign_flow(market_overview: Dict) -> Dict:
     nb=float(foreign.get("net_buy_twd",0) or 0)
     if not data_available:
         logger.warning("check_foreign_flow: market_overview 缺少 foreign 資料，net_buy_twd 會當作 0 處理，並標記 data_available=False")
+    # ★ 2026-11-08 使用者核准、依台股實際量能重校（見 config.CIRCUIT_BREAKER 說明）：
+    # 三層——extreme(≥1,800億)=史上前幾大恐慌日，暫停新多單（action=stop_buy，由上層硬擋）；
+    # heavy(≥1,000億)=大幅降低信心（扣12分）；warning(≥500億)=降低信心（扣8分）。放空不受影響。
     if nb<=CB["foreign_sell_stop"]:
         return {"triggered":True,"level":"extreme","net_buy_twd":nb,"data_available":data_available,
-                "message":f"🚨 外資賣超 {abs(nb)/1e8:.0f}億，大幅降低信心度（2026-10-06 起不再硬性暫停多單：近100日驗證賣超≥50億後無預測力）","action":"reduce_confidence"}
+                "message":f"🚨 外資賣超 {abs(nb)/1e8:.0f}億（史上極端等級），暫停新多單","action":"stop_buy"}
+    if nb<=CB["foreign_sell_heavy"]:
+        return {"triggered":True,"level":"heavy","net_buy_twd":nb,"data_available":data_available,
+                "message":f"🚨 外資賣超 {abs(nb)/1e8:.0f}億，大幅降低信心度","action":"reduce_confidence"}
     if nb<=CB["foreign_sell_caution"]:
         return {"triggered":True,"level":"warning","net_buy_twd":nb,"data_available":data_available,
                 "message":f"⚠️ 外資賣超 {abs(nb)/1e8:.0f}億，降低信心度","action":"reduce_confidence"}
@@ -308,6 +314,7 @@ def get_system_status(market_overview: Dict) -> Dict:
     elif twii_chg>1.0:                      score+=10; st="大盤強勢"; cl="green"
     else:                                   st="正常";  cl="green"
     if foreign.get("level")=="extreme":    score-=20
+    elif foreign.get("level")=="heavy":    score-=15
     elif foreign.get("level")=="warning":  score-=10
     elif foreign.get("level")=="positive": score+=10
     daily=check_daily_loss_limit(); score=max(0,min(100,score))
