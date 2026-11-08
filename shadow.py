@@ -71,8 +71,12 @@ REASONS = {
     "material_news": "命中重大訊息風險",
 }
 
+# ★ 2026-11-08（P0-3 可重現）：特徵 schema 版本戳。每筆候選記錄「當時用哪一版特徵集合」，
+# 讓日後重算/訓練能辨識特徵演進、偵測 schema 漂移。特徵集合有增刪時務必 bump 此版本。
+FEATURE_SCHEMA_VERSION = "fs-v1-2026-11-08"
+
 _COLS = ("bar_date,ticker,code,name,kind,direction,score,entry,stop,tp1,tp2,tp3,size_cat,sector,"
-         "sent,features,status,created_at,model_prob")
+         "sent,features,status,created_at,model_prob,feat_schema_ver")
 
 # ───────────── 一次掃描的收集狀態 ─────────────
 _run = None
@@ -143,7 +147,8 @@ def ensure_table():
             logger.debug(f"shadow migrate model_prob: {e}")
         # 2026-11-06（P0 sent→delivered 對帳）：sent=1 只代表「候選被排入推播」，不等於 Telegram 真的
         # 收下。新增 delivered（provider 至少一個目標回 200）與 delivered_at，讓「送出 vs 送達」分開可查。
-        for col, typ in (("delivered", "INTEGER"), ("delivered_at", "TEXT")):
+        for col, typ in (("delivered", "INTEGER"), ("delivered_at", "TEXT"),
+                         ("feat_schema_ver", "TEXT")):
             try:
                 store._migrate_add_column("shadow_signals", col, typ)
             except Exception as e:
@@ -445,12 +450,12 @@ def _insert(rows):
         for r in rows:
             try:
                 conn.execute(
-                    f"INSERT INTO shadow_signals ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    f"INSERT INTO shadow_signals ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT (bar_date, ticker) DO NOTHING",
                     (r["bar_date"], r["ticker"], r["code"], r["name"], r["kind"], r["direction"], r["score"],
                      r["entry"], r["stop"], r["tp1"], r["tp2"], r["tp3"], r["size_cat"], r["sector"],
                      0, json.dumps(r["features"], ensure_ascii=False), "pending", r["created_at"],
-                     r.get("model_prob")))
+                     r.get("model_prob"), FEATURE_SCHEMA_VERSION))
             except Exception as e:
                 logger.warning(f"shadow insert {r.get('ticker')}: {e}")
                 _err(f"insert {r.get('ticker')}: {e}")
@@ -1018,6 +1023,10 @@ def overview():
             "SELECT COALESCE(SUM(sent),0) AS sent, "
             "COALESCE(SUM(CASE WHEN delivered=1 THEN 1 ELSE 0 END),0) AS delivered "
             "FROM shadow_signals WHERE kind='candidate'").fetchone() or {})
+        # ★ 2026-11-08：特徵 schema 版本分布（偵測漂移／標示未標版的舊資料）
+        _fsv = [dict(x) for x in conn.execute(
+            "SELECT COALESCE(feat_schema_ver,'(未標版)') AS ver, COUNT(*) AS n "
+            "FROM shadow_signals WHERE kind='candidate' GROUP BY feat_schema_ver ORDER BY n DESC").fetchall()]
     # 特徵覆蓋率（每種來源各自算）
     cov, cnt = {}, {}
     for x in sample:
@@ -1068,7 +1077,7 @@ def overview():
                       f"（{_sent - _deliv} 筆未確認送達，可能是早期資料無對帳欄位，或實際未送達）")
     return {"summary": summary, "per_day": per_day, "runs": runs, "meta": meta, "oldest_pending": oldest,
             "coverage": coverage[:60], "coverage_n": cnt, "recent": recent, "alerts": alerts,
-            "delivery": delivery,
+            "delivery": delivery, "feature_schema": {"current": FEATURE_SCHEMA_VERSION, "dist": _fsv},
             "reasons": REASONS, "control_rate": CONTROL_RATE,
             "caps": {"per_reason": REJ_PER_REASON, "total": REJ_TOTAL}}
 

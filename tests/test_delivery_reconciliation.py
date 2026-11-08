@@ -94,3 +94,23 @@ def test_overview_reports_delivery_stats():
     assert "delivery" in ov
     assert ov["delivery"]["sent"] >= 3 and ov["delivery"]["delivered"] >= 2
     assert ov["delivery"]["rate"] is not None
+
+
+def test_insert_stamps_feature_schema_version():
+    """P0-3：候選寫入時標記 feature schema 版本；overview 回報版本分布。"""
+    import shadow
+    from state_store import store
+    shadow.ensure_table()
+    with store._conn() as conn:
+        conn.execute("DELETE FROM shadow_signals WHERE ticker='FSV1.TW'")
+    row = {"bar_date": "2026-11-08", "ticker": "FSV1.TW", "code": "FSV1", "name": "測試",
+           "kind": "candidate", "direction": "buy", "score": 80, "entry": 100.0, "stop": 95.0,
+           "tp1": 105.0, "tp2": 110.0, "tp3": 115.0, "size_cat": "中型股", "sector": "其他",
+           "features": {"adx_value": 30}, "created_at": "2026-11-08T00:00:00"}
+    shadow._insert([row])
+    with store._conn() as conn:
+        r = conn.execute("SELECT feat_schema_ver FROM shadow_signals WHERE ticker='FSV1.TW'").fetchone()
+    assert dict(r)["feat_schema_ver"] == shadow.FEATURE_SCHEMA_VERSION
+    ov = shadow.overview()
+    assert ov["feature_schema"]["current"] == shadow.FEATURE_SCHEMA_VERSION
+    assert any(d["ver"] == shadow.FEATURE_SCHEMA_VERSION for d in ov["feature_schema"]["dist"])
