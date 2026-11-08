@@ -370,6 +370,94 @@ def score_calibration():
         return {"ok": False, "error": str(e)}
 
 
+# ─────────── 因子增量驗證：Rank IC / ICIR（2026-11-08，P1-3）───────────
+# 規格 §5.3：量化每個因子對未來報酬的預測力，分辨「真有增量 alpha」vs「只是重複計分」。
+# 作法：對每個數值特徵，算它與實際淨 R 的 Rank IC（Spearman），附樣本數、近似 p 值與 BH-FDR
+# 顯著性，依 |IC| 排序。純研究、不改評分；誠實揭露：此為「合併樣本」Rank IC（非每日橫斷面），
+# 樣本期間短、同日/同股相關，僅供觀察。
+_IC_MIN_N = 30              # 少於此樣本數的因子不給 IC（避免雜訊充當訊號）
+_IC_SKIP = {"score", "month", "dow"}   # score 已有專屬校準；month/dow 為日曆特徵，非 alpha
+
+
+def _norm_sf(z):
+    """標準常態右尾機率 P(Z>z)，用 math.erf 實作（免 scipy）。"""
+    return 0.5 * math.erfc(z / math.sqrt(2))
+
+
+def _ic_one(rows, label):
+    n0 = len(rows)
+    if n0 < _IC_MIN_N:
+        return {"side": label, "n": n0, "insufficient": True,
+                "note": "已結算樣本不足，暫不計算因子 IC（樣本累積中）"}
+    # 收集每個數值特徵在各列的值
+    keys = {}
+    for r in rows:
+        f = r.get("f") or {}
+        for k, v in f.items():
+            if k in _IC_SKIP:
+                continue
+            fv = _num_or_none(v)
+            if fv is not None:
+                keys.setdefault(k, 0)
+                keys[k] += 1
+    out = []
+    pvals, idx = [], []
+    for k in keys:
+        xs, ys = [], []
+        for r in rows:
+            fv = _num_or_none((r.get("f") or {}).get(k))
+            rm = _num_or_none(r.get("r_multiple"))
+            if fv is not None and rm is not None:
+                xs.append(fv); ys.append(rm)
+        if len(xs) < _IC_MIN_N:
+            continue
+        ic = _spearman(xs, ys)
+        if ic is None:
+            continue
+        n = len(xs)
+        z = abs(ic) * math.sqrt(n - 1)            # Spearman 虛無下近似常態
+        p = 2 * _norm_sf(z)
+        rec = {"factor": k, "ic": round(ic, 3), "n": n, "p": round(p, 4)}
+        out.append(rec); pvals.append(p); idx.append(len(out) - 1)
+    # BH-FDR：在多因子下控制偽發現，標示「較可靠」
+    if pvals:
+        flags = _bh_reject(pvals, FDR_Q)
+        for j, f in zip(idx, flags):
+            out[j]["significant"] = bool(f)
+    out.sort(key=lambda d: -abs(d["ic"]))
+    return {"side": label, "n": n0, "factors": out[:40]}
+
+
+def _num_or_none(v):
+    if isinstance(v, bool):
+        return 1.0 if v else 0.0
+    try:
+        f = float(v)
+        return f if f == f and abs(f) < 1e12 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def factor_ic_report():
+    """因子 Rank IC 主入口。只用已結算、有淨R、非退化的候選；多空分開。"""
+    try:
+        rows = [r for r in _rows()
+                if r.get("kind") == "candidate" and r.get("status") == "closed"
+                and r.get("r_multiple") is not None and r.get("result") != "bad_risk"]
+        buy = [r for r in rows if r.get("direction") == "buy"]
+        sell = [r for r in rows if r.get("direction") == "sell"]
+        return {"ok": True,
+                "overall": _ic_one(rows, "全部"),
+                "buy": _ic_one(buy, "做多"),
+                "sell": _ic_one(sell, "做空"),
+                "metric": "Rank IC（Spearman，因子值 vs 實際淨 R）",
+                "disclaimer": "合併樣本 Rank IC（非每日橫斷面）；樣本期間短、同日/同股相關，"
+                              "IC 僅供觀察、非保證；正負號代表方向，|IC| 越大關聯越強。"}
+    except Exception as e:
+        logger.warning(f"factor_ic_report: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 def _rules(rej_closed, cand_closed):
     """每條規則擋下的假想單，後來的表現如何。"""
     by = {}

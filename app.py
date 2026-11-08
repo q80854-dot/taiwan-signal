@@ -1255,6 +1255,19 @@ def api_learning():
         logger.error(f"api_learning: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning/factor_ic")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_factor_ic():
+    """站主：因子增量驗證（Rank IC/ICIR）——量化哪些因子真有預測力、哪些只是重複計分。
+    純研究、不改評分；多空分開、附樣本數與 BH-FDR 顯著性。"""
+    try:
+        import learning
+        return jsonify(learning.factor_ic_report())
+    except Exception as e:
+        logger.error(f"api_learning_factor_ic: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/learning/score_calibration")
 @members.owner_required
 @admin_auth.admin_required
