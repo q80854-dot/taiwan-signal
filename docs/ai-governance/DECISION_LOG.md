@@ -5,6 +5,7 @@
 
 | 日期 | 任務 ID | 風險 | 決定 | 理由 | 核准人 | Commit/PR |
 |---|---|---|---|---|---|---|
+| 2026-11-08 | TS-SHORT-001-fix | risk:research | 修正 learning.build_report 的 edge「訊號 vs 隨機」比較：改為只取做多候選對隨機做多對照（direction-matched），消除方向組成混淆；放空無隨機對照、不納入此比較 | 使用者「把沒完成的通通完成」→採 #132 提案之方案1；附 test_longshort_edge 驗證放空不污染結論 | 使用者「還有沒有完成的部分通通先把它完成」 | PR #134 |
 | 2026-11-08 | TS-REGIME-001 | risk:none | Regime baseline 現況與增量價值方法（REGIME_STATUS.md）：確認 regime.py 為可解釋規則 baseline、shadow-only 未接決策；regime/sentiment 已入 shadow 特徵快照故 factor_ic_report 已在量測其關聯；載明策略路由需足量 OOS+核准（risk:champion）才可接決策 | 完成「不接正式策略、先 OOS」；誠實標註樣本不足、過度擬合風險 | Claude 自選（使用者「未動的部分要記得動工」） | PR #133 |
 | 2026-11-08 | TS-SHORT-001 | risk:none | 多空獨立性稽核（LONGSHORT_SEPARATION_AUDIT.md）：確認訓練/IC/校準/方向維度統計/回測/成本皆依 direction 分開、未混用；標出唯一混合＝headline「候選(多空混合) vs 對照組(隨機做多)」比較，提兩案建議（risk:research，待你定奪） | 完成「多空不混合訓練與績效推論」核對；誠實標出 headline 混淆與放空樣本不足 | Claude 自選（使用者「未動的部分要記得動工」） | PR #132 |
 | 2026-11-08 | TS-FACTOR-001 | risk:none | 新增 FACTOR_REGISTRY.md：把 shadow.snapshot() 記錄的 ~50 個因子分 7 類逐一登錄（定義/類別/做多方向假設/來源），載明 factor_ic_report 的 IC/分位數/單調性/BH-FDR 驗證機制與樣本門檻 | Phase 3 因子研究標準化起步；誠實標註全 shadow-only、樣本累積中、未進正式權重 | Claude 自選（使用者「未動的部分要記得動工」） | PR #131 |

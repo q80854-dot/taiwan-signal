@@ -660,16 +660,22 @@ def build_report():
                     "level": level, "halves": halves, "consistent": consistent,
                     "text": f"【{name}】{st['label']}：平均 R {st['avg_r']}（95% CI {st['avg_r_lo']}~{st['avg_r_hi']}）、"
                             f"勝率 {st['win_rate']}%（n={st['n']}，p={st['p']}），{'明顯優於' if z > 0 else '明顯劣於'}其餘樣本"})
-    a, b = out["groups"]["候選（全部，含沒發出的）"], out["groups"]["對照組（隨機做多）"]
+    # ★ 2026-11-08（TS-SHORT-001 修正）：對照組是「隨機做多」(long-only)，故與它比較的候選也必須
+    # 只取「做多」，否則候選含放空樣本時，這條「訊號是否優於隨機」的結論會是方向組成混淆
+    # （mixed-direction 候選 對 long-only 對照）。放空沒有對應的隨機空單對照組，故放空不納入這條
+    # 比較；放空的獨立表現見「方向」維度與各別統計。見 docs/ai-governance/LONGSHORT_SEPARATION_AUDIT.md。
+    cc_buy = [r for r in cc if r.get("direction") == "buy"]
+    a, b = _stats(cc_buy), out["groups"]["對照組（隨機做多）"]
     if a.get("n", 0) >= MIN_N and b.get("n", 0) >= MIN_N:
-        diff, p, z = _boot_diff(cc, kc)
+        diff, p, z = _boot_diff(cc_buy, kc)
         sig = p is not None and p < 0.05
-        out["edge"] = {"z": z, "p": p, "diff_r": diff, "significant": sig,
-                       "text": ("訊號平均 R " + ("顯著優於" if (sig and diff > 0) else "顯著劣於" if (sig and diff < 0) else "與")
-                                + "隨機對照組" + ("" if sig else "沒有顯著差異")
-                                + f"（{a['avg_r']} vs {b['avg_r']}；差 {diff}，p={p}；勝率 {a['win_rate']}% vs {b['win_rate']}%）")}
+        out["edge"] = {"z": z, "p": p, "diff_r": diff, "significant": sig, "direction": "buy",
+                       "text": ("做多訊號平均 R " + ("顯著優於" if (sig and diff > 0) else "顯著劣於" if (sig and diff < 0) else "與")
+                                + "隨機做多對照組" + ("" if sig else "沒有顯著差異")
+                                + f"（{a['avg_r']} vs {b['avg_r']}；差 {diff}，p={p}；勝率 {a['win_rate']}% vs {b['win_rate']}%）"
+                                + "（放空無隨機對照、不納入本比較，見「方向」維度）")}
     else:
-        out["edge"] = {"text": f"樣本不足（候選 {a.get('n', 0)}、對照 {b.get('n', 0)}，各需 ≥ {MIN_N} 筆已結算）才能判斷訊號有沒有比隨機好。"}
+        out["edge"] = {"text": f"樣本不足（做多候選 {a.get('n', 0)}、隨機做多對照 {b.get('n', 0)}，各需 ≥ {MIN_N} 筆已結算）才能判斷做多訊號有沒有比隨機好。"}
     out["findings"].sort(key=lambda f: (f["level"] != "strong", -abs(f["z"] or 0)))
     out["note"] = (f"目前已結算的資料涵蓋 {closed_days} 個交易日；需至少 {MIN_DAYS} 日才列出結論。"
                    if not reliable else "")
