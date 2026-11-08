@@ -23,6 +23,28 @@ from config import SYSTEM
 
 logger = logging.getLogger(__name__)
 
+# ── Champion provenance（治理 TS-GOV-001，2026-11-08）──
+# 每筆訊號在落盤時，把「產生它的 Champion 策略版本」寫進 raw_json，讓任何一筆
+# 歷史訊號都能回溯到當時生效的策略/風控常數雜湊（config_hash）。純 metadata，
+# 不參與任何決策、不改任何策略值；config_hash 在同一進程內穩定，故快取一次即可。
+_PROVENANCE_CACHE: Optional[Dict[str, str]] = None
+
+
+def _champion_provenance() -> Dict[str, str]:
+    """回傳 {'strategy_version':..., 'config_hash':...}；取不到時回空字典（絕不讓落盤失敗）。"""
+    global _PROVENANCE_CACHE
+    if _PROVENANCE_CACHE is None:
+        try:
+            import strategy_version as _sv
+            _PROVENANCE_CACHE = {
+                "strategy_version": _sv.strategy_version(),
+                "config_hash": _sv.config_hash(),
+            }
+        except Exception as e:
+            logger.warning(f"_champion_provenance 取得失敗（略過，不影響落盤）：{e}")
+            _PROVENANCE_CACHE = {}
+    return _PROVENANCE_CACHE
+
 # ★ 修正：2026-10-18——交易紀錄顯示「外資買超 +52,829,071張」：數字是「股」卻標成「張」。
 # 根因：T86 的單位換算（股→張，÷1000）是 2026-10-10 才合併上線（見 data_fetcher._inst_try
 # 的 2026-10-06 單位修正說明），在那之前產生、存進資料庫的訊號 inst_signal 字串就把「股」
@@ -357,7 +379,7 @@ class StateStore:
                     sig.get("result","pending"),sig.get("close_price"),
                     sig.get("pnl_twd",0),sig.get("status","active"),
                     sig.get("generated_at",datetime.now(timezone.utc).isoformat()),
-                    json.dumps(sig,ensure_ascii=False),
+                    json.dumps({**sig, **_champion_provenance()},ensure_ascii=False),
                 ))
             return True
         except Exception as e:
