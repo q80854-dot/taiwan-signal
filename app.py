@@ -928,9 +928,10 @@ def _position_view(r):
            "generated_at": r.get("generated_at"), "result": r.get("result"), "status": r.get("status"),
            "pnl_pct": r.get("pnl_pct"), "pnl_twd": r.get("pnl_twd"),
            "sector": r.get("sector"), "risk_twd": r.get("risk_twd"), "risk_pct": r.get("risk_pct"),
-           # DB 欄位 suggested_lots 歷史遺留，實際存的是「股數」；shares＝股數、lots＝張數（÷1000）
-           "shares": r.get("suggested_lots"),
-           "lots": round((r.get("suggested_lots") or 0) / 1000, 3) if r.get("suggested_lots") is not None else None}
+           # 單位治本（TS-DATA-001）：一律以明確的 suggested_shares（股）為準，退回歷史遺留的
+           # suggested_lots（實存股數）；shares＝股數、lots＝張數（÷1000）
+           "shares": (_sh := r.get("suggested_shares") if r.get("suggested_shares") is not None else r.get("suggested_lots")),
+           "lots": round((_sh or 0) / 1000, 3) if _sh is not None else None}
     risk = abs(entry - sl) if entry and sl else 0
     out["risk_per_share"] = round(risk, 2)
     try:
