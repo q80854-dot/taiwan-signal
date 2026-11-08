@@ -279,6 +279,43 @@ def _fred_obs_latest(series_id: str, units: str = "lin", n: int = 4):
         return []
 
 
+def _hot_window(now_utc=None) -> bool:
+    """★ 2026-11-06：是否處於美國數據密集公布時段（平日美東 08:25–10:45，涵蓋 08:30 的
+    初領失業金/CPI/NFP 與 10:00 的 ISM 等）。此時段快取大幅縮短，讓公布當下的錯值/初值能在
+    1–2 分鐘內被校正，而不是被 1 小時快取鎖住。"""
+    try:
+        et = (now_utc or datetime.now(_UTC)).astimezone(pytz.timezone("America/New_York"))
+        if et.weekday() >= 5:
+            return False
+        mins = et.hour * 60 + et.minute
+        return 8 * 60 + 25 <= mins <= 10 * 60 + 45
+    except Exception:
+        return False
+
+
+def _fred_is_current(release_date: str, obs0_date: str, obs1_date: str) -> bool:
+    """FRED 官方庫是否已納入「本期」資料（用來判斷能否以 FRED 覆蓋 FMP 的公佈值）。
+    作法與頻率無關：以最近兩筆觀測的日期間隔估計資料頻率（週報≈7天、月報≈30天），若最新觀測
+    距公布日在「約 1.5 個週期」內，視為已納入本期；過舊則代表 FRED 尚未更新（最新值其實是前值），
+    此時不可拿來當本期公佈值。缺日期一律回 False（保守）。"""
+    try:
+        rd = datetime.strptime(release_date[:10], "%Y-%m-%d").date()
+        o0 = datetime.strptime(obs0_date[:10], "%Y-%m-%d").date()
+    except Exception:
+        return False
+    gap = (rd - o0).days
+    if gap < 0:
+        return False                                  # 觀測日竟晚於公布日 → 不合理，保守不採
+    period = 7
+    try:
+        if obs1_date:
+            o1 = datetime.strptime(obs1_date[:10], "%Y-%m-%d").date()
+            period = max(1, (o0 - o1).days)
+    except Exception:
+        period = 7
+    return gap <= period * 1.6                         # 約 1.6 個週期內＝本期；更舊代表 FRED 尚未更新
+
+
 def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: bool = False) -> dict:
     """彙整未來美國財經事件。回傳 {events, status, sources, window, at}。
     events 每筆：{dt(UTC iso), date, time, weekday, event, zh, importance(高/中/低),
@@ -286,8 +323,11 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
     estimate（市場共識）無免費來源恆為 None。"""
     if not force:
         c = _cache.get("econ")
-        # 成功結果快取 1 小時；來源全部失敗（no_source）只快取 2 分鐘，避免一次逾時就整小時沒資料
-        if c and time.time() - c[0] < (_TTL if c[1].get("status") == "ok" else _FAIL_TTL):
+        # 成功結果快取 1 小時；但在美國數據公布密集時段（_hot_window）縮短為 90 秒，讓公布當下
+        # 的錯值/初值能在 1–2 分鐘內被校正，而非被 1 小時快取鎖住（過去「過一段時間才恢復正確」之因）。
+        # 來源全部失敗（no_source）只快取 2 分鐘，避免一次逾時就整小時沒資料。
+        ok_ttl = 90 if _hot_window() else _TTL
+        if c and time.time() - c[0] < (ok_ttl if c[1].get("status") == "ok" else _FAIL_TTL):
             return c[1]
 
     now_utc = datetime.now(_UTC)
@@ -422,7 +462,11 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
         obs_cache, future_taken = {}, set()
         for e in events:
             spec = _FRED_SERIES.get(e["zh"])
-            if not spec or e["prev"] is not None or e["actual"] is not None:
+            if not spec:
+                continue
+            is_released = e["date"] <= today
+            # 未來事件：只在缺值時補前值（維持原行為）；已公佈事件一律進入下方 FRED 官方對帳
+            if not is_released and (e["prev"] is not None or e["actual"] is not None):
                 continue
             series_id, units, unit = spec
             if series_id not in obs_cache:
@@ -430,11 +474,18 @@ def fetch_economic_calendar(days_back: int = 1, days_ahead: int = 14, force: boo
             obs = obs_cache[series_id]
             if not obs:
                 continue
-            if e["date"] <= today:                       # 已公佈：最新＝公佈值、次新＝前值
-                e["actual"] = obs[0][1]
-                e["prev"] = obs[1][1] if len(obs) > 1 else None
-                e["unit"] = unit
-                e["source"] = "FRED"
+            if is_released:                              # 已公佈：FRED 官方為準
+                o0d = obs[0][0]
+                o1v = obs[1][1] if len(obs) > 1 else None
+                o1d = obs[1][0] if len(obs) > 1 else None
+                if e["actual"] is None:
+                    # FMP 沒給公佈值 → 直接用 FRED（沿用原行為）
+                    e["actual"] = obs[0][1]; e["prev"] = o1v; e["unit"] = unit; e["source"] = "FRED"
+                elif _fred_is_current(e["date"], o0d, o1d):
+                    # ★ 2026-11-06：FMP 有值、且 FRED 官方已納入本期 → 以官方覆蓋（校正 FMP 可能的初值/錯值）。
+                    # 若 FRED 尚未納入本期（_fred_is_current=False）→ 保留 FMP 當下值，待短 TTL 重抓再校正，
+                    # 避免把 FRED 的「前值」誤當本期公佈值。
+                    e["actual"] = obs[0][1]; e["prev"] = o1v; e["unit"] = unit; e["source"] = "FRED（官方校正）"
             elif series_id not in future_taken:           # 最近一筆未來事件：前值＝最後公佈
                 e["prev"] = obs[0][1]
                 e["unit"] = unit
