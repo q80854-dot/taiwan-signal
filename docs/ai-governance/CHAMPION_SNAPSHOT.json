@@ -1,0 +1,169 @@
+{
+  "config_hash": "208e598d8ffb0ce2e81359eac6e21b68145b9131ccd8e6f273f40ede578e9513",
+  "constants": {
+    "CIRCUIT_BREAKER": {
+      "foreign_sell_caution": -2000000000.0,
+      "foreign_sell_stop": -5000000000.0,
+      "margin_change_warning": -5.0,
+      "max_daily_signals": 10,
+      "signal_expire_days": 15,
+      "twii_drop_caution": -2.0,
+      "twii_drop_stop": -3.5,
+      "vix_extreme": 40,
+      "vix_high": 30
+    },
+    "COMMISSION_RATE": 0.001425,
+    "CORRELATION_GROUPS": [
+      [
+        "半導體業",
+        "電子零組件業",
+        "電腦及週邊設備業"
+      ],
+      [
+        "金融保險"
+      ],
+      [
+        "航運業"
+      ],
+      [
+        "生技醫療業"
+      ],
+      [
+        "ETF"
+      ]
+    ],
+    "EARNINGS_SEASON_DEADLINES": [
+      [
+        3,
+        31
+      ],
+      [
+        5,
+        15
+      ],
+      [
+        8,
+        14
+      ],
+      [
+        11,
+        14
+      ]
+    ],
+    "EARNINGS_SEASON_LOOKBACK_DAYS": 14,
+    "ENABLE_SHORT_SIGNALS": true,
+    "EVENT_EXDIV_BLOCK_DAYS": 2,
+    "EVENT_MATERIAL_NEWS_PENALTY": 20.0,
+    "INDICATOR_PARAMS": {
+      "adx_min": 20,
+      "adx_period": 14,
+      "atr_period": 14,
+      "bb_period": 20,
+      "bb_std": 2,
+      "ema_fast": 10,
+      "ema_mid": 20,
+      "ema_slow": 60,
+      "ema_trend": 60,
+      "fib_levels": [
+        0.236,
+        0.382,
+        0.5,
+        0.618,
+        0.786
+      ],
+      "macd_fast": 12,
+      "macd_signal": 9,
+      "macd_slow": 26,
+      "max_hold_days": 20,
+      "min_hold_days": 3,
+      "rsi_bear_zone": 50,
+      "rsi_bull_zone": 50,
+      "rsi_overbought": 70,
+      "rsi_oversold": 30,
+      "rsi_period": 14,
+      "support_lookback": 60,
+      "vol_period": 20,
+      "vol_surge_ratio": 1.5
+    },
+    "MAX_DAILY_RISK": 0.06,
+    "MAX_PER_CORRELATION_GROUP": 2,
+    "MAX_PORTFOLIO_RISK": 0.15,
+    "MAX_RISK_PER_TRADE": 0.02,
+    "MAX_SIMULTANEOUS_POSITIONS": 5,
+    "MIN_COMMISSION": 20,
+    "SHARES_PER_LOT": 1000,
+    "SHORT_BORROW_ANNUAL": 0.04,
+    "SHORT_EXECUTABLE": true,
+    "SHORT_MAX_SENTIMENT": 65,
+    "SHORT_REQUIRE_WEEKLY_BEARISH": true,
+    "SHORT_SIGNAL_THRESH": {
+      "min_adx": 22,
+      "min_score": 70,
+      "min_vol_ratio": 1.3
+    },
+    "SIGNAL_THRESHOLDS": {
+      "high_conf": 80,
+      "min_adx": 20,
+      "min_avg_volume": 200,
+      "min_market_cap": 500000000.0,
+      "min_rr": 1.5,
+      "min_score": 65,
+      "min_vol_ratio": 1.2
+    },
+    "SLIPPAGE_RATE": 0.001,
+    "SWING_PARAMS": {
+      "ETF": {
+        "sl_atr_mult": 1.2,
+        "tp1_rr": 1.5,
+        "tp2_rr": 2.0,
+        "tp3_rr": 3.0,
+        "trail_stop": true
+      },
+      "中型股": {
+        "sl_atr_mult": 2.0,
+        "tp1_rr": 2.0,
+        "tp2_rr": 3.0,
+        "tp3_rr": 5.0,
+        "trail_stop": true
+      },
+      "大型股": {
+        "sl_atr_mult": 1.5,
+        "tp1_rr": 1.5,
+        "tp2_rr": 2.5,
+        "tp3_rr": 4.0,
+        "trail_stop": true
+      },
+      "小型股": {
+        "sl_atr_mult": 2.5,
+        "tp1_rr": 2.0,
+        "tp2_rr": 4.0,
+        "tp3_rr": 6.0,
+        "trail_stop": false
+      }
+    },
+    "TAX_RATE_SELL": 0.003,
+    "TIMEFRAMES": {
+      "daily": {
+        "bars": 250,
+        "interval": "1d",
+        "label": "日線",
+        "period": "1y"
+      },
+      "hourly": {
+        "bars": 200,
+        "interval": "1h",
+        "label": "小時線",
+        "period": "90d"
+      },
+      "weekly": {
+        "bars": 200,
+        "interval": "1wk",
+        "label": "週線",
+        "period": "5y"
+      }
+    }
+  },
+  "frozen_at": "2026-11-08",
+  "note": "此為 Champion 正式策略/風控常數的凍結快照。要更新，須有意識地改 config 常數並經使用者核准後重新產生本檔。",
+  "strategy_version": "champion-208e598d8ffb"
+}

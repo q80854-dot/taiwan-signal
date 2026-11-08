@@ -1965,6 +1965,19 @@ def api_summary_today():
         pass
     return jsonify(_explain.daily_summary_text(signals, mo, {"scanned": scanned}))
 
+@app.route("/api/strategy/version")
+@members.owner_required
+@admin_auth.admin_required
+def api_strategy_version():
+    """站主：Champion 策略版本與凍結雜湊（治理 TS-GOV-001）。顯示當前生效的策略/風控常數與
+    config_hash；用於訊號可回溯與偵測正式策略參數變更。純顯示，不改任何值。"""
+    try:
+        import strategy_version
+        return jsonify(strategy_version.version_info())
+    except Exception as e:
+        logger.error(f"api_strategy_version: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/regime")
 def api_regime():
     """市場狀態 baseline（趨勢／波動／流動性，可解釋規則）。研究/顯示用，不接線上決策。"""
