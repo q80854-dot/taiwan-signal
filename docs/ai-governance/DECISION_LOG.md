@@ -5,6 +5,7 @@
 
 | 日期 | 任務 ID | 風險 | 決定 | 理由 | 核准人 | Commit/PR |
 |---|---|---|---|---|---|---|
+| 2026-11-08 | TS-DATA-PIT-audit | risk:none | Look-ahead 稽核（程式碼追蹤，因沙箱無法連 yfinance 跑回測）：live（盤後產訊號、T+1 進場、用已公告法人資料）無 look-ahead；backtest 已具 PIT 紀律（價格截斷/週線 as-of/TWII regime 歷史重建/總經 point-in-time）。結論：無實質 look-ahead，**PIT B/C 不具充分投資理由**，維持 A | 用證據決定不投入大工程，資源轉因子/多空研究 | Claude 自選（使用者「自己安排進度」） | PR #130 |
 | 2026-11-08 | TS-DATA-PIT-A | risk:none | PIT 起步 A：新增 data_quality.py（品質狀態列舉＋worst/is_tradeable/classify_freshness 純函式），把 get_system_status 的資料可用性布林升級為標準化品質狀態（純顯示、can_trade 行為不變）；並產出 PIT_FEASIBILITY.md（B/C 可行性＋A/B 量化測試設計） | 標準化 fail-closed 語意、為 PIT 鋪路；誠實評估 C 受限於無歷史快照 | 使用者「選A」＋要求評估 PIT 可行性與實測差異 | PR #129 |
 | 2026-11-08 | TS-TEST-001 | risk:none | 新增 fail-closed 契約測試（大盤/風控資料缺失、外資暫停等級→不交易；外資三層扣分一致）；並把 run_all_checks（非live的參考程式）的外資映射補上 heavy 層與 #126 一致 | 鎖住關鍵失敗情境；消除 #126 遺漏的 run_all_checks 陳舊三層映射（dead code，不影響 config_hash） | Claude 自選（使用者授權「繼續做其他的」） | PR #128 |
 | 2026-11-08 | TS-DATA-001/TS-TEST-001 | risk:none | 新增單位契約測試（test_unit_contracts：部位計算 9 項不變量＋2% 風控保證＋部位/流動性上限）與資料字典（DATA_DICTIONARY.md） | 把剛修好的單位約定硬性鎖住，未來任何改動破壞關係即 CI 紅；純測試/文件 | Claude 自選（使用者授權「繼續做其他的」） | PR #127 |
