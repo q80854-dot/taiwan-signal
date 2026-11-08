@@ -35,18 +35,26 @@ MIN_COVERAGE = 0.6         # 特徵在樣本中出現比例低於此者不納入
 _EXCLUDE_KEYS = {"reject", "sector", "code", "ticker", "name", "direction", "kind", "month"}
 
 
-def _rows():
+def _rows(direction="buy"):
     """讀已結算、有淨 R 的 shadow 列：score / r_multiple / kind / features。
     ★ F-06：依 bar_date（訊號決策日）＋ created_at 由舊到新排序，提供時間序列評估所需的
-    時間順序；排序在 SQL 完成，build_dataset 僅保留此順序。"""
+    時間順序；排序在 SQL 完成，build_dataset 僅保留此順序。
+    ★ 2026-11-08（多空標籤拆分／狀態分離）：只取 kind='candidate'（策略實際候選，不混
+    rejected/control——它們的選擇機制不同，混入會污染標籤），且依 direction 分開（多方與空方
+    報酬分布、動態相反，不可共用同一模型）。預設做多；空方樣本目前太少、不足以單獨建模。
+    direction=None 時回全部方向（僅供研究檢視，不建議用於訓練）。"""
     from state_store import store
     import shadow
     shadow.ensure_table()
+    where = "WHERE status='closed' AND r_multiple IS NOT NULL AND kind='candidate'"
+    params = []
+    if direction:
+        where += " AND direction=?"
+        params.append(direction)
     with store._conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT bar_date, exit_date, score, r_multiple, kind, features FROM shadow_signals "
-            "WHERE status='closed' AND r_multiple IS NOT NULL "
-            "ORDER BY bar_date ASC, created_at ASC").fetchall()]
+            "SELECT bar_date, exit_date, score, r_multiple, kind, direction, features FROM shadow_signals "
+            + where + " ORDER BY bar_date ASC, created_at ASC", tuple(params)).fetchall()]
 
 
 def _num(v):
@@ -59,13 +67,14 @@ def _num(v):
         return None
 
 
-def build_dataset():
-    """回傳 {ok, parsed, y, score, rmult, n} 或 {ok:False,...}（資料不足）。
+def build_dataset(direction="buy"):
+    """回傳 {ok, parsed, y, score, rmult, n, direction} 或 {ok:False,...}（資料不足）。
     parsed：依時間由舊到新的 [(特徵字典, 規則分數), ...]（未填補、未標準化——前處理延後到
-    各 fold 的訓練段才 fit，避免洩漏）；y：勝(1)/負(0)；score：規則分數；rmult：淨 R。"""
-    rows = _rows()
+    各 fold 的訓練段才 fit，避免洩漏）；y：勝(1)/負(0)；score：規則分數；rmult：淨 R。
+    ★ 2026-11-08：只用單一方向的候選（預設 buy），多空不混。"""
+    rows = _rows(direction)
     if len(rows) < MIN_SAMPLES:
-        return {"ok": False, "reason": "insufficient", "n": len(rows)}
+        return {"ok": False, "reason": "insufficient", "n": len(rows), "direction": direction}
     parsed, ys, scores, rmults, bar_dates, end_dates = [], [], [], [], [], []
     for r in rows:
         rm = _num(r.get("r_multiple"))
@@ -93,10 +102,10 @@ def build_dataset():
         end_dates.append((r.get("exit_date") or r.get("bar_date") or "")[:10])   # 標籤實現日（持有到出場）
     n = len(parsed)
     if n < MIN_SAMPLES:
-        return {"ok": False, "reason": "insufficient", "n": n}
+        return {"ok": False, "reason": "insufficient", "n": n, "direction": direction}
     return {"ok": True, "parsed": parsed, "y": np.array(ys, dtype=float),
             "score": np.array(scores, dtype=float), "rmult": np.array(rmults, dtype=float),
-            "bar_dates": bar_dates, "end_dates": end_dates, "n": n}
+            "bar_dates": bar_dates, "end_dates": end_dates, "n": n, "direction": direction}
 
 
 def _select_keys(parsed):
@@ -262,7 +271,8 @@ def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
     coef = sorted([{"feature": cols[i], "weight": round(float(w[i]), 4)} for i in range(len(cols))],
                   key=lambda z: -abs(z["weight"]))
     ma, ba = ev["model_auc"], ev["base_auc"]
-    out = {"ok": True, "n": n, "n_eval": ev["n_eval"], "eval_method": "time_series_walkforward",
+    out = {"ok": True, "n": n, "direction": ds.get("direction", "buy"),
+           "n_eval": ev["n_eval"], "eval_method": "time_series_walkforward",
            "win_base_rate": round(float(y.mean()) * 100, 1),
            "model_auc": round(ma, 4) if ma is not None else None,
            "baseline_auc_rule_score": round(ba, 4) if ba is not None else None,
@@ -601,7 +611,8 @@ def run_challengers(k: int = 5, embargo_days: int = EMBARGO_DAYS) -> dict:
             rec = {"promote": None, "reason": "未明顯優於現任 champion 或規則基準，維持不變"}
     else:
         rec = {"promote": None, "reason": "holdout 無法評估"}
-    return {"ok": True, "n": n, "dev_n": dev_n, "n_holdout": n_holdout, "holdout_days": hold_days,
+    return {"ok": True, "n": n, "direction": ds.get("direction", "buy"),
+            "dev_n": dev_n, "n_holdout": n_holdout, "holdout_days": hold_days,
             "gates_ok": gates_ok, "embargo_days": embargo_days,
             "baseline_holdout_auc": round(base_auc, 4) if base_auc is not None else None,
             "champion": champ, "entries": entries, "recommendation": rec,

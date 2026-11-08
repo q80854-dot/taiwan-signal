@@ -7648,9 +7648,10 @@ async function loadFactorIC(){
     const sides=[d.buy,d.sell,d.overall].filter(Boolean);
     el.innerHTML=`<div style="font-size:12px;color:var(--t3);margin-bottom:8px">${esc2(d.metric||'')}</div>`+sides.map(s=>{
       if(s.insufficient)return `<div style="margin-bottom:10px"><b>${esc2(s.side)}</b>：${esc2(s.note||'樣本不足')}（n=${s.n}）</div>`;
-      const rows=(s.factors||[]).map(f=>`<tr><td>${esc2(f.factor)}</td><td style="color:${f.ic>=0?'var(--up)':'var(--down)'}">${f.ic}</td><td>${f.n}</td><td>${f.significant?'✓ 較可靠':''}</td></tr>`).join('');
+      const qstr=f=>(f.quantiles&&f.quantiles.length)?f.quantiles.map(q=>q.avg_net_r==null?'—':q.avg_net_r).join(' → '):'—';
+      const rows=(s.factors||[]).map(f=>`<tr><td>${esc2(f.factor)}</td><td style="color:${f.ic>=0?'var(--up)':'var(--down)'}">${f.ic}</td><td>${f.n}</td><td>${f.significant?'✓':''}</td><td style="font:400 11px/16px var(--mono);white-space:nowrap">${qstr(f)}</td><td>${esc2(f.q_monotonic||'—')}</td></tr>`).join('');
       return `<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:4px">${esc2(s.side)}（n=${s.n}）</div>`+
-        (rows?`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>因子</th><th>Rank IC</th><th>n</th><th>FDR</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="empty">樣本不足以評估</div>')+`</div>`;
+        (rows?`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>因子</th><th>Rank IC</th><th>n</th><th>FDR</th><th>分位淨R（低→高）</th><th>單調</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="empty">樣本不足以評估</div>')+`</div>`;
     }).join('')+`<div style="font-size:11px;color:var(--t3)">${esc2(d.disclaimer||'')}</div>`;
   }catch(e){el.innerHTML='<div class="empty">載入失敗</div>';}
 }

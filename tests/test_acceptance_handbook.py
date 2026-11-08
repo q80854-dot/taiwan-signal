@@ -214,7 +214,7 @@ def test_training_uses_time_series_walkforward(monkeypatch):
     import learning_model as lm
     rng = np.random.default_rng(0)
 
-    def _rows():
+    def _rows(direction="buy"):
         rows = []
         for _ in range(800):
             x = float(rng.standard_normal())
