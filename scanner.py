@@ -411,7 +411,7 @@ class TWScanEngine:
         try:
             from signal_engine import fit_to_cash
             from config import ACCOUNT_BALANCE_TWD, MAX_DAILY_RISK
-            _cash = ACCOUNT_BALANCE_TWD - sum((p.get("entry_price") or 0) * (p.get("suggested_lots") or 0)
+            _cash = ACCOUNT_BALANCE_TWD - sum((p.get("entry_price") or 0) * (p.get("suggested_shares") or p.get("suggested_lots") or 0)
                                               for p in (active_positions or []))
             # 組合風險上限（config.MAX_DAILY_RISK，網站顯示的「組合上限 6%」）：扣掉既有部位的停損風險
             _risk_left = ACCOUNT_BALANCE_TWD * MAX_DAILY_RISK - sum(float(p.get("risk_twd") or 0)
@@ -578,7 +578,7 @@ class TWScanEngine:
                                  "close": closes[i] if i < len(closes) else lows[i]})
                 sim_entry = next((b["open"] for b in bars if b.get("open")), None)
                 entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or 0
-                shares = sig.get("suggested_lots") or 1  # 欄位名稱歷史遺留，實際存的是股數
+                shares = sig.get("suggested_shares") or sig.get("suggested_lots") or 1  # 明確股數優先；suggested_lots 為歷史遺留欄位（實存股數）
                 if not bars or not entry:
                     continue
                 sim = simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date)

@@ -206,7 +206,7 @@ def plan_rescale(open_rows: List[Dict], balance: float = None, max_positions: in
     cash, risk_left = bal, bal * (max_risk if max_risk is not None else MAX_DAILY_RISK)
     out = []
     for r in sorted(open_rows or [], key=lambda x: str(x.get("generated_at") or "")):
-        px = float(r.get("entry_price") or 0); sh = int(r.get("suggested_lots") or 0)
+        px = float(r.get("entry_price") or 0); sh = int(r.get("suggested_shares") or r.get("suggested_lots") or 0)
         rps = abs(px - float(r.get("stop_loss") or px))
         if px <= 0 or sh <= 0:
             continue
@@ -381,7 +381,7 @@ def portfolio_risk(open_rows: List[Dict], balance: float = None) -> Dict:
     bal = balance or ACCOUNT_BALANCE_TWD
     rows = []
     for r in (open_rows or []):
-        sh = int(r.get("suggested_lots") or r.get("shares") or 0)
+        sh = int(r.get("suggested_shares") or r.get("suggested_lots") or r.get("shares") or 0)
         px = float(r.get("entry_price") or r.get("entry") or 0)
         stop = float(r.get("stop_loss") or r.get("stop") or 0)
         if sh <= 0 or px <= 0:

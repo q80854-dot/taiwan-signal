@@ -91,6 +91,27 @@ def normalize_legacy_inst_signal(sig: Dict) -> Dict:
     except Exception as e:
         logger.warning(f"normalize_legacy_inst_signal 失敗（原樣顯示）：{e}")
     return sig
+
+
+# ── 單位治本（治理 TS-DATA-001，2026-11-08）──
+# 根因：DB `signals` 表的欄位名叫 `suggested_lots`，但歷史遺留實際存的是「股數」。
+# 於是同一個名字依來源有兩種語意（記憶體訊號 dict＝張；DB 列＝股），讀取端必須「知道自己
+# 的來源」才不會 1000× 誤讀（見 docs/UNIT_AUDIT_2026-11-06.md）。治本做法不是去翻動
+# 既有 `suggested_lots` 的值（那會逼所有讀取端同時改、且會打到風控路徑），而是在『資料存取
+# 邊界』一律補上一個語意明確、不可混淆的 `suggested_shares`（股）欄位——任何下游都改讀它，
+# 就不必再去猜那個歷史欄位名的意思。純附加、不改既有欄位值，故今日數值完全不變、零回歸。
+def with_share_units(row: Dict) -> Dict:
+    """就地為一筆 DB 訊號列補上明確的 `suggested_shares`（股）。
+    DB 的 `suggested_lots` 歷史遺留實際存股數，故 shares 直接取該值；`suggested_lots` 本身
+    不更動（維持與既有讀取端/風控路徑的相容）。已帶 suggested_shares 者不覆蓋。"""
+    try:
+        if row.get("suggested_shares") is None and row.get("suggested_lots") is not None:
+            row["suggested_shares"] = int(row["suggested_lots"])
+    except Exception as e:
+        logger.warning(f"with_share_units 失敗（原樣回傳）：{e}")
+    return row
+
+
 DB_PATH = SYSTEM["db_path"]
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
@@ -403,7 +424,7 @@ class StateStore:
                     "SELECT * FROM signals WHERE generated_at>=? ORDER BY generated_at DESC LIMIT ?",
                     (cutoff,limit)
                 ).fetchall()
-            return [normalize_legacy_inst_signal(dict(r)) for r in rows]
+            return [with_share_units(normalize_legacy_inst_signal(dict(r))) for r in rows]
         except Exception as e:
             logger.error(f"get_recent_signals: {e}"); return []
 
@@ -427,7 +448,7 @@ class StateStore:
                     "SELECT * FROM signals WHERE status='closed' ORDER BY closed_at DESC LIMIT ?",
                     (limit,)
                 ).fetchall()
-            return [normalize_legacy_inst_signal(dict(r)) for r in rows]
+            return [with_share_units(normalize_legacy_inst_signal(dict(r))) for r in rows]
         except Exception as e:
             logger.error(f"get_closed_trades: {e}"); return []
 
@@ -493,7 +514,7 @@ class StateStore:
                     "ORDER BY generated_at DESC LIMIT ?",
                     (limit,)
                 ).fetchall()
-            return [dict(r) for r in rows]
+            return [with_share_units(dict(r)) for r in rows]
         except Exception as e:
             logger.warning(f"get_pending_signals: {e}")
             return []
