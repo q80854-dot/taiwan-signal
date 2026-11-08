@@ -5,6 +5,7 @@
 
 | 日期 | 任務 ID | 風險 | 決定 | 理由 | 核准人 | Commit/PR |
 |---|---|---|---|---|---|---|
+| 2026-11-08 | TS-REGIME-001 | risk:none | Regime baseline 現況與增量價值方法（REGIME_STATUS.md）：確認 regime.py 為可解釋規則 baseline、shadow-only 未接決策；regime/sentiment 已入 shadow 特徵快照故 factor_ic_report 已在量測其關聯；載明策略路由需足量 OOS+核准（risk:champion）才可接決策 | 完成「不接正式策略、先 OOS」；誠實標註樣本不足、過度擬合風險 | Claude 自選（使用者「未動的部分要記得動工」） | PR #133 |
 | 2026-11-08 | TS-SHORT-001 | risk:none | 多空獨立性稽核（LONGSHORT_SEPARATION_AUDIT.md）：確認訓練/IC/校準/方向維度統計/回測/成本皆依 direction 分開、未混用；標出唯一混合＝headline「候選(多空混合) vs 對照組(隨機做多)」比較，提兩案建議（risk:research，待你定奪） | 完成「多空不混合訓練與績效推論」核對；誠實標出 headline 混淆與放空樣本不足 | Claude 自選（使用者「未動的部分要記得動工」） | PR #132 |
 | 2026-11-08 | TS-FACTOR-001 | risk:none | 新增 FACTOR_REGISTRY.md：把 shadow.snapshot() 記錄的 ~50 個因子分 7 類逐一登錄（定義/類別/做多方向假設/來源），載明 factor_ic_report 的 IC/分位數/單調性/BH-FDR 驗證機制與樣本門檻 | Phase 3 因子研究標準化起步；誠實標註全 shadow-only、樣本累積中、未進正式權重 | Claude 自選（使用者「未動的部分要記得動工」） | PR #131 |
 | 2026-11-08 | TS-DATA-PIT-audit | risk:none | Look-ahead 稽核（程式碼追蹤，因沙箱無法連 yfinance 跑回測）：live（盤後產訊號、T+1 進場、用已公告法人資料）無 look-ahead；backtest 已具 PIT 紀律（價格截斷/週線 as-of/TWII regime 歷史重建/總經 point-in-time）。結論：無實質 look-ahead，**PIT B/C 不具充分投資理由**，維持 A | 用證據決定不投入大工程，資源轉因子/多空研究 | Claude 自選（使用者「自己安排進度」） | PR #130 |
