@@ -191,7 +191,13 @@ SWING_PARAMS = {
 CIRCUIT_BREAKER = {
     "twii_drop_stop": -3.5, "twii_drop_caution": -2.0,
     "vix_extreme": 40, "vix_high": 30,
-    "foreign_sell_stop": -50e8, "foreign_sell_caution": -20e8,
+    # ★ 2026-11-08 使用者核准（依台股實際量能重校，見 docs/ai-governance/STRATEGY_ARCHITECTURE.md §6
+    # 與 DECISION_LOG）：舊門檻 −20億/−50億 以 2026 日成交值 ~8,000~9,000億 來看幾乎天天觸發
+    #（外資日常淨賣超動輒 ±100~300億），形同常態扣分、失去事件意義。改用全市場外資淨賣超的
+    # 三層，對照真實分布（11/2 −735億屬家常、11/5 −1,024億為史上前10大、10/15 −3,025億史上最高）：
+    #   caution −500億（~6% 成交值，扣 8 分）/ heavy −1,000億（~12%，扣 12 分）/
+    #   stop −1,800億（~21%，史上前幾大恐慌日才暫停新多單；放空不受影響）。
+    "foreign_sell_stop": -1800e8, "foreign_sell_heavy": -1000e8, "foreign_sell_caution": -500e8,
     "margin_change_warning": -5.0,
     "max_daily_signals": 10,
     # ★ 修正：2026-09-24——使用者反映實盤「常常停損、很少停利」，追查後用

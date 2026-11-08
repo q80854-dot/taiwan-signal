@@ -478,11 +478,12 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 _rej("macro_stop"); return None
             if mc.get("level") == "high":
                 macro_adj -= 10; macro_notes.append(mc["message"])
+            # 2026-11-08 使用者核准、依台股實際量能重校（見 config.CIRCUIT_BREAKER）：外資賣超三層。
+            # extreme（≥1,800億，史上前幾大恐慌日）已於上方 fc.action=="stop_buy" 硬擋新多單；
+            # 這裡只處理扣分層：warning（≥500億）−8、heavy（≥1,000億）−12。放空不扣（順勢）。
             if fc.get("level") == "warning":
                 macro_adj -= 8; macro_notes.append(fc["message"])
-            elif fc.get("level") == "extreme":
-                # 2026-10-06：近100個交易日驗證（/api/analysis/foreign-flow），外資賣超≥50億後
-                # 隔天大盤平均+0.02%、5日後平均+2.24%，沒有預測力，改為重扣分不再硬性擋單。
+            elif fc.get("level") == "heavy":
                 macro_adj -= 12; macro_notes.append(fc["message"])
             gc_ = check_margin_change(market_overview)
             if gc_.get("triggered"):

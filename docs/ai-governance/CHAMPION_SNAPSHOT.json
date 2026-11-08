@@ -1,9 +1,10 @@
 {
-  "config_hash": "208e598d8ffb0ce2e81359eac6e21b68145b9131ccd8e6f273f40ede578e9513",
+  "config_hash": "d4eb06e13ef275f5b8c10ce194d0eba33e5c459843968314f50d3611c7300679",
   "constants": {
     "CIRCUIT_BREAKER": {
-      "foreign_sell_caution": -2000000000.0,
-      "foreign_sell_stop": -5000000000.0,
+      "foreign_sell_caution": -50000000000.0,
+      "foreign_sell_heavy": -100000000000.0,
+      "foreign_sell_stop": -180000000000.0,
       "margin_change_warning": -5.0,
       "max_daily_signals": 10,
       "signal_expire_days": 15,
@@ -164,6 +165,6 @@
     }
   },
   "frozen_at": "2026-11-08",
-  "note": "此為 Champion 正式策略/風控常數的凍結快照。要更新，須有意識地改 config 常數並經使用者核准後重新產生本檔。",
-  "strategy_version": "champion-208e598d8ffb"
+  "note": "此為 Champion 正式策略/風控常數的凍結快照。要更新，須有意識地改 config 常數並經使用者核准後重新產生本檔（python scripts/freeze_champion.py）。",
+  "strategy_version": "champion-d4eb06e13ef2"
 }
