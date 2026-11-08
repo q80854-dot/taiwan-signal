@@ -362,9 +362,19 @@ def get_system_status(market_overview: Dict) -> Dict:
     data_issues=[m for m in (market_cb.get("message") if market_cb.get("level")=="unknown" else None,
                               foreign.get("message") if foreign.get("level")=="unknown" else None,
                               daily.get("message") if risk_unavailable else None) if m]
+    # ★ PIT 起步 A（2026-11-08）：把既有的資料可用性布林升級成標準化品質狀態（純顯示，
+    # 不改 can_trade/stop_buy 的任何判斷）。嚴重度取最差：大盤 TWII 缺＝INVALID（完全無法判斷）、
+    # 只缺 VIX＝PARTIAL、外資資料缺＝PARTIAL、每日虧損風控讀取失敗＝INVALID。
+    import data_quality as _dq
+    data_quality = _dq.worst(
+        _dq.INVALID if market_unknown else (_dq.PARTIAL if vix_missing else _dq.VALID),
+        _dq.PARTIAL if foreign.get("level")=="unknown" else _dq.VALID,
+        _dq.INVALID if risk_unavailable else _dq.VALID,
+    )
     return {"env_score":score,"env_status":st,"env_color":cl,"twii_chg":twii_chg,"vix":vix,
             "can_trade":can_trade,"stop_buy":stop_buy,"category_advice":cat_advice,"daily_loss":daily,
-            "foreign_signal":foreign.get("message",""),"data_issues":data_issues}
+            "foreign_signal":foreign.get("message",""),"data_issues":data_issues,
+            "data_quality":data_quality}
 
 
 # ═══ 2026-10-08 持倉滿額時的「極高信心例外」 ═══
