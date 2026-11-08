@@ -18,7 +18,7 @@ def test_auc_perfect_and_reversed():
 
 
 def test_insufficient_data(monkeypatch):
-    monkeypatch.setattr(lm, "_rows", lambda: [{"score": 1, "r_multiple": 0.5, "kind": "candidate",
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": [{"score": 1, "r_multiple": 0.5, "kind": "candidate",
                                                "features": "{}"}] * 10)
     out = lm.train_and_eval()
     assert out["ok"] is False and out["reason"] == "insufficient"
@@ -38,7 +38,7 @@ def _synth_rows(n=800, seed=0):
 
 
 def test_train_beats_coin_flip_and_reports_baseline(monkeypatch):
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows())
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows())
     out = lm.train_and_eval(persist=False)
     assert out["ok"] and out["n"] == 800
     assert out["model_auc"] is not None and out["model_auc"] > 0.75     # 可預測特徵 → 明顯優於 0.5
@@ -51,7 +51,7 @@ def test_train_beats_coin_flip_and_reports_baseline(monkeypatch):
 def test_time_series_walkforward_no_leakage(monkeypatch):
     # ★ F-06：評估須為時間序列 walk-forward，且最早一段只做訓練（不進驗證），
     # 因此被評估的樣本數 n_eval 必定小於總樣本數 n（代表沒有把全部樣本都拿來「自評」）。
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(n=800))
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows(n=800))
     out = lm.train_and_eval(persist=False)
     assert out["eval_method"] == "time_series_walkforward"
     assert 0 < out["n_eval"] < out["n"]
@@ -67,7 +67,7 @@ class _MemStore:
 
 def test_competition_ranks_and_rule_baseline(monkeypatch):
     # Phase 2：多模型競賽——同一批資料跑多種設定、產出排名；規則基準也是其中一個參賽者
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(n=800))
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows(n=800))
     out = lm.run_competition()
     assert out["ok"] and len(out["entries"]) == len(lm._COMPETITION_CONFIGS)
     ranks = [e["rank"] for e in out["entries"]]
@@ -83,7 +83,7 @@ def test_model_version_history(monkeypatch):
     import state_store
     mem = _MemStore()
     monkeypatch.setattr(state_store, "store", mem)
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(n=800))
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows(n=800))
     lm.train_and_eval(persist=True)
     lm.train_and_eval(persist=True)
     listing = lm.list_model_versions()
@@ -99,7 +99,7 @@ def test_explain_signal_contributions(monkeypatch):
     import state_store
     mem = _MemStore()
     monkeypatch.setattr(state_store, "store", mem)
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(n=800))
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows(n=800))
     lm.train_and_eval(persist=True)
     ex = lm.explain_signal({"f1": 2.0, "f2": 0.0}, score=1.8)
     assert ex is not None and 0.0 <= ex["prob"] <= 1.0 and ex["prob"] > 0.5
@@ -127,7 +127,7 @@ def test_challengers_insufficient_blocks_promote(monkeypatch):
     # B：單一日期（無行情多樣性）→ 資料關卡不過，不建議晉升
     import state_store
     monkeypatch.setattr(state_store, "store", _MemStore())
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows())      # 無 bar_date → holdout 交易日=0
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows())      # 無 bar_date → holdout 交易日=0
     out = lm.run_challengers()
     assert out["ok"] and out["gates_ok"] is False
     assert out["recommendation"]["promote"] is None
@@ -137,7 +137,7 @@ def test_challengers_with_dates_ranks_and_gates(monkeypatch):
     # B：跨多個交易日 → 通過資料關卡、依 holdout AUC 排名
     import state_store
     monkeypatch.setattr(state_store, "store", _MemStore())
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows_dated(n=800, days=120))
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows_dated(n=800, days=120))
     out = lm.run_challengers()
     assert out["ok"] and out["gates_ok"] is True
     assert out["n_holdout"] >= lm.MIN_HOLDOUT and out["holdout_days"] >= lm.MIN_HOLDOUT_DAYS
@@ -153,7 +153,7 @@ def test_promote_refused_when_gates_fail(monkeypatch):
     # B：資料關卡未過時，手動晉升也會被拒（守「不要資訊錯誤」）
     import state_store
     monkeypatch.setattr(state_store, "store", _MemStore())
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows())
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows())
     out = lm.promote_champion("rule_feats_l2_1")
     assert out["ok"] is False and "關卡" in out["reason"]
 
@@ -163,7 +163,7 @@ def test_month_feature_excluded(monkeypatch):
     assert "month" in lm._EXCLUDE_KEYS
     rng = np.random.default_rng(3)
 
-    def _rows():
+    def _rows(direction="buy"):
         rows = []
         for i in range(800):
             x = float(rng.standard_normal())
@@ -183,7 +183,7 @@ def test_month_feature_excluded(monkeypatch):
 def test_persist_and_score_features(monkeypatch):
     saved = {}
     import state_store
-    monkeypatch.setattr(lm, "_rows", lambda: _synth_rows(seed=1))
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows(seed=1))
     monkeypatch.setattr(state_store.store, "set_meta", lambda k, v: saved.__setitem__(k, v))
     monkeypatch.setattr(state_store.store, "get_meta", lambda k: saved.get(k))
     out = lm.train_and_eval(persist=True)

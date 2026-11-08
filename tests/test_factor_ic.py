@@ -72,3 +72,38 @@ def test_excludes_bad_risk_and_score(monkeypatch):
     assert "a" in facs
     assert "score" not in facs and "month" not in facs   # 被 _IC_SKIP 排除
     assert rep["buy"]["n"] == 50                          # bad_risk 未計入
+
+
+# ── 因子分位數報酬 ──
+def test_quantile_returns_monotonic_increasing():
+    # 因子值與淨 R 正相關 → 低→高分位的平均淨 R 應遞增
+    xs = list(range(100)); ys = [x * 0.1 for x in xs]
+    buckets, mono = L._quantile_returns(xs, ys, q=5)
+    assert buckets is not None and len(buckets) == 5
+    avgs = [b["avg_net_r"] for b in buckets]
+    assert avgs == sorted(avgs) and mono == "遞增"
+
+
+def test_quantile_returns_decreasing():
+    xs = list(range(100)); ys = [-x * 0.1 for x in xs]
+    buckets, mono = L._quantile_returns(xs, ys, q=5)
+    assert mono == "遞減"
+
+
+def test_quantile_returns_insufficient():
+    buckets, mono = L._quantile_returns([1, 2, 3], [0.1, 0.2, 0.3], q=5)
+    assert buckets is None and mono is None
+
+
+def test_factor_report_attaches_quantiles(monkeypatch):
+    import random
+    rng = random.Random(3)
+    specs = []
+    for i in range(80):
+        rm = rng.uniform(-2, 2)
+        specs.append({"r_multiple": rm, "f": {"good": rm}})
+    monkeypatch.setattr(L, "_rows", lambda: _rows(specs))
+    rep = L.factor_ic_report()
+    good = next(d for d in rep["buy"]["factors"] if d["factor"] == "good")
+    assert good["quantiles"] and len(good["quantiles"]) == 5
+    assert good["q_monotonic"] == "遞增"

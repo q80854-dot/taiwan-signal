@@ -384,6 +384,29 @@ def _norm_sf(z):
     return 0.5 * math.erfc(z / math.sqrt(2))
 
 
+def _quantile_returns(xs, ys, q=5):
+    """依因子值排序分 q 組（低→高），回傳各組平均淨 R 與組內筆數，以及是否單調（遞增/遞減）。
+    規格 §5.3「因子分位數未來報酬」：看因子由低到高，實際淨 R 是否單調改變（比單一 IC 更可讀）。"""
+    pairs = sorted(zip(xs, ys), key=lambda t: t[0])
+    n = len(pairs)
+    if n < q * 4:                       # 每組至少 ~4 筆才分組，否則不給分位
+        return None, None
+    buckets = []
+    for i in range(q):
+        lo = n * i // q
+        hi = n * (i + 1) // q
+        seg = [p[1] for p in pairs[lo:hi]]
+        buckets.append({"q": i + 1, "n": len(seg),
+                        "avg_net_r": round(sum(seg) / len(seg), 3) if seg else None})
+    avgs = [b["avg_net_r"] for b in buckets if b["avg_net_r"] is not None]
+    mono = None
+    if len(avgs) == q:
+        inc = all(avgs[i] <= avgs[i + 1] + 1e-9 for i in range(q - 1))
+        dec = all(avgs[i] >= avgs[i + 1] - 1e-9 for i in range(q - 1))
+        mono = "遞增" if inc else "遞減" if dec else "非單調"
+    return buckets, mono
+
+
 def _ic_one(rows, label):
     n0 = len(rows)
     if n0 < _IC_MIN_N:
@@ -417,7 +440,9 @@ def _ic_one(rows, label):
         n = len(xs)
         z = abs(ic) * math.sqrt(n - 1)            # Spearman 虛無下近似常態
         p = 2 * _norm_sf(z)
-        rec = {"factor": k, "ic": round(ic, 3), "n": n, "p": round(p, 4)}
+        q_buckets, q_mono = _quantile_returns(xs, ys)
+        rec = {"factor": k, "ic": round(ic, 3), "n": n, "p": round(p, 4),
+               "quantiles": q_buckets, "q_monotonic": q_mono}
         out.append(rec); pvals.append(p); idx.append(len(out) - 1)
     # BH-FDR：在多因子下控制偽發現，標示「較可靠」
     if pvals:
