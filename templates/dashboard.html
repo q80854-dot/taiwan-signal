@@ -3122,6 +3122,8 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
       <div class="x6-bar"><div class="o-tabs" id="m6-mk"><button class="tab on" data-m="TSE" onclick="m6Mk('TSE')">上市</button><button class="tab" data-m="OTC" onclick="m6Mk('OTC')">上櫃</button><button class="tab" data-m="ALL" onclick="m6Mk('ALL')">全部</button></div><span class="o-mt" id="m6-at"></span><span style="flex:1"></span><button class="btn" onclick="go('market')">市場環境分析 →</button></div>
       <div class="r-g" id="m6-body"><div class="o-c12 o-card"><div class="o-cb"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></div></div>
     </div>
+    <div class="sec-label" style="margin-top:0"><div class="bar"></div><div class="tx">市場狀態 Regime（研究 baseline）</div></div>
+    <div class="panel card" style="margin-bottom:12px"><div class="panel-body" id="regime-panel" style="padding:12px"><div class="empty">載入中…</div></div></div>
     <section id="live-strip" class="mbar" aria-label="大盤指數與市場廣度" hidden><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></section>
     <section id="taifex-strip" class="ledger" aria-label="期交所籌碼" hidden></section>
     <div id="mo-source-note" style="font-size:10.5px;color:var(--t3);margin-bottom:12px"></div>
@@ -3793,7 +3795,7 @@ function go(id){
   if(id==='report')rpTab(window._rpKind||'postmarket');
   if(id==='autopsy')fetchAutopsy();
   if(id==='events')fetchEvents();
-  if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();}
+  if(id==='marketoverview'&&!_marketOverviewLoaded){_marketOverviewLoaded=true;fetchLiveStrip();fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();fetchCalendar();loadRegime();}
   if(id==='marketoverview'&&!window._moTimer){window._moTimer=setInterval(()=>{if(document.hidden||window._curPage!=='marketoverview')return;fetchTaifexStrip();fetchMarketBreadth();fetchSectorPerf();},300000);}
   if(id==='diag'){fetchDiag();fetchAdminTools();loadNotifyPrefs();}
   if(id==='freshness')pollFreshness(true);
@@ -7616,6 +7618,25 @@ async function fetchLearning(){
     document.getElementById('ad-main').style.display='block';
     setHtml('lr-find','<div class="empty">載入失敗：'+esc2(e.message)+'</div>');
   }
+}
+async function loadRegime(){
+  const el=document.getElementById('regime-panel');if(!el)return;
+  try{
+    const r=await fetch('/api/regime',{cache:'no-store'});
+    if(!r.ok){el.innerHTML='<div class="empty">暫無資料</div>';return;}
+    const d=await r.json();
+    if(!d.ok){el.innerHTML='<div class="empty">暫無資料</div>';return;}
+    const c=d.components||{};
+    const cell=(title,comp,extra)=>`<div class="o-inset" style="padding:10px"><div class="o-lbl">${title}</div><div style="font:700 16px/22px var(--sans)">${esc2((comp&&comp.label)||'暫無')}</div>${extra?`<div style="font-size:11px;color:var(--t3)">${extra}</div>`:''}</div>`;
+    const v=c.volatility||{},l=c.liquidity||{},t=c.trend||{};
+    el.innerHTML=`<div style="font:700 16px/24px var(--sans);margin-bottom:10px">綜合：${esc2(d.composite||'暫無')}</div>`+
+      `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">`+
+      cell('趨勢',t,t.ma20!=null&&t.ma60!=null?`MA20 ${v5F?v5F(t.ma20,0):t.ma20}／MA60 ${v5F?v5F(t.ma60,0):t.ma60}`:'')+
+      cell('波動',v,v.annualized_pct!=null?`年化 ${v.annualized_pct}%`:'')+
+      cell('流動性',l,l.recent_vs_prior!=null?`近5日/前20日 ${l.recent_vs_prior}x`:'')+
+      cell('廣度',c.breadth,'尚未建置')+
+      `</div><div style="font-size:11px;color:var(--t3);margin-top:8px">${esc2(d.note||'')}</div>`;
+  }catch(e){el.innerHTML='<div class="empty">載入失敗</div>';}
 }
 async function loadFactorIC(){
   const el=document.getElementById('factor-ic');if(!el)return;

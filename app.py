@@ -1965,6 +1965,16 @@ def api_summary_today():
         pass
     return jsonify(_explain.daily_summary_text(signals, mo, {"scanned": scanned}))
 
+@app.route("/api/regime")
+def api_regime():
+    """市場狀態 baseline（趨勢／波動／流動性，可解釋規則）。研究/顯示用，不接線上決策。"""
+    try:
+        import regime
+        return jsonify(regime.regime_snapshot())
+    except Exception as e:
+        logger.error(f"api_regime: {e}", exc_info=True); return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/market")
 def api_market():
     try:
