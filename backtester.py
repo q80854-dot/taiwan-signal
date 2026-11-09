@@ -266,14 +266,14 @@ def calc_tw_pnl(entry, close, direction, shares, days_held=0):
     borrow   = sell_leg * shares * SHORT_BORROW_ANNUAL * max(days_held, 0) / 365 if direction == "sell" else 0
     return round(gross - buy_fee - sell_fee - sell_tax - borrow, 0)
 
-def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date):
+def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, expire_days=None):
     """★ 2026-11-08 Phase 1：分批出場判定統一由 execution.simulate_staged_exit 執行，與
     （未來的）其他回測路徑共用同一實作，避免漂移。成本仍走本模組的 calc_tw_pnl（以 pnl_fn
     依賴注入傳入），數字完全不變。保守規則與原本一致：TP1/TP2/TP3 各出 1/3、TP1→保本、
     TP2→移至 TP1、同 K 先停損、跳空以開盤成交、末段逾期以收盤結算。回傳結構與原本相同。"""
     import execution
     return execution.simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares,
-                                          gen_date, pnl_fn=calc_tw_pnl)
+                                          gen_date, pnl_fn=calc_tw_pnl, expire_days=expire_days)
 
 
 def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True,
@@ -642,8 +642,9 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
     from signal_engine import check_multi_timeframe_tw, calc_stop_loss_tw, calc_take_profits_tw, calc_position_size
     from stock_universe import get_tw50_components, get_stock_info
     from scoring_engine import calc_performance_metrics
-    from config import ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_PORTFOLIO_RISK
+    from config import ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_PORTFOLIO_RISK, CIRCUIT_BREAKER
     LOOKBACK = 130
+    EXPIRE_DAYS = CIRCUIT_BREAKER.get("signal_expire_days", 15)   # ★ 2026-11-09 Phase B：回測也套用到期窗
     min_score = min_score if min_score is not None else THRESH["min_score"]
     max_pos   = int(max_positions or MAX_SIMULTANEOUS_POSITIONS)
     port_risk = float(max_portfolio_risk if max_portfolio_risk is not None else MAX_PORTFOLIO_RISK)
@@ -698,6 +699,16 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             if hit_sl or hit_tp:
                 res, cp = ("sl", p["sl"]) if hit_sl else ("tp1", p["tp1"])
                 _close(t, cp, res, day)
+                continue
+            # ★ 2026-11-09 Phase B：到期窗。實盤訊號持有達 signal_expire_days（日曆天）仍未出場即
+            # 強制平倉；回測沿用同一規則，避免「無限持有到最終 TP1」而高估勝率（look-ahead）。
+            try:
+                _held = (datetime.strptime(day[:10], "%Y-%m-%d")
+                         - datetime.strptime(p["bar_date"][:10], "%Y-%m-%d")).days
+            except Exception:
+                _held = 0
+            if _held >= EXPIRE_DAYS:
+                _close(t, dd["closes"][di], "expired", day)
         # 2b) 進場：找當日候選、依分數排序，在三個限制下開倉
         if len(open_pos) < max_pos:
             cands = []

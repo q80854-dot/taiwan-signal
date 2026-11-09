@@ -17,8 +17,8 @@ R 一律以傳入的 risk（＝|規劃進場價−停損|）為分母，跨筆�
 """
 from datetime import datetime, timezone, timedelta
 
-SIM_VERSION = "exit-v1-2026-11-06"
-STAGED_SIM_VERSION = "staged-v1-2026-11-08"
+SIM_VERSION = "exit-v2-2026-11-09"            # v2：加到期窗截斷＋同根 K tp1_before_sl 保守化（Phase B）
+STAGED_SIM_VERSION = "staged-v2-2026-11-09"   # v2：加 expire_days 到期窗截斷（Phase B）
 _TPE = timezone(timedelta(hours=8))
 
 
@@ -55,6 +55,10 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
         out["r10"] = round(sgn * (after[9]["close"] - entry_fill) / risk, 3)
     if len(after) >= 20:
         out["r20"] = round(sgn * (after[19]["close"] - entry_fill) / risk, 3)
+    try:
+        _sig_dt = datetime.strptime(bar_date[:10], "%Y-%m-%d")
+    except Exception:
+        _sig_dt = None
     mfe, mae = -9e9, 9e9
     mfe_i = mae_i = tp1_i = sl_i = None
     for i, b in enumerate(after):
@@ -74,6 +78,18 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
         if sl_hit and sl_i is None:
             sl_i = i + 1
         if not (sl_hit or h1 or h2 or h3):
+            # ★ 2026-11-09 Phase B：到期窗截斷（消除 look-ahead）。本根未觸及任何出場，
+            # 若其日曆天齡已達 expire_days，則以本根收盤結算 expired 並停止往後掃描——
+            # 否則到期日之後才觸及的停利/停損會被誤計入出場（高估勝率）。
+            if _sig_dt is not None and expire_days:
+                try:
+                    _age_b = (datetime.strptime(b["bar_date"][:10], "%Y-%m-%d") - _sig_dt).days
+                except Exception:
+                    _age_b = -1
+                if _age_b >= expire_days:
+                    out.update(result="expired", exit_price=b["close"],
+                               exit_date=b["bar_date"][:10], bars_held=i + 1)
+                    break
             continue
         if sl_hit:                                    # 同根同時觸及 → 先判停損（保守）
             res, px = "sl", stop
@@ -90,7 +106,9 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
     out["mfe"], out["mae"] = round(mfe, 3), round(mae, 3)
     out["mfe_bars"], out["mae_bars"] = mfe_i, mae_i
     if tp1_i is not None:
-        out["tp1_before_sl"] = int(sl_i is None or tp1_i <= sl_i)
+        # ★ 2026-11-09 Phase B：同一根 K 棒同時觸及 TP1 與 SL（tp1_i == sl_i）時，無法得知盤中
+        # 先後，依整體「同根先判停損」的保守慣例視為 SL 先（tp1_before_sl=0）。故用嚴格 < 。
+        out["tp1_before_sl"] = int(sl_i is None or tp1_i < sl_i)
     elif sl_i is not None:
         out["tp1_before_sl"] = 0
     if out["result"] is None:                         # 逾期以最新收盤結算
@@ -104,7 +122,8 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
     return out
 
 
-def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, pnl_fn):
+def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, pnl_fn,
+                         expire_days=None):
     """分批出場模擬器（2026-11-08，Phase 1：backtester 與此共用同一實作）。
     忠實模擬推播給使用者的操作計畫：TP1/TP2/TP3 各出 1/3；TP1 觸及後停損移至成本、
     TP2 觸及後移至 TP1；同一根 K 棒停損優先於停利（保守）；跳空穿越停損以開盤價成交；
@@ -158,6 +177,14 @@ def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_
             done[stage] = True; remaining -= leg_sh[stage]; exit_date = bd[:10]
             if stage == "tp1":   current_sl = entry        # 移至保本
             elif stage == "tp2": current_sl = tp1          # 移至 TP1 鎖利
+        # ★ 2026-11-09 Phase B：到期窗截斷。本根收盤時若已達 expire_days 且仍有未出場部位，
+        # 以本根收盤結算剩餘為 expired，停止往後掃描——否則到期日之後才觸及的停利會被誤計入
+        # 出場（高估勝率/報酬）。與 simulate_exit 的到期語意一致。
+        if expire_days and remaining > 0 and _days(bd) >= expire_days:
+            legs.append({"stage": "expired", "price": b["close"], "shares": remaining,
+                         "pnl": pnl_fn(entry, b["close"], direction, remaining, days_held=_days(bd))})
+            exit_date = bd[:10]; remaining = 0
+            break
     if remaining > 0 and bars:
         last = bars[-1]
         legs.append({"stage": "expired", "price": last["close"], "shares": remaining,
