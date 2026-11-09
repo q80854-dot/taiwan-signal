@@ -245,11 +245,7 @@ def broadcast(text: str, tier: str = "free") -> int:
 # 先用這個低成本版本補上「完全沒有提示」的缺口。
 def _weekend_gap_warning(now_tw: datetime) -> str:
     if now_tw.weekday() in (3, 4):  # 3=週四, 4=週五
-        return (
-            "⚠️ <b>週末風險提醒</b>：訊號在週四/週五產生，下次盤後結算前"
-            "（含週末）系統無法監控盤中價格，若隔週一開盤跳空，可能直接"
-            "穿越停損價。建議進場部位酌情減碼，或等週一開盤確認走勢再進場。\n"
-        )
+        return "⚠️ 週末前訊號：週末系統不監控盤中，週一跳空可能直接穿越停損，建議減碼或等週一確認。\n"
     return ""
 
 
@@ -261,12 +257,7 @@ def _weekend_gap_warning(now_tw: datetime) -> str:
 def _earnings_season_warning(now_tw: datetime) -> str:
     season = is_earnings_season(now_tw)
     if season["in_season"]:
-        return (
-            f"⚠️ <b>財報密集期提醒</b>：現在是法定財報申報截止日（{season['deadline']}，"
-            f"剩 {season['days_left']} 天）前的密集公告期，個股可能在任何時間點公告財報，"
-            "公告後股價跳空的機率較平時高，且本系統無法逐檔預先得知確切公告日期，"
-            "建議留意個股即將公告財報的消息，並酌情減碼或提高警覺。\n"
-        )
+        return (f"⚠️ 財報密集期（截止 {season['deadline']}，剩 {season['days_left']} 天）：個股隨時可能公告財報、跳空機率高，請留意並酌情減碼。\n")
     return ""
 
 
