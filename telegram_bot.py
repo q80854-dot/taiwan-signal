@@ -322,8 +322,8 @@ def format_signal_paid(sig: Dict) -> str:
         "bearish":        "週線空頭",
         "neutral":        "週線橫盤",
     }.get(sig.get("weekly_bias", "neutral"), "—")
-    conds_met  = "\n".join(f"　▪️ {c}" for c in sig.get("conditions_met",  [])[:5])
-    conds_fail = "\n".join(f"　⚠️ {c}" for c in sig.get("conditions_fail", [])[:3])
+    conds_met  = " ・ ".join(sig.get("conditions_met",  [])[:4])
+    conds_fail = " ・ ".join(sig.get("conditions_fail", [])[:3])
     inst = sig.get("inst_signal", "") or "資料更新中"
 
     # ★ 新增：2026-09-28——見 signal_engine.py generate_signal_tw() 的
@@ -354,47 +354,36 @@ def format_signal_paid(sig: Dict) -> str:
     else:
         short_research_banner = ""
 
+    # ── 美編（2026-11-09）：去掉七條粗分隔線（只在標題下保留一條當「卡片頭」），
+    # 改用粗體小標＋分組空行＋一致 emoji；TP/條件改為單行緊湊排版，整體在手機上更清爽好讀。
     return (
         short_research_banner +
-        f"{grade_em} <b>{sig.get('grade','C')}級｜{sig['name']} {sig.get('code','')}</b>\n"
-        f"{sig.get('sector','—')}｜{dir_str}\n"
+        f"{grade_em} <b>{sig.get('grade','C')}級　{sig['name']}　{sig.get('code','')}</b>\n"
+        f"{sig.get('sector','—')} ・ {dir_str} ・ {sig.get('size_cat','—')}\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"現價：<b>{sig['current_price']:.2f}</b>　{chg_str}\n"
-        f"📍 進場區：{sig.get('entry_zone_low',0):.2f} ~ {sig.get('entry_zone_high',0):.2f}\n"
-        f"🛑 止損：<b>{sig['stop_loss']:.2f}</b>　{sl_arrow}{sig.get('sl_pct',0):.1f}%\n"
-        f"🥇 TP1：<b>{sig['tp1']:.2f}</b>　{tp_arrow}{sig.get('tp1_pct',0):.1f}%　1:{sig.get('rr1',1.5)}　出1/3\n"
-        f"🥈 TP2：<b>{sig.get('tp2',0):.2f}</b>　{tp_arrow}{sig.get('tp2_pct',0):.1f}%　1:{sig.get('rr2',2.5)}　出1/3\n"
-        f"🥉 TP3：<b>{sig.get('tp3',0):.2f}</b>　{tp_arrow}{sig.get('tp3_pct',0):.1f}%　1:{sig.get('rr3',4.0)}　出1/3\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"📦 <b>倉位建議</b>\n"
-        f"建議：<b>{sig.get('suggested_lots',1)} 張</b>　市值 TWD {sig.get('position_value',0):,}\n"
-        f"風險：TWD {sig.get('risk_twd',0):,}（{sig.get('risk_pct',0):.1f}%）\n"
-        f"費稅：TWD {sig.get('roundtrip_cost',0):,}\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"👥 <b>法人動向</b>\n"
-        f"{inst}\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"📊 <b>技術指標</b>\n"
-        f"評分 {sig['score']}分｜ADX {sig.get('adx_value',0):.0f}｜"
-        f"RSI {sig.get('rsi_value',50):.0f}｜量比 {sig.get('vol_ratio',1):.1f}x\n"
-        f"✅ {weekly_zh}｜{sig.get('size_cat','—')}\n"
-        + (f"━━━━━━━━━━━━━━━\n✅ <b>確認條件：</b>\n{conds_met}\n" if conds_met else "")
-        + (f"⚠️ <b>注意：</b>\n{conds_fail}\n" if conds_fail else "")
-        # ★ 新增：2026-09-28——見 scanner.py/fundamentals.py 的 data_missing
-        # 說明：月營收資料抓不到時系統採 fail-open（不擋訊號），但這裡明確
-        # 推播出來，避免使用者誤以為這檔已經過本業衰退檢查。
-        + ("⚠️ <b>月營收資料本次無法取得，未經本業衰退檢查</b>\n" if sig.get("revenue_check") == "data_missing" else "")
-        # ★ 新增：2026-09-28——item 2（fail-open 三態化）：獲利品質／重大
-        # 訊息「這次抓取失敗、沒查」(unavailable) 跟「這檔本來就不在涵蓋
-        # 範圍」(not_covered，例如上櫃／異業) 分開處理——only unavailable
-        # 需要提醒，not_covered 是長期已知的系統限制，每次都提示會變噪音。
-        + ("⚠️ <b>獲利品質資料本次無法取得，未經檢查</b>\n" if sig.get("quality_check") == "unavailable" else "")
-        + ("⚠️ <b>重大訊息公告本次無法取得，未經檢查</b>\n" if sig.get("news_check") == "unavailable" else "")
-        + f"━━━━━━━━━━━━━━━\n"
+        f"💰 現價 <b>{sig['current_price']:.2f}</b>　{chg_str}\n"
+        f"🎯 進場 {sig.get('entry_zone_low',0):.2f} – {sig.get('entry_zone_high',0):.2f}\n"
+        f"\n"
+        f"🛑 止損 <b>{sig['stop_loss']:.2f}</b>　{sl_arrow}{sig.get('sl_pct',0):.1f}%\n"
+        f"🥇 TP1 <b>{sig['tp1']:.2f}</b>　{tp_arrow}{sig.get('tp1_pct',0):.1f}%　R{sig.get('rr1',1.5)}\n"
+        f"🥈 TP2 <b>{sig.get('tp2',0):.2f}</b>　{tp_arrow}{sig.get('tp2_pct',0):.1f}%　R{sig.get('rr2',2.5)}\n"
+        f"🥉 TP3 <b>{sig.get('tp3',0):.2f}</b>　{tp_arrow}{sig.get('tp3_pct',0):.1f}%　R{sig.get('rr3',4.0)}\n"
+        f"　　<i>各出 1/3</i>\n"
+        f"\n"
+        f"📦 倉位 <b>{sig.get('suggested_lots',1)} 張</b> ・ 市值 {sig.get('position_value',0):,}\n"
+        f"　　風險 {sig.get('risk_twd',0):,}（{sig.get('risk_pct',0):.1f}%） ・ 費稅 {sig.get('roundtrip_cost',0):,}\n"
+        f"\n"
+        f"📊 技術 評分{sig['score']} ・ ADX{sig.get('adx_value',0):.0f} ・ RSI{sig.get('rsi_value',50):.0f} ・ 量{sig.get('vol_ratio',1):.1f}x ・ {weekly_zh}\n"
+        f"🏦 籌碼 {inst}\n"
+        + (f"✅ {conds_met}\n" if conds_met else "")
+        + (f"⚠️ {conds_fail}\n" if conds_fail else "")
+        # fail-open 資料缺料提醒（維持，見 scanner.py/fundamentals.py 說明）
+        + ("⚠️ <b>月營收本次無法取得，未經本業衰退檢查</b>\n" if sig.get("revenue_check") == "data_missing" else "")
+        + ("⚠️ <b>獲利品質本次無法取得，未經檢查</b>\n" if sig.get("quality_check") == "unavailable" else "")
+        + ("⚠️ <b>重大訊息本次無法取得，未經檢查</b>\n" if sig.get("news_check") == "unavailable" else "")
+        + f"\n"
         f"💡 {sig.get('reason_brief','—')}\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"🕐 資料時間：{_data_age_str(sig, now_tw)}\n"
-        f"⏰ 訊號有效 {sig.get('expire_days',3)} 個交易日\n"
+        f"🕐 {_data_age_str(sig, now_tw)} ・ 有效 {sig.get('expire_days',3)} 日\n"
         + _weekend_gap_warning(now_tw)
         + _earnings_season_warning(now_tw)
         + f"<i>{DISCLAIMER}</i>"
