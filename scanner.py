@@ -581,7 +581,11 @@ class TWScanEngine:
                 shares = sig.get("suggested_shares") or sig.get("suggested_lots") or 1  # 明確股數優先；suggested_lots 為歷史遺留欄位（實存股數）
                 if not bars or not entry:
                     continue
-                sim = simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date)
+                expire_days = CB.get("signal_expire_days", 15)
+                # ★ 2026-11-09 Phase B：把到期窗傳入模擬器，到期日之後才觸及的停利/停損不再計入
+                # （look-ahead 修正）；仍由下方 aged_out 閘門決定「尚未到期、未出場」者留 pending。
+                sim = simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date,
+                                           expire_days=expire_days)
                 if not sim:
                     continue
                 has_open_leg = any(l["stage"] == "expired" for l in sim["legs"])   # 仍有未出場的 1/3
@@ -589,7 +593,6 @@ class TWScanEngine:
                     gen_dt = datetime.strptime(gen_date, "%Y-%m-%d")
                 except ValueError:
                     gen_dt = None
-                expire_days = CB.get("signal_expire_days", 15)
                 aged_out = bool(gen_dt) and (datetime.now(timezone.utc).replace(tzinfo=None) - gen_dt).days >= expire_days
                 # 尚有未出場部位且還沒到期：留在 pending，下次掃描有新 K 棒再結算（避免提早以現價結清）
                 if has_open_leg and not aged_out:
