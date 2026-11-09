@@ -1313,10 +1313,15 @@ class TWScanEngine:
             send_alert(f"🌅 盤前掃描完成（掃 {stats.get('scanned')} 檔，耗時 {stats.get('duration_min')} 分）\n"
                        + (f"新訊號 {len(signals)} 檔：{names}" if signals else "沒有新的符合條件訊號；正式盤後掃描 16:30 仍會照常執行。"), "info")
             deliveries = {}
+            owner_misses = []       # ★ 2026-11-09 Phase C：站主本人沒收到（即使頻道收到）
             for sig in self._apply_notify_prefs(signals):
+                label = sig.get("name") or sig.get("code") or sig.get("ticker") or "?"
                 try:
                     res = push_signal(sig) or {}
                     deliveries[sig.get("ticker")] = bool(res.get("any_ok"))
+                    if res.get("owner_configured") and not res.get("owner_ok"):
+                        owner_misses.append(label)
+                        logger.error(f"_push_premarket: {label} 站主本人未收到（owner_ok=False）")
                 except Exception as e:
                     deliveries[sig.get("ticker")] = False
                     logger.error(f"_push_premarket: 訊號推播失敗 {sig.get('ticker')}: {e}")
@@ -1326,6 +1331,14 @@ class TWScanEngine:
                 shadow.mark_delivered(deliveries)
             except Exception as e:
                 logger.warning(f"_push_premarket: mark_delivered 失敗: {e}")
+            if owner_misses:
+                try:
+                    send_alert(
+                        f"⚠️ 盤前：你本人（站主）未收到 {len(owner_misses)} 檔訊號：{'、'.join(owner_misses)}\n"
+                        f"頻道或其他管理員可能已收到。請檢查是否封鎖了 bot、或 TELEGRAM_CHAT_ID 設定。",
+                        "warning")
+                except Exception as e:
+                    logger.error(f"_push_premarket: 站主漏收告警也送不出去: {e}")
         except Exception as e:
             logger.error(f"_push_premarket: {e}", exc_info=True)
 
@@ -1387,6 +1400,7 @@ class TWScanEngine:
 
         time.sleep(1)
         push_failures = []
+        owner_misses = []       # ★ 2026-11-09 Phase C：站主本人沒收到（即使頻道收到）
         deliveries = {}
         for sig in self._apply_notify_prefs(signals):
             label = sig.get("name") or sig.get("code") or sig.get("ticker") or "?"
@@ -1397,6 +1411,10 @@ class TWScanEngine:
                 if not ok:      # ★ 2026-11-06：所有目標都沒送出（非例外，但 Telegram 沒收下）也算失敗
                     push_failures.append(label)
                     logger.error(f"_push_signals: {label} 推播未送達任何目標（any_ok=False）")
+                elif res.get("owner_configured") and not res.get("owner_ok"):
+                    # 有設站主 chat 但本人沒收到——即使頻道/其他 admin 收到也要讓機主知道
+                    owner_misses.append(label)
+                    logger.error(f"_push_signals: {label} 站主本人未收到（owner_ok=False，但其他目標已送達）")
             except Exception as e:
                 deliveries[sig.get("ticker")] = False
                 push_failures.append(label)
@@ -1407,6 +1425,16 @@ class TWScanEngine:
             shadow.mark_delivered(deliveries)
         except Exception as e:
             logger.warning(f"_push_signals: mark_delivered 失敗: {e}")
+
+        if owner_misses:
+            # 專屬告警，與 any_ok 失敗分開：這些訊號「有人收到、但你本人沒收到」。
+            try:
+                send_alert(
+                    f"⚠️ 你本人（站主）未收到 {len(owner_misses)} 檔訊號：{'、'.join(owner_misses)}\n"
+                    f"頻道或其他管理員可能已收到。請檢查是否封鎖了 bot、或 TELEGRAM_CHAT_ID 設定是否正確。",
+                    "warning")
+            except Exception as e:
+                logger.error(f"_push_signals: 站主漏收告警也送不出去: {e}")
 
         if push_failures:
             try:

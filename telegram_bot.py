@@ -644,17 +644,27 @@ def push_signal(sig: Dict) -> Dict:
 
     subs = _load_subscribers()
     admin_ids = subs.get("admin", [])
-    admin_ok  = sum(1 for admin_id in admin_ids if send_message(admin_id, paid_msg))
+    # ★ 2026-11-09 Phase C：逐 admin 記送達結果，才能單獨判斷「站主本人」有沒有收到。
+    # 原本只算 admin_ok 總數，站主私訊失敗會被其他 admin/頻道的成功掩蓋（審查 §五）。
+    admin_results = {str(admin_id): send_message(admin_id, paid_msg) for admin_id in admin_ids}
+    admin_ok  = sum(1 for v in admin_results.values() if v)
+    owner_id = str(TELEGRAM_CHAT_ID) if TELEGRAM_CHAT_ID else None
+    owner_configured = bool(owner_id)
+    if owner_configured and owner_id not in admin_results:
+        # _load_subscribers 正常會把站主併入 admin；萬一沒有，直接補送一次確認本人送達。
+        owner_ok = bool(send_message(owner_id, paid_msg))
+    else:
+        owner_ok = bool(owner_configured and admin_results.get(owner_id))
     any_ok = bool(free_ok or paid_ok or admin_ok > 0)
-    # ★ 修正：2026-09-03——把 admin 直送的成功/失敗數量記進 log，這樣機主
-    # 之後只要看 Render log 就能確認每一筆訊號到底有沒有真的送到自己手機，
-    # 不用再靠猜的。
+    # ★ 修正：2026-09-03——把 admin 直送的成功/失敗數量記進 log；2026-11-09 另記 owner_ok，
+    # 機主看 Render log 即可確認「本人」到底有沒有真的收到這一筆（而非只看有沒有人收到）。
     logger.info(
         f"訊號推播：{sig.get('name','')} {sig.get('direction','')} score={sig['score']} "
-        f"admin {admin_ok}/{len(admin_ids)} any_ok={any_ok}"
+        f"admin {admin_ok}/{len(admin_ids)} owner_ok={owner_ok} any_ok={any_ok}"
     )
     return {"any_ok": any_ok, "admin_ok": admin_ok, "admin_total": len(admin_ids),
-            "free_ok": bool(free_ok), "paid_ok": bool(paid_ok)}
+            "free_ok": bool(free_ok), "paid_ok": bool(paid_ok),
+            "owner_ok": owner_ok, "owner_configured": owner_configured}
 
 # ══════════════════════════════════════════════
 # 盤中持倉現況總覽（12:00 台北時間，見 scanner.check_intraday_price_alerts）
