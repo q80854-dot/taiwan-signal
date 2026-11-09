@@ -146,8 +146,8 @@ def test_shadow_r_multiple_is_net_of_costs(monkeypatch, tmp_path):
             if q.strip().startswith("SELECT"):
                 self._rows = [dict(r) for r in rows]; return self
             if q.strip().startswith("UPDATE"):
-                # 攔截 r_multiple 寫入值（倒數第二個參數為 r_multiple，最後是 id）
-                saved["vals"] = p
+                # 攔截 r_multiple 寫入值。以欄位名定位（不再假設固定位置，因後續可能追加 champion_r 等欄位）。
+                saved["q"] = q; saved["vals"] = p
             return self
 
         def fetchall(self): return getattr(self, "_rows", [])
@@ -159,7 +159,11 @@ def test_shadow_r_multiple_is_net_of_costs(monkeypatch, tmp_path):
     from config import SLIPPAGE_RATE
     res = shadow.resolve_pending()
     assert res["closed"] == 1
-    net_r = saved["vals"][-2]
+    # 以 SET 子句中「帶 ? 的欄位」順序定位 r_multiple 的參數位置（params 依序填入、非 ? 欄位跳過）。
+    set_clause = saved["q"].split(" SET ", 1)[1].rsplit(" WHERE ", 1)[0]
+    ph_fields = [f.strip() for f in set_clause.split(",") if "?" in f]
+    idx = next(i for i, f in enumerate(ph_fields) if f.startswith("r_multiple"))
+    net_r = saved["vals"][idx]
     # 含滑價＋來回手續費＋證交稅（買方；借券費=0）的淨 R，需 < 毛 R(1.0) 但仍為正
     eff_fill = 105 * (1 + SLIPPAGE_RATE); eff_exit = 110 * (1 - SLIPPAGE_RATE)
     gross_r = (eff_exit - eff_fill) / 5.0
