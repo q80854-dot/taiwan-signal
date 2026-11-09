@@ -153,6 +153,13 @@ def ensure_table():
                 store._migrate_add_column("shadow_signals", col, typ)
             except Exception as e:
                 logger.debug(f"shadow migrate {col}: {e}")
+        # 2026-11-09（Shadow 雙軌）：champion_r＝與正式推播一致的『分批出場（TP1/TP2/TP3 各 1/3、
+        # TP1 後移保本、TP2 後移 TP1）』淨 R，回答「現行 Champion 策略到底有沒有優勢」。既有
+        # r_multiple 維持單次出場（Research Track），兩軌並存、不混用。
+        try:
+            store._migrate_add_column("shadow_signals", "champion_r", "REAL")
+        except Exception as e:
+            logger.debug(f"shadow migrate champion_r: {e}")
         _ready = True
 
 
@@ -789,6 +796,45 @@ def _simulate(row, bars, expire_days):
     return out
 
 
+def _shadow_staged_pnl_factory():
+    """回傳一個與 shadow 單次出場『同口徑』的 pnl_fn：滑價＋來回手續費＋證交稅＋（放空）借券費，
+    唯張數相消、不套用每筆 20 元最低手續費（與既有 r_multiple 相同假設，兩軌才可直接比較）。"""
+    from config import COMMISSION_RATE, TAX_RATE_SELL, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL
+
+    def _pnl(entry, exit_price, direction, shares, days_held=0):
+        buy = direction == "buy"
+        eff_in = entry * (1 + SLIPPAGE_RATE) if buy else entry * (1 - SLIPPAGE_RATE)
+        eff_out = exit_price * (1 - SLIPPAGE_RATE) if buy else exit_price * (1 + SLIPPAGE_RATE)
+        gross = (eff_out - eff_in) * shares if buy else (eff_in - eff_out) * shares
+        sell_leg = eff_out if buy else eff_in                       # 賣出腳的每股價（證交稅／借券基準）
+        cost = (eff_in * COMMISSION_RATE + eff_out * COMMISSION_RATE + sell_leg * TAX_RATE_SELL) * shares
+        borrow = sell_leg * shares * SHORT_BORROW_ANNUAL * max(0, days_held) / 365 if not buy else 0
+        return gross - cost - borrow
+    return _pnl
+
+
+def _champion_r(row, bars, expire_days):
+    """Champion Track：以『分批出場』（與正式推播一致）＋ shadow 成本口徑計淨 R。
+    回傳 champion_r（分批淨損益 ÷ (1R×股數)，股數相消故與名目股數無關）或 None（資料不足/退化）。"""
+    planned_entry, stop = row.get("entry"), row.get("stop")
+    if not _risk_ok(planned_entry, stop):
+        return None
+    after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
+    if not after:
+        return None
+    import execution
+    risk = abs(planned_entry - stop)
+    fill = after[0].get("open") or planned_entry                   # 與單次出場同基準（訊號日後第一根開盤）
+    shares = 3000                                                  # 名目股數（可被 3 整除，R 正規化後相消）
+    sim = execution.simulate_staged_exit(
+        after, entry=fill, sl=stop, tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"),
+        direction=row["direction"], shares=shares, gen_date=row["bar_date"],
+        pnl_fn=_shadow_staged_pnl_factory(), expire_days=expire_days)
+    if not sim:
+        return None
+    return round(sim["pnl"] / (risk * shares), 3)
+
+
 def _load_bars(tickers, since):
     """一條連線、分批 IN 查詢，撈回所有需要的日K（取代「一檔一條連線」）。"""
     from state_store import store
@@ -940,6 +986,14 @@ def resolve_pending(max_rows=8000):
                 net_r = gross_r - (cost_ps + borrow_ps) / risk
                 fields += ["status='closed'", "result=?", "exit_price=?", "exit_date=?", "r_multiple=?"]
                 vals += [sim["result"], exitp, sim["exit_date"], round(net_r, 3)]
+                # ★ 2026-11-09 Shadow 雙軌：另存 Champion Track（分批出場）淨 R，與單次出場 r_multiple 並列。
+                try:
+                    champ = _champion_r(r2, bars, expire_days)
+                except Exception as e:
+                    champ = None
+                    logger.debug(f"champion_r 計算失敗 id={row['id']}: {e}")
+                if champ is not None:
+                    fields.append("champion_r=?"); vals.append(champ)
                 closed += 1
             updates.append((f"UPDATE shadow_signals SET {', '.join(fields)} WHERE id=?", vals + [row["id"]]))
         if updates:
@@ -1027,6 +1081,12 @@ def overview():
         _fsv = [dict(x) for x in conn.execute(
             "SELECT COALESCE(feat_schema_ver,'(未標版)') AS ver, COUNT(*) AS n "
             "FROM shadow_signals WHERE kind='candidate' GROUP BY feat_schema_ver ORDER BY n DESC").fetchall()]
+        # ★ 2026-11-09 Shadow 雙軌：Champion（分批）vs Research（單次）淨 R 對照，依方向分開（不混多空）。
+        _champ = [dict(x) for x in conn.execute(
+            "SELECT direction, COUNT(*) AS n, "
+            "AVG(r_multiple) AS research_avg_r, AVG(champion_r) AS champion_avg_r "
+            "FROM shadow_signals WHERE kind='candidate' AND status='closed' AND champion_r IS NOT NULL "
+            "GROUP BY direction").fetchall()]
     # 特徵覆蓋率（每種來源各自算）
     cov, cnt = {}, {}
     for x in sample:
@@ -1075,9 +1135,14 @@ def overview():
     if _sent and _deliv < _sent:
         alerts.append(f"推播送達對帳：排入 {_sent} 筆、Telegram 確認送達 {_deliv} 筆"
                       f"（{_sent - _deliv} 筆未確認送達，可能是早期資料無對帳欄位，或實際未送達）")
+    champion_edge = [{"direction": c.get("direction"), "n": int(c.get("n") or 0),
+                      "research_avg_r": round(c["research_avg_r"], 3) if c.get("research_avg_r") is not None else None,
+                      "champion_avg_r": round(c["champion_avg_r"], 3) if c.get("champion_avg_r") is not None else None}
+                     for c in _champ]
     return {"summary": summary, "per_day": per_day, "runs": runs, "meta": meta, "oldest_pending": oldest,
             "coverage": coverage[:60], "coverage_n": cnt, "recent": recent, "alerts": alerts,
             "delivery": delivery, "feature_schema": {"current": FEATURE_SCHEMA_VERSION, "dist": _fsv},
+            "champion_edge": champion_edge,
             "reasons": REASONS, "control_rate": CONTROL_RATE,
             "caps": {"per_reason": REJ_PER_REASON, "total": REJ_TOTAL}}
 
@@ -1116,8 +1181,8 @@ def export_csv(kind=None, status=None):
             keys[k] = keys.get(k, 0) + 1
     fkeys = [k for k, _ in sorted(keys.items(), key=lambda z: -z[1])][:500]   # 2026-10-16：上限 150→500，幾乎匯出全部特徵
     base = ["id", "bar_date", "ticker", "code", "name", "kind", "direction", "score", "entry", "stop", "tp1", "tp2",
-            "tp3", "size_cat", "sector", "sent", "status", "result", "exit_price", "exit_date", "r_multiple", "mfe_r",
-            "mae_r", "bars_held", "gap_pct", "r1", "r5", "r10", "r20", "mae_bars", "mfe_bars", "tp1_before_sl", "created_at"]
+            "tp3", "size_cat", "sector", "sent", "status", "result", "exit_price", "exit_date", "r_multiple", "champion_r",
+            "mfe_r", "mae_r", "bars_held", "gap_pct", "r1", "r5", "r10", "r20", "mae_bars", "mfe_bars", "tp1_before_sl", "created_at"]
     # 2026-10-16：加上離線分析常用的衍生欄位，省得每次自己算
     WIN = ("tp1", "tp2", "tp3")
     derived = ["win", "is_stop", "hold_days", "reject_reason"]
