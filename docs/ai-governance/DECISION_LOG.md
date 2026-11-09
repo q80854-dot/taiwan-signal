@@ -5,6 +5,7 @@
 
 | 日期 | 任務 ID | 風險 | 決定 | 理由 | 核准人 | Commit/PR |
 |---|---|---|---|---|---|---|
+| 2026-11-09 | TS-SEC-PHASEA | risk:none(安全硬化) | 依第二階段審查 §8 Phase A：修正查證屬實的三項——gate() 認證例外改 fail-closed（受保護 /api/→503）、_ip() 取 XFF 最右段防偽造繞過限流、viewer_is_owner 新增 OWNER_FAIL_OPEN=0 可選 fail-closed（預設不變、不鎖既有單人使用者）。查證後判定：id_token 未驗簽為誤判（server 端授權碼流程直接向 Google 換取、來源可信）、admin 預設關閉非漏洞（gate 需 REQUIRED&&authed）；Chart.js SRI 延後（需正確雜湊、無網路不猜）、webhook secret 為加碼防禦延後 | 外部審查為待驗證宣稱，先查證再改；只改安全且不會把使用者鎖在門外的項 | 使用者「按照這份檔案去修改」 | PR #137 |
 | 2026-11-09 | TS-PAPER-001 | risk:research | Phase 5 第一刀：新增 paper.py（前向 Paper 帳戶模擬）＋ /api/paper（站主）。沿用已結算 pnl（execution 分批出場＋成本），只加「組合入場容量/現金會計」——修正既有 realized 曲線把所有已結算 pnl 無腦相加、未考慮同時持倉上限而高估的問題 | 稽核發現出場/成本/組合權益引擎大半已在，Paper 真正缺的是前向容量會計層；不碰 Champion、可離線測 | Claude 建議、使用者「繼續完成量化交易策略」 | PR #136 |
 | 2026-11-08 | TS-SHORT-001-fix | risk:research | 修正 learning.build_report 的 edge「訊號 vs 隨機」比較：改為只取做多候選對隨機做多對照（direction-matched），消除方向組成混淆；放空無隨機對照、不納入此比較 | 使用者「把沒完成的通通完成」→採 #132 提案之方案1；附 test_longshort_edge 驗證放空不污染結論 | 使用者「還有沒有完成的部分通通先把它完成」 | PR #134 |
 | 2026-11-08 | TS-REGIME-001 | risk:none | Regime baseline 現況與增量價值方法（REGIME_STATUS.md）：確認 regime.py 為可解釋規則 baseline、shadow-only 未接決策；regime/sentiment 已入 shadow 特徵快照故 factor_ic_report 已在量測其關聯；載明策略路由需足量 OOS+核准（risk:champion）才可接決策 | 完成「不接正式策略、先 OOS」；誠實標註樣本不足、過度擬合風險 | Claude 自選（使用者「未動的部分要記得動工」） | PR #133 |

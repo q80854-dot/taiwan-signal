@@ -509,8 +509,16 @@ _AUTH_RATE: dict = {}
 
 
 def _ip() -> str:
-    return (request.headers.get("CF-Connecting-IP") or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-            or request.remote_addr or "?")
+    # ★ 資安（2026-11-09）：X-Forwarded-For 的『最左段』是用戶端可偽造的（可任意塞假 IP），
+    # 可信代理（Render/CF）會把真實用戶端 IP 附在『最右段』。作為限流/辨識鍵改取最右段或
+    # CF-Connecting-IP（Cloudflare 設定、可信），避免攻擊者輪替假 XFF 繞過登入限流。
+    cf = (request.headers.get("CF-Connecting-IP") or "").strip()
+    if cf:
+        return cf
+    xff = (request.headers.get("X-Forwarded-For") or "").strip()
+    if xff:
+        return xff.split(",")[-1].strip()
+    return request.remote_addr or "?"
 
 
 def _ip_hash() -> str:
@@ -661,14 +669,29 @@ def gate():
         return r
     except Exception as e:
         logger.warning(f"gate: {e}")
+        # ★ 資安（2026-11-09）：認證過程發生例外時改為 fail-closed——對受保護的 /api/ 路徑
+        # （非開放清單）一律擋下（503），不再無聲 return None＝放行。原本的 fail-open 會在
+        # 資料庫/驗證服務出錯時讓受保護 API 被放行。靜態頁與開放路徑不受影響。
+        try:
+            p = request.path
+            if p.startswith("/api/") and not p.startswith(_OPEN_PATHS):
+                r = jsonify({"error": "暫時無法驗證身分，請稍後再試", "login_required": True})
+                r.status_code = 503
+                r.headers["Cache-Control"] = "no-store"
+                return r
+        except Exception:
+            pass
         return None
 
 
 def viewer_is_owner() -> bool:
-    """目前這個請求是不是站主（登入功能沒開＝單人使用，視為站主）。"""
+    """目前這個請求是不是站主（登入功能沒開＝單人使用，預設視為站主）。
+    ★ 資安（2026-11-09）：單人模式（未設定登入/REQUIRE_LOGIN=0）預設仍視為站主以便本機/研究使用；
+    正式環境可設環境變數 OWNER_FAIL_OPEN=0 改為 fail-closed（未登入即非站主，owner 端點一律 403），
+    避免「沒設定登入」被當成「所有人都是站主」。預設值保持現狀、不會把既有單人使用者鎖在門外。"""
     try:
         if not enabled() or os.environ.get("REQUIRE_LOGIN", "1").strip() == "0":
-            return True
+            return os.environ.get("OWNER_FAIL_OPEN", "1").strip() != "0"
         return is_owner(current_member())
     except Exception:
         return False
