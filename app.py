@@ -1700,6 +1700,20 @@ def api_risk_portfolio():
         return jsonify({"error": "無法計算組合風險"}), 500
 
 
+@app.route("/api/paper")
+@members.owner_required
+def api_paper():
+    """站主：Paper 帳戶模擬（Phase 5）——把系統實際發出並已結算的訊號，依『持倉/現金上限』模擬
+    「每筆都照做」的帳戶權益曲線與交易紀錄。沿用已結算 pnl（分批出場＋成本），只加組合入場容量
+    會計，修正既有 realized 曲線高估的問題。純模擬、非實盤、需樣本累積。因含帳戶本金，限機主。"""
+    try:
+        import paper
+        return jsonify(paper.paper_report(limit=500))
+    except Exception as e:
+        logger.error(f"api_paper: {e}", exc_info=True)
+        return jsonify({"error": "無法計算 Paper 帳戶"}), 500
+
+
 @app.route("/api/autopsy")
 def api_autopsy():
     from state_store import store
