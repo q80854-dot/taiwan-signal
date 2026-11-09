@@ -45,6 +45,19 @@ def test_exit_frees_slot_for_later_entry():
     assert out["taken"] == 6 and out["skipped_capacity"] == 0
 
 
+def test_daily_mtm_interpolates_unrealized():
+    # 一檔：2026-10-05(週一)入場、10-09(週五)出場、賺 10000。逐日 MTM 應從期初線性爬升到期末。
+    sigs = [_sig(1, 5, 9, 100000, 10000)]
+    out = paper.simulate_paper_portfolio(sigs, start_capital=500000, max_positions=5)
+    curve = out["daily_equity_curve"]
+    assert len(curve) >= 3                       # 週一~週五逐日
+    assert curve[0]["equity"] == 500000          # 入場當日尚未累積
+    assert curve[-1]["equity"] == 510000         # 出場日已實現全額
+    mids = [p["equity"] for p in curve[1:-1]]
+    assert all(500000 < m < 510000 for m in mids)  # 中間為線性累積的浮動損益
+    assert out["max_concurrent"] == 1
+
+
 def test_empty_is_safe():
     out = paper.simulate_paper_portfolio([], start_capital=500000)
     assert out["taken"] == 0 and out["final_equity"] == 500000 and out["equity_curve"] == []

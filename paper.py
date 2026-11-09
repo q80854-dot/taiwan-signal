@@ -13,9 +13,60 @@
 界線：純模擬、不動真錢、不碰 Champion 決策。Paper ≠ 實盤；且需真實訊號前向累積才有統計意義。
 """
 from typing import Dict, List, Optional
+from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _d(s: str):
+    """把 ISO 字串取到日期（YYYY-MM-DD）→ date 物件；失敗回 None。"""
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _daily_mtm_curve(taken: List[Dict], start_capital: float) -> Dict:
+    """逐日 mark-to-market 浮動權益曲線（線性近似，無盤中路徑）。
+
+    taken 每筆需有 entry_d / exit_d（date）/ pnl。對每個交易日 d：
+      equity(d) = 期初 ＋ 已於 d(含) 前出場者的 pnl ＋ 仍持有者的『線性累積浮動損益』
+                  （pnl × 已持有天數 ÷ 總持有天數）。
+    僅計週一~週五（近似交易日；未扣國定假日）。回傳曲線、最大回撤%、每日最大同時持倉。
+    """
+    rows = [t for t in taken if t.get("entry_d") and t.get("exit_d")]
+    if not rows:
+        return {"daily_equity_curve": [], "max_drawdown_pct": 0.0, "max_concurrent": 0}
+    d0 = min(r["entry_d"] for r in rows)
+    d1 = max(r["exit_d"] for r in rows)
+    curve = []
+    peak = start_capital
+    max_dd = 0.0
+    max_concurrent = 0
+    day = d0
+    while day <= d1:
+        if day.weekday() < 5:  # 週一~週五
+            realized = 0.0
+            unreal = 0.0
+            concurrent = 0
+            for r in rows:
+                if r["exit_d"] <= day:
+                    realized += r["pnl"]
+                elif r["entry_d"] <= day < r["exit_d"]:
+                    total = max(1, (r["exit_d"] - r["entry_d"]).days)
+                    elapsed = (day - r["entry_d"]).days
+                    unreal += r["pnl"] * (elapsed / total)
+                    concurrent += 1
+            eq = start_capital + realized + unreal
+            curve.append({"date": day.isoformat(), "equity": round(eq, 0)})
+            peak = max(peak, eq)
+            if peak > 0:
+                max_dd = max(max_dd, (peak - eq) / peak * 100)
+            max_concurrent = max(max_concurrent, concurrent)
+        day += timedelta(days=1)
+    return {"daily_equity_curve": curve, "max_drawdown_pct": round(max_dd, 2),
+            "max_concurrent": max_concurrent}
 
 
 def _pv(sig: Dict) -> float:
@@ -65,6 +116,7 @@ def simulate_paper_portfolio(closed_signals: List[Dict], start_capital: float = 
     open_pos: Dict = {}          # id -> pv
     taken = skipped = 0
     wins = 0
+    taken_rows: List[Dict] = []  # 實際進場者（供逐日 mark-to-market）
     trades: List[Dict] = []
     equity_curve: List[Dict] = []
     peak = start_capital
@@ -79,9 +131,9 @@ def simulate_paper_portfolio(closed_signals: List[Dict], start_capital: float = 
                 continue
             if len(open_pos) < max_positions and cash >= r["pv"]:
                 cash -= r["pv"]; open_pos[r["id"]] = r["pv"]; taken += 1
-                r["_taken"] = True
+                taken_rows.append({"entry_d": _d(r["entry_t"]), "exit_d": _d(r["exit_t"]), "pnl": r["pnl"]})
             else:
-                skipped += 1; r["_taken"] = False
+                skipped += 1
         else:  # exit
             if open_pos.get(r["id"]) is not None:
                 cash += r["pv"] + r["pnl"]; del open_pos[r["id"]]
@@ -96,6 +148,7 @@ def simulate_paper_portfolio(closed_signals: List[Dict], start_capital: float = 
                     max_dd = max(max_dd, (peak - eq) / peak * 100)
 
     final_eq = equity()
+    mtm = _daily_mtm_curve(taken_rows, start_capital)   # 逐日 mark-to-market（線性近似）
     return {
         "start_capital": round(start_capital, 0),
         "final_equity": round(final_eq, 0),
@@ -103,11 +156,14 @@ def simulate_paper_portfolio(closed_signals: List[Dict], start_capital: float = 
         "taken": taken,
         "skipped_capacity": skipped,            # 因『同時持倉/現金上限』而沒進場的訊號數
         "win_rate": round(wins / taken * 100, 1) if taken else None,
-        "max_drawdown_pct": round(max_dd, 2),
+        "max_drawdown_pct": mtm["max_drawdown_pct"],          # 以逐日 MTM 曲線計（比只在出場跳點更真實）
+        "max_drawdown_realized_pct": round(max_dd, 2),        # 僅出場跳點的保守回撤（供對照）
+        "max_concurrent": mtm["max_concurrent"],              # 每日最大同時持倉
         "max_positions": max_positions,
         "trades": trades[-50:],
-        "equity_curve": equity_curve,
-        "note": "Paper 模擬（沿用已結算 pnl ＋ 組合入場容量/現金會計）；非實盤、需樣本累積。",
+        "equity_curve": equity_curve,                         # 出場跳點（realized）
+        "daily_equity_curve": mtm["daily_equity_curve"],      # 逐日 mark-to-market（線性近似、無盤中路徑）
+        "note": "Paper 模擬：沿用已結算 pnl ＋ 組合入場容量/現金會計；逐日權益為線性近似（無盤中路徑）。非實盤、需樣本累積。",
     }
 
 
