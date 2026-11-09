@@ -463,6 +463,86 @@ def _num_or_none(v):
         return None
 
 
+# ─────────── 每日橫斷面 IC → ICIR（2026-11-09，§三 3.3 第一刀）───────────
+# 合併樣本 IC 把所有日期的樣本混在一起算，受「同日/同股群聚」污染。標準作法是：每個交易日在
+# 當日多檔之間算一次橫斷面 Rank IC，得到每日 IC 序列，再取 ICIR = mean(日IC)/std(日IC)——
+# 衡量因子預測力的「穩定度」而非單次強度。純研究、不改評分；多空分開、不混用。
+_ICIR_MIN_DAYS = 5          # 少於此天數不給 ICIR（序列太短、std 無意義）
+_IC_DAY_MIN_BREADTH = 4     # 單日橫斷面至少 N 檔才算當日 IC（1~3 檔的 Spearman 無鑑別力）
+
+
+def _daily_ic_one(rows, factor_key, ret_key):
+    """單一因子的每日橫斷面 IC 序列與 ICIR。ret_key 可為 r_multiple（Research）或 champion_r（Champion）。"""
+    by_day = {}
+    for r in rows:
+        fv = _num_or_none((r.get("f") or {}).get(factor_key))
+        rv = _num_or_none(r.get(ret_key))
+        if fv is None or rv is None:
+            continue
+        by_day.setdefault(r.get("bar_date"), []).append((fv, rv))
+    day_ics = []
+    for _d, pairs in by_day.items():
+        if len(pairs) < _IC_DAY_MIN_BREADTH:
+            continue
+        ic = _spearman([p[0] for p in pairs], [p[1] for p in pairs])
+        if ic is not None:
+            day_ics.append(ic)
+    nd = len(day_ics)
+    if nd < _ICIR_MIN_DAYS:
+        return None
+    mean_ic, sd_ic = _mean_sd(day_ics)
+    icir = mean_ic / sd_ic if sd_ic > 1e-9 else None
+    t = mean_ic / (sd_ic / math.sqrt(nd)) if sd_ic > 1e-9 else None   # 檢定 mean(日IC) 是否顯著 ≠ 0
+    p = 2 * _norm_sf(abs(t)) if t is not None else None
+    return {"factor": factor_key, "n_days": nd,
+            "mean_ic": round(mean_ic, 3), "ic_std": round(sd_ic, 3),
+            "icir": round(icir, 3) if icir is not None else None,
+            "t_stat": round(t, 2) if t is not None else None,
+            "p": round(p, 4) if p is not None else None,
+            "pct_pos_days": round(sum(1 for x in day_ics if x > 0) / nd * 100)}
+
+
+def _daily_ic_side(rows, ret_key, label):
+    """某一方向（做多/做空）下，各因子的每日 ICIR，附 BH-FDR 顯著性，依 |ICIR| 排序。"""
+    keys = set()
+    for r in rows:
+        for k, v in (r.get("f") or {}).items():
+            if k not in _IC_SKIP and _num_or_none(v) is not None:
+                keys.add(k)
+    recs, pvals, idx = [], [], []
+    for k in keys:
+        rec = _daily_ic_one(rows, k, ret_key)
+        if rec is None:
+            continue
+        recs.append(rec)
+        if rec.get("p") is not None:
+            pvals.append(rec["p"]); idx.append(len(recs) - 1)
+    if pvals:
+        flags = _bh_reject(pvals, FDR_Q)
+        for j, fl in zip(idx, flags):
+            recs[j]["significant"] = bool(fl)
+    recs.sort(key=lambda d: -(abs(d["icir"]) if d.get("icir") is not None else 0))
+    return {"side": label, "n_days_max": max((r["n_days"] for r in recs), default=0),
+            "factors": recs[:40]}
+
+
+def _daily_ic_block(buy, sell):
+    """每日 ICIR 區塊：Research（r_multiple，單次出場）必給；Champion（champion_r，分批）有值才給。"""
+    block = {"research": {"buy": _daily_ic_side(buy, "r_multiple", "做多"),
+                          "sell": _daily_ic_side(sell, "r_multiple", "做空")},
+             "metric": "每日橫斷面 Rank IC（Spearman）→ ICIR = mean(日IC)/std(日IC)",
+             "params": {"min_days": _ICIR_MIN_DAYS, "min_breadth": _IC_DAY_MIN_BREADTH},
+             "disclaimer": "每日橫斷面 IC：每個交易日在當日多檔間算因子 vs 淨 R 的 Rank IC，再取序列 "
+                           "mean/std 得 ICIR（穩定度）。樣本期間短、單日檔數少時 ICIR 不穩，僅供觀察；"
+                           "多空分開、不混用。Research=單次出場 r_multiple；Champion=分批出場 champion_r。"}
+    has_champ = any(_num_or_none(r.get("champion_r")) is not None for r in buy) \
+        or any(_num_or_none(r.get("champion_r")) is not None for r in sell)
+    if has_champ:
+        block["champion"] = {"buy": _daily_ic_side(buy, "champion_r", "做多"),
+                             "sell": _daily_ic_side(sell, "champion_r", "做空")}
+    return block
+
+
 def factor_ic_report():
     """因子 Rank IC 主入口。只用已結算、有淨R、非退化的候選；多空分開。"""
     try:
@@ -475,9 +555,11 @@ def factor_ic_report():
                 "overall": _ic_one(rows, "全部"),
                 "buy": _ic_one(buy, "做多"),
                 "sell": _ic_one(sell, "做空"),
+                "daily": _daily_ic_block(buy, sell),       # ★ 2026-11-09 §三 3.3：每日橫斷面 ICIR
                 "metric": "Rank IC（Spearman，因子值 vs 實際淨 R）",
                 "disclaimer": "合併樣本 Rank IC（非每日橫斷面）；樣本期間短、同日/同股相關，"
-                              "IC 僅供觀察、非保證；正負號代表方向，|IC| 越大關聯越強。"}
+                              "IC 僅供觀察、非保證；正負號代表方向，|IC| 越大關聯越強。"
+                              "每日橫斷面 ICIR 見 daily 區塊。"}
     except Exception as e:
         logger.warning(f"factor_ic_report: {e}")
         return {"ok": False, "error": str(e)}
