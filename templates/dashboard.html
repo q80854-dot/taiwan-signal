@@ -3103,7 +3103,7 @@ html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
       <div class="panel card"><div class="panel-body" id="lr-edge"></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>組別</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>獲利因子</th><th>盈虧比</th><th>夏普</th><th>最長連敗</th><th>平均最大浮盈 R</th><th>平均最大回撤 R</th><th>平均持有天數</th><th>累積 R</th></tr></thead><tbody id="lr-groups"></tbody></table></div><div id="lr-exits" style="font-size:11px;color:var(--t3);padding:8px 14px"></div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">蒙地卡羅模擬（本期經驗分布重抽樣）</div></div>
       <div class="panel card"><div class="panel-body"><div id="lr-mc"></div>
-        <div style="font-size:12px;color:var(--t2);margin:12px 0 6px">累積淨 R（已成熟訊號按決策日歸因 · 非帳戶資金曲線）</div>
+        <div style="font-size:12px;color:var(--t2);margin:12px 0 6px">累積淨 R（已成熟訊號按決策日歸因 · 非帳戶資金曲線 · 淨 R＝費後，估列滑價/手續費/證交稅、放空含借券費）</div>
         <canvas id="lr-equity" height="150" style="width:100%;display:block"></canvas></div></div>
       </div>
 
@@ -5162,7 +5162,9 @@ function h8Draw(){
   if(eq.length>1){const H=(hist&&hist.series)||[],d0=eq[0].date,ix=H.filter(p=>p.d>=d0),b0=ix[0]&&ix[0].c,e0=eq[0].balance,W=760,ev=eq.map(x=>x.balance/e0*100),bv=ix.map(p=>p.c/b0*100),all=[...ev,...bv],lo=Math.min(...all),hi=Math.max(...all),rg=(hi-lo)||1,y=v=>(10+(1-(v-lo)/rg)*200).toFixed(1),ln=a=>a.map((v,i)=>(i?'L':'M')+(i*W/Math.max(1,a.length-1)).toFixed(1)+','+y(v)).join(' ');
     eqB=`<svg viewBox="0 0 ${W} 220" preserveAspectRatio="none" style="display:block;width:100%;height:220px" role="img" aria-label="權益曲線"><path d="M0 10H${W} M0 110H${W} M0 210H${W}" stroke="var(--line)" vector-effect="non-scaling-stroke"/>${bv.length>1?`<path d="${ln(bv)}" fill="none" stroke="var(--t3)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`:''}<path d="${ln(ev)} L${W},210 L0,210 Z" fill="rgba(111,85,224,.12)"/><path d="${ln(ev)}" fill="none" stroke="var(--acc)" stroke-width="2.2" vector-effect="non-scaling-stroke"/></svg>
       <div style="display:flex;gap:14px;margin-top:8px"><span class="o-leg"><i style="background:var(--acc)"></i>系統追蹤 ${v5S(ev[ev.length-1]-100,1)}%</span>${bv.length>1?`<span class="o-leg"><i style="background:var(--t3)"></i>加權指數 ${v5S(bv[bv.length-1]-100,1)}%</span>`:''}</div>`;}
-  const eqC=v5Card('o-c8','權益曲線',eq.length?`${v5E(eq[0].date)} 起 · 以起始日為 100`:'',eqB);
+  // ★ 2026-11-11 P2-D B05（圖表比較）：同期基準（起點=100）＋費後口徑＋最大回撤一起可讀；
+  //   回撤取自績效彙總（不前端重算指標）；基準只疊同期間（H.filter(p=>p.d>=d0)），不同期間不疊加。
+  const eqC=v5Card('o-c8','權益曲線',eq.length?`${v5E(eq[0].date)} 起 · 以起始日為 100 · 基準同期間 · 損益為費後（估列滑價/手續費/證交稅，放空含借券費）· 最大回撤 ${pf.max_drawdown!=null?'−'+v5F(Math.abs(pf.max_drawdown),1)+'%':'未取得'}`:'',eqB);
   const cols=['var(--acc)','#9a86ec','#c6bbf4','var(--t3)','var(--s3)'],items=op.map(p=>({n:p.name,v:(p.last||p.entry)*sh(p)})).sort((a,b)=>b.v-a.v),cash=bal?Math.max(0,bal-cost):0,tot=items.reduce((a,x)=>a+x.v,0)+cash||1;
   const al2=v5Card('o-c4','持股配置','依市值',`<div style="display:flex;flex-direction:column;gap:12px"><div class="o-bar" style="height:14px">${items.map((x,i)=>`<i style="flex:${x.v};background:${cols[i%cols.length]}"></i>`).join('')}${cash?`<i style="flex:${cash};background:var(--s3)"></i>`:''}</div>${items.map((x,i)=>`<div class="o-row2" style="align-items:center"><i style="width:10px;height:10px;border-radius:3px;background:${cols[i%cols.length]};flex:none"></i><span style="flex:1;font-size:13px">${v5E(x.n)}</span><b style="font-weight:500">${v5F(x.v,0)}</b><span class="o-tag">${v5F(x.v/tot*100,0)}%</span></div>`).join('')}${cash?`<div class="o-row2" style="align-items:center"><i style="width:10px;height:10px;border-radius:3px;background:var(--s3);flex:none"></i><span style="flex:1;font-size:13px">現金</span><b style="font-weight:500">${v5F(cash,0)}</b><span class="o-tag">${v5F(cash/tot*100,0)}%</span></div>`:''}</div>`);
   el.innerHTML=ks+tbl+rkC+eqC+al2+h8Trades(cl);
@@ -5910,6 +5912,34 @@ function v5Chart(){
   svg+=bars.map((x,i)=>{const col=x.c>=x.o?'var(--chart-up)':'var(--chart-down)',t=y(Math.max(x.o,x.c)),b=y(Math.min(x.o,x.c)),vh=x.v/vmax*44;
     return `<path d="M${cx(i).toFixed(1)} ${y(x.h).toFixed(1)}V${y(x.l).toFixed(1)}" style="stroke:${col}" class="nv"/><rect x="${(cx(i)-bw/2).toFixed(1)}" y="${t.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,b-t).toFixed(1)}" style="fill:${col}"/><rect x="${(cx(i)-bw/2).toFixed(1)}" y="${(314-vh).toFixed(1)}" width="${bw.toFixed(1)}" height="${vh.toFixed(1)}" style="fill:${col};opacity:.28"/>`;}).join('');
   svg+=ovl.map(([n,a,c],j)=>`<path d="${pd(a,y)}" style="fill:none;stroke:${c};stroke-width:1.5${ov==='boll'&&j===1?';stroke-dasharray:4 3':''}" class="nv"/>`).join('');
+  // ★ 2026-11-11 P2-D B06（事件定位）：日 K 標本檔訊號事件（全為真實紀錄，無資料即不畫）。
+  //   ▲/▼＝訊號日（多/空；價格＝訊號日收盤，來源：系統訊號紀錄）；◆＝結案日（依結算規則）。
+  //   放在 hit 層之上才能 hover 出 <title> 定義；只佔小點、不擋十字線操作。
+  let evSvg='',evn=0;
+  try{if(per==='d'){
+    const hist=(_v5.d&&_v5.d.signal_history)||[];
+    const di={};bars.forEach((x,i)=>{di[x.d]=i;});
+    const RES={tp1:'達目標 1',tp2:'達目標 2',tp3:'達目標 3',sl:'停損',expired:'到期出場'};
+    const evs=[];
+    hist.forEach(h=>{
+      const d0=String(h.generated_at||'').slice(0,10);
+      if(di[d0]!=null)evs.push({i:di[d0],kind:'sig',h});
+      const d1=String(h.exit_date||'').slice(0,10);
+      if(di[d1]!=null&&h.result&&h.result!=='pending')evs.push({i:di[d1],kind:'exit',h});
+    });
+    evn=evs.length;
+    evSvg=evs.map(e=>{
+      const b=bars[e.i],x=cx(e.i),buy=e.h.direction==='buy';
+      if(e.kind==='sig'){
+        const yy=buy?Math.min(306,y(b.l)+10):Math.max(18,y(b.h)-10);
+        const tip=v5E(`${buy?'做多':'做空'}訊號 ${String(e.h.generated_at||'').slice(0,10)} · 評分 ${e.h.score??'—'} · 價格 ${v5F(e.h.current_price)}＝訊號日收盤（來源：系統訊號紀錄）`);
+        return `<path d="M${(x-4.5).toFixed(1)} ${(buy?yy+7:yy-7).toFixed(1)}H${(x+4.5).toFixed(1)}L${x.toFixed(1)} ${yy.toFixed(1)}Z" style="fill:${buy?'var(--chart-up)':'var(--chart-down)'}"><title>${tip}</title></path>`;
+      }
+      const yy=Math.max(18,y(b.h)-10);
+      const tip=v5E(`結案（${RES[e.h.result]||e.h.result}）${String(e.h.exit_date||'').slice(0,10)} · 依結算規則以當日價位結算，損益為費後（來源：訊號結算紀錄）`);
+      return `<rect x="${(x-3.5).toFixed(1)}" y="${(yy-3.5).toFixed(1)}" width="7" height="7" transform="rotate(45 ${x.toFixed(1)} ${yy.toFixed(1)})" style="fill:var(--t2)"><title>${tip}</title></rect>`;
+    }).join('');
+  }}catch(e){evSvg='';evn=0;}   // 事件層失敗絕不影響主圖
   // 副圖
   const s0=338,s1=430,sh=s1-s0,mid=(s0+s1)/2;let sb='',sname='',sleg=[];
   const barsAt=(a,f)=>a.map((v,i)=>v==null?'':`<rect x="${(cx(i)-bw/2).toFixed(1)}" y="${Math.min(f(v),mid).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(.5,Math.abs(f(v)-mid)).toFixed(1)}" style="fill:${v>=0?'var(--chart-up)':'var(--chart-down)'};opacity:.75"/>`).join('');
@@ -5929,8 +5959,8 @@ function v5Chart(){
   const plab={d:'日 K · 近 '+N+' 個交易日',w:'週 K · 近 '+N+' 週',m:'月 K · 近 '+N+' 個月'}[per];
   const mt=document.getElementById('v5-chart-mt');if(mt)mt.textContent=plab;
   document.querySelectorAll('.v5-ctl').forEach(c=>c.innerHTML=v5Tl('per',[['d','日'],['w','週'],['m','月']],per)+v5Tl('ov',[['ma','均線'],['ema','EMA'],['boll','布林'],['none','無']],ov)+v5Tl('sub',[['macd','MACD'],['kd','KD'],['rsi','RSI'],['bias','乖離'],['vol','成交量']],sub));
-  box.innerHTML=`<div class="r-ib"><span id="v5-ibx" style="display:contents">${ib(N-1)}</span><span style="flex:1"></span>${leg}</div>
-    <svg class="r-kx" viewBox="0 0 ${W} 450" preserveAspectRatio="none" role="img" aria-label="${v5E((_v5.d.info||{}).name)} K 線圖">${svg}<rect x="0" y="0" width="${PX}" height="440" fill="transparent" id="v5-hit"/></svg>
+  box.innerHTML=`<div class="r-ib"><span id="v5-ibx" style="display:contents">${ib(N-1)}</span><span style="flex:1"></span>${evn?'<span style="color:var(--t3)">▲▼ 訊號日 · ◆ 結案日（滑過看定義）</span>':''}${leg}</div>
+    <svg class="r-kx" viewBox="0 0 ${W} 450" preserveAspectRatio="none" role="img" aria-label="${v5E((_v5.d.info||{}).name)} K 線圖">${svg}<rect x="0" y="0" width="${PX}" height="440" fill="transparent" id="v5-hit"/>${evSvg}</svg>
     <div class="r-ib"><span style="color:var(--ink);font-weight:500">${sname}</span>${sleg.map(([n,v,c])=>`<span><i style="background:${c}"></i>${n} <b>${v}</b></span>`).join('')}</div>`;
   const hit=document.getElementById('v5-hit'),sv=hit.ownerSVGElement,cr=document.getElementById('v5-cross'),ibx=document.getElementById('v5-ibx');
   const mv=e=>{const r=sv.getBoundingClientRect(),px=((e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width*W,i=Math.max(0,Math.min(N-1,Math.floor(px/(PX/N))));cr.setAttribute('d',`M${cx(i).toFixed(1)} 12V430`);ibx.innerHTML=ib(i);};
