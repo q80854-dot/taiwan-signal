@@ -129,18 +129,81 @@ def resolve_pending(max_rows=5000) -> dict:
     return {"updated": len(updates), "closed": closed, "rows": len(rows)}
 
 
+MIN_EVAL_SAMPLES = 30          # 結論門檻：已結算 < 此數一律保留為「資料不足」，不下結論（§8.5）
+
+
 def overview() -> dict:
-    """各策略的 shadow 績效摘要（筆數、已結算、平均 champion_r）。純研究、依策略分列。"""
+    """各策略的 shadow 績效摘要（§8.5 影子展示用）。純研究、依策略分列，依實際可得資料提供：
+    總筆數/未結/已結算/勝負、Champion 同口徑平均淨 R、開始與最近追蹤日。
+    回撤/換手/風險事件逐筆資料尚未逐欄記錄 → 列為資料契約缺口，不前端猜值。"""
     ensure_table()
     from state_store import store
     with store._conn() as conn:
         rows = [dict(x) for x in conn.execute(
             "SELECT strategy_name, COUNT(*) AS total, "
             "SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END) AS closed, "
-            "AVG(CASE WHEN status='closed' THEN champion_r ELSE NULL END) AS avg_champion_r "
+            "SUM(CASE WHEN status='closed' AND champion_r > 0 THEN 1 ELSE 0 END) AS wins, "
+            "SUM(CASE WHEN status='closed' AND champion_r <= 0 THEN 1 ELSE 0 END) AS losses, "
+            "AVG(CASE WHEN status='closed' THEN champion_r ELSE NULL END) AS avg_champion_r, "
+            "MIN(bar_date) AS first_date, MAX(bar_date) AS last_date "
             "FROM strategy_signals GROUP BY strategy_name ORDER BY strategy_name").fetchall()]
-    return {"strategies": [{"strategy_name": r["strategy_name"], "total": int(r["total"] or 0),
-                            "closed": int(r["closed"] or 0),
-                            "avg_champion_r": round(r["avg_champion_r"], 3) if r["avg_champion_r"] is not None else None}
-                           for r in rows],
-            "note": "純 shadow 研究、未接線上；champion_r＝與正式分批出場同口徑的淨 R，樣本累積中。"}
+    by_name = {r["strategy_name"]: r for r in rows}
+
+    # 依註冊表列出所有已登錄策略（即使尚無樣本也顯示，誠實呈現「尚未累積」），附研究假設。
+    strat_list = []
+    try:
+        from . import load_builtin, registry as _reg
+        load_builtin()
+        strat_list = _reg.all_strategies()
+    except Exception:
+        strat_list = []
+
+    def _status(closed, avg):
+        if (closed or 0) < MIN_EVAL_SAMPLES:
+            return {"state": "insufficient", "label": f"資料不足（已結算 {closed or 0} / 需 ≥{MIN_EVAL_SAMPLES}）"}
+        if avg is None:
+            return {"state": "insufficient", "label": "資料不足（無已結算淨 R）"}
+        if avg > 0:
+            return {"state": "tentative_pos", "label": "樣本達門檻、平均淨 R 為正（仍需顯著性檢定，非最終結論）"}
+        return {"state": "tentative_neg", "label": "樣本達門檻、平均淨 R 未為正（未達標）"}
+
+    out = []
+    seen = set()
+    for s in strat_list:
+        nm = getattr(s, "name", None)
+        if not nm:
+            continue
+        seen.add(nm)
+        r = by_name.get(nm, {})
+        closed = int(r.get("closed") or 0)
+        avg = r.get("avg_champion_r")
+        avg = round(avg, 3) if avg is not None else None
+        out.append({
+            "strategy_name": nm, "label": getattr(s, "label", nm), "direction": getattr(s, "direction", "both"),
+            "total": int(r.get("total") or 0), "closed": closed,
+            "open": int(r.get("total") or 0) - closed,
+            "wins": int(r.get("wins") or 0), "losses": int(r.get("losses") or 0),
+            "avg_champion_r": avg, "first_date": r.get("first_date"), "last_date": r.get("last_date"),
+            "hypothesis": getattr(s, "hypothesis", None),
+            "status": _status(closed, avg),
+        })
+    # 資料表裡有、但註冊表沒有的策略（歷史或已下架）也列出，不藏
+    for nm, r in by_name.items():
+        if nm in seen:
+            continue
+        closed = int(r.get("closed") or 0)
+        avg = r.get("avg_champion_r")
+        avg = round(avg, 3) if avg is not None else None
+        out.append({
+            "strategy_name": nm, "label": nm, "direction": "unknown",
+            "total": int(r.get("total") or 0), "closed": closed,
+            "open": int(r.get("total") or 0) - closed,
+            "wins": int(r.get("wins") or 0), "losses": int(r.get("losses") or 0),
+            "avg_champion_r": avg, "first_date": r.get("first_date"), "last_date": r.get("last_date"),
+            "hypothesis": None, "status": _status(closed, avg),
+        })
+    return {"strategies": out, "min_eval_samples": MIN_EVAL_SAMPLES,
+            "gaps": ["回撤／換手／風險事件逐筆資料尚未逐欄記錄（需後端 schema，列為資料契約缺口）"],
+            "note": "純 shadow 研究、未接線上、不授權切換正式策略；champion_r＝把各策略選股用 Champion "
+                    "同一套分批出場規則結算的淨 R（費後：估列滑價/手續費/證交稅、放空含借券費）——"
+                    "是『共同量尺』、非各策略自有出場邏輯的績效。"}

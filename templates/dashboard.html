@@ -3063,6 +3063,7 @@ html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
         <button class="tab" onclick="lrnNav('compare',this)">三組比較</button>
         <button class="tab" onclick="lrnNav('factor',this)">因子</button>
         <button class="tab" onclick="lrnNav('model',this)">模型與實驗</button>
+        <button class="tab" onclick="lrnNav('shadow',this)">影子策略</button>
         <button class="tab" onclick="lrnNav('raw',this)">原始資料</button>
       </div>
       <div id="lrn-ctx" style="font-size:11px;color:var(--t3);margin:-8px 0 12px"></div>
@@ -3081,6 +3082,13 @@ html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
       <div class="sec-label"><div class="bar"></div><div class="tx">因子穩定度（每日橫斷面 ICIR）</div></div>
       <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>哪些因子有「穩定」的預測力？主表＝每個交易日在當日多檔間算 Rank IC、序列取 mean/std 得 ICIR（穩定度）；識別／決策衍生欄（絕對價位、部位、成本）另列、非 alpha 證據。合併樣本 IC 僅列為參考。</span></div>
         <div class="panel-body" id="factor-ic" style="padding:12px"><div class="empty">載入中…</div></div></div>
+      </div>
+
+      <div class="lrn-g" data-g="shadow">
+      <!-- ★ 2026-11-11 P2-E §8.5 影子追蹤展示：正式 Champion 與影子策略並排、口徑不同明說不可比較、
+           每個假設有編號/預訂指標/驗收/證據/結論狀態、保留樣本不足與失敗、不授權切換正式策略。 -->
+      <div class="sec-label"><div class="bar"></div><div class="tx">影子策略 vs 正式 Champion（研究展示）</div></div>
+      <div id="lrn-shadow"><div class="empty">載入中…</div></div>
       </div>
 
       <div class="lrn-g" data-g="raw">
@@ -7882,11 +7890,50 @@ async function fetchLearning(){
     try{lrnClampSync();}catch(e2){}
     // P2-C B04：研究脈絡（策略版本/凍結日一致；run_id 列缺口；各區塊評估口徑見其標示）
     try{tsCtx().then(()=>{const e=document.getElementById('lrn-ctx');if(e)e.textContent=tsCtxLine();});}catch(e2){}
+    // P2-E §8.5：影子策略並排展示
+    try{loadShadowStrategies();}catch(e2){}
   }catch(e){
     document.getElementById('ad-gate').style.display='none';
     document.getElementById('ad-main').style.display='block';
     setHtml('lr-find','<div class="empty">載入失敗：'+esc2(e.message)+'</div>');
   }
+}
+// ★ 2026-11-11 P2-E §8.5：影子策略並排展示（站主唯讀 /api/strategy/shadow）。
+//   正式 Champion 與影子策略並排、口徑不同明說不可比較；每個假設附編號/預訂指標/驗收/證據/結論狀態；
+//   樣本不足與失敗保留、不藏；缺口（回撤/換手/風險事件）明列；不授權切換正式策略。
+async function loadShadowStrategies(){
+  const el=document.getElementById('lrn-shadow');if(!el)return;
+  let d;try{const r=await fetch('/api/strategy/shadow',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);d=await r.json();}
+  catch(e){el.innerHTML='<div class="empty">影子策略資料載入失敗：'+esc2(e.message)+'</div>';return;}
+  if(!d||!d.ok){el.innerHTML='<div class="empty">影子策略資料未取得</div>';return;}
+  const S=(d.shadow&&d.shadow.strategies)||[],ch=d.champion||{};
+  const ST={insufficient:['資料不足','var(--t3)'],tentative_pos:['暫定：淨 R 為正','var(--ok,#1c7a5e)'],tentative_neg:['未達標','var(--warn,#8a6100)']};
+  const rowR=v=>v==null?'<span class="mut">未取得</span>':`<span class="${v>0?'up':v<0?'down':''}">${v>0?'+':''}${esc2(v)}</span>`;
+  // 正式 Champion 參照列（不可與影子直接比較——另註）
+  const champHtml=`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>正式 Champion（線上運行中）</span></div>
+    <div class="panel-body" style="font-size:13px;line-height:1.7">
+      <div class="kv"><span>策略版本</span><span>${esc2(ch.strategy_version||'未取得')}</span></div>
+      <div class="kv"><span>參數凍結日</span><span>${esc2(ch.effective_at||'未取得')}</span></div>
+      <div class="kv"><span>線上績效</span><span>見「績效」頁（口徑與下方影子不同，不可直接比較）</span></div>
+    </div></div>`;
+  // 影子策略表
+  const tbl=S.length?`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>影子策略（離線記錄假想單、未接線上）· as_of ${esc2((d.as_of||'').slice(0,16))}</span></div>
+    <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>策略</th><th>方向</th><th>開始追蹤</th><th class="r">總筆數</th><th class="r">未結</th><th class="r">已結算</th><th class="r">勝/負</th><th class="r">平均淨R（共同量尺）</th><th>結論狀態</th></tr></thead><tbody>${S.map(s=>{const st=ST[(s.status||{}).state]||['—','var(--t3)'];return `<tr><td><b>${esc2(s.label||s.strategy_name)}</b><small style="display:block;color:var(--t3)">${esc2(s.strategy_name)}</small></td><td>${s.direction==='long'?'做多':s.direction==='short'?'做空':esc2(s.direction)}</td><td class="num">${esc2(s.first_date||'—')}</td><td class="num r">${s.total}</td><td class="num r">${s.open}</td><td class="num r">${s.closed}</td><td class="num r">${s.wins}/${s.losses}</td><td class="num r">${rowR(s.avg_champion_r)}</td><td><span style="color:${st[1]}">${esc2((s.status||{}).label||st[0])}</span></td></tr>`;}).join('')}</tbody></table></div></div>`
+    :'<div class="empty">尚無任何影子策略樣本（策略已登錄、等待掃描累積）</div>';
+  // 研究假設（編號/指標/驗收/證據/結論）
+  const hyp=S.filter(s=>s.hypothesis).map(s=>{const h=s.hypothesis,st=ST[(s.status||{}).state]||['—','var(--t3)'];
+    return `<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>${esc2(h.id)} · ${esc2(s.label||s.strategy_name)}</span><span style="margin-left:auto;color:${st[1]};font-weight:600">${esc2((s.status||{}).label||st[0])}</span></div>
+    <div class="panel-body" style="font-size:13px;line-height:1.7">
+      <div><b>立論</b>：${esc2(h.rationale||'—')}</div>
+      <div><b>預訂指標</b>：${esc2(h.metric||'—')}</div>
+      <div><b>驗收條件</b>：${esc2(h.acceptance||'—')}</div>
+      <div><b>目前證據</b>：已結算 ${s.closed} 筆（勝 ${s.wins} / 負 ${s.losses}）、平均淨 R ${s.avg_champion_r==null?'未取得':esc2(s.avg_champion_r)}</div>
+    </div></div>`;}).join('');
+  const gaps=(d.shadow&&d.shadow.gaps)||[];
+  el.innerHTML=`<div class="note-box" style="margin-bottom:12px"><b>不可直接比較</b>：${esc2(d.compare_caveat||'')}</div>`
+    +champHtml+tbl+(hyp?`<div class="sec-label"><div class="bar"></div><div class="tx">研究假設與結論狀態</div></div>${hyp}`:'')
+    +(gaps.length?`<div class="note-box" style="border-left-color:var(--warn,#8a6100)"><b>資料缺口</b>：${gaps.map(esc2).join('；')}。</div>`:'')
+    +`<div class="note-box">本區為研究展示與驗證紀錄，不代表已稽核統計正確性，也<b>不授權切換正式策略</b>；樣本不足、未改善與失敗一律保留，不依單一高勝率推薦。</div>`;
 }
 async function loadRegime(){
   const el=document.getElementById('regime-panel');if(!el)return;

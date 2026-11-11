@@ -18,6 +18,10 @@ VALID_DIRECTIONS = ("long", "short", "both")
 class Strategy:
     name: str = "base"
     direction: str = "both"          # "long" | "short" | "both"
+    # 研究假設（§8.5 影子展示用）：編號 id、預先訂定的指標 metric 與驗收條件 acceptance、立論 rationale。
+    # 純研究展示，不接線上決策；驗收指標以 shadow 樣本累積後評估，樣本不足時結論保留為「資料不足」。
+    label: str = "base"              # 顯示名稱（中文）
+    hypothesis: dict = None          # {"id","metric","acceptance","rationale"} 或 None（骨架未定假設）
 
     def regime_applicability(self, regime: dict) -> float:
         """此策略在給定 regime 下的啟用權重（0=不啟用, 1=完全啟用）。預設恆啟用。"""

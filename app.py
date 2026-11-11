@@ -2150,6 +2150,35 @@ def api_strategy_version():
         logger.error(f"api_strategy_version: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/strategy/shadow")
+@members.owner_required
+@admin_auth.admin_required
+def api_strategy_shadow():
+    """站主：影子策略展示（§8.5）。純研究唯讀——把各 shadow 策略（未接線上）的假想單用
+    Champion 同口徑分批出場結算，與正式 Champion 版本並排呈現；口徑不同、明說不可直接比較；
+    每個假設附編號/預訂指標/驗收/證據與結論狀態；樣本不足一律保留為資料不足，不下結論。
+    **不授權切換正式策略、不碰 Champion、不改 config_hash。**"""
+    try:
+        import strategies.store as _ss
+        import strategy_version as _sv
+        ov = _ss.overview()
+        champ = {"strategy_version": _sv.strategy_version(), "config_version": _sv.config_hash()[:12]}
+        try:
+            from risk_manager import risk_basis as _rb
+            champ["effective_at"] = (_rb() or {}).get("effective_at")
+        except Exception:
+            champ["effective_at"] = None
+        import time as _t
+        return jsonify({"ok": True, "champion": champ, "shadow": ov,
+                        "as_of": _t.strftime("%Y-%m-%d %H:%M:%S"),
+                        "compare_caveat": "正式 Champion 與影子策略『不可直接比較』：Champion 是實際發出並線上運行的"
+                        "策略；影子策略僅離線記錄假想單、未接線上。表中 avg_champion_r 是把各策略選股用 Champion "
+                        "同一套出場規則結算的『共同量尺』淨 R，不是各策略自有出場的績效，也不等於 Champion 本身的"
+                        "線上績效（見績效頁）。樣本期間與筆數不同者更不可比。"})
+    except Exception as e:
+        logger.error(f"api_strategy_shadow: {e}", exc_info=True); return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/regime")
 def api_regime():
     """市場狀態 baseline（趨勢／波動／流動性，可解釋規則）。研究/顯示用，不接線上決策。"""
