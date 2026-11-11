@@ -4970,14 +4970,27 @@ function s8Draw(){
   bar.innerHTML=`<span class="o-mt">${st&&st.last_scan_time?'最近掃描 '+v5E(toTaipeiStr(st.last_scan_time)||''):'尚未掃描'}${a.duration_sec?' · 耗時 '+v5F(a.duration_sec/60,1)+' 分':''}</span>
     <div class="r7-dts">${days.map(d=>`<button class="r7-dt${d===_x8.sd?' on':''}" onclick="s8Pick('${d}',0)" style="position:relative">${+d.slice(8)}<small>週${x7Wk(d)}</small><span class="s8-c">${(byD[d]||[]).length}</span></button>`).join('')}</div>`;
   // 篩選漏斗
+  // ★ 2026-11-11 LIVE07：批次綁定誠實化——漏斗前三階段來自 scan_audit(a)、後兩階段來自
+  // scan_history 最新一筆(h)、訊號卡來自選定批次(_x8.sd)，三者可能不同批（例：盤前掃描 0 候選
+  // vs 昨日批次卡片）。不同批時逐一明示，不得讓讀者誤以為同一次掃描；完整 scan_run_id 綁定
+  // 需後端 schema（signals/audit 記 run_id），列為資料契約缺口。
+  const hMatch=(!a.date||!h.scan_date)||String(h.scan_date)===String(a.date);
   const fn=[['全市場',a.universe,'上市櫃股票清單'],['進入檢查',a.examined,'有足夠日線可計算'],['通過預篩',a.passed,'流動性與基本條件'],['候選訊號',h.signals_found,'技術、籌碼條件成立'],['最終訊號',h.signals_sent,'評分與風控通過']];
   const mx=Math.max(1,...fn.map(f=>f[1]||0)),nb=dayList.filter(x=>x.direction==='buy').length,last20=Object.keys(byD).filter(d=>d>=x7Add(t,-28)),avg=last20.length?last20.reduce((s2,d)=>s2+byD[d].length,0)/Math.max(1,last20.length):null;
+  const batchNotes=[
+    (a.date&&String(a.date)!==String(_x8.sd))?`漏斗為最近一次掃描（${v5E(a.date)}）；下方訊號卡為 ${v5E(_x8.sd)} 批次，兩者非同一批`:'',
+    !hMatch?`「候選/最終」來自 ${v5E(h.scan_date)} 掃描，與前三階段（${v5E(a.date)}）非同一批，僅供參考`:''
+  ].filter(Boolean);
   const fnC=v5Card('o-c12','篩選漏斗',a.date?`${v5E(a.date)} 掃描 · 全市場依序通過各道條件`:'最近一次盤後掃描',fn.every(f=>f[1]!=null)?`<div class="s8-fn">${fn.map((f,i)=>`<div class="s8-fs${i===4?' last':''}"><div class="bx" style="height:${Math.max(40,Math.round(Math.sqrt(f[1]/mx)*140))}px;--w:${Math.max(14,Math.sqrt(f[1]/mx)*100).toFixed(0)}%">${v5F(f[1],0)}</div><span><b>${f[0]}</b><br><small>${f[2]}</small></span></div>`).join('')}</div>`:v5Empty('還沒有掃描紀錄','每個交易日 16:30 收盤後掃描，完成後顯示各階段檔數。'),
-    `<div class="o-row" style="gap:8px;flex-wrap:wrap"><span class="o-tag up">多 ${nb}</span><span class="o-tag">空 ${dayList.length-nb}</span>${avg!=null?`<span class="o-tag">近期平均 ${v5F(avg,1)} 檔／日</span>`:''}</div>`);
+    `<div class="o-row" style="gap:8px;flex-wrap:wrap"><span class="o-tag up">多 ${nb}</span><span class="o-tag">空 ${dayList.length-nb}</span>${avg!=null?`<span class="o-tag">近期平均 ${v5F(avg,1)} 檔／日</span>`:''}</div>${batchNotes.length?`<div style="font-size:11px;color:var(--warn);margin-top:6px">${batchNotes.map(n=>'⚠ '+n).join('<br>')}</div>`:''}`);
   // 主訊號卡
   const s=dayList[Math.min(_x8.si,dayList.length-1)];
   let main,calc;
-  if(!s){main=`<section class="o-card o-c8"><div class="o-cb">${v5Empty(_x8.sd===t?'今日沒有訊號':'這一天沒有訊號','收盤後掃描沒有符合全部條件的股票；可以看看下方近期訊號的追蹤結果。')}</div></section>`;calc=`<section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>部位計算</h2><span class="o-mt">有訊號時依風險設定自動計算</span></div></div><div class="o-cb"><div class="o-lbl">—</div></div></section>`;}
+  if(!s){
+    // ★ LIVE07：0 訊號也明示原因（今日掃描已跑完沒選出 vs 尚未掃描），並指向仍在追蹤的舊訊號
+    const scannedToday=String(a.date||'')===t;
+    const why=_x8.sd===t?(scannedToday?`今日掃描已完成（${hMatch&&h.signals_found!=null?`候選 ${h.signals_found}、最終 ${h.signals_sent}`:'無選出'}），沒有符合全部條件的股票；既有訊號仍持續追蹤（見下方近期訊號追蹤）。`:'今日尚未掃描（每交易日 16:30 盤後）；既有訊號仍持續追蹤（見下方近期訊號追蹤）。'):'這一天的掃描沒有符合全部條件的股票；可以看看下方近期訊號的追蹤結果。';
+    main=`<section class="o-card o-c8"><div class="o-cb">${v5Empty(_x8.sd===t?'今日沒有新訊號':'這一天沒有訊號',why)}</div></section>`;calc=`<section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>部位計算</h2><span class="o-mt">有訊號時依風險設定自動計算</span></div></div><div class="o-cb"><div class="o-lbl">—</div></div></section>`;}
   else{const code=s.code||String(s.ticker||'').split('.')[0],buy=s.direction==='buy';if(!_x8.inst[code])s8Inst(code);
     const tabs=dayList.length>1?`<div class="o-tabs" style="flex-wrap:wrap">${dayList.map((x,i)=>`<button class="tab${i===_x8.si?' on':''}" onclick="s8Pick(null,${i})">${v5E(x.name)}</button>`).join('')}</div>`:'';
     const cm=(Array.isArray(s.conditions_met)?s.conditions_met:[]),cf=(Array.isArray(s.conditions_fail)?s.conditions_fail:[]);
@@ -8629,7 +8642,10 @@ function v4oSignal(d){
   const el=document.getElementById('v4o-sig'),mt=document.getElementById('v4o-sig-mt');if(!el)return;
   const sigs=(d&&d.active_signals)||[];
   const nb=sigs.filter(s=>s.direction==='buy').length,ns=sigs.length-nb;
-  if(mt)mt.textContent=(d&&d.last_scan_time?toTaipeiHM(d.last_scan_time)+' · ':'')+(sigs.length?[nb?nb+' 檔多方':'',ns?ns+' 檔空方':''].filter(Boolean).join('、'):'尚無訊號');
+  // ★ 2026-11-11 LIVE07：顯示中的有效訊號可能是較早批次（例如昨日盤後），不得以「今日訊號」
+  // 的標題讓人誤以為是今天新發——副標明示批次日期與「最近有效訊號（非今日新發）」。
+  const _bd=sigs.length?x8Date(sigs[0].generated_at):null,_isToday=_bd===x7Today();
+  if(mt)mt.textContent=(sigs.length&&!_isToday?`${_bd} 批次（最近有效訊號，非今日新發） · `:(d&&d.last_scan_time?toTaipeiHM(d.last_scan_time)+' · ':''))+(sigs.length?[nb?nb+' 檔多方':'',ns?ns+' 檔空方':''].filter(Boolean).join('、'):'尚無訊號');
   if(!sigs.length){el.innerHTML=`<div class="o-empty"><span class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></span><b>今日尚無訊號</b><p>每個交易日 16:30 收盤後掃描全市場，有訊號會出現在這裡。</p></div>`;el.style.display='flex';return;}
   el.style.display='';
   const s=sigs[0],buy=s.direction==='buy',cd=s.code||s.ticker;
