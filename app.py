@@ -1292,6 +1292,19 @@ def api_learning_ablation():
         logger.error(f"api_learning_ablation: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning/backfill_champion_r", methods=["POST"])
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_backfill_champion_r():
+    """站主：一次性回填 champion_r（Shadow 雙軌上線前就結案的候選）。只用真實訊號價位＋真實歷史
+    K 棒重算，缺資料留 NULL、不猜；不改其他欄位；冪等可重跑。純研究、不碰 Champion。"""
+    try:
+        import shadow
+        return jsonify(shadow.backfill_champion_r())
+    except Exception as e:
+        logger.error(f"api_learning_backfill_champion_r: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/learning/score_calibration")
 @members.owner_required
 @admin_auth.admin_required
