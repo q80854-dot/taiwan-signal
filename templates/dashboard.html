@@ -2634,6 +2634,49 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
   html[data-theme]:not(.force-desktop) .v4i-tabs button{background:var(--s1);box-shadow:var(--card-sh)}
   html[data-theme]:not(.force-desktop) .v4i-tabs button.on{background:var(--ink)}}
 </style>
+<style id="ts-tokens">
+/* ===== ts-tokens (2026-11-11) 美編 P1-A：設計系統 token 層 =====
+   依 docs/ai-governance/VISUAL_DESIGN_PLAN.md §2（使用者核准 D1：inline 收斂為單一具名樣式區，
+   不改後端渲染）。本層只「定名」——值取自現行生效層（skin-v3/skin-v4 的淺/深色 token），
+   alias 隨 data-theme 自動切換，對既有頁零視覺變更；P1-B/C/D 起新樣式一律引用本層 token。
+   語意色三組不混用：品牌紫＝選取/導覽/CTA；漲跌＝只給價格/報酬；警示＝系統狀態。
+   保留矩陣：skin-ledger…skin-v4 等歷史層全數保留（被 v3/v4 覆蓋或仍提供結構樣式），本批不刪。 */
+html[data-theme]{
+  /* 間距（4/8/12/16/24/32/48/64） */
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:32px;--sp-7:48px;--sp-8:64px;
+  /* 字級（內文14–16/輔助12–13/區塊標題16–20/頁標24–30/關鍵數字28–40；數字一律 tabular-nums） */
+  --fs-aux:12px;--fs-aux2:13px;--fs-body:14px;--fs-body2:15px;
+  --fs-title:16px;--fs-title2:18px;--fs-page:24px;--fs-num:28px;--fs-num2:34px;--fs-num3:40px;
+  /* 圓角（展示容器16–24／研究工作區6–12／膠囊僅主 CTA 與標籤） */
+  --rad-show:20px;--rad-card:16px;--rad-work:10px;--rad-pill:999px;
+  /* 語意色三組（alias 現行生效 token；淺/深色由 skin-v3/v4 的主題定義供值） */
+  --c-brand:var(--acc);--c-brand-soft:var(--acc-soft);
+  --c-up:var(--up);--c-up-soft:var(--up-soft);--c-down:var(--down);--c-down-soft:var(--down-soft);
+  --c-chart-up:var(--chart-up);--c-chart-down:var(--chart-down);
+  --c-ok:var(--ok);--c-ok-soft:var(--ok-soft);--c-warn:var(--warn);--c-warn-soft:var(--warn-soft);
+  --c-alert:var(--alert);--c-alert-soft:var(--alert-soft);
+  --c-unknown:var(--t3);
+  /* 層次三層：背景／主要表面／內嵌表面 */
+  --ly-bg:var(--bg);--ly-surface:var(--s1);--ly-inset:var(--s2);
+}
+/* ── 基礎元件：資料五態（loading/empty/error/stale/forbidden）──
+   鐵律：缺資料顯示「未取得／未知」、不以 0 裝飾；錯誤/過時在首個視野可辨識、不藏 tooltip。
+   （既有 .empty/.skel 保留不動；新頁一律用 .st 系）。按鈕/卡片/表格沿用現行 .btn/.panel/.tbl。 */
+.st{padding:var(--sp-5) var(--sp-4);border-radius:var(--rad-work);background:var(--ly-inset);
+  color:var(--t2);font-size:var(--fs-aux2);line-height:1.65;text-align:center}
+.st b{display:block;font-size:var(--fs-body);font-weight:600;color:var(--t1);margin-bottom:var(--sp-1)}
+.st small{display:block;color:var(--t3);font-size:var(--fs-aux);margin-top:var(--sp-1)}
+.st.st-error{background:var(--c-alert-soft)}.st.st-error b{color:var(--c-alert)}
+.st.st-stale{background:var(--c-warn-soft)}.st.st-stale b{color:var(--c-warn)}
+.st.st-forbidden b{color:var(--t2)}
+.st.st-loading b{color:var(--t3)}
+@media(prefers-reduced-motion:no-preference){
+  .st.st-loading{animation:ts-pulse 1.6s ease-in-out infinite}
+  @keyframes ts-pulse{0%,100%{opacity:.7}50%{opacity:1}}
+}
+/* 觸控目標輔助（驗收目標 44px）：只給新頁引用，不改既有元件 */
+.ts-tap{min-height:44px;min-width:44px}
+</style>
 </head>
 <body>
 <div class="shell">
