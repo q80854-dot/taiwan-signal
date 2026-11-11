@@ -2004,6 +2004,25 @@ def api_material_news():
         logger.error(f"api_material_news: {e}")
         return jsonify({"error": str(e), "ok": False, "count": 0, "items": []}), 500
 
+def _live06_pnl_view(r):
+    """★ 2026-11-11 LIVE06：事件與收益分欄、缺報價不 fallback 0%。
+    已實現損益（pnl_pct/pnl_twd）只對『已結案』有意義；pending/追蹤中沒有已實現損益，
+    資料表的 DEFAULT 0 會被誤顯成『0.0% 報酬』，這裡一律改回 None（前端顯示『—／不可計算』）。
+    另附 result_event（出場事件，如達目標1）與 profit_flag（實際是否淨獲利）——達目標不等於淨獲利。"""
+    r = dict(r)
+    closed = (r.get("status") == "closed")
+    r["result_event"] = r.get("result")
+    if closed:
+        twd = r.get("pnl_twd")
+        r["profit_flag"] = (twd > 0) if twd is not None else None
+    else:
+        # pending/active：沒有已實現損益，不可用 DEFAULT 0 冒充 0% 報酬
+        r["pnl_pct"] = None
+        r["pnl_twd"] = None
+        r["profit_flag"] = None
+    return r
+
+
 @app.route("/api/signals")
 def api_signals():
     from state_store import store
@@ -2013,7 +2032,8 @@ def api_signals():
     signals   = store.get_recent_signals(limit=limit * 2)
     if direction: signals = [s for s in signals if s.get("direction") == direction]
     if sector:    signals = [s for s in signals if s.get("sector") == sector]
-    return jsonify({"signals": signals[:limit], "count": len(signals[:limit])})
+    signals = [_live06_pnl_view(s) for s in signals[:limit]]
+    return jsonify({"signals": signals, "count": len(signals)})
 
 
 @app.route("/api/explain/signal")
