@@ -4976,7 +4976,7 @@ function s8Draw(){
     const g=tp=>tp?Math.abs(tp-px)*sh:null,rr=tp=>tp&&rps?Math.abs(tp-px)/rps:null;
     const fld=(k,v,c)=>`<div class="b7-fld"><span>${k}</span><b${c?` class="${c}"`:''}>${v}</b></div>`,out=(k,v,c)=>`<div class="s8-out"><span>${k}</span><b${c?` style="color:${c}"`:''}>${v}</b></div>`;
     calc=`<section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>部位計算</h2><span class="o-mt">依系統風險設定計算</span></div></div><div class="o-cb" style="display:flex;flex-direction:column;gap:14px">
-      <div style="display:flex;flex-direction:column;gap:6px">${fld('帳戶資金',bal?v5F(bal,0):'—')}${fld('單筆風險上限',s.risk_pct!=null?v5F(s.risk_pct,1)+'% · '+v5F(s.risk_twd,0):'—')}${fld('進場價（收盤）',v5F(px))}${fld('停損價',v5F(stp),'')}</div>
+      <div style="display:flex;flex-direction:column;gap:6px">${fld('帳戶資金',bal?v5F(bal,0):'—')}${fld('本筆風險（實算）',s.risk_pct!=null?v5F(s.risk_pct,1)+'% · '+v5F(s.risk_twd,0):'—')}${fld('進場價（收盤）',v5F(px))}${fld('停損價',v5F(stp),'')}</div>
       <div style="padding:16px;border-radius:14px;background:#fff;color:#111113"><div class="o-lbl">建議股數</div><div style="display:flex;align-items:baseline;gap:6px"><span style="font:500 40px/44px var(--sans);letter-spacing:-.03em">${v5F(sh,0)}</span><span style="font-size:14px;color:#6b6c74">股${sh&&sh<1000?'（零股）':s.suggested_lots?'（'+v5F(s.suggested_lots,1)+' 張）':''}</span></div><div style="font-size:12px;color:#6b6c74;margin-top:2px">每股風險 ${v5F(rps)} × ${v5F(sh,0)} ＝ ${v5F(rps*sh,0)}</div></div>
       <div>${out('投入金額',v5F(inv,0)+(bal?' · 占 '+v5F(inv/bal*100,0)+'%':''))}${out('最大虧損（停損）','−'+v5F(rps*sh,0)+(bal?' · '+v5F(rps*sh/bal*100,2)+'%':''),'#4ee08a')}${s.tp1?out('目標 1　'+v5F(s.tp1),'+'+v5F(g(s.tp1),0)+' · 風報比 1 : '+v5F(rr(s.tp1),1),'#ff7a74'):''}${s.tp2?out('目標 2　'+v5F(s.tp2),'+'+v5F(g(s.tp2),0)+' · 風報比 1 : '+v5F(rr(s.tp2),1),'#ff7a74'):''}${s.roundtrip_cost?out('來回手續費＋稅',v5F(s.roundtrip_cost,0)):''}</div>
       <div class="o-lbl" style="color:#a1a1a8">訊號收盤後才產生，最早只能下一個交易日開盤成交，開盤跳空時實際風報比會不同。</div>
@@ -5000,7 +5000,7 @@ async function h8Load(){
 }
 function h8Draw(){
   const el=document.getElementById('h8-body');if(!el||!_x8.h)return;
-  const {ps,pf,hist,st,rk}=_x8.h,op=ps.open||[],cl=ps.closed||[],bal=ps.account_balance||x8Bal([...op,...cl,...(((st||{}).active_signals)||[])]),cap=(rk.portfolio_pct||6)/100;
+  const {ps,pf,hist,st,rk}=_x8.h,op=ps.open||[],cl=ps.closed||[],bal=ps.account_balance||x8Bal([...op,...cl,...(((st||{}).active_signals)||[])]),cap=(rk.portfolio_hard_cap_pct||15)/100;/* ★ LIVE03：組合風險比對組合硬上限 15%，非單日 6% */
   const sh=p=>x8Sh(p),dir=p=>p.direction==='buy'?1:-1;
   // ★ 2026-11-11 LIVE02：帳戶口徑以後端 account 聚合為準（多單資產/空單名目/現金分開，不混為淨權益）。
   const acc=ps.account||{};
@@ -5018,7 +5018,7 @@ function h8Draw(){
   if(!op.length){
     const act=((st||{}).active_signals)||[];
     el.innerHTML=ks+`<section class="o-card o-c8"><div class="o-cb">${v5Empty('目前沒有追蹤中的部位','訊號成立後，系統會依訊號價位與建議張數自動追蹤停損、目標與組合風險。')}${act.length?`<div style="margin-top:16px"><div class="o-lbl" style="margin-bottom:6px">今日訊號</div>${act.slice(0,3).map((s,i)=>`<div class="o-row2" style="align-items:center">${v4oAv(s.name,i)}<span style="flex:1;font:600 14px/18px var(--sans)">${v5E(s.name)} ${v5E(s.code||'')}<small style="display:block;font:400 11px/15px var(--sans);color:var(--t3)">${(s.suggested_shares||0).toLocaleString()} 股 · 停損 ${v5F(s.stop_loss)}</small></span><button class="btn sm" onclick="go('signals')">查看</button></div>`).join('')}</div>`:`<div style="display:flex;justify-content:center;margin-top:12px"><button class="btn primary" onclick="go('signals')">看今日訊號</button></div>`}</div></section>
-      <section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>風險設定</h2><span class="o-mt">系統實際使用</span></div></div><div class="o-cb" style="display:flex;flex-direction:column;gap:6px"><div class="b7-fld"><span>帳戶資金</span><b>${bal?v5F(bal,0):'—'}</b></div><div class="b7-fld"><span>單筆風險</span><b>${rk.per_trade_pct!=null?rk.per_trade_pct+'%':'—'}</b></div><div class="b7-fld"><span>組合上限</span><b>${rk.portfolio_pct!=null?rk.portfolio_pct+'%':'—'}</b></div></div></section>`+h8Trades(cl);
+      <section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>風險設定</h2><span class="o-mt">系統實際使用</span></div></div><div class="o-cb" style="display:flex;flex-direction:column;gap:6px"><div class="b7-fld"><span>帳戶資金</span><b>${bal?v5F(bal,0):'—'}</b></div><div class="b7-fld"><span>單筆預算</span><b>${rk.per_trade_pct!=null?rk.per_trade_pct+'%':'—'}</b></div><div class="b7-fld"><span>單日新增上限</span><b>${rk.daily_new_pct!=null?rk.daily_new_pct+'%':'—'}</b></div><div class="b7-fld"><span>組合硬上限</span><b>${rk.portfolio_hard_cap_pct!=null?rk.portfolio_hard_cap_pct+'%':'—'}</b></div></div></section>`+h8Trades(cl);
     return;
   }
   const f=_x8.hf||'all',rows=op.filter(p=>f==='win'?(p.r_now||0)>0:f==='loss'?(p.r_now||0)<0:true);
@@ -5116,13 +5116,13 @@ async function rk9Load(){
   const tot=risk.reduce((a,x)=>a+x.r,0),cur=risk.reduce((a,x)=>a+x.cur,0),by={};
   risk.forEach(x=>{const k=x.p.sector||'未分類';(by[k]=by[k]||{n:0,r:0}).n++;by[k].r+=x.r;});
   const sec=Object.entries(by).sort((a,b)=>b[1].r-a[1].r),top=sec[0],rn=op.map(p=>p.r_now).filter(x=>x!=null),avgR=rn.length?rn.reduce((a,b)=>a+b,0)/rn.length:null;
-  const cap=rk.portfolio_pct||6,rp=bal?cur/bal*100:null;
+  const cap=rk.portfolio_hard_cap_pct||15,rp=bal?cur/bal*100:null;/* ★ LIVE03：組合硬上限 15% */
   const ks=`<section class="o-card o-c12 h8-ks x9-k4" aria-label="風險概況">${x9Kpi('持倉檔數',op.length,'上限 5 檔')}${x9Kpi('最大可能虧損',v5F(tot,0),'全數觸及停損，未計滑價與跳空')}${x9Kpi('最大產業占比',top&&tot?v5F(top[1].r/tot*100,0)+'%':'—',top?v5E(top[0]):'',top&&tot&&top[1].r/tot>.5?'up':'')}${x9Kpi('平均 R',avgR==null?'—':v5S(avgR,2),'目前未實現',v5C(avgR))}</section>`;
   const gauge=v5Card('o-c4 o-dark','組合風險','以目前價格到停損的距離計算',`<div style="display:flex;flex-direction:column;gap:14px"><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:500 32px/36px var(--sans);letter-spacing:-.03em">${rp!=null?v5F(rp,2)+'%':'—'}</span><span style="font-size:12px;color:#a1a1a8">上限 ${v5F(cap,0)}%</span></div><div class="o-bar" style="height:8px;background:#2a2a2e"><i style="flex:${Math.min(rp||0,cap)};background:${(rp||0)>=cap?'#ff7a74':'#fff'}"></i><i style="flex:${Math.max(0,cap-(rp||0))}"></i></div>
     <div class="b7-fld"><span>帳戶資金</span><b>${bal?v5F(bal,0):'—'}</b></div><div class="b7-fld"><span>單筆風險上限</span><b>${rk.per_trade_pct!=null?rk.per_trade_pct+'%':'—'}</b></div><div class="b7-fld"><span>組合風險上限</span><b>${v5F(cap,0)}%</b></div><div class="b7-fld"><span>目前風險金額</span><b>${v5F(cur,0)}</b></div></div>`);
   const secC=v5Card('o-c8','產業集中度','依停損風險金額',sec.length?sec.map(([k,v])=>{const pc=tot?v.r/tot*100:0;return `<div class="x9-hb x9-sec"><span>${v5E(k)}</span><div class="o-bar" style="height:8px;background:var(--s2)"><i style="flex:${pc};background:${pc>50?'#c33f3c':'var(--acc)'}"></i><i style="flex:${100-pc}"></i></div><b>${v5F(pc,0)}%</b><span>${v.n} 檔 · ${v5F(v.r,0)}</span></div>`;}).join('')+(top&&tot&&top[1].r/tot>.5?`<div class="o-foot" style="margin-top:12px"><span class="o-tag alert">集中</span><span>${v5E(top[0])} 占總風險超過一半，同產業同時下跌時損失會疊加。</span></div>`:''):v5Empty('目前沒有持倉','有持倉後依產業計算風險占比。'));
   const posC=v5Card('o-c12','各持倉風險','距停損越近越需要留意',op.length?x9Lab(`<div style="overflow-x:auto"><table class="r-t x9-t"><thead><tr><th>股票</th><th>現價</th><th>停損</th><th>距停損</th><th>目前 R</th><th>風險金額</th><th>占總風險</th></tr></thead><tbody>${risk.sort((a,b)=>(a.p.cushion_pct??99)-(b.p.cushion_pct??99)).map((x,i)=>{const p=x.p,cu=p.cushion_pct;return `<tr onclick="goToInstrument('${v5E(p.code)}')"><td><span class="x9-stk">${v4oAv(p.name,i)}<span><b>${v5E(p.name)}</b><small>${v5E(p.code)} · ${v5E(p.sector||'—')}</small></span></span></td><td>${v5F(p.last)}</td><td>${v5F(p.stop)}</td><td>${cu!=null?`<span class="o-tag ${cu<3?'alert':cu<6?'warn':''}">${v5F(cu,1)}%</span>`:'—'}</td><td class="${v5C(p.r_now)}">${p.r_now==null?'—':v5S(p.r_now,2)+'R'}</td><td>${v5F(x.r,0)}</td><td>${tot?v5F(x.r/tot*100,0)+'%':'—'}</td></tr>`;}).join('')}</tbody></table></div>`):v5Empty('目前沒有持倉','訊號成立並追蹤後，這裡列出每檔的停損距離與風險金額。'));
-  const rule=v5Card('o-c12','風控規則','系統實際採用（詳見方法論）',`<div class="x9-rules">${[['單筆風險',(rk.per_trade_pct??2)+'% 資金','進場到停損的距離 × 張數'],['同時持倉','最多 5 檔','同產業另有上限'],['停損','ATR 為基礎','達目標 1 後移動停損'],['追高防護','漲停附近不發','高於 20MA 超過 3 倍 ATR 不發']].map(r=>`<div class="o-inset"><div class="o-lbl">${r[0]}</div><b>${r[1]}</b><span>${r[2]}</span></div>`).join('')}</div>`);
+  const rule=v5Card('o-c12','風控規則','系統實際採用（詳見方法論）',`<div class="x9-rules">${[['單筆預算',(rk.per_trade_pct??2)+'% 資金','進場到停損的距離 × 張數'],['組合硬上限',(rk.portfolio_hard_cap_pct??15)+'% 資金','最壞同時停損總和超過即暫停新單'],['同時持倉','最多 '+(rk.max_positions??5)+' 檔','同產業另有上限'],['停損','ATR 為基礎','達目標 1 後移動停損'],['追高防護','漲停附近不發','高於 20MA 超過 3 倍 ATR 不發']].map(r=>`<div class="o-inset"><div class="o-lbl">${r[0]}</div><b>${r[1]}</b><span>${r[2]}</span></div>`).join('')}</div>`);
   el.innerHTML=ks+secC+gauge+posC+rule;
 }
 // ---------- 停損解剖 ----------
@@ -6748,7 +6748,7 @@ function loginWall(){
     if(sc.date&&sc.universe!=null&&sc.sent!=null){const t=$('lw-scan-tag');if(t)t.innerHTML=`<i></i>${sc.date.slice(5).replace('-','/')} 掃描完成 · ${fmt(sc.universe,0)} 檔 → ${sc.sent} 檔訊號`;}
     setT('lw-sig-n',sc.sent!=null?String(sc.sent):'—');if(sc.date)setT('lw-sig-date',sc.date.slice(5).replace('-','/')+' 掃描');
     if(rk.per_trade_pct!=null){setT('lw-f-risk',rk.per_trade_pct+'%');setT('lw-risk-amt',fmt(200000*rk.per_trade_pct/100,0)+' 元');setT('lw-risk-note',`資金 × ${rk.per_trade_pct}%；停損距離越遠，股數越少`);}
-    if(rk.portfolio_pct!=null)setT('lw-k4',rk.portfolio_pct+'%');
+    if(rk.portfolio_hard_cap_pct!=null)setT('lw-k4',rk.portfolio_hard_cap_pct+'%');
     setT('lw-f-trk',pf.total!=null?fmt(pf.total,0)+' 筆':'—');setT('lw-k5',pf.closed!=null?fmt(pf.closed,0)+' 筆':'—');
     if(sc.sent!=null)setT('lw-today-txt',`${sc.date?sc.date.slice(5,10).replace('-','/')+' ':''}${sc.sent} 檔訊號、價位與部位計算，登入後查看`);
     // 漏斗

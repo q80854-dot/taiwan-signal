@@ -1611,11 +1611,13 @@ def api_signal_check(key):
 @app.route("/api/settings")
 def api_settings():
     """唯讀：目前生效的策略與風控參數，附白話說明。調整需改程式碼並部署，避免無帳號機制下被任意竄改。"""
-    from config import THRESH, SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, CIRCUIT_BREAKER, MAX_RISK_PER_TRADE, MAX_DAILY_RISK, ACCOUNT_BALANCE_TWD, SWING_PARAMS
+    from config import THRESH, SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, CIRCUIT_BREAKER, MAX_RISK_PER_TRADE, MAX_DAILY_RISK, MAX_PORTFOLIO_RISK, MAX_SIMULTANEOUS_POSITIONS, ACCOUNT_BALANCE_TWD, SWING_PARAMS
     try:
         from fund_score import fund_adjustment  # noqa
     except Exception:
         pass
+    import risk_manager as _rm
+    _rb = _rm.risk_basis()
     g = lambda k, v, note: {"key": k, "value": v, "note": note}
     return jsonify({"groups": [
         {"title": "進場門檻", "items": [
@@ -1630,9 +1632,10 @@ def api_settings():
             g("最低單日成交量", THRESH.get("min_avg_volume"), "張；流動性門檻")]},
         {"title": "資金與風控", "items": [
             g("帳戶本金（試算用）", ACCOUNT_BALANCE_TWD, "TWD；建議張數依此計算，請至環境變數 ACCOUNT_BALANCE_TWD 改成你的實際本金"),
-            g("單筆最大風險", f"{MAX_RISK_PER_TRADE*100:.1f}%", "每筆停損時最多虧本金的比例"),
-            g("單日最大風險", f"{MAX_DAILY_RISK*100:.1f}%", "當日所有新單的風險總和上限"),
-            g("同時持倉上限", 5, "達上限即暫停發新訊號"),
+            g("單筆預算（每筆上限）", f"{MAX_RISK_PER_TRADE*100:.1f}%", "每筆停損時最多虧本金的比例（歷史訊號顯示的是該筆產生當時的實算風險%，非一律等於此上限）"),
+            g("單日新增上限", f"{MAX_DAILY_RISK*100:.1f}%", "當日所有『新』單的風險總和上限（與組合硬上限語意不同）"),
+            g("組合硬上限", f"{MAX_PORTFOLIO_RISK*100:.0f}%", "所有進行中部位『最壞同時停損』總和的硬上限，超過即暫停新單、不動既有部位"),
+            g("同時持倉上限", MAX_SIMULTANEOUS_POSITIONS, "達上限即暫停發新訊號"),
             g("單日最多訊號", CIRCUIT_BREAKER.get("max_daily_signals"), "避免一天塞太多單"),
             g("訊號有效天數", CIRCUIT_BREAKER.get("signal_expire_days"), "超過仍未觸及停損停利即結案")]},
         {"title": "停損停利（依市值規模）", "items": [
@@ -1640,7 +1643,10 @@ def api_settings():
         {"title": "基本面加減分（做多）", "items": [
             g("基本面 ≥80", "+5", "月營收／獲利／估值綜合分"), g("≥65", "+3", ""), g("≥50", "+1", ""),
             g("≥35", "−3", ""), g("≥20", "−7", ""), g("<20", "−12", "基本面明顯轉弱的標的降低排序")]},
-    ], "note": "參數為唯讀。要調整請先和我討論依據（需有足夠的結案樣本），再改程式碼部署。"})
+    ], "risk_basis": _rb,
+       "note": f"參數為唯讀（config_version {_rb.get('config_version') or '—'}，凍結日 {_rb.get('effective_at') or '—'}）。"
+               "風控三上限（單筆預算／單日新增／組合硬上限）語意不同、各頁一律引用同一來源、不各自硬編。"
+               "要調整請先和我討論依據（需有足夠的結案樣本），再改程式碼部署。"})
 
 
 @app.route("/api/audit")
@@ -2493,8 +2499,9 @@ def api_public_summary():
     except Exception as e:
         out["index"] = []; logger.warning(f"public summary index: {e}")
     try:
-        from config import MAX_RISK_PER_TRADE, MAX_DAILY_RISK
-        out["risk"] = {"per_trade_pct": round(MAX_RISK_PER_TRADE * 100, 1), "portfolio_pct": round(MAX_DAILY_RISK * 100, 1)}
+        # ★ 2026-11-11 LIVE03：改用風控三上限的單一事實來源（單筆/單日新增/組合硬上限各自命名、不混用）。
+        import risk_manager as _rm
+        out["risk"] = _rm.risk_basis()
     except Exception:
         out["risk"] = {}
     return jsonify(out)
@@ -3444,8 +3451,12 @@ def api_backtest_full_run():
 def api_backtest_config():
     """2026-10-28 績效回測頁（Design 定稿）左側「回測設定」：顯示回測實際使用的參數（站主，路徑前綴已限站主）。"""
     import config as C
+    import risk_manager as _rm
+    rb = _rm.risk_basis()
+    # ★ 2026-11-11 LIVE03：單日新增與組合硬上限分開命名；portfolio_risk_pct 原誤用單日 6%，改回真正組合硬上限 15%。
     return jsonify({"initial_balance": C.ACCOUNT_BALANCE_TWD, "risk_per_trade_pct": round(C.MAX_RISK_PER_TRADE * 100, 2),
-                    "portfolio_risk_pct": round(C.MAX_DAILY_RISK * 100, 2), "commission_rate_pct": round(C.COMMISSION_RATE * 100, 4),
+                    "daily_new_risk_pct": rb["daily_new_pct"], "portfolio_risk_pct": rb["portfolio_hard_cap_pct"],
+                    "risk_basis": rb, "commission_rate_pct": round(C.COMMISSION_RATE * 100, 4),
                     "min_commission": C.MIN_COMMISSION, "tax_sell_pct": round(C.TAX_RATE_SELL * 100, 3),
                     "slippage_pct": round(getattr(C, "SLIPPAGE_RATE", 0) * 100, 3), "default_min_score": 65.0})
 
