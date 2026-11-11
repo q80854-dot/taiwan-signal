@@ -646,7 +646,9 @@ def _mc_equity(rows, n_sims=2000, seed=BOOT_SEED):
 
 
 def _equity_curve(rows, cap=300):
-    """已結算候選依訊號日累積的淨 R 權益曲線（供前端畫圖）。"""
+    """已結算候選依訊號日累積的淨 R 曲線（供前端畫圖）。
+    ★ SH08：這是「按決策日(訊號日)歸因」的累積淨 R，不是實際可見/可成交的帳戶資金曲線——
+    未成熟批次的 R 會回填到過去日期。真實帳戶資金曲線見績效頁。"""
     cl = [r for r in rows if r.get("status") == "closed" and r.get("r_multiple") is not None]
     cl.sort(key=lambda r: (r["bar_date"], r.get("id", 0)))
     cum, pts = 0.0, []
@@ -708,6 +710,9 @@ def build_report():
                    "被規則擋下（假想）": _stats(rc)},
         "dimensions": [], "findings": [], "rules": _rules(rc, cc),
         "montecarlo": _mc_equity(cc), "equity_curve": _equity_curve(cc), "monthly": _monthly(cc),
+        # ★ 2026-11-11 SH08：此曲線是「已成熟訊號累積淨 R，按決策日(訊號日)歸因」，不是實際可見/
+        # 可成交的帳戶資金曲線（未成熟批次的 R 會回填到過去日期）。帳戶資金曲線見績效頁。
+        "equity_curve_note": "累積淨 R 按決策日(訊號日)歸因；非帳戶資金曲線，未成熟批次的 R 會回填到過去日期。",
     }
     reliable = closed_days >= MIN_DAYS
     out["reliable"] = reliable
