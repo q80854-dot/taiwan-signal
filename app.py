@@ -1694,6 +1694,40 @@ def api_watchlist_cards():
     return jsonify({"items": _m.build_rows(items[:12], "cards")})
 
 
+def _account_aggregates(views, balance):
+    """★ 2026-11-11 LIVE02：帳戶概況聚合，把多單資產與空單名目分開，不混為「淨權益」。
+    - 多單：買進＝持有資產，佔用現金（成本）；long_market_value＝現價市值。
+    - 空單：賣空＝名目曝險/負債方向，不佔用買進現金（保證金另計，本系統未模擬）；
+      short_notional＝現價名目，不計入持股市值，也不從可用現金扣除。
+    - cash_available＝帳戶資金−多單成本（空單名目不佔現金）。
+    - unrealized_pnl／cur_risk 皆依方向正確計算。"""
+    long_mv = short_notional = long_cost = short_entry_notional = 0.0
+    unreal = cur_risk = 0.0
+    n_long = n_short = 0
+    for p in views:
+        sh = p.get("shares") or 0
+        entry = p.get("entry") or 0
+        last = p.get("last") or entry or 0
+        stop = p.get("stop") or 0
+        buy = p.get("direction") == "buy"
+        if buy:
+            long_mv += last * sh; long_cost += entry * sh; n_long += 1
+        else:
+            short_notional += last * sh; short_entry_notional += entry * sh; n_short += 1
+        unreal += ((last - entry) if buy else (entry - last)) * sh
+        cur_risk += max(0.0, ((last - stop) if buy else (stop - last))) * sh
+    return {
+        "long_market_value": round(long_mv, 0),
+        "short_notional": round(short_notional, 0),
+        "long_cost": round(long_cost, 0),
+        "short_entry_notional": round(short_entry_notional, 0),
+        "cash_available": round(balance - long_cost, 0) if balance else None,
+        "unrealized_pnl": round(unreal, 0),
+        "cur_risk": round(cur_risk, 0),
+        "n_long": n_long, "n_short": n_short,
+    }
+
+
 @app.route("/api/positions")
 def api_positions():
     from state_store import store
@@ -1703,8 +1737,10 @@ def api_positions():
     from config import ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS
     # account_balance 只給站主（members._PRIVATE_KEYS 會對一般會員移除）；前端用它算資金使用率，
     # 不再從 risk_twd ÷ risk_pct 反推（四捨五入後會出現 499,371 這種錯誤本金）
-    return jsonify({"open": [_position_view(r) for r in open_rows],
+    open_views = [_position_view(r) for r in open_rows]
+    return jsonify({"open": open_views,
                     "closed": [_position_view(r) for r in closed[:30]],
+                    "account": _account_aggregates(open_views, ACCOUNT_BALANCE_TWD),
                     "account_balance": ACCOUNT_BALANCE_TWD, "max_positions": MAX_SIMULTANEOUS_POSITIONS})
 
 @app.route("/api/risk/portfolio")
