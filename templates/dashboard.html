@@ -4792,7 +4792,7 @@ function renderInstrument(d){
   }
 
   html+=instExtraHtml(d);
-  html+=`<div class="sec-label"><div class="bar"></div><div class="tx">目前有效訊號</div></div>`;
+  html+=`<div class="sec-label"><div class="bar"></div><div class="tx">今日新訊號</div></div>`;
   if(sig){
     html+=`<div class="sig-card ${sig.direction==='buy'?'':'sell'}">
       <div class="sig-head">
@@ -4808,7 +4808,16 @@ function renderInstrument(d){
       <div class="sig-footer" style="margin-top:6px">${qnBadge(sig.quality_check,'獲利品質')}${qnBadge(sig.news_check,'重大訊息')}<button class="btn qc-btn" onclick="qcRun('${sig.code||sig.ticker}')">下單前質檢</button></div>
     </div>`;
   }else{
-    html+=`<div class="panel card"><div class="panel-body"><div class="empty">目前無有效訊號</div></div></div>`;
+    // ★ 2026-11-11 LIVE09：active（今日新訊號）為空時，若此股仍有未結案的既有訊號在追蹤，明確標示，
+    // 不再一律顯示「無有效訊號」（與事件/持倉頁對同一股的追蹤狀態矛盾）。
+    const tr=d.tracked_signal;
+    if(tr){
+      html+=`<div class="panel card"><div class="panel-body"><div class="kv"><span>今日無新訊號</span><span style="color:var(--t3)">但此股仍有追蹤中訊號</span></div>`+
+        `<div class="kv"><span>追蹤中（${tr.direction==='buy'?'做多':'做空'}）</span><span>${toTaipeiStr(tr.generated_at)||safe(tr.generated_at)} 發出 · 評分 ${safe(tr.score)} · 未結案</span></div>`+
+        `<div style="font-size:11px;color:var(--t3);margin-top:6px">「今日新訊號」只含本日盤後掃描新發出的訊號；既有訊號的追蹤狀態見「通知中心／持倉追蹤／下方歷史訊號」。</div></div></div>`;
+    }else{
+      html+=`<div class="panel card"><div class="panel-body"><div class="empty">今日無新訊號（此股亦無追蹤中的既有訊號）</div></div></div>`;
+    }
   }
 
   html+=`<div class="sec-label"><div class="bar"></div><div class="tx">技術指標</div></div>`;
