@@ -2661,6 +2661,11 @@ html[data-theme]{
   --c-unknown:var(--t3);
   /* 層次三層：背景／主要表面／內嵌表面 */
   --ly-bg:var(--bg);--ly-surface:var(--s1);--ly-inset:var(--s2);
+  /* ★ 2026-11-11 P3-A 動態 token（§4 動態規格）：全站共用時長，皆短促、尊重 reduce-motion
+     （整站已有全域 prefers-reduced-motion:reduce → animation/transition none 的關閉開關）。
+     禁止清單（§4/§8.6）合規：無連續動畫迴圈（唯一一次性 rAF 用於 layout 修正）、
+     不為動畫新增背景輪詢、報價走 fetch 非逐位跳動、盈虧曲線不持續重播、頁面隱藏瀏覽器自動暫停。 */
+  --mo-press:140ms;--mo-hover:200ms;--mo-tab:180ms;--mo-flash:500ms;--mo-ease:cubic-bezier(.2,.6,.2,1);
 }
 /* ── 基礎元件：資料五態（loading/empty/error/stale/forbidden）──
    鐵律：缺資料顯示「未取得／未知」、不以 0 裝飾；錯誤/過時在首個視野可辨識、不藏 tooltip。
@@ -2679,6 +2684,19 @@ html[data-theme]{
 }
 /* 觸控目標輔助（驗收目標 44px）：只給新頁引用，不改既有元件 */
 .ts-tap{min-height:44px;min-width:44px}
+/* ── P3-A 動態精修（§4）：全部包在 no-preference，reduce-motion 一律無動作 ── */
+@media(prefers-reduced-motion:no-preference){
+  /* CTA 按壓回饋：位移 1px＋微降透明，hit area 不縮小（只 translate、不改 padding/size）；鍵盤 :active 同觸發 */
+  html[data-theme] .btn:active,html[data-theme] .lw-btn:active,html[data-theme] .o-tag[onclick]:active{transform:translateY(1px);transition:transform var(--mo-press) var(--mo-ease)}
+  /* 互動卡 hover（僅標 .ts-hover 的可點卡；純指標卡不浮動、觸控不依賴 hover） */
+  @media(hover:hover){html[data-theme] .ts-hover{transition:transform var(--mo-hover) var(--mo-ease),box-shadow var(--mo-hover) var(--mo-ease)}
+    html[data-theme] .ts-hover:hover{transform:translateY(-2px)}}
+  /* 行情更新底色提示（P3-B 以 .ts-flash 類觸發；僅確有新值時加類，約 500ms 後移除） */
+  @keyframes ts-flash-up{0%{background:var(--c-up-soft)}100%{background:transparent}}
+  @keyframes ts-flash-down{0%{background:var(--c-down-soft)}100%{background:transparent}}
+  html[data-theme] .ts-flash-up{animation:ts-flash-up var(--mo-flash) ease-out}
+  html[data-theme] .ts-flash-down{animation:ts-flash-down var(--mo-flash) ease-out}
+}
 /* ── P2-E B08：全域搜尋「功能頁」分組 ── */
 html[data-theme] .gs-dd .gs-grp{padding:8px 14px 4px;font:600 11px/1 var(--sans);letter-spacing:.04em;color:var(--t3);text-transform:none}
 html[data-theme] .gs-dd .gs-pg{cursor:pointer}
