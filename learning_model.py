@@ -726,6 +726,144 @@ def _eval_config(ds, dev_n, k, l2, mode, embargo):
     return {"dev_auc": dev_auc, "holdout_auc": hold_auc, "holdout_brier": hold_brier, "n_features": n_features}
 
 
+_M03_ATTEMPTS_KEY = "learning_m03_attempts"
+
+
+def _challengers_m03(ds, k, embargo_days, champ):
+    """★ 2026-11-11 M03 第一刀（並列對照、不改現行行為）：內層 dev 折選模、外層封存只評一次。
+
+    審查 M03 指出：run_challengers 對**所有**設定算 holdout_auc 後排序＝holdout 同時被用來
+    「選模型」與「評估」，且與 get_champion 存的舊 holdout_auc 比較＝不同資料期間不可比。
+
+    本協定（與現行 entries/recommendation 並列、預設不切換——切換需使用者核准）：
+      - 封存邊界按**日**對齊（最近 ~20% 交易日為封存段，整日不拆；無 bar_date 樣本整組排除）。
+      - 內層：各設定只看 dev 段的日期感知 purged OOF 指標（_walkforward_eval_dated）排名選模，
+        選模過程完全不接觸封存段。
+      - 外層：封存段只評**被選中者＋規則基準＋現任 champion 設定**（同一批封存樣本重評，
+        不拿舊期間的 champ holdout_auc 來比），各一次。
+      - 晉升建議附校準（brier）、淨 R、樣本量；仍為人工核准、不自動晉升。
+      - 誠實標示：這段 holdout 已被歷次執行反覆查看，依審查應視為「開發測試資料」；
+        真正封存區需上線後新累積、未被任何挑選查看過的樣本（缺口）。
+    """
+    parsed, y, scores, rmult = ds["parsed"], ds["y"], ds["score"], ds["rmult"]
+    bd = ds.get("bar_dates") or []
+    ed = ds.get("end_dates") or []
+    n = len(parsed)
+    ek = ds.get("end_known") or [True] * n
+    days = sorted({d for d in bd if d})
+    kk_ = max(2, k)
+    if len(days) < kk_ + 2:        # dev 要能切 k+1 塊、封存段至少 1 日
+        return {"ok": False, "reason": "too_few_days", "n_days": len(days)}
+    n_dev_days = min(len(days) - 1, max(kk_ + 1, int(round(len(days) * (1 - HOLDOUT_FRAC)))))
+    dev_days = set(days[:n_dev_days])
+    hold_first = days[n_dev_days]
+    dev_idx = [i for i in range(n) if bd[i] in dev_days]
+    hold_idx = [i for i in range(n) if bd[i] and bd[i] >= hold_first]
+    excluded_undated = n - len(dev_idx) - len(hold_idx)
+    hold_days_cnt = len(days) - n_dev_days
+    if not dev_idx or not hold_idx:
+        return {"ok": False, "reason": "empty_split"}
+    _i = np.array(dev_idx)
+    p_dev = [parsed[i] for i in dev_idx]
+    bd_dev = [bd[i] for i in dev_idx]
+    ed_dev = [ed[i] for i in dev_idx]
+    ek_dev = [ek[i] for i in dev_idx]
+    y_dev, s_dev, r_dev = y[_i], scores[_i], rmult[_i]
+
+    # ── 內層：dev 段日期感知 OOF 排名（選模不碰封存段）──
+    inner = []
+    for cfg in _COMPETITION_CONFIGS:
+        try:
+            ev = _walkforward_eval_dated(p_dev, y_dev, s_dev, r_dev, bd_dev, ed_dev, ek_dev,
+                                         k=k, l2=cfg["l2"], mode=cfg["mode"],
+                                         embargo_days=embargo_days)
+        except Exception as e:
+            ev = {"ok": False, "error": str(e)}
+        inner.append({"id": cfg["id"], "label": cfg["label"], "mode": cfg["mode"], "l2": cfg["l2"],
+                      "dev_auc": ev.get("model_auc"), "dev_brier": ev.get("brier"),
+                      "dev_n_eval": ev.get("n_eval"), "dev_ok": bool(ev.get("ok"))})
+    inner.sort(key=lambda e: (-(e["dev_auc"] if e["dev_auc"] is not None else -1.0),
+                              (e["dev_brier"] if e["dev_brier"] is not None else 9.0)))
+    for i, e in enumerate(inner):
+        e["dev_rank"] = i + 1
+    selected = next((e for e in inner if e["dev_auc"] is not None), None)
+
+    # ── 外層：封存段只評一次（選中者＋規則基準＋現任 champion 同批重評）──
+    eo_all = [_date_ord(d) for d in ed]
+    hcut = _date_ord(hold_first)
+    if hcut is not None:
+        hcut -= embargo_days
+
+    def _sealed_eval(l2, mode):
+        n_q = sum(1 for i in dev_idx if (not ek[i]) or eo_all[i] is None)      # M02 隔離
+        tr = [i for i in dev_idx if ek[i] and eo_all[i] is not None
+              and (hcut is None or eo_all[i] < hcut)]                          # purge 跨界標籤
+        n_p = len(dev_idx) - n_q - len(tr)
+        if not tr:
+            return None
+        sel = [parsed[i] for i in tr]
+        keys, use_score = _apply_mode(*_select_keys(sel), mode)
+        if not keys and not use_score:
+            return None
+        med, score_med = _fit_prep(sel, keys, use_score)
+        Xtr, _ = _build_X(sel, keys, use_score, med, score_med)
+        Xho, _ = _build_X([parsed[i] for i in hold_idx], keys, use_score, med, score_med)
+        Xtr_s, mean, std = _standardize(Xtr)
+        w, b = _fit_logreg(Xtr_s, y[np.array(tr)], l2=l2)
+        Xho_s, _, _ = _standardize(Xho, mean, std)
+        ph = _sigmoid(Xho_s @ w + b)
+        yh = y[np.array(hold_idx)]
+        rh = rmult[np.array(hold_idx)]
+        auc = _auc(ph, yh)
+        selm = ph > 0.5
+        sn = int(selm.sum())
+        return {"auc": round(auc, 4) if auc is not None else None,
+                "brier": round(float(np.mean((ph - yh) ** 2)), 4),
+                "sel_net_r": round(float(rh[selm].mean()), 3) if sn >= 1 else None, "sel_n": sn,
+                "n_train": len(tr), "n_purged": n_p, "n_quarantined": n_q}
+
+    sealed = {"selected": None, "baseline_rule": None, "champion_same_batch": None}
+    try:
+        if selected is not None:
+            sealed["selected"] = _sealed_eval(selected["l2"], selected["mode"])
+        sealed["baseline_rule"] = _sealed_eval(1.0, "rule")
+        champ_cfg = next((c for c in _COMPETITION_CONFIGS
+                          if c["id"] == (champ or {}).get("config_id")), None)
+        if champ_cfg is not None:
+            sealed["champion_same_batch"] = _sealed_eval(champ_cfg["l2"], champ_cfg["mode"])
+    except Exception as e:
+        logger.warning(f"_challengers_m03 sealed: {e}")
+
+    gates_ok = (len(hold_idx) >= MIN_HOLDOUT and hold_days_cnt >= MIN_HOLDOUT_DAYS)
+    sa = (sealed["selected"] or {}).get("auc")
+    ba = (sealed["baseline_rule"] or {}).get("auc")
+    ca = (sealed["champion_same_batch"] or {}).get("auc")
+    if not gates_ok:
+        rec = {"promote": None, "reason": f"資料不足（封存段 {len(hold_idx)} 筆／{hold_days_cnt} 個交易日，"
+               f"需 ≥{MIN_HOLDOUT} 筆且 ≥{MIN_HOLDOUT_DAYS} 個交易日），不建議晉升"}
+    elif selected is None or sa is None:
+        rec = {"promote": None, "reason": "內層無法選模或封存段無法評估"}
+    else:
+        beat_rule = (ba is None) or (sa - ba >= PROMOTE_MARGIN)
+        beat_champ = (ca is None) or (sa - ca >= PROMOTE_MARGIN)
+        if beat_rule and beat_champ:
+            rec = {"promote": selected["id"],
+                   "reason": "內層 dev 折選出、封存段一次性評估勝過規則基準與現任 champion（同批重評）；"
+                             "仍需站主手動核准採用"}
+        else:
+            rec = {"promote": None, "reason": "封存段一次性評估未明顯優於規則基準或現任 champion（同批重評），維持不變"}
+    return {"ok": True, "inner_dev_rank": inner, "selected_id": (selected or {}).get("id"),
+            "sealed_once": sealed, "recommendation": rec, "gates_ok": gates_ok,
+            "protocol": {"split": "day_aligned_holdout", "selection": "inner_dev_oof_only",
+                         "dev_days": n_dev_days, "holdout_days": hold_days_cnt,
+                         "holdout_first": hold_first, "n_dev": len(dev_idx),
+                         "n_holdout": len(hold_idx), "excluded_undated": excluded_undated,
+                         "embargo_days": embargo_days},
+            "holdout_note": "此封存段（最近約 20% 交易日）已被歷次挑戰者執行反覆查看，依審查 M03 應視為"
+                            "「開發測試資料」；真正封存區需上線後新累積、未被任何挑選查看過的樣本（缺口，"
+                            "另行估工）。attempts 為歷來查看次數。"}
+
+
 def get_champion() -> Optional[dict]:
     """目前已採用的 champion 中繼資料（不含權重；權重在 META_KEY）。無則回 None。"""
     try:
@@ -776,11 +914,30 @@ def run_challengers(k: int = 5, embargo_days: int = EMBARGO_DAYS) -> dict:
             rec = {"promote": None, "reason": "未明顯優於現任 champion 或規則基準，維持不變"}
     else:
         rec = {"promote": None, "reason": "holdout 無法評估"}
+    # ★ M03 第一刀（並列對照）：內層 dev 選模＋封存段只評一次；現行 entries/recommendation
+    #   不變（仍以 holdout 排名＝審查 M03 指出的缺陷），切換預設口徑需使用者核准後另行處理。
+    try:
+        m03 = _challengers_m03(ds, k, embargo_days, champ)
+    except Exception as e:
+        logger.warning(f"run_challengers m03: {e}")
+        m03 = {"ok": False, "error": str(e)}
+    try:
+        from state_store import store
+        st, att = store.read_meta(_M03_ATTEMPTS_KEY)
+        cnt_att = int((att or {}).get("count", 0)) + 1 if st == "ok" else 1
+        store.set_meta(_M03_ATTEMPTS_KEY, {"count": cnt_att,
+                                           "last_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+        m03["attempts"] = cnt_att
+    except Exception as e:
+        logger.warning(f"run_challengers m03 attempts: {e}")
     return {"ok": True, "n": n, "direction": ds.get("direction", "buy"),
             "dev_n": dev_n, "n_holdout": n_holdout, "holdout_days": hold_days,
             "gates_ok": gates_ok, "embargo_days": embargo_days,
             "baseline_holdout_auc": round(base_auc, 4) if base_auc is not None else None,
             "champion": champ, "entries": entries, "recommendation": rec,
+            "m03": m03, "m03_note": "m03＝審查 M03 協定（內層 dev 折選模、封存段只評一次、"
+            "champion 同批重評）之並列對照；現行 entries 仍以 holdout 排名（M03 指出的缺陷）、"
+            "切換預設口徑需使用者核准",
             "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
 
 
