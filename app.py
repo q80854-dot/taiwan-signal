@@ -988,6 +988,19 @@ def _position_view(r):
         out["error"] = str(e)[:80]
     return out
 
+def _material_news_coverage(ticker):
+    """★ 2026-11-11 LIVE19：重大訊息公告來源僅涵蓋上市（TWSE）；上櫃(.TWO)無對應公開源。
+    上櫃個股回 covered=False（未查核/unknown），前端須明示『未涵蓋≠無風險』，不可當成無公告。"""
+    is_otc = str(ticker or "").upper().endswith(".TWO")
+    return {
+        "covered": not is_otc,
+        "market": "上櫃" if is_otc else "上市",
+        "source": "TWSE OpenAPI t187ap04_L（重大訊息公告，僅涵蓋上市）",
+        "note": ("本檔為上櫃，重大訊息公告來源未涵蓋；此處無命中代表『未查核』而非『無風險』。"
+                 if is_otc else "本檔為上市，已查核重大訊息風險關鍵字。"),
+    }
+
+
 def _pick_tracked_signal(history, active_signal):
     """★ 2026-11-11 LIVE09：從個股歷史訊號挑出「仍在追蹤（未結案）」的既有訊號。
     history 依 generated_at DESC；取最近一筆 status!='closed' 且 result 為 pending/active/None 者。
@@ -3289,8 +3302,13 @@ def api_instrument(ticker: str):
     try:
         from fundamentals import fetch_material_news_risk_map
         out["material_news"] = fetch_material_news_risk_map().get(code, [])
+        # ★ 2026-11-11 LIVE19：重大訊息來源僅涵蓋上市（TWSE）；上櫃(.TWO)無對應公開源。
+        # 上櫃個股的空清單是「未涵蓋(unknown)」，不可被解讀為「無公告/無風險」。
+        out["material_news_coverage"] = _material_news_coverage(t)
     except Exception as e:
         out["material_news"] = []; out["material_news_error"] = str(e)
+        out["material_news_coverage"] = {"covered": False, "market": None,
+                                         "note": "重大訊息查核失敗，暫列未涵蓋(unknown)"}
     # ★ 2026-10-11：個股研究延伸資料（使用者要求）——公司概況、外資（機構）持股比率、
     # 集保股權分散（大戶／散戶）、技術指標白話解讀。逐項優雅降級，缺就不顯示。
     # （2026-10-15：以上四項與個股新聞已於前面並行送出，這裡只取回結果。）
