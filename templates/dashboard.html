@@ -5002,11 +5002,19 @@ function h8Draw(){
   const el=document.getElementById('h8-body');if(!el||!_x8.h)return;
   const {ps,pf,hist,st,rk}=_x8.h,op=ps.open||[],cl=ps.closed||[],bal=ps.account_balance||x8Bal([...op,...cl,...(((st||{}).active_signals)||[])]),cap=(rk.portfolio_pct||6)/100;
   const sh=p=>x8Sh(p),dir=p=>p.direction==='buy'?1:-1;
-  const mv=op.reduce((a,p)=>a+(p.last||p.entry||0)*sh(p),0),cost=op.reduce((a,p)=>a+(p.entry||0)*sh(p),0),un=op.reduce((a,p)=>a+((p.last||p.entry)-p.entry)*dir(p)*sh(p),0);
-  const curRisk=op.reduce((a,p)=>a+Math.max(0,((p.last||p.entry)-p.stop)*dir(p))*sh(p),0);
+  // ★ 2026-11-11 LIVE02：帳戶口徑以後端 account 聚合為準（多單資產/空單名目/現金分開，不混為淨權益）。
+  const acc=ps.account||{};
+  const mvLong=acc.long_market_value!=null?acc.long_market_value:op.filter(p=>p.direction==='buy').reduce((a,p)=>a+(p.last||p.entry||0)*sh(p),0);
+  const shortNotional=acc.short_notional!=null?acc.short_notional:op.filter(p=>p.direction!=='buy').reduce((a,p)=>a+(p.last||p.entry||0)*sh(p),0);
+  const longCost=acc.long_cost!=null?acc.long_cost:op.filter(p=>p.direction==='buy').reduce((a,p)=>a+(p.entry||0)*sh(p),0);
+  const un=acc.unrealized_pnl!=null?acc.unrealized_pnl:op.reduce((a,p)=>a+((p.last||p.entry)-p.entry)*dir(p)*sh(p),0);
+  const curRisk=acc.cur_risk!=null?acc.cur_risk:op.reduce((a,p)=>a+Math.max(0,((p.last||p.entry)-p.stop)*dir(p))*sh(p),0);
+  const cost=longCost;  // 資金佔用以多單成本計（空單名目不佔現金）
   const m=x7Today().slice(0,7),rl=cl.filter(p=>x8Date(p.generated_at).slice(0,7)===m),rsum=rl.reduce((a,p)=>a+(p.pnl_twd||0),0),rw=rl.filter(p=>(p.pnl_twd||0)>0).length;
+  const nL=acc.n_long!=null?acc.n_long:op.filter(p=>p.direction==='buy').length,nS=acc.n_short!=null?acc.n_short:op.filter(p=>p.direction!=='buy').length;
   const kpi=(l,v,s,c)=>`<div><div class="o-lbl">${l}</div><div class="h8-v ${c||''}">${v}</div><div class="h8-s">${s}</div></div>`;
-  const ks=`<section class="o-card o-c12 h8-ks" aria-label="帳戶概況">${kpi('起始資金',bal?v5F(bal,0):'—','系統設定的帳戶資金')}${kpi('持股市值',v5F(mv,0),`${op.length} 檔${bal?' · 資金使用率 '+v5F(cost/bal*100,0)+'%':''}`)}${kpi('可用現金',bal?(bal-cost>=0?v5F(bal-cost,0):'超出 '+v5F(cost-bal,0)):'—',bal&&bal-cost<0?'部位成本已超過帳戶資金':'以進場成本計',bal&&bal-cost<0?'up':'')}${kpi('未實現損益',v5S(un),cost?`<span class="o-tag ${v5C(un)}">${v5S(un/cost*100,2)}%</span>`:'',v5C(un))}${kpi('組合風險',bal?v5F(curRisk/bal*100,2)+'%':'—',`上限 ${v5F(cap*100,0)}%`)}${kpi('本月已實現',v5S(rsum),`${rl.length} 筆出場 · 勝 ${rw} 敗 ${rl.length-rw}`,v5C(rsum))}</section>`;
+  const mvSub=`多單 ${nL} 檔${bal?' · 資金使用率 '+v5F(longCost/bal*100,0)+'%':''}${nS?' · 空單名目 '+v5F(shortNotional,0):''}`;
+  const ks=`<section class="o-card o-c12 h8-ks" aria-label="帳戶概況">${kpi('起始資金',bal?v5F(bal,0):'—','系統設定的帳戶資金')}${kpi('持股市值（多單）',v5F(mvLong,0),mvSub)}${kpi('可用現金',bal?(bal-longCost>=0?v5F(bal-longCost,0):'超出 '+v5F(longCost-bal,0)):'—',bal&&bal-longCost<0?'多單成本已超過帳戶資金':'帳戶資金−多單成本（空單名目不佔現金）',bal&&bal-longCost<0?'up':'')}${kpi('未實現損益',v5S(un),cost?`<span class="o-tag ${v5C(un)}">${v5S(un/cost*100,2)}%</span>`:'',v5C(un))}${kpi('組合風險',bal?v5F(curRisk/bal*100,2)+'%':'—',`上限 ${v5F(cap*100,0)}%`)}${kpi('本月已實現',v5S(rsum),`${rl.length} 筆出場 · 勝 ${rw} 敗 ${rl.length-rw}`,v5C(rsum))}</section>`;
   if(!op.length){
     const act=((st||{}).active_signals)||[];
     el.innerHTML=ks+`<section class="o-card o-c8"><div class="o-cb">${v5Empty('目前沒有追蹤中的部位','訊號成立後，系統會依訊號價位與建議張數自動追蹤停損、目標與組合風險。')}${act.length?`<div style="margin-top:16px"><div class="o-lbl" style="margin-bottom:6px">今日訊號</div>${act.slice(0,3).map((s,i)=>`<div class="o-row2" style="align-items:center">${v4oAv(s.name,i)}<span style="flex:1;font:600 14px/18px var(--sans)">${v5E(s.name)} ${v5E(s.code||'')}<small style="display:block;font:400 11px/15px var(--sans);color:var(--t3)">${(s.suggested_shares||0).toLocaleString()} 股 · 停損 ${v5F(s.stop_loss)}</small></span><button class="btn sm" onclick="go('signals')">查看</button></div>`).join('')}</div>`:`<div style="display:flex;justify-content:center;margin-top:12px"><button class="btn primary" onclick="go('signals')">看今日訊號</button></div>`}</div></section>
