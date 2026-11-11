@@ -160,6 +160,12 @@ def ensure_table():
             store._migrate_add_column("shadow_signals", "champion_r", "REAL")
         except Exception as e:
             logger.debug(f"shadow migrate champion_r: {e}")
+        # 2026-11-11（策略引擎 Phase 1）：standalone 策略的假想訊號以 strategy_name 標記（如
+        # 'trend_following'），既有 Champion 候選視為 'champion'。純 shadow 研究、不影響線上訊號。
+        try:
+            store._migrate_add_column("shadow_signals", "strategy_name", "TEXT")
+        except Exception as e:
+            logger.debug(f"shadow migrate strategy_name: {e}")
         _ready = True
 
 
