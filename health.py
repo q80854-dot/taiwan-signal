@@ -84,9 +84,15 @@ def check_fundamentals():
     out.append(_c("月營收", "ok" if len(rv) > 1500 else "warn", f"{len(rv)} 檔；主要期別 {top[0]}（{top[1]} 檔）"))
     val = fetch_valuation_map()
     out.append(_c("本益比／淨值比／殖利率", "ok" if len(val) > 1500 else "warn", f"{len(val)} 檔"))
+    # ★ 2026-11-11 LIVE14 補漏：重大訊息來源取得失敗＝檢查無法完成（外部來源暫時無法連線），
+    # 屬 unknown（升 warn、不觸發 fail 的 Telegram 紅色告警），不是系統異常 fail。先前此處用 "fail"
+    # 被 LIVE14 的 warn→unknown 批次替換漏掉，導致來源短暫失敗就發「系統健檢異常」告警。
     ok = material_news_fetch_ok()
     n = sum(len(v) for v in fetch_material_news_risk_map().values())
-    out.append(_c("重大訊息（僅上市）", "ok" if ok else "fail", f"來源正常，命中風險關鍵字 {n} 則" if ok else "取得失敗"))
+    out.append(_c("重大訊息（僅上市）", "ok" if ok else "unknown",
+                  f"來源正常，命中風險關鍵字 {n} 則" if ok
+                  else "取得失敗——重大訊息來源（僅上市，證交所）暫時無法連線，此期間無法以重大訊息為持倉標記風險旗標；"
+                       "非系統異常，來源恢復後自動回補"))
     return out
 
 
