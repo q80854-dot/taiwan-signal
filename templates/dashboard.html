@@ -5533,7 +5533,9 @@ const x6Md=d=>d?String(d).replace(/^(\d{4})(\d\d)(\d\d)$/,'$1-$2-$3').slice(5).r
 const x6Asc=a=>(a||[]).slice().sort((x,y)=>x.date<y.date?-1:x.date>y.date?1:0);
 function x6Breadth(b,mk){if(!b)return null;if(mk==='TSE')return b.tse?{...b.tse,date:b.tse.quote_date}:null;if(mk==='OTC')return b.otc?{...b.otc,date:b.otc.quote_date}:null;return {advancers:b.advancers,decliners:b.decliners,unchanged:b.unchanged,limit_up:b.limit_up,limit_down:b.limit_down,total:b.total,date:b.dates_mismatch?'上市 '+x6Md(b.tse&&b.tse.quote_date)+'／上櫃 '+x6Md(b.otc&&b.otc.quote_date):''};}
 function x6BarHtml(br){if(!br||br.advancers==null)return '<div class="o-lbl">漲跌家數暫無資料</div>';return `<div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px"><span class="up">▲ ${br.advancers}</span><span style="color:var(--t3)">平 ${br.unchanged??'—'}</span><span class="down">▼ ${br.decliners}</span></div><div class="o-bar" style="height:10px"><i style="flex:${br.advancers};background:var(--o-cu)"></i><i style="flex:${br.unchanged||0};background:var(--s3)"></i><i style="flex:${br.decliners};background:var(--o-cd)"></i></div></div>`;}
-function x6Mini(n,tag,v,ch,sp,dg=2){const c=v5C(ch);return `<div><span class="o-lbl">${n}${tag?` <span class="o-cc" style="background:var(--s2);color:var(--t3)">${tag}</span>`:''}</span><span class="x6-v">${v==null?'—':v5F(v,dg)}</span><span class="${c}" style="font:500 12px/16px var(--mono)">${ch==null?'—':(ch>0?'▲ ':ch<0?'▼ ':'')+Math.abs(ch).toFixed(2)+'%'}</span>${sp?`<svg viewBox="0 0 120 30" preserveAspectRatio="none" style="width:100%;height:30px" aria-hidden="true"><path d="${sp}" fill="none" stroke="var(--o-${ch>=0?'cu':'cd'})" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`:'<div style="height:30px"></div>'}</div>`;}
+/* ★ 2026-11-11 LIVE08：tile 可帶各自 as_of（第 7 參數），即時報價與日線收盤分開標示，
+   不以全頁更新時間代替各欄位實際時間。 */
+function x6Mini(n,tag,v,ch,sp,dg=2,asof){const c=v5C(ch);return `<div><span class="o-lbl">${n}${tag?` <span class="o-cc" style="background:var(--s2);color:var(--t3)">${tag}</span>`:''}</span><span class="x6-v">${v==null?'—':v5F(v,dg)}</span><span class="${c}" style="font:500 12px/16px var(--mono)">${ch==null?'—':(ch>0?'▲ ':ch<0?'▼ ':'')+Math.abs(ch).toFixed(2)+'%'}</span>${sp?`<svg viewBox="0 0 120 30" preserveAspectRatio="none" style="width:100%;height:30px" aria-hidden="true"><path d="${sp}" fill="none" stroke="var(--o-${ch>=0?'cu':'cd'})" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`:'<div style="height:30px"></div>'}${asof?`<span style="display:block;font:400 10px/14px var(--mono);color:var(--t3)">${asof}</span>`:''}</div>`;}
 
 // ---------- 市場總覽 ----------
 function m6Mk(m){_x6.mk=m;document.querySelectorAll('#m6-mk .tab').forEach(b=>b.classList.toggle('on',b.dataset.m===m));m6Draw();}
@@ -5547,7 +5549,14 @@ function m6Draw(){
   const wf=(g,k)=>((W[g]||[]).find(x=>x.key===k))||{};
   const last=H[H.length-1]||{},prev=H[H.length-2]||{};
   // 主要指數列
-  const strip=[['加權指數','TW',(I.twii||{}).price??last.c,(I.twii||{}).chg,x6Sp(H.slice(-24).map(p=>p.c))],['櫃買指數','TW',(I.tpex||{}).price,(I.tpex||{}).chg,''],
+  // ★ 2026-11-11 LIVE08：加權主數值可能是即時報價、也可能 fallback 到日線收盤——兩者 session 不同，
+  // 不得混標。各 tile 標各自 as_of：即時→「報價 HH:MM」；fallback→「{日期} 收盤」。走勢小圖為近 24 個
+  // 日線收盤（非分時）。分時卡的開高低收已另標「{日期} 證交所日線」，不得與即時主數值互相驗證價位關係。
+  const twiiLive=(I.twii||{}).price!=null,twiiV=twiiLive?I.twii.price:last.c;
+  const _moHM=mo.fetched_at?toTaipeiHM(mo.fetched_at):null;
+  const twiiAsof=twiiLive?('報價 '+(_moHM||'最新')):(last.d?x6Md(last.d)+' 收盤':null);
+  const tpexAsof=((I.tpex||{}).price!=null)?('報價 '+(_moHM||'最新')):null;
+  const strip=[['加權指數','TW',twiiV,(I.twii||{}).chg,x6Sp(H.slice(-24).map(p=>p.c)),2,twiiAsof],['櫃買指數','TW',(I.tpex||{}).price,(I.tpex||{}).chg,'',2,tpexAsof],
     ['費城半導體','US',wf('indices','sox').price,wf('indices','sox').chg,x6Sp(wf('indices','sox').spark)],['S&P 500','US',wf('indices','sp500').price,wf('indices','sp500').chg,x6Sp(wf('indices','sp500').spark)],
     ['日經 225','JP',wf('indices','n225').price,wf('indices','n225').chg,x6Sp(wf('indices','n225').spark)],['美元／台幣','FX',wf('fx','usdtwd').price,wf('fx','usdtwd').chg,x6Sp(wf('fx','usdtwd').spark),3],
     ['VIX','US',wf('futures','vix').price,wf('futures','vix').chg,x6Sp(wf('futures','vix').spark)]];
