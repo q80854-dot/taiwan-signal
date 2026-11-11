@@ -75,7 +75,7 @@ def build_dataset(direction="buy"):
     rows = _rows(direction)
     if len(rows) < MIN_SAMPLES:
         return {"ok": False, "reason": "insufficient", "n": len(rows), "direction": direction}
-    parsed, ys, scores, rmults, bar_dates, end_dates = [], [], [], [], [], []
+    parsed, ys, scores, rmults, bar_dates, end_dates, end_known = [], [], [], [], [], [], []
     for r in rows:
         rm = _num(r.get("r_multiple"))
         if rm is None:
@@ -100,12 +100,17 @@ def build_dataset(direction="buy"):
         rmults.append(rm)
         bar_dates.append((r.get("bar_date") or "")[:10])
         end_dates.append((r.get("exit_date") or r.get("bar_date") or "")[:10])   # 標籤實現日（持有到出場）
+        # ★ 2026-11-11 M02：exit_date 缺時上行 fallback 成 bar_date 會低估標籤成熟時間。
+        # 這裡誠實記錄「實現日是否可靠」——日期感知驗證（_walkforward_eval_dated）據此把
+        # 缺實現日的樣本隔離出訓練段（quarantine），不冒充當日已成熟。加法式欄位、不影響既有路徑。
+        end_known.append(bool(r.get("exit_date")))
     n = len(parsed)
     if n < MIN_SAMPLES:
         return {"ok": False, "reason": "insufficient", "n": n, "direction": direction}
     return {"ok": True, "parsed": parsed, "y": np.array(ys, dtype=float),
             "score": np.array(scores, dtype=float), "rmult": np.array(rmults, dtype=float),
-            "bar_dates": bar_dates, "end_dates": end_dates, "n": n, "direction": direction}
+            "bar_dates": bar_dates, "end_dates": end_dates, "end_known": end_known,
+            "n": n, "direction": direction}
 
 
 def _select_keys(parsed):
@@ -267,6 +272,107 @@ def _walkforward_eval(parsed, y, scores, rmult, k: int = 5, l2: float = 1.0, mod
             "deciles": deciles, "cols": cols, "mean": mean, "std": std, "w": w, "b": b}
 
 
+def _walkforward_eval_dated(parsed, y, scores, rmult, bar_dates, end_dates, end_known=None,
+                            k: int = 5, l2: float = 1.0, mode: str = "all",
+                            exclude=None, embargo_days: int = None) -> dict:
+    """★ 2026-11-11 M01/M02 第一刀：日期感知的 purged expanding-window 驗證核心（研究對照用）。
+
+    與既有 _walkforward_eval（按筆數 n//(k+1) 切、無 purge）**並列對照、不取代**——
+    把日期感知版設為預設會改研究報表數字，需使用者核准後另行切換（見 DECISION_LOG）。
+
+    規則（對應審查 M01/M02）：
+      - 按「決策日」切 k+1 段：同一 bar_date 永不跨 train/val 邊界。
+      - Purge：訓練樣本的標籤實現日 end_date 必須 < 該折驗證期第一個決策日 − embargo_days，
+        否則自訓練段剔除（訓練標籤在驗證決策日後才成熟＝洩漏）。
+      - M02 隔離：end_known=False（exit_date 缺、實現日不可靠）的樣本不進任何訓練段
+        （quarantined），不以 bar_date fallback 冒充當日成熟；仍可作驗證樣本（其 y 為實際結果）。
+      - protocol：逐折記錄 train/val 日期範圍、原始/有效訓練數、purged、quarantined——
+        對應 M01「記錄每折刪除數、日期與有效樣本」與 evaluation_protocol 要求。
+    """
+    _excl = set(exclude or [])
+    if embargo_days is None:
+        embargo_days = EMBARGO_DAYS
+    n = len(parsed)
+    ek = list(end_known) if end_known is not None else [True] * n
+    bo = [_date_ord(d) for d in bar_dates]
+    eo = [_date_ord(d) for d in end_dates]
+
+    def _mode_keys(sel):
+        keys, use_score = _select_keys(sel)
+        keys = [kk for kk in keys if kk not in _excl]
+        if mode == "rule":
+            return [], True
+        if mode == "features":
+            return keys, False
+        return keys, use_score
+
+    # 依決策日切 k+1 段（每段約 n/(k+1) 筆，但整日不拆）
+    days = sorted({d for d in bar_dates if d})
+    kk_ = max(2, k)
+    if len(days) < kk_ + 1:
+        return {"ok": False, "reason": "too_few_days", "n_days": len(days)}
+    by_day = {}
+    for i, d in enumerate(bar_dates):
+        by_day.setdefault(d, []).append(i)
+    target = n / (kk_ + 1)
+    blocks, cur, cnt = [], [], 0
+    for d in days:
+        cur.append(d); cnt += len(by_day[d])
+        if cnt >= target and len(blocks) < kk_:
+            blocks.append(cur); cur, cnt = [], 0
+    if cur:
+        blocks.append(cur)
+    if len(blocks) < kk_ + 1:
+        return {"ok": False, "reason": "too_few_days", "n_days": len(days)}
+
+    oof = np.full(n, np.nan)
+    protocol = {"split": "by_decision_day", "embargo_days": embargo_days, "folds": [],
+                "note": "train.label_available_at(end_date) < validation.first_decision_date − embargo；"
+                        "end_date 缺（end_known=False）的樣本隔離出訓練段"}
+    for j in range(1, len(blocks)):
+        train_days = [d for b in blocks[:j] for d in b]
+        val_days = blocks[j]
+        cut = _date_ord(val_days[0])
+        if cut is not None:
+            cut -= embargo_days
+        tr_all = [i for d in train_days for i in by_day[d]]
+        tr_q = [i for i in tr_all if not ek[i] or eo[i] is None]                 # 隔離：實現日不可靠
+        tr_p = [i for i in tr_all if i not in set(tr_q) and (cut is None or eo[i] >= cut)]  # purge：標籤太晚成熟
+        tr = [i for i in tr_all if i not in set(tr_q) and i not in set(tr_p)]
+        va = [i for d in val_days for i in by_day[d]]
+        protocol["folds"].append({"train_days": [train_days[0], train_days[-1]],
+                                  "val_days": [val_days[0], val_days[-1]],
+                                  "n_train_raw": len(tr_all), "n_train": len(tr),
+                                  "n_purged": len(tr_p), "n_quarantined": len(tr_q), "n_val": len(va)})
+        if not tr or not va:
+            continue
+        sel = [parsed[i] for i in tr]
+        keys, use_score = _mode_keys(sel)
+        if not keys and not use_score:
+            continue
+        med, score_med = _fit_prep(sel, keys, use_score)
+        Xtr, _ = _build_X(sel, keys, use_score, med, score_med)
+        Xva, _ = _build_X([parsed[i] for i in va], keys, use_score, med, score_med)
+        Xtr_s, mean, std = _standardize(Xtr)
+        w, b = _fit_logreg(Xtr_s, y[np.array(tr)], l2=l2)
+        Xva_s, _, _ = _standardize(Xva, mean, std)
+        pv = _sigmoid(Xva_s @ w + b)
+        for z, i in enumerate(va):
+            oof[i] = pv[z]
+    val = np.isfinite(oof)
+    model_auc = _auc(oof[val], y[val]) if val.any() else None
+    base_auc = _auc(scores[val], y[val]) if val.any() else None
+    brier = round(float(np.mean((oof[val] - y[val]) ** 2)), 4) if val.any() else None
+    sel_m = val & (oof > 0.5)
+    oos_sel_n = int(sel_m.sum())
+    oos_sel_net_r = round(float(rmult[sel_m].mean()), 3) if oos_sel_n >= 1 else None
+    return {"ok": True, "n_eval": int(val.sum()),
+            "model_auc": round(model_auc, 4) if model_auc is not None else None,
+            "base_auc": round(base_auc, 4) if base_auc is not None else None,
+            "brier": brier, "oos_sel_net_r": oos_sel_net_r, "oos_sel_n": oos_sel_n,
+            "protocol": protocol}
+
+
 def factor_ablation(direction: str = "buy", k: int = 5, l2: float = 1.0) -> dict:
     """因子 ablation（§三 3.3）：逐一拿掉單一因子重訓，看「樣本外淨期望值」有沒有變差。
     delta_net_r = 全特徵 OOS 選中淨 R − 去除該因子後 OOS 選中淨 R：
@@ -325,6 +431,19 @@ def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
            "auc_lift": round(ma - ba, 4) if (ma is not None and ba is not None) else None,
            "brier": ev["brier"], "deciles": ev["deciles"], "top_features": coef[:15],
            "n_features": len(cols), "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    # ★ 2026-11-11 M01/M02 第一刀：日期感知 purged 驗證「並列對照」——同一批資料跑按決策日切分
+    # ＋標籤成熟 purge＋缺實現日隔離，與上面按筆數版本的數字同時呈現（protocol 含逐折刪除數）。
+    # 不改變持久化模型與既有欄位；把 dated 設為正式口徑需使用者核准後另行切換。
+    try:
+        evd = _walkforward_eval_dated(parsed, y, scores, rmult,
+                                      ds.get("bar_dates") or [], ds.get("end_dates") or [],
+                                      ds.get("end_known"), k=k, l2=l2, mode="all")
+        out["dated"] = evd
+        out["dated_note"] = ("dated＝按決策日切分＋purge（訓練標籤實現日須早於驗證首日−embargo）"
+                             "＋缺實現日隔離的對照數字；主欄位仍為既有按筆數切分，兩者差距大代表"
+                             "原評估可能受標籤成熟洩漏影響。")
+    except Exception as _e:
+        out["dated"] = {"ok": False, "error": str(_e)}
     if persist:
         try:
             from state_store import store
