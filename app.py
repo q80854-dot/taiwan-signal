@@ -953,6 +953,13 @@ def _position_view(r):
             out["r_now"] = round(move / risk, 2)
             out["pnl_now_pct"] = round(move / entry * 100, 2)
             out["cushion_pct"] = round(((last - sl) if buy else (sl - last)) / last * 100, 2) if last else None
+            # ★ 2026-11-11 LIVE01：現價已到/穿越停損 → 標記 breached（已觸停、待盤後結算確認），
+            # 不可與「近停損」混為一談、也不可用「距停損≈0%」暗示安全。breach_pct＝穿越幅度。
+            if last and sl:
+                breached = (last <= sl) if buy else (last >= sl)
+                out["breached"] = bool(breached)
+                if breached:
+                    out["breach_pct"] = round(abs(last - sl) / sl * 100, 2)
             # 進度條：停損(0) → 進場 → TP1
             tp1 = r.get("tp1") or 0
             if tp1:
