@@ -2880,6 +2880,7 @@ html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
         <option value="">全部等級</option><option value="A">A 級（85+）</option><option value="B">B 級（75+）</option><option value="C">C 級（65+）</option>
       </select>
       <span style="font-size:11px;color:var(--t3)" id="sig-filter-info"></span>
+      <span id="sig-chips" style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
     </div>
     <div id="signals-container"></div>
     </div>
@@ -7170,7 +7171,9 @@ async function mwFetch(){
   const r=await fetch('/api/my/watchlist'+(p.toString()?'?'+p:''),{cache:'no-store'});
   if(r.status===401){_mw.data=null;return false;}
   if(!r.ok)return false;
-  _mw.data=await r.json();_mw.grp=_mw.data.grp;return true;
+  _mw.data=await r.json();_mw.grp=_mw.data.grp;
+  _mw.at=new Date();   // P2-B B09：最後成功更新時間（顯示於頁尾）
+  return true;
 }
 async function renderMyWatch(){
   const el=document.getElementById('watchlist-container');if(!el)return;
@@ -7185,6 +7188,14 @@ async function renderMyWatch(){
   clearInterval(_mw.t);
   _mw.t=setInterval(async()=>{
     if(document.hidden||!document.getElementById('page-watchlist').classList.contains('on')){return;}
+    // ★ 2026-11-11 P2-B B09（更新不打擾）：使用者正聚焦清單內的排序選單/按鈕/輸入（搜尋框除外，
+    //   其焦點與游標會還原），或正在清單內選取文字（閱讀/複製）時，跳過本輪重畫、下一輪再更新。
+    try{
+      const host=document.getElementById('watchlist-container'),ae=document.activeElement;
+      if(host&&ae&&ae.id!=='mw-in'&&host.contains(ae)&&/^(SELECT|BUTTON|INPUT)$/.test(ae.tagName))return;
+      const sel=window.getSelection();
+      if(host&&sel&&!sel.isCollapsed&&sel.anchorNode&&host.contains(sel.anchorNode))return;
+    }catch(e){}
     if(await mwFetch())mwDraw(true);
   },60000);
 }
@@ -7260,7 +7271,7 @@ function mwDraw(keep){
     ${toolbar}
     ${rows.length?`<div class="wl-tblw panel card"><div style="overflow-x:auto"><table class="tbl mw-tbl"><thead><tr>${th('code','代號')}${th('name','名稱')}${th('price','成交價','r')}${headCols}${tailTh}<th></th></tr></thead><tbody>${body}</tbody></table></div></div><div class="wl-cards">${cards}</div>`
       :'<div class="empty" style="margin-top:14px"><div class="empty-label">這個清單還是空的</div>在上面搜尋代號或名稱，點「加入」就會出現在這裡。</div>'}
-    <div class="wl-foot">${live?'報價為證交所官方即時快照（約 5 分鐘更新）':'報價為最近一個交易日收盤資料'}；每 60 秒自動更新。${_mw.view==='chips'?'「籌碼」欄為當日三大法人買賣超（張，證交所 T86）；':_mw.view==='basic'?'「基本」欄本益比／殖利率／淨值比為官方每日收盤後估值；':''}每個清單上限 100 檔，存在伺服器，換手機也看得到。在訊號卡按 ☆ 也會加進來。${d.groups.length>1?`　<a href="#" onclick="mwDelGroup();return false">${_mw.delArm?'再按一次確定刪除「'+esc2(d.grp)+'」':'刪除此清單'}</a>`:''}　<a href="#" onclick="logoutAll();return false">登出所有裝置</a></div>`;
+    <div class="wl-foot">${live?'報價為證交所官方即時快照（約 5 分鐘更新）':'報價為最近一個交易日收盤資料'}；每 60 秒自動更新${_mw.at?'，最後成功更新 '+_mw.at.toLocaleTimeString('zh-TW',{hour12:false,timeZone:'Asia/Taipei'}):''}。${_mw.view==='chips'?'「籌碼」欄為當日三大法人買賣超（張，證交所 T86）；':_mw.view==='basic'?'「基本」欄本益比／殖利率／淨值比為官方每日收盤後估值；':''}每個清單上限 100 檔，存在伺服器，換手機也看得到。在訊號卡按 ☆ 也會加進來。${d.groups.length>1?`　<a href="#" onclick="mwDelGroup();return false">${_mw.delArm?'再按一次確定刪除「'+esc2(d.grp)+'」':'刪除此清單'}</a>`:''}　<a href="#" onclick="logoutAll();return false">登出所有裝置</a></div>`;
   const ni=document.getElementById('mw-in');
   if(ni&&had){ni.focus();try{ni.setSelectionRange(ni.value.length,ni.value.length);}catch(e){}}
   if(_mw.newg){const g=document.getElementById('mw-gn');if(g&&!keep)g.focus();}
@@ -8973,6 +8984,12 @@ function renderSigFreshness(){
   html+='<div style="font-size:11px;color:var(--t3);margin-top:6px">訊號以收盤為基準、收盤後產生，最早下一交易日開盤成交；此處標示資料新鮮度與完整度，資料缺漏時請降低對訊號的信賴。</div></div>';
   el.innerHTML=html;el.style.display='';
 }
+// P2-B B03：移除單一篩選或重置全部（只動 select 值與重繪，不保存、不動資料）
+function sigClearFilter(k){
+  if(k==='dir'||k==='all')document.getElementById('sig-filter-dir').value='';
+  if(k==='grade'||k==='all')document.getElementById('sig-filter-grade').value='';
+  renderSignals();
+}
 function renderSignals(){
   const container=document.getElementById('signals-container');
   const fd=document.getElementById('sig-filter-dir').value;
@@ -8980,7 +8997,14 @@ function renderSignals(){
   let sigs=[..._signals];
   if(fd)sigs=sigs.filter(s=>s.direction===fd);
   if(fg)sigs=sigs.filter(s=>s.grade===fg);
-  document.getElementById('sig-filter-info').textContent=`顯示 ${sigs.length} / ${_signals.length} 個`;
+  document.getElementById('sig-filter-info').textContent=`顯示 ${sigs.length} / 共 ${_signals.length} 檔`;
+  // ★ 2026-11-11 P2-B B03（篩選脈絡）：已選條件 chips＋一鍵重置；結果數在左側 info。純顯示、不保存檢視。
+  {const ch=document.getElementById('sig-chips');
+   if(ch){const chips=[];
+     if(fd)chips.push([`方向：${fd==='buy'?'做多':'做空'}`,'dir']);
+     if(fg)chips.push([`等級：${fg} 級`,'grade']);
+     ch.innerHTML=chips.map(([t,k])=>`<button type="button" class="o-tag" style="cursor:pointer;border:0" onclick="sigClearFilter('${k}')" aria-label="移除篩選：${t}">${t} ✕</button>`).join('')
+       +(chips.length?`<button type="button" style="border:0;background:none;cursor:pointer;font-size:11px;color:var(--c-brand,var(--acc))" onclick="sigClearFilter('all')">重置篩選</button>`:'');}}
   renderSigFreshness();
   const _sd=(_state&&_state.last_scan_time)?new Date(_state.last_scan_time):null;
   const scanDateStr=(_sd&&!isNaN(_sd))?_sd.toLocaleDateString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric'}):'—';
