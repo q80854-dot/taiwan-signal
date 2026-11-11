@@ -64,3 +64,21 @@ def test_scan_no_errors_ok(monkeypatch):
     items = health.check_engine()
     scan = next(i for i in items if i["name"] == "最近一次掃描")
     assert scan["status"] == "ok" and "母體" not in scan["detail"]
+
+
+def test_material_news_fetch_fail_is_unknown_not_fail(monkeypatch):
+    """LIVE14 補漏：重大訊息來源取得失敗＝檢查無法完成→unknown（升 warn、不觸發 fail 告警），
+    不是系統異常 fail。先前用 'fail' 會讓來源短暫失敗就發「系統健檢異常」Telegram 告警。"""
+    import fundamentals
+    monkeypatch.setattr(fundamentals, "fetch_monthly_revenue_map", lambda: {str(i): {"period": "2026-10"} for i in range(1600)})
+    monkeypatch.setattr(fundamentals, "fetch_valuation_map", lambda: {str(i): {} for i in range(1600)})
+    monkeypatch.setattr(fundamentals, "material_news_fetch_ok", lambda: False)   # 來源取得失敗
+    monkeypatch.setattr(fundamentals, "fetch_material_news_risk_map", lambda: {})
+    items = health.check_fundamentals()
+    mn = [i for i in items if i["name"] == "重大訊息（僅上市）"]
+    assert mn and mn[0]["status"] == "unknown"          # 取得失敗＝unknown，非 fail
+    assert "非系統異常" in mn[0]["detail"]
+    # 整體 verdict：unknown 升 warn、不是 fail → 不觸發 Telegram 告警
+    _patch_all(monkeypatch, {"check_fundamentals": items})
+    h = health.run_health()
+    assert h["verdict"] == "warn" and h["counts"]["fail"] == 0
