@@ -608,8 +608,10 @@ def _max_dd(path):
 
 
 def _mc_equity(rows, n_sims=2000, seed=BOOT_SEED):
-    """大數據蒙地卡羅：把已結算的每筆淨 R 當母體，重抽 N 次組成未來同筆數的權益曲線，
-    得到『總 R、獲利機率、最大回撤、最長連敗』的分布——比單一歷史曲線更能看清策略的運氣區間與風險。"""
+    """蒙地卡羅（本期經驗分布 IID 重抽樣）：把已結算的每筆淨 R 當母體，重抽 N 次組成同筆數路徑，
+    得到『總 R、本次模擬正值比例、最大回撤、最長連敗』的分布——看策略在本期樣本下的運氣區間。
+    ★ 誠實限制（SH07）：IID 逐筆重抽、未含交易日區塊/行情分層/重疊持倉/資金約束；為敏感度參考、
+    非未來真實機率；R 累積非可成交帳戶權益。"""
     rs = _rl([r for r in rows if r.get("result")])
     n = len(rs)
     if n < MIN_N:
@@ -626,13 +628,21 @@ def _mc_equity(rows, n_sims=2000, seed=BOOT_SEED):
         streaks.append(s)
     finals.sort(); dds.sort(); streaks.sort()
     q = lambda a, p: a[min(len(a) - 1, int(p * len(a)))]
+    pos = sum(1 for x in finals if x > 0)
     return {"ready": True, "n": n, "n_sims": n_sims,
             "per_trade_r": round(sum(rs) / n, 3),
             "total_r_med": round(q(finals, .5), 1), "total_r_lo": round(q(finals, .05), 1),
             "total_r_hi": round(q(finals, .95), 1),
-            "prob_profit": round(sum(1 for x in finals if x > 0) / len(finals) * 100, 1),
+            # ★ 2026-11-11 SH07：本次模擬正值比例（非未來真實機率）。pos/n_sims 的實際計數也回傳，
+            # 讓 0% 能誠實顯示為「本次 N 條模擬無正值」，不被解讀成未來獲利機率＝0。
+            "prob_profit": round(pos / len(finals) * 100, 1),
+            "sims_positive": pos,
             "maxdd_med": round(q(dds, .5), 1), "maxdd_worst5": round(q(dds, .05), 1),
-            "streak_med": q(streaks, .5), "streak_worst5": q(streaks, .95)}
+            "streak_med": q(streaks, .5), "streak_worst5": q(streaks, .95),
+            # 方法論誠實揭露：IID 逐筆重抽本期經驗分布，未含交易日區塊/行情分層/重疊持倉/資金約束；
+            # R 累積非可成交帳戶權益；僅作運氣區間敏感度，非未來真實機率。
+            "method": "iid_resample_current",
+            "note": "本期經驗分布 IID 重抽樣（未含交易日區塊/資金約束）；為敏感度參考、非未來真實機率；R 累積非帳戶權益"}
 
 
 def _equity_curve(rows, cap=300):

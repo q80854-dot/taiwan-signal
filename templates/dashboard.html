@@ -3012,7 +3012,7 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
       <div class="sec-label"><div class="bar"></div><div class="tx">學習結果</div></div>
       <div id="lr-note"></div>
       <div class="panel card"><div class="panel-body" id="lr-edge"></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>組別</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>獲利因子</th><th>盈虧比</th><th>夏普</th><th>最長連敗</th><th>平均最大浮盈 R</th><th>平均最大回撤 R</th><th>平均持有天數</th><th>累積 R</th></tr></thead><tbody id="lr-groups"></tbody></table></div><div id="lr-exits" style="font-size:11px;color:var(--t3);padding:8px 14px"></div></div>
-      <div class="sec-label"><div class="bar"></div><div class="tx">大數據蒙地卡羅模擬</div></div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">蒙地卡羅模擬（本期經驗分布重抽樣）</div></div>
       <div class="panel card"><div class="panel-body"><div id="lr-mc"></div>
         <div style="font-size:12px;color:var(--t2);margin:12px 0 6px">權益曲線（已結算候選，累積淨 R）</div>
         <canvas id="lr-equity" height="150" style="width:100%;display:block"></canvas></div></div>
@@ -3349,7 +3349,7 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
           <p><b>個股研究再擴充</b><br>・新增「經營效率天數」：存貨／應收／應付週轉天數與現金轉換循環，取自官方財報、以近四季（TTM）計算。<br>・新增「法人目標價與評等」：採 Yahoo Finance 分析師共識（目標均價／區間、綜合評等、分析師數），台股僅部分個股有覆蓋。<br>・延續資料正確性把關：科目對不上或無分析師覆蓋一律顯示「暫無」，不以推估或假值充數。</p>
           <p><b>2026-10-16（策略學習升級）</b></p>
           <p><b>資料收集更廣</b><br>・每筆影子訊號新增 14 項由日K直接算的特徵：52週區間位置、均線多頭排列強度、K棒實體/上下影線、近20日最大回檔、60日年化波動、量能 z 分數、成交值、近半年動能、當日/5/10/120日均線距離等（只記錄、不影響訊號）。</p>
-          <p><b>大數據蒙地卡羅模擬</b><br>・策略學習新增蒙地卡羅模擬：以已結算的淨 R 為母體重抽 2,000 次，估出每筆期望值、獲利機率、總報酬 5~95% 區間、最大回撤與最長連敗的分布；並畫出累積淨 R 權益曲線、逐月績效表。</p>
+          <p><b>蒙地卡羅模擬（本期經驗分布重抽樣）</b><br>・策略學習新增蒙地卡羅模擬：以已結算的淨 R 為母體 IID 重抽 2,000 次，估出每筆期望值、本次模擬正值比例、總報酬 5~95% 區間、最大回撤與最長連敗的分布；並畫出累積淨 R 權益曲線、逐月績效表。<b>誠實限制</b>：未含交易日區塊/行情分層/重疊持倉/資金約束，為運氣區間敏感度參考、非未來真實機率；R 累積非可成交帳戶權益。</p>
           <p><b>學習內容更詳細</b><br>・各群組新增獲利因子、盈虧比、夏普式比值、最長連敗、累積 R；新增 6 個分析維度（52週位置、均線排列、最大回檔、年化波動、量能 z、K棒實體）。每筆模擬多記錄 r1/r20、最大浮盈/回撤到達第幾根、是否先到停利。</p>
           <p><b>匯出更詳細</b><br>・CSV 特徵上限 150→500，加上多時點 R、路徑指標、勝敗旗標、持有天數、被擋原因等衍生欄位。</p>
           <p><b>2026-10-16（下午）</b></p>
@@ -7688,10 +7688,10 @@ function renderMonteCarlo(d){
     if(!mc.ready){mcEl.innerHTML=`<div class="empty">已結算樣本 ${mc.n||0} 筆，需至少 ${mc.need||30} 筆才能跑蒙地卡羅模擬（系統每天累積中）</div>`;}
     else{
       const card=(lab,val,sub,col)=>`<div class="kpi" style="border:1px solid var(--line);border-radius:8px;padding:12px 14px"><div class="kpi-label">${lab}</div><div class="kpi-val" style="font-size:22px;color:${col||'var(--t1)'}">${val}</div><div class="kpi-sub">${sub||''}</div></div>`;
-      mcEl.innerHTML=`<div style="font-size:12px;color:var(--t2);margin-bottom:10px">以 ${mc.n} 筆已結算的淨 R 為母體、重抽 ${mc.n_sims} 次，模擬「未來同筆數」的結果分布（固定種子、可重現）：</div>
+      mcEl.innerHTML=`<div style="font-size:12px;color:var(--t2);margin-bottom:10px">以 ${mc.n} 筆已結算的淨 R 為母體、IID 逐筆重抽 ${mc.n_sims} 次（固定種子、可重現）。<b>本期經驗分布重抽樣</b>：未含交易日區塊/行情分層/重疊持倉/資金約束，僅作運氣區間敏感度參考、<b>非未來真實機率</b>；R 累積非可成交帳戶權益。</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
         ${card('每筆期望值',f(mc.per_trade_r)+' R','單筆平均淨 R')}
-        ${card('獲利機率',mc.prob_profit+'%','模擬結束為正報酬的比例',mc.prob_profit>=50?'var(--up)':'var(--down)')}
+        ${card('本次模擬正值比例',mc.prob_profit+'%',(mc.prob_profit===0?`本次 ${mc.n_sims} 條模擬無正值（非未來機率=0）`:`${mc.sims_positive!=null?mc.sims_positive:'—'}/${mc.n_sims} 條為正 · 非未來真實機率`),mc.prob_profit>=50?'var(--up)':'var(--down)')}
         ${card('總報酬（中位）',f(mc.total_r_med)+' R',`5~95%：${f(mc.total_r_lo)} ~ ${f(mc.total_r_hi)} R`)}
         ${card('最大回撤（中位）',f(mc.maxdd_med)+' R',`最壞 5%：${f(mc.maxdd_worst5)} R`,'var(--down)')}
         ${card('最長連敗（中位）',mc.streak_med+' 筆',`最壞 5%：${mc.streak_worst5} 筆`)}
