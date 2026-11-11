@@ -7332,9 +7332,13 @@ function mwDraw(keep){
   const bodyCols=r=>cols.map(c=>`<td class="num ${c[2]||''}">${c[3](r)}</td>`).join('');
   const tailTh=_mw.view==='quote'?'<th>訊號</th><th>狀態</th>':'<th>訊號</th>';
   const tailTd=r=>_mw.view==='quote'?`<td>${badge(r)||'<span class="mut">—</span>'}</td><td>${flags(r)}</td>`:`<td>${badge(r)||'<span class="mut">—</span>'}</td>`;
+  // ★ 2026-11-11 P3-B 行情更新底色提示（§4）：僅當報價「確有新值」才 flash（紅漲/綠跌，約 500ms），
+  //   不輪播虛構值；比較前次快照、相等不閃；reduce-motion 時 keyframes 被全域關閉開關停用。
+  const _pp=window._mwPrevPx||{};
+  const pxFlash=r=>{const p=_pp[r.code];return (p!=null&&r.price!=null&&r.price!==p)?(r.price>p?' ts-flash-up':' ts-flash-down'):'';};
   const body=rows.map(r=>`<tr onclick="goToInstrument('${esc2(r.code)}')" style="cursor:pointer">
       <td class="num"><b>${esc2(r.code)}</b></td><td>${esc2(r.name||'—')}<span class="mut"> ${r.market==='OTC'?'櫃':'市'}</span></td>
-      <td class="num r" style="color:${mwCol(r.change_pct)};font-weight:600">${r.price!=null?_fmtN(r.price,2):'—'}</td>
+      <td class="num r${pxFlash(r)}" style="color:${mwCol(r.change_pct)};font-weight:600">${r.price!=null?_fmtN(r.price,2):'—'}</td>
       ${bodyCols(r)}${tailTd(r)}
       <td class="r" style="white-space:nowrap"><span class="mw-bell" title="到價提醒" onclick="event.stopPropagation();mwAlertOpen('${esc2(r.code)}','${escA(r.name||'')}',${r.price!=null?r.price:"''"})">🔔</span>　<span class="mw-x" title="從清單移除" onclick="event.stopPropagation();mwRemove('${esc2(r.code)}')">×</span></td></tr>`).join('');
   // 手機卡片右下角的次要資訊，依樣式變動
@@ -7372,6 +7376,8 @@ function mwDraw(keep){
   const ni=document.getElementById('mw-in');
   if(ni&&had){ni.focus();try{ni.setSelectionRange(ni.value.length,ni.value.length);}catch(e){}}
   if(_mw.newg){const g=document.getElementById('mw-gn');if(g&&!keep)g.focus();}
+  // P3-B：更新報價快照供下次重繪比較（只存真實 price，null 不覆蓋以免下次誤判為變動）
+  {const m={};rows.forEach(r=>{if(r.price!=null)m[r.code]=r.price;});window._mwPrevPx=m;}
   mwRenderRes();
 }
 function mwSort(c){_mw.sort=_mw.sort.k===c?{k:c,d:-_mw.sort.d}:{k:c,d:(c==='code'||c==='name')?1:-1};mwSavePref();mwDraw(true);}
