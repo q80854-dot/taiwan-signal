@@ -514,6 +514,16 @@ class TWScanEngine:
         except Exception as e:
             logger.warning(f"影子追蹤結算失敗（不影響掃描）: {e}")
 
+        # ★ 2026-11-11 策略引擎 2b-2：結算 standalone 策略假想訊號（純研究、獨立表，不影響掃描）。
+        try:
+            if self._mode != "premarket":
+                from strategies import store as _strat_store
+                _sr = _strat_store.resolve_pending()
+                if _sr.get("closed"):
+                    logger.info(f"策略 shadow 結算：新結案 {_sr['closed']} 筆")
+        except Exception as e:
+            logger.warning(f"策略 shadow 結算失敗（不影響掃描）: {e}")
+
         logger.info(
             f"═══ 掃描完成 ═══\n"
             f"  掃描：{scanned_count} 檔（錯誤：{error_count}）\n"
@@ -847,6 +857,18 @@ class TWScanEngine:
         tf_data["daily"] = daily
         code = stock_info.get("code", ticker.replace(".TW","").replace(".TWO",""))
         inst_data = fetch_inst(code)
+        # ★ 2026-11-11 策略引擎 2b-2：standalone 策略 shadow 平行記錄（純研究）。只在通過預篩的
+        # 股票上跑、重用已抓好的 tf_data（零額外抓取）。整段全包 try/except——任何策略錯誤只記
+        # debug、絕不中斷真實掃描；STRATEGY_SHADOW=0 可即時關閉。不碰 gen_signal 決策/風控/推播。
+        import os
+        if os.environ.get("STRATEGY_SHADOW", "1") != "0":
+            try:
+                from strategies.runner import run_and_record
+                _bd = (daily.get("dates") or [None])[-1]
+                if _bd:
+                    run_and_record(_bd[:10], ticker, stock_info, tf_data, market_overview, inst_data)
+            except Exception as e:
+                logger.debug(f"策略 shadow 記錄 {ticker}（不影響掃描）: {e}")
         return gen_signal(ticker, stock_info, tf_data, market_overview, inst_data)
 
     def _check_market_status(self, market_overview: Dict):
