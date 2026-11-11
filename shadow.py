@@ -1033,6 +1033,51 @@ def resolve_pending(max_rows=8000):
             r["stats"]["secs_resolve"] += time.time() - t0
 
 
+def backfill_champion_r(max_rows=20000) -> dict:
+    """一次性回填 champion_r（Shadow 雙軌 #140 上線前就結案的候選列，champion_r 為 NULL）。
+
+    ★ 只用真實資料：訊號當時記錄的 entry/stop/tp（真值）＋ ohlcv_bars 的真實歷史 K 棒，跑
+    execution.simulate_staged_exit 重算，與新結案時 resolve_pending 的 _champion_r 完全同一套。
+    缺真實 K 棒或風險退化者 **留 NULL、不猜、不填代用值**；不改動 r_multiple/result/exit 等既有欄位。
+    冪等：只填 champion_r IS NULL 的列，可重複執行。"""
+    ensure_table()
+    from state_store import store
+    from config import CIRCUIT_BREAKER
+    expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
+    with store._conn() as conn:
+        rows = [dict(x) for x in conn.execute(
+            "SELECT * FROM shadow_signals WHERE status='closed' AND kind='candidate' "
+            "AND champion_r IS NULL AND r_multiple IS NOT NULL AND result != 'bad_risk' "
+            "ORDER BY bar_date LIMIT ?", (max_rows,)).fetchall()]
+    if not rows:
+        return {"scanned": 0, "filled": 0, "skipped_nodata": 0}
+    since = (datetime.strptime(min(r["bar_date"] for r in rows), "%Y-%m-%d")
+             - timedelta(days=10)).strftime("%Y-%m-%d")
+    bars_by = _load_bars(sorted({r["ticker"] for r in rows}), since)
+    updates, skipped = [], 0
+    for row in rows:
+        bars = bars_by.get(row["ticker"])
+        if not bars or not _risk_ok(row.get("entry"), row.get("stop")):
+            skipped += 1
+            continue
+        r2, _scale = _rescale(row, bars)          # 與 resolve_pending 相同的除權息還原口徑
+        try:
+            champ = _champion_r(r2, bars, expire_days)
+        except Exception as e:
+            logger.debug(f"backfill champion_r id={row['id']}: {e}")
+            champ = None
+        if champ is None:                         # 缺真實 K 棒/退化 → 留 NULL，不猜
+            skipped += 1
+            continue
+        updates.append((champ, row["id"]))
+    if updates:
+        with store._conn() as conn:
+            for champ, _id in updates:
+                conn.execute("UPDATE shadow_signals SET champion_r=? WHERE id=?", (champ, _id))
+    logger.info(f"champion_r 回填：掃 {len(rows)} 筆、填 {len(updates)} 筆、缺真實資料略過 {skipped} 筆")
+    return {"scanned": len(rows), "filled": len(updates), "skipped_nodata": skipped}
+
+
 def finish_run(universe=None, pre_skipped=None, pre_passed=None):
     """整次掃描收尾：把這次收集了多少、花多久、有沒有錯誤寫進 shadow_runs（後台『收集紀錄』）。"""
     global _run
