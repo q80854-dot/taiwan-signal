@@ -32,3 +32,5 @@ def test_portfolio_risk_exposes_portfolio_hard_cap():
     ], balance=500_000)
     assert pr["max_portfolio_risk_pct"] == round(C.MAX_PORTFOLIO_RISK * 100, 1)
     assert pr["max_daily_risk_pct"] == round(C.MAX_DAILY_RISK * 100, 1)
+    # LIVE04：最壞同時停損須標明基準（進場→停損、未含費用/跳空、非實損上限）
+    assert "跳空" in pr["loss_basis"] and "非實損上限" in pr["loss_basis"]
