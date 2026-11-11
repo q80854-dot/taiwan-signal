@@ -194,7 +194,8 @@ def _auc(scores, y):
     return float(auc)
 
 
-def _walkforward_eval(parsed, y, scores, rmult, k: int = 5, l2: float = 1.0, mode: str = "all") -> dict:
+def _walkforward_eval(parsed, y, scores, rmult, k: int = 5, l2: float = 1.0, mode: str = "all",
+                      exclude=None) -> dict:
     """★ F-06／Phase 2（2026-11-04）：共用的 expanding-window walk-forward 評估核心。
     把依時間排序的樣本切成 k+1 段，第 j 次用「前 j 段」訓練、對「第 j+1 段」預測（1≤j≤k）；
     每個 fold 的特徵選擇、中位數填補、標準化都只 fit 在該次訓練段，杜絕未來資料洩漏。
@@ -203,7 +204,10 @@ def _walkforward_eval(parsed, y, scores, rmult, k: int = 5, l2: float = 1.0, mod
       - "features"：只用特徵、不含規則分數
       - "rule"    ：只用規則分數（＝規則基準當成一個模型）
     回傳 out-of-fold 指標與「用全資料擬合的最終模型」係數（供解釋與落地）。"""
+    _excl = set(exclude or [])
+
     def _mode_keys(keys, use_score):
+        keys = [kk for kk in keys if kk not in _excl]    # ★ ablation：去除指定因子（每個 fold 與最終模型一致）
         if mode == "rule":
             return [], True
         if mode == "features":
@@ -233,6 +237,11 @@ def _walkforward_eval(parsed, y, scores, rmult, k: int = 5, l2: float = 1.0, mod
     model_auc = _auc(oof[val], y[val]) if val.any() else None
     base_auc = _auc(scores[val], y[val]) if val.any() else None   # 基準：同一批驗證樣本、只用規則分數
     brier = round(float(np.mean((oof[val] - y[val]) ** 2)), 4) if val.any() else None
+    # ★ 2026-11-11（因子 ablation）：OOS「選中淨 R」＝模型在驗證段判為會贏（prob>0.5）的那些訊號，
+    # 其實算淨 R 平均。這是審查 §三 3.3 要的「樣本外淨期望值」，供去一因子比較貢獻。
+    sel = val & (oof > 0.5)
+    oos_sel_n = int(sel.sum())
+    oos_sel_net_r = round(float(rmult[sel].mean()), 3) if oos_sel_n >= 1 else None
     deciles = []
     vidx = np.where(val)[0]
     if len(vidx) >= 10:
@@ -254,7 +263,44 @@ def _walkforward_eval(parsed, y, scores, rmult, k: int = 5, l2: float = 1.0, mod
     else:
         mean = std = w = np.zeros(0); b = 0.0
     return {"n_eval": int(val.sum()), "model_auc": model_auc, "base_auc": base_auc, "brier": brier,
+            "oos_sel_net_r": oos_sel_net_r, "oos_sel_n": oos_sel_n,
             "deciles": deciles, "cols": cols, "mean": mean, "std": std, "w": w, "b": b}
+
+
+def factor_ablation(direction: str = "buy", k: int = 5, l2: float = 1.0) -> dict:
+    """因子 ablation（§三 3.3）：逐一拿掉單一因子重訓，看「樣本外淨期望值」有沒有變差。
+    delta_net_r = 全特徵 OOS 選中淨 R − 去除該因子後 OOS 選中淨 R：
+      >0 ＝ 該因子對樣本外淨期望 R 有正貢獻（值得保留/接入）；
+      <0 ＝ 拿掉反而更好（可能只是雜訊或與他因子重複計分）。
+    純研究、walk-forward（擴張視窗、per-fold fit、杜絕洩漏）；多空分開、不接正式訊號。"""
+    ds = build_dataset(direction)
+    if not ds.get("ok"):
+        return {"ok": False, "reason": ds.get("reason", "insufficient"),
+                "n": ds.get("n", 0), "min_samples": MIN_SAMPLES, "direction": direction}
+    parsed, y, score, rmult = ds["parsed"], ds["y"], ds["score"], ds["rmult"]
+    keys, _use = _select_keys(parsed)            # 覆蓋率足夠的候選因子（不含 score；score 以 base_auc 另行比較）
+    full = _walkforward_eval(parsed, y, score, rmult, k=k, l2=l2, mode="all")
+    base_net = full.get("oos_sel_net_r")
+    base_auc = full.get("model_auc")
+    factors = []
+    for kk in keys:
+        drop = _walkforward_eval(parsed, y, score, rmult, k=k, l2=l2, mode="all", exclude=[kk])
+        d_net = (None if base_net is None or drop.get("oos_sel_net_r") is None
+                 else round(base_net - drop["oos_sel_net_r"], 3))
+        d_auc = (None if base_auc is None or drop.get("model_auc") is None
+                 else round(base_auc - drop["model_auc"], 3))
+        factors.append({"factor": kk, "delta_net_r": d_net, "delta_auc": d_auc,
+                        "drop_net_r": drop.get("oos_sel_net_r"), "drop_auc": drop.get("model_auc"),
+                        "drop_sel_n": drop.get("oos_sel_n")})
+    factors.sort(key=lambda z: (z["delta_net_r"] is None, -(z["delta_net_r"] or 0.0)))
+    return {"ok": True, "direction": direction, "n": ds["n"], "n_eval": full.get("n_eval"),
+            "baseline": {"oos_sel_net_r": base_net, "oos_sel_n": full.get("oos_sel_n"),
+                         "model_auc": base_auc, "rule_auc": full.get("base_auc")},
+            "factors": factors, "k": k, "l2": l2,
+            "metric": "leave-one-factor-out：全特徵 OOS 選中淨 R − 去除該因子後 OOS 選中淨 R（prob>0.5 選中樣本的平均實算淨 R）",
+            "disclaimer": "walk-forward（擴張視窗、per-fold fit）去一因子重訓。delta_net_r>0＝該因子對樣本外"
+                          "淨期望 R 有正貢獻，<0＝拿掉反而更好（可能雜訊/重複計分）。樣本期間短、單一 fold "
+                          "噪音大，delta 僅供觀察、非保證；多空分開、不接正式訊號。"}
 
 
 def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
