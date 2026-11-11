@@ -8808,7 +8808,12 @@ function renderPerf(wr){
   // 已平倉交易、只是全輸）被誤判成「沒有資料」。同樣改用 wr.closed 判斷。
   const hasClosedTrades=(wr.closed||0)>0;
   setEl('p-total',safe(wr.total,0));setEl('p-wr',hasClosedTrades?safeN(wr.win_rate,1)+'%':'—%');
-  setEl('p-wr-sub',wr.wins!==undefined?`${wr.wins}勝 / ${wr.losses}負`:'');
+  // ★ 2026-11-11 LIVE05：明確分母。勝率＝觸及停利/分出勝負(排除逾期)；另列淨獲利/所有終止交易(含逾期)。
+  const _dec=(wr.decided!==undefined?wr.decided:wr.closed)||0, _ct=(wr.closed_total!==undefined?wr.closed_total:wr.total)||0,
+        _th=(wr.target_hit!==undefined?wr.target_hit:wr.wins);
+  setEl('p-wr-sub', _th!==undefined
+    ? `觸及停利 ${_th}/${_dec}（排除逾期 ${wr.expired||0}）`+(wr.net_profitable!==undefined?`　｜　淨獲利 ${wr.net_profitable}/${_ct}（${safeN(wr.net_profitable_rate,1)}%）`:'')
+    : (wr.wins!==undefined?`${wr.wins}勝 / ${wr.losses}負`:''));
   setEl('p-dd',wr.max_drawdown?safeN(wr.max_drawdown,1)+'%':'—%');setEl('p-sharpe',wr.sharpe==null?'樣本不足':safeN(wr.sharpe,2));
   const pnl=wr.total_pnl||0;setEl('p-pnl',pnl===0?'—':(pnl>0?'+':'')+pnl.toLocaleString());setColor('p-pnl',clr(pnl));
   const trades=wr.recent_trades||[];

@@ -579,6 +579,7 @@ class StateStore:
                     SELECT COUNT(*) as total,
                            SUM(CASE WHEN result IN ('tp1','tp2','tp3') THEN 1 ELSE 0 END) as wins,
                            SUM(CASE WHEN result='sl' THEN 1 ELSE 0 END) as losses,
+                           SUM(CASE WHEN pnl_twd > 0 THEN 1 ELSE 0 END) as net_profitable,
                            SUM(pnl_twd) as total_pnl,
                            AVG(CASE WHEN result LIKE ? THEN pnl_twd ELSE NULL END) as avg_win,
                            AVG(CASE WHEN result='sl' THEN pnl_twd ELSE NULL END) as avg_loss
@@ -589,6 +590,7 @@ class StateStore:
                 """, ("00%",)).fetchone()
             total=row["total"] or 0; wins=row["wins"] or 0; losses=row["losses"] or 0
             closed=wins+losses
+            net_profitable = row["net_profitable"] or 0        # ★ LIVE05：淨損益>0 的終止交易（含逾期），與「觸及停利」不同
             excluded_etf_shorts = excluded_row["n"] or 0
             # ★ 修正：2026-10-09——原本 "pending": total-closed 會把「已結案但逾期(expired)」
             # 的筆數當成『追蹤中』回傳（total 只數 status='closed'，closed 只數 tp/sl），造成
@@ -606,6 +608,15 @@ class StateStore:
                 "total":      total, "closed": closed, "pending": active_n, "expired": expired_n,
                 "wins":       wins,  "losses": losses,
                 "win_rate":   round(wins/max(closed,1)*100,1),
+                # ★ 2026-11-11 LIVE05：績效分母正名（保留上面原欄位對照，不無聲改歷史）。
+                #   closed_total＝所有終止交易（含逾期）；decided＝分出勝負(觸停利/停損，排除逾期)；
+                #   target_hit_rate＝觸及停利比例(分母 decided)；net_profitable_rate＝淨獲利比例(分母 closed_total)。
+                "closed_total":        total,
+                "decided":             closed,
+                "target_hit":          wins,
+                "target_hit_rate":     round(wins/max(closed,1)*100,1),
+                "net_profitable":      net_profitable,
+                "net_profitable_rate": round(net_profitable/max(total,1)*100,1),
                 "total_pnl":  round(row["total_pnl"] or 0,0),
                 "avg_win":    round(row["avg_win"]  or 0,0),
                 "avg_loss":   round(row["avg_loss"] or 0,0),
