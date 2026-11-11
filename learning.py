@@ -660,6 +660,17 @@ def _monthly(rows):
     return out
 
 
+def _unresolved_breakdown(rows):
+    """★ 2026-11-11 SH04：把 unresolved 依 result 原因拆分（nodata＝逾期無 K 棒可結算、
+    bad_risk＝進場≈停損風險退化）。離線無法區分退市/停牌/資料源中斷，故不逕稱退市。"""
+    ub = {}
+    for r in rows:
+        if r.get("status") == "unresolved":
+            key = r.get("result") or "unknown"
+            ub[key] = ub.get(key, 0) + 1
+    return ub
+
+
 def build_report():
     rows = _rows()
     cand = [r for r in rows if r["kind"] == "candidate"]
@@ -677,7 +688,8 @@ def build_report():
                      "closed_candidates": len(cc), "closed_controls": len(kc), "closed_rejected": len(rc),
                      "closed_days": closed_days,
                      "pending": sum(1 for r in rows if r["status"] == "pending"),
-                     "unresolved": sum(1 for r in rows if r["status"] == "unresolved"),   # 退市／停牌無法結算，已排除在勝率與平均 R 之外
+                     "unresolved": sum(1 for r in rows if r["status"] == "unresolved"),   # 無法結算，已排除在勝率與平均 R 之外
+                     "unresolved_breakdown": _unresolved_breakdown(rows),                 # ★ SH04：原因拆分（nodata/bad_risk）
                      "min_n": MIN_N, "min_days": MIN_DAYS},
         "groups": {"候選（全部，含沒發出的）": _stats(cc), "實際發出": _stats(sent), "對照組（隨機做多）": _stats(kc),
                    "被規則擋下（假想）": _stats(rc)},
