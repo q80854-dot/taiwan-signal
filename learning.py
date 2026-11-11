@@ -381,6 +381,29 @@ def score_calibration():
 _IC_MIN_N = 30              # 少於此樣本數的因子不給 IC（避免雜訊充當訊號）
 _IC_SKIP = {"score", "month", "dow"}   # score 已有專屬校準；month/dow 為日曆特徵，非 alpha
 
+# ★ 2026-11-11 SH09：識別／決策衍生欄。絕對價位、部位股數、成本與決策輸出由決策本身決定
+# （非「當下可量測、用來預測未來報酬」的 alpha 因子）。它們與淨 R 的相關多半是價位水準／
+# 部位規模的機械關聯，不能當作「這個因子有預測力」的證據。這裡**不隱藏、仍照算**，但標記
+# derived=True，前端與技術／基本面因子分開呈現（審查 SH09：不一律與技術因子混排）。
+_IC_DERIVED = {
+    # 絕對價位（元）
+    "current_price", "entry_price", "entry_zone_low", "entry_zone_high",
+    "stop_loss", "tp1", "tp2", "tp3", "atr",
+    # 決策參數／輸出（停損距離、停利距離、風報比、追高、分級、部位類別、到期窗）
+    "sl_pct", "tp1_pct", "tp2_pct", "tp3_pct", "rr1", "rr2", "rr3",
+    "sl_atr", "chase_pen", "chase_level", "grade", "size_cat", "expire_days",
+    # 部位／成本
+    "suggested_shares", "suggested_lots", "risk_twd", "risk_pct",
+    "position_value", "roundtrip_cost", "breakeven_pct",
+    # 識別／決策 meta
+    "pnl_twd", "model_prob",
+}
+
+
+def _is_derived(key) -> bool:
+    """該特徵是否為識別／決策衍生欄（非 alpha 預測因子）。"""
+    return key in _IC_DERIVED
+
 
 def _norm_sf(z):
     """標準常態右尾機率 P(Z>z)，用 math.erf 實作（免 scipy）。"""
@@ -445,14 +468,16 @@ def _ic_one(rows, label):
         p = 2 * _norm_sf(z)
         q_buckets, q_mono = _quantile_returns(xs, ys)
         rec = {"factor": k, "ic": round(ic, 3), "n": n, "p": round(p, 4),
-               "quantiles": q_buckets, "q_monotonic": q_mono}
+               "quantiles": q_buckets, "q_monotonic": q_mono,
+               "derived": _is_derived(k)}            # ★ SH09：識別／決策衍生欄另類別
         out.append(rec); pvals.append(p); idx.append(len(out) - 1)
     # BH-FDR：在多因子下控制偽發現，標示「較可靠」
     if pvals:
         flags = _bh_reject(pvals, FDR_Q)
         for j, f in zip(idx, flags):
             out[j]["significant"] = bool(f)
-    out.sort(key=lambda d: -abs(d["ic"]))
+    # alpha 因子優先（derived 排後），各自再依 |IC| 排序；上限 40 不讓衍生欄擠掉技術因子
+    out.sort(key=lambda d: (d["derived"], -abs(d["ic"])))
     return {"side": label, "n": n0, "factors": out[:40]}
 
 
@@ -517,6 +542,7 @@ def _daily_ic_side(rows, ret_key, label):
         rec = _daily_ic_one(rows, k, ret_key)
         if rec is None:
             continue
+        rec["derived"] = _is_derived(k)              # ★ SH09：識別／決策衍生欄另類別
         recs.append(rec)
         if rec.get("p") is not None:
             pvals.append(rec["p"]); idx.append(len(recs) - 1)
@@ -524,20 +550,28 @@ def _daily_ic_side(rows, ret_key, label):
         flags = _bh_reject(pvals, FDR_Q)
         for j, fl in zip(idx, flags):
             recs[j]["significant"] = bool(fl)
-    recs.sort(key=lambda d: -(abs(d["icir"]) if d.get("icir") is not None else 0))
+    # alpha 因子優先（derived 排後），各自再依 |ICIR| 排序
+    recs.sort(key=lambda d: (d["derived"], -(abs(d["icir"]) if d.get("icir") is not None else 0)))
     return {"side": label, "n_days_max": max((r["n_days"] for r in recs), default=0),
             "factors": recs[:40]}
 
 
 def _daily_ic_block(buy, sell):
     """每日 ICIR 區塊：Research（r_multiple，單次出場）必給；Champion（champion_r，分批）有值才給。"""
+    # ★ SH09：有效日期範圍與交易日數（breadth 的時間維度），讓讀者知道序列落在哪段期間、涵蓋幾個交易日
+    _days = sorted({r.get("bar_date") for r in (buy + sell) if r.get("bar_date")})
+    span = {"first_day": _days[0] if _days else None,
+            "last_day": _days[-1] if _days else None,
+            "n_days": len(_days)}
     block = {"research": {"buy": _daily_ic_side(buy, "r_multiple", "做多"),
                           "sell": _daily_ic_side(sell, "r_multiple", "做空")},
+             "span": span,
              "metric": "每日橫斷面 Rank IC（Spearman）→ ICIR = mean(日IC)/std(日IC)",
              "params": {"min_days": _ICIR_MIN_DAYS, "min_breadth": _IC_DAY_MIN_BREADTH},
              "disclaimer": "每日橫斷面 IC：每個交易日在當日多檔間算因子 vs 淨 R 的 Rank IC，再取序列 "
                            "mean/std 得 ICIR（穩定度）。樣本期間短、單日檔數少時 ICIR 不穩，僅供觀察；"
-                           "多空分開、不混用。Research=單次出場 r_multiple；Champion=分批出場 champion_r。"}
+                           "多空分開、不混用。Research=單次出場 r_multiple；Champion=分批出場 champion_r。"
+                           "識別／決策衍生欄（絕對價位、部位股數、成本）另列、非 alpha 證據。"}
     has_champ = any(_num_or_none(r.get("champion_r")) is not None for r in buy) \
         or any(_num_or_none(r.get("champion_r")) is not None for r in sell)
     if has_champ:

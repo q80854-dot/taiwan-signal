@@ -2992,8 +2992,8 @@ html[data-theme=dark] .o-foot{background:var(--s1)}
       <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>規則分數提高，有沒有換到更好的淨 R？（Spearman 等級相關＋分桶，多空分開）</span></div>
         <div class="panel-body" id="sc-calib" style="padding:12px"><div class="empty">載入中…</div></div></div>
 
-      <div class="sec-label"><div class="bar"></div><div class="tx">因子增量驗證（Rank IC）</div></div>
-      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>哪些因子真的有預測力、哪些只是重複計分？（因子值 vs 實際淨 R 的 Rank IC，依 |IC| 排序）</span></div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">因子穩定度（每日橫斷面 ICIR）</div></div>
+      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>哪些因子有「穩定」的預測力？主表＝每個交易日在當日多檔間算 Rank IC、序列取 mean/std 得 ICIR（穩定度）；識別／決策衍生欄（絕對價位、部位、成本）另列、非 alpha 證據。合併樣本 IC 僅列為參考。</span></div>
         <div class="panel-body" id="factor-ic" style="padding:12px"><div class="empty">載入中…</div></div></div>
 
       <div class="sec-label"><div class="bar"></div><div class="tx">資料收集狀態</div></div>
@@ -7648,20 +7648,47 @@ async function loadRegime(){
   }catch(e){el.innerHTML='<div class="empty">載入失敗</div>';}
 }
 async function loadFactorIC(){
+  // ★ 2026-11-11 SH09：主表改每日橫斷面 ICIR（穩定度）；合併樣本 IC 降為參考（收進 details）；
+  // 識別／決策衍生欄（絕對價位・部位・成本，derived=true）與技術/基本面因子分表，非 alpha 證據。
   const el=document.getElementById('factor-ic');if(!el)return;
   try{
     const r=await fetch('/api/learning/factor_ic',{cache:'no-store'});
     if(!r.ok){el.innerHTML='<div class="empty">暫無資料</div>';return;}
     const d=await r.json();
     if(!d.ok){el.innerHTML='<div class="empty">暫無資料</div>';return;}
-    const sides=[d.buy,d.sell,d.overall].filter(Boolean);
-    el.innerHTML=`<div style="font-size:12px;color:var(--t3);margin-bottom:8px">${esc2(d.metric||'')}</div>`+sides.map(s=>{
-      if(s.insufficient)return `<div style="margin-bottom:10px"><b>${esc2(s.side)}</b>：${esc2(s.note||'樣本不足')}（n=${s.n}）</div>`;
-      const qstr=f=>(f.quantiles&&f.quantiles.length)?f.quantiles.map(q=>q.avg_net_r==null?'—':q.avg_net_r).join(' → '):'—';
-      const rows=(s.factors||[]).map(f=>`<tr><td>${esc2(f.factor)}</td><td style="color:${f.ic>=0?'var(--up)':'var(--down)'}">${f.ic}</td><td>${f.n}</td><td>${f.significant?'✓':''}</td><td style="font:400 11px/16px var(--mono);white-space:nowrap">${qstr(f)}</td><td>${esc2(f.q_monotonic||'—')}</td></tr>`).join('');
-      return `<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:4px">${esc2(s.side)}（n=${s.n}）</div>`+
-        (rows?`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>因子</th><th>Rank IC</th><th>n</th><th>FDR</th><th>分位淨R（低→高）</th><th>單調</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="empty">樣本不足以評估</div>')+`</div>`;
-    }).join('')+`<div style="font-size:11px;color:var(--t3)">${esc2(d.disclaimer||'')}</div>`;
+    // 把一個 side 的 factors 依 alpha / 衍生欄分成兩表（同一組表頭）
+    const splitTables=(factors,mkRow,headCols)=>{
+      const alpha=(factors||[]).filter(f=>!f.derived), der=(factors||[]).filter(f=>f.derived);
+      const tbl=list=>`<div style="overflow-x:auto"><table class="tbl"><thead><tr>${headCols}</tr></thead><tbody>${list.map(mkRow).join('')}</tbody></table></div>`;
+      return (alpha.length?tbl(alpha):'<div class="empty">無技術/基本面因子達門檻</div>')+
+        (der.length?`<div style="font-size:11px;color:var(--t3);margin:8px 0 2px">識別／決策衍生欄（絕對價位・部位股數・成本，參考；由決策本身決定、非 alpha 預測因子，其相關多為機械關聯）</div>${tbl(der)}`:'');
+    };
+    // ── 主表：每日橫斷面 ICIR ──
+    const dRow=f=>`<tr><td>${esc2(f.factor)}</td><td style="color:${(f.icir||0)>=0?'var(--up)':'var(--down)'}">${f.icir==null?'—':f.icir}</td><td>${f.mean_ic==null?'—':f.mean_ic}</td><td>${f.n_days}</td><td>${f.pct_pos_days==null?'—':f.pct_pos_days+'%'}</td><td>${f.t_stat==null?'—':f.t_stat}</td><td>${f.significant?'✓':''}</td></tr>`;
+    const dHead=`<th>因子</th><th>ICIR</th><th>平均日IC</th><th>有效天數</th><th>正IC天數</th><th>t</th><th>FDR</th>`;
+    const dSide=(s,track)=>(!s||!(s.factors&&s.factors.length))?'':`<div style="margin-bottom:12px"><div style="font-weight:700;margin-bottom:4px">${esc2(track)}·${esc2(s.side)}（最多 ${s.n_days_max} 交易日）</div>${splitTables(s.factors,dRow,dHead)}</div>`;
+    const daily=d.daily||{}, span=daily.span||{};
+    const spanTxt=span.first_day?`樣本期間 ${esc2(span.first_day)} ~ ${esc2(span.last_day)}，共 ${span.n_days} 個交易日`:'';
+    let html=`<div style="font-weight:700;margin-bottom:4px">每日橫斷面 ICIR（主要指標）</div>`+
+      `<div style="font-size:12px;color:var(--t3);margin-bottom:8px">${esc2(daily.metric||'')}${spanTxt?'　'+spanTxt:''}</div>`;
+    const res=daily.research||{};
+    const rBlocks=[dSide(res.buy,'Research'),dSide(res.sell,'Research')].join('');
+    html+= rBlocks || `<div class="empty">每日 ICIR 樣本不足（需序列≥${(daily.params&&daily.params.min_days)||5} 個交易日、單日≥${(daily.params&&daily.params.min_breadth)||4} 檔，累積中）</div>`;
+    if(daily.champion){
+      html+=`<div style="font-size:12px;color:var(--t2);margin:6px 0 4px">Champion（分批出場 champion_r）</div>`+
+        [dSide(daily.champion.buy,'Champion'),dSide(daily.champion.sell,'Champion')].join('');
+    }
+    html+=`<div style="font-size:11px;color:var(--t3);margin:2px 0 14px">${esc2(daily.disclaimer||'')}</div>`;
+    // ── 參考：合併樣本 Rank IC（收進 details）──
+    const pRow=f=>{const q=(f.quantiles&&f.quantiles.length)?f.quantiles.map(x=>x.avg_net_r==null?'—':x.avg_net_r).join(' → '):'—';
+      return `<tr><td>${esc2(f.factor)}</td><td style="color:${f.ic>=0?'var(--up)':'var(--down)'}">${f.ic}</td><td>${f.n}</td><td>${f.significant?'✓':''}</td><td style="font:400 11px/16px var(--mono);white-space:nowrap">${q}</td><td>${esc2(f.q_monotonic||'—')}</td></tr>`;};
+    const pHead=`<th>因子</th><th>Rank IC</th><th>n</th><th>FDR</th><th>分位淨R（低→高）</th><th>單調</th>`;
+    const pHtml=[d.buy,d.sell,d.overall].filter(Boolean).map(s=>{
+      if(s.insufficient)return `<div style="margin-bottom:8px"><b>${esc2(s.side)}</b>：${esc2(s.note||'樣本不足')}（n=${s.n}）</div>`;
+      return `<div style="margin-bottom:12px"><div style="font-weight:700;margin-bottom:4px">${esc2(s.side)}（n=${s.n}）</div>${(s.factors&&s.factors.length)?splitTables(s.factors,pRow,pHead):'<div class="empty">樣本不足以評估</div>'}</div>`;
+    }).join('');
+    html+=`<details style="margin-top:4px"><summary style="cursor:pointer;color:var(--t2);font-size:13px">合併樣本 Rank IC（參考，受同日/同股群聚污染，不等於每日穩定度）</summary><div style="margin-top:8px"><div style="font-size:12px;color:var(--t3);margin-bottom:8px">${esc2(d.metric||'')}</div>${pHtml}<div style="font-size:11px;color:var(--t3)">${esc2(d.disclaimer||'')}</div></div></details>`;
+    el.innerHTML=html;
   }catch(e){el.innerHTML='<div class="empty">載入失敗</div>';}
 }
 async function loadScoreCalib(){
