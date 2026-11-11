@@ -9,9 +9,41 @@ import threading
 import pytz
 from datetime import datetime
 from typing import Dict, List
-from config import CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_DAILY_RISK, MAX_PORTFOLIO_RISK
+from config import CIRCUIT_BREAKER as CB, ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_DAILY_RISK, MAX_PORTFOLIO_RISK, MAX_RISK_PER_TRADE
 
 logger = logging.getLogger(__name__)
+
+
+# ★ 2026-11-11 LIVE03：風險上限的單一事實來源。三個語意不同、不可混用的上限，各頁一律讀此處、
+# 不得各自硬編（審查 §9.5 LIVE03：各頁把單日 6% 當組合上限、歷史訊號 1.2% 與設定頁 2% 混淆）。
+_RISK_EFFECTIVE_AT = "2026-11-08"   # 現行風控/Champion 凍結日（CHAMPION_SNAPSHOT.frozen_at）
+
+
+def risk_basis(balance: float = None) -> Dict:
+    """風控三上限的權威來源，供所有頁面/端點引用（禁止各自硬編）。
+      - per_trade_pct        單筆預算：每筆停損時最多虧本金的比例（MAX_RISK_PER_TRADE）
+      - daily_new_pct        單日新增：當日所有『新』單的風險總和上限（MAX_DAILY_RISK）
+      - portfolio_hard_cap_pct 組合硬上限：所有部位『最壞同時停損』總和的硬上限，超過即暫停新單（MAX_PORTFOLIO_RISK）
+    三者語意不同、不可互相代用；歷史訊號的風險%為其產生當時的實算值，不以現行上限回填。"""
+    bal = ACCOUNT_BALANCE_TWD if balance is None else balance
+    cfg_ver = None
+    try:
+        import strategy_version as _sv
+        cfg_ver = _sv.config_hash()[:12]
+    except Exception:
+        pass
+    return {
+        "per_trade_pct": round(MAX_RISK_PER_TRADE * 100, 2),
+        "daily_new_pct": round(MAX_DAILY_RISK * 100, 2),
+        "portfolio_hard_cap_pct": round(MAX_PORTFOLIO_RISK * 100, 2),
+        "max_positions": MAX_SIMULTANEOUS_POSITIONS,
+        "account_balance_twd": bal,
+        "config_version": cfg_ver,
+        "effective_at": _RISK_EFFECTIVE_AT,
+        "basis": "三個上限語意不同、不可混用：單筆預算＝每筆停損最多虧本金比例；單日新增＝當日所有新單"
+                 "風險總和上限；組合硬上限＝所有部位最壞同時停損總和的硬上限（超過即暫停新單、不動既有部位）。"
+                 "參數隨程式部署生效（effective_at 為現行凍結日）；歷史訊號的風險%為產生當時的實算值，不回填現行上限。",
+    }
 
 # ★ 修正：2026-09-29（跨AI覆核發現）——record_signal_loss / check_daily_loss_limit
 # 原本用 datetime.now(timezone.utc) 算「今天」，但 app.py 全部排程（包含真正會
@@ -243,7 +275,7 @@ def check_margin_usage(active_signals: List[Dict]) -> Dict:
         return {**base,"warning":True,"exceeded":True,
                 "message":f"🔴 組合總風險 {total_risk_pct:.1f}% 超過硬上限 {hard:.0f}%，暫停新增訊號（不影響既有部位）"}
     if total_risk_pct>10:
-        return {**base,"warning":True,"exceeded":False,"message":f"⚠️ 總風險 {total_risk_pct:.1f}%，建議控制在 6% 以下"}
+        return {**base,"warning":True,"exceeded":False,"message":f"⚠️ 組合總風險 {total_risk_pct:.1f}%，接近組合硬上限 {hard:.0f}%（所有部位最壞同時停損總和）"}
     return {**base,"warning":False,"exceeded":False}
 
 def check_price_spike(ticker: str, tf_data: Dict) -> Dict:
@@ -447,6 +479,7 @@ def portfolio_risk(open_rows: List[Dict], balance: float = None) -> Dict:
             "long_pct": pct(long_v), "short_pct": pct(short_v), "net_pct": pct(long_v - short_v),
             "worst_case_loss": round(worst, 0), "worst_case_loss_pct": pct(worst),
             "max_daily_risk_pct": round(MAX_DAILY_RISK * 100, 1),
+            "max_portfolio_risk_pct": round(MAX_PORTFOLIO_RISK * 100, 1),   # ★ LIVE03：組合硬上限（前端組合風險面板用）
             "sectors": sectors[:8],
             "largest": {"code": largest.get("code"), "name": largest.get("name"),
                         "value": round(largest["value"], 0), "pct": pct(largest["value"])},
