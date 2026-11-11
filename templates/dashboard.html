@@ -2676,6 +2676,11 @@ html[data-theme]{
 }
 /* 觸控目標輔助（驗收目標 44px）：只給新頁引用，不改既有元件 */
 .ts-tap{min-height:44px;min-width:44px}
+/* ── P1-D 策略學習：分組導覽與長表精簡（版面層，資料 id 不動） ── */
+.lrn-g.lrn-hide{display:none!important}
+.lrn-clamp{max-height:340px;overflow:auto}
+.lrn-clamp.open{max-height:none}
+.lrn-more{margin:8px 14px 12px}
 </style>
 </head>
 <body>
@@ -3034,21 +3039,35 @@ html[data-theme]{
       </div>
       <div id="ad-alerts"></div>
       <details class="note-box" style="margin-bottom:14px"><summary style="cursor:pointer;font-weight:700;color:var(--t1)">系統怎麼學習？<span style="font-weight:400;color:var(--t3)">（點開看說明）</span></summary><div style="margin-top:8px">每次盤後掃描，同時記錄三種「假想單」並用和實盤<b>完全相同的停損停利規則</b>追蹤結果：<b>候選</b>（通過全部規則的標的，不論有沒有發出）、<b>被規則擋下的</b>（分數夠高卻被某條規則否決，用來檢驗規則有沒有擋錯）、<b>對照組</b>（沒有訊號、隨機抽樣）。累積足夠樣本後，用統計檢定列出哪些條件真的有效。樣本不足或交易日太少時只顯示、不下結論。</div></details>
+      <!-- ★ 2026-11-11 P1-D：策略學習分組導覽（brief §4 策略學習）——健康摘要/三組比較/因子/
+           模型與實驗/原始資料。只包版面與顯示分組，所有資料 id 與渲染函式不變；
+           自動刷新只重寫各 id 內容，分組與展開狀態不會被重置（鐵律 4）。 -->
+      <div class="o-tabs" id="lrn-nav" role="tablist" aria-label="研究分組" style="display:flex;gap:4px;flex-wrap:wrap;margin:2px 0 14px">
+        <button class="tab on" onclick="lrnNav('all',this)">全部</button>
+        <button class="tab" onclick="lrnNav('health',this)">健康摘要</button>
+        <button class="tab" onclick="lrnNav('compare',this)">三組比較</button>
+        <button class="tab" onclick="lrnNav('factor',this)">因子</button>
+        <button class="tab" onclick="lrnNav('model',this)">模型與實驗</button>
+        <button class="tab" onclick="lrnNav('raw',this)">原始資料</button>
+      </div>
+
+      <div class="lrn-g" data-g="health">
       <div id="lr-progress" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:2px"></div>
 
-      <div class="sec-label"><div class="bar"></div><div class="tx">分數 ↔ 淨 R 校準</div></div>
-      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>規則分數提高，有沒有換到更好的淨 R？（Spearman 等級相關＋分桶，多空分開）</span></div>
-        <div class="panel-body" id="sc-calib" style="padding:12px"><div class="empty">載入中…</div></div></div>
+      <div class="sec-label"><div class="bar"></div><div class="tx">資料收集狀態</div></div>
+      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>每次掃描的收集紀錄</span></div><div class="lrn-clamp" style="overflow-x:auto"><table class="tbl"><thead><tr><th>時間（台北）</th><th>資料日</th><th>候選</th><th>被擋下</th><th>對照</th><th>新結算</th><th>耗時</th><th>錯誤</th></tr></thead><tbody id="ad-runs"></tbody></table></div><button class="btn sm lrn-more" onclick="lrnMore(this)" hidden>展開全部列</button></div>
+      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>近 14 個資料日的累積量</span></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料日</th><th>候選</th><th>被擋下</th><th>對照</th></tr></thead><tbody id="ad-days"></tbody></table></div></div>
+      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>特徵欄位完整度（最近 600 筆）</span></div><div class="panel-body" id="ad-cov" style="max-height:260px;overflow:auto"></div></div>
+      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>最近寫入的樣本</span></div><div class="lrn-clamp" style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料日</th><th>標的</th><th>類型</th><th>方向</th><th>分數</th><th>進場</th><th>停損</th><th>狀態</th></tr></thead><tbody id="ad-recent"></tbody></table></div><button class="btn sm lrn-more" onclick="lrnMore(this)" hidden>展開全部列</button></div>
+      </div>
 
+      <div class="lrn-g" data-g="factor">
       <div class="sec-label"><div class="bar"></div><div class="tx">因子穩定度（每日橫斷面 ICIR）</div></div>
       <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>哪些因子有「穩定」的預測力？主表＝每個交易日在當日多檔間算 Rank IC、序列取 mean/std 得 ICIR（穩定度）；識別／決策衍生欄（絕對價位、部位、成本）另列、非 alpha 證據。合併樣本 IC 僅列為參考。</span></div>
         <div class="panel-body" id="factor-ic" style="padding:12px"><div class="empty">載入中…</div></div></div>
+      </div>
 
-      <div class="sec-label"><div class="bar"></div><div class="tx">資料收集狀態</div></div>
-      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>每次掃描的收集紀錄</span></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>時間（台北）</th><th>資料日</th><th>候選</th><th>被擋下</th><th>對照</th><th>新結算</th><th>耗時</th><th>錯誤</th></tr></thead><tbody id="ad-runs"></tbody></table></div></div>
-      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>近 14 個資料日的累積量</span></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料日</th><th>候選</th><th>被擋下</th><th>對照</th></tr></thead><tbody id="ad-days"></tbody></table></div></div>
-      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>特徵欄位完整度（最近 600 筆）</span></div><div class="panel-body" id="ad-cov" style="max-height:260px;overflow:auto"></div></div>
-      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>最近寫入的樣本</span></div><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>資料日</th><th>標的</th><th>類型</th><th>方向</th><th>分數</th><th>進場</th><th>停損</th><th>狀態</th></tr></thead><tbody id="ad-recent"></tbody></table></div></div>
+      <div class="lrn-g" data-g="raw">
       <div class="panel card"><div class="panel-head"><span>匯出原始資料（CSV，供離線分析）</span></div><div class="panel-body" style="display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn" href="/api/admin/shadow/export.csv">全部</a>
         <a class="btn" href="/api/admin/shadow/export.csv?kind=candidate">只要候選</a>
@@ -3056,6 +3075,12 @@ html[data-theme]{
         <a class="btn" href="/api/admin/shadow/export.csv?kind=control">只要對照</a>
         <a class="btn" href="/api/admin/shadow/export.csv?status=closed">只要已結算</a>
         <div style="font-size:11px;color:var(--t3);width:100%">每筆含進出場、結果、多時點 R 值（r1/r5/r10/r20）、最大浮盈/回撤與其到達第幾根、是否先到停利、勝敗旗標、持有天數、被擋原因，以及當時的 80＋ 個特徵欄位（前綴 f_，上限已放寬到 500）。</div></div></div>
+      </div>
+
+      <div class="lrn-g" data-g="compare">
+      <div class="sec-label"><div class="bar"></div><div class="tx">分數 ↔ 淨 R 校準</div></div>
+      <div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>規則分數提高，有沒有換到更好的淨 R？（Spearman 等級相關＋分桶，多空分開）</span></div>
+        <div class="panel-body" id="sc-calib" style="padding:12px"><div class="empty">載入中…</div></div></div>
 
       <div class="sec-label"><div class="bar"></div><div class="tx">學習結果</div></div>
       <div id="lr-note"></div>
@@ -3064,6 +3089,9 @@ html[data-theme]{
       <div class="panel card"><div class="panel-body"><div id="lr-mc"></div>
         <div style="font-size:12px;color:var(--t2);margin:12px 0 6px">累積淨 R（已成熟訊號按決策日歸因 · 非帳戶資金曲線）</div>
         <canvas id="lr-equity" height="150" style="width:100%;display:block"></canvas></div></div>
+      </div>
+
+      <div class="lrn-g" data-g="model">
       <div class="sec-label"><div class="bar"></div><div class="tx">勝率模型實驗室</div></div>
       <div class="panel card"><div class="panel-body">
         <div style="font-size:12px;color:var(--t2);margin-bottom:10px">暖啟動勝率模型的離線評估與比較（時間序列 walk-forward，<b>只評估、不改動即時訊號</b>，也不會自動晉升任何模型）。</div>
@@ -3076,6 +3104,9 @@ html[data-theme]{
         </div>
         <div id="lm-out" style="font-size:12px"></div>
       </div></div>
+      </div>
+
+      <div class="lrn-g" data-g="compare">
       <div class="sec-label"><div class="bar"></div><div class="tx">逐月績效</div></div>
       <div class="panel card"><div style="overflow-x:auto"><table class="tbl"><thead><tr><th>月份</th><th>已結算</th><th>勝率</th><th>平均 R</th><th>累積 R</th></tr></thead><tbody id="lr-monthly"></tbody></table></div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">規則檢驗：被擋下的單後來怎麼了？</div></div>
@@ -3083,7 +3114,9 @@ html[data-theme]{
       <div class="sec-label"><div class="bar"></div><div class="tx">統計上站得住腳的發現</div></div>
       <div class="panel card"><div class="panel-body" id="lr-find"></div></div>
       <div class="sec-label"><div class="bar"></div><div class="tx">各條件分組表現（已結算候選）</div></div>
-      <div id="lr-dims"></div>
+      <div id="lr-dims" class="lrn-clamp"></div>
+      <button class="btn sm lrn-more" onclick="lrnMore(this)" hidden style="margin-bottom:10px">展開全部分組</button>
+      </div>
       <div class="note-box">名詞：<b>R</b>＝以「進場到停損的距離」為 1 單位的損益（+1.5R 代表賺到 1.5 倍停損距離）。勝＝觸及任一停利；敗＝停損；逾期＝超過有效天數未到價。<b>平均 R 才是期望值</b>，勝率高不等於賺錢。對照組不含支撐壓力調整，停損略寬鬆於正式訊號。顯著性以「交易日為叢集」的拔靴估計平均 R 差異與 95% 信賴區間，多組一起用 Benjamini-Hochberg 控制偽發現率。</div>
     </div>
     </div>
@@ -7745,6 +7778,27 @@ async function lmExplain(){
     +'</tbody></table></div>';
 }
 function adAgo(iso){if(!iso)return '—';const d=new Date(iso);return isNaN(d)?'—':d.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});}
+// ★ 2026-11-11 P1-D：策略學習分組導覽與長表精簡——純版面切換；分組/展開狀態存在 DOM class，
+//   自動刷新只重寫各 id 內容、不會重置（鐵律 4）。長表預設夾 340px 可捲動（完整資訊仍可達），
+//   超出時出現「展開全部」鈕。
+function lrnNav(g,btn){
+  document.querySelectorAll('#ad-main .lrn-g').forEach(e=>e.classList.toggle('lrn-hide',g!=='all'&&e.dataset.g!==g));
+  document.querySelectorAll('#lrn-nav .tab').forEach(b=>b.classList.toggle('on',b===btn));
+  window._lrnG=g;
+  try{lrnClampSync();}catch(e){}   // 隱藏時量不到高度——切換顯示後重算展開鈕
+}
+function lrnMore(b){
+  const c=b.previousElementSibling;if(!c||!c.classList.contains('lrn-clamp'))return;
+  const open=c.classList.toggle('open');
+  b.textContent=open?'收合':(b.dataset.txt||'展開全部');
+}
+function lrnClampSync(){
+  document.querySelectorAll('#ad-main .lrn-clamp').forEach(c=>{
+    const b=c.nextElementSibling;if(!b||!b.classList.contains('lrn-more'))return;
+    if(!b.dataset.txt)b.dataset.txt=b.textContent;
+    b.hidden=!c.classList.contains('open')&&c.scrollHeight<=c.clientHeight+4;
+  });
+}
 async function fetchLearning(){
   try{
     if(!await adGuard(fetchLearning))return;
@@ -7759,6 +7813,7 @@ async function fetchLearning(){
     adRender(d,o);
     loadScoreCalib();
     loadFactorIC();
+    try{lrnClampSync();}catch(e2){}
   }catch(e){
     document.getElementById('ad-gate').style.display='none';
     document.getElementById('ad-main').style.display='block';
