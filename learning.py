@@ -566,25 +566,28 @@ def factor_ic_report():
 
 
 def _rules(rej_closed, cand_closed):
-    """每條規則擋下的假想單，後來的表現如何。"""
+    """每條規則擋下的假想單，後來的表現如何。
+    ★ 2026-11-11 SH06：依 (reject 原因, 方向) 分組——同一原因（如量能不足）可能含多空，
+    不可取第一筆方向代表整組。結論措辭改為描述性（此組假想單均值與 0 比較），不逕稱「規則在
+    保護你」（那是對 0 比較、非與放行對照；是否真有增益須看 vs_baseline_z 並經前向 Gate ablation）。"""
     by = {}
     for r in rej_closed:
-        by.setdefault(_f(r, "reject"), []).append(r)
+        by.setdefault((_f(r, "reject"), r.get("direction")), []).append(r)
     out = []
-    for code, xs in by.items():
+    for (code, direction), xs in by.items():
         st = _stats(xs)
-        base = [c for c in cand_closed if c["direction"] == xs[0]["direction"]]
-        item = dict(st, code=code, label=_readable_reason(code), direction=xs[0]["direction"], baseline_n=len(base))
+        base = [c for c in cand_closed if c["direction"] == direction]
+        item = dict(st, code=code, label=_readable_reason(code), direction=direction, baseline_n=len(base))
         if st["n"] < MIN_N:
             item["verdict"] = f"樣本不足（{st['n']}/{MIN_N}）"
             item["tone"] = "wait"
         else:
             t = st.get("t_vs0") or 0
             if t >= Z_TENT and (st["avg_r"] or 0) > 0:
-                item["verdict"] = f"被擋下的單其實有正期望值（平均 R {st['avg_r']:+.2f}）——這條規則可能過嚴，建議觀察更多樣本"
+                item["verdict"] = f"此組被擋下的假想單歷史模擬平均 R {st['avg_r']:+.2f}（與 0 比較為正）——需與同向放行候選對照（見 vs_baseline_z）才能判定規則是否過嚴"
                 item["tone"] = "loose"
             elif t <= -Z_TENT:
-                item["verdict"] = f"被擋下的單期望值為負（平均 R {st['avg_r']:+.2f}）——這條規則在保護你"
+                item["verdict"] = f"此組被擋下的假想單歷史模擬平均 R {st['avg_r']:+.2f}（與 0 比較為負）——僅代表此組均值為負，非與放行對照的增益證明"
                 item["tone"] = "good"
             else:
                 item["verdict"] = "與 0 沒有顯著差異，暫無結論"
