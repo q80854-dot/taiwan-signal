@@ -9,7 +9,10 @@
 <meta property="og:title" content="台股波段智慧交易系統"><meta property="og:description" content="多因子波段訊號、透明績效、資料來源公開（研究用途，非投資建議）">
 <meta property="og:type" content="website"><meta name="theme-color" content="#f1f1ef">
 <link rel="manifest" href="/manifest.webmanifest">
-<script>(function(){try{var t=localStorage.getItem('dashTheme');if(!localStorage.getItem('dashThemeV3')){t='light';localStorage.setItem('dashTheme','light');localStorage.setItem('dashThemeV3','1');}if(t!=='dark'&&t!=='light')t='light';/* 2026-10-23：設計系統 v3 改為淺色預設，未設定過一律淺色 */document.documentElement.setAttribute('data-theme',t);if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.content='#0a0b0d'}}catch(e){document.documentElement.setAttribute('data-theme','dark')}})();</script>
+<script>(function(){try{var t=localStorage.getItem('dashTheme');if(!localStorage.getItem('dashThemeV3')){t='light';localStorage.setItem('dashTheme','light');localStorage.setItem('dashThemeV3','1');}if(t!=='dark'&&t!=='light')t='light';/* 2026-10-23：設計系統 v3 改為淺色預設，未設定過一律淺色 */document.documentElement.setAttribute('data-theme',t);if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.content='#0a0b0d'}
+/* 2026-11-11 P2-A B01：資訊密度偏好（compact/舒適），只存本機、不影響任何模型參數 */
+try{if(localStorage.getItem('dashDensity')==='compact')document.documentElement.classList.add('density-compact');}catch(e2){}
+}catch(e){document.documentElement.setAttribute('data-theme','dark')}})();</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1f3a'/%3E%3Cpath d='M6 22l6-8 5 5 9-12' stroke='%23e5484d' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
@@ -2676,6 +2679,15 @@ html[data-theme]{
 }
 /* 觸控目標輔助（驗收目標 44px）：只給新頁引用，不改既有元件 */
 .ts-tap{min-height:44px;min-width:44px}
+/* ── P2-A B01：兩種資訊密度（compact 只縮間距，主要閱讀文字維持 14px 下限；偏好存本機） ── */
+html[data-theme].density-compact .tbl td,html[data-theme].density-compact .panel table td{padding:7px 10px!important}
+html[data-theme].density-compact .tbl th,html[data-theme].density-compact .panel table th{padding:7px 10px!important}
+html[data-theme].density-compact .r-t td,html[data-theme].density-compact .r-t th{padding-top:5px;padding-bottom:5px}
+html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
+#density-btn .ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+/* ── P2-A B02：水平捲動交界固定識別欄；捲動容器內固定欄頭 ── */
+.mw-tbl th:first-child,.mw-tbl td:first-child{position:sticky;left:0;background:var(--s1);z-index:1}
+.lrn-clamp thead th{position:sticky;top:0;background:var(--s1);z-index:2}
 /* ── P1-D 策略學習：分組導覽與長表精簡（版面層，資料 id 不動） ── */
 .lrn-g.lrn-hide{display:none!important}
 .lrn-clamp{max-height:340px;overflow:auto}
@@ -2757,6 +2769,7 @@ html[data-theme]{
       <div class="bell" onclick="go('events')" title="系統／訊號通知" role="button" aria-label="系統／訊號通知"><svg viewBox="0 0 24 24" class="ic"><path d="M3 11v2a1 1 0 0 0 1 1h3l4 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 8.5a4 4 0 0 1 0 7"/></svg><span class="cnt" id="bell-cnt">0</span></div>
       <div class="acct" id="acct" hidden><button class="acct-btn" id="acct-btn" onclick="acctToggle(event)" aria-haspopup="menu" aria-expanded="false" aria-label="帳號選單">我</button><div class="acct-menu" id="acct-menu" role="menu"></div></div>
       <button class="btn" id="login-btn" onclick="memberBtn()" hidden>Google 登入</button>
+      <button class="btn" id="density-btn" onclick="toggleDensity()" aria-label="切換表格密度（緊湊／舒適）" title="切換表格密度（緊湊／舒適）" aria-pressed="false"><svg viewBox="0 0 24 24" class="ic"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg></button>
       <button class="btn" id="theme-btn" onclick="toggleTheme()" aria-label="切換深色／淺色模式" title="切換深色／淺色模式"><span id="theme-ic-moon"><svg viewBox="0 0 24 24" class="ic"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></span><span id="theme-ic-sun"><svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span></button>
       <button class="btn" id="view-toggle-btn" onclick="toggleViewMode()">手機版</button>
       <button class="btn btn-ic" onclick="fetchState()" aria-label="重新整理" title="重新整理"><svg viewBox="0 0 24 24" class="ic"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
@@ -7187,7 +7200,8 @@ function mwDraw(keep){
     if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;
     return (typeof x==='string'?x.localeCompare(y):x-y)*dir;});
   const arrow=c=>k===c?(dir>0?' ▲':' ▼'):'';
-  const th=(c,l,al)=>`<th class="${al||''}" onclick="mwSort('${c}')" style="cursor:pointer">${l}${arrow(c)}</th>`;
+  // P2-A B02：可排序欄帶 aria-sort 與 scope，輔助技術可讀目前排序方向
+  const th=(c,l,al)=>`<th scope="col" class="${al||''}" onclick="mwSort('${c}')" style="cursor:pointer" aria-sort="${_mw.sort.k===c?(_mw.sort.d>0?'ascending':'descending'):'none'}">${l}${arrow(c)}</th>`;
   const badge=r=>r.signal?`<span class="sig-badge ${esc2(r.signal.direction)}">${r.signal.direction==='buy'?'做多':'做空'} ${esc2(r.signal.score)}</span>`:'';
   const flags=r=>(r.flags||[]).map(f=>`<span class="pill warn">${esc2(f)}</span>`).join('');
   const instTd=v=>v==null?'—':`<span style="color:${_col(v)}">${_sg(v)}</span>`;
@@ -7237,6 +7251,7 @@ function mwDraw(keep){
       .concat(_mw.view==='basic'?[['pe','本益比'],['yield_pct','殖利率'],['pb','淨值比']]:_mw.view==='chips'?[['inst_foreign','外資'],['inst_total','法人合計']]:[['change','漲跌']])
       .map(o=>`<option value="${o[0]}"${k===o[0]?' selected':''}>${o[1]}</option>`).join('');
   const toolbar=d.items.length?`<div class="mw-toolbar"><div class="mw-segs">${viewSeg}</div>
+      <span class="mut" style="font-size:12px">共 ${rows.length} 檔</span>
       <label class="mw-sortsel">排序 <select onchange="mwSortSel(this.value)">${sortOpts}</select>
       <button class="mw-dir" title="切換升冪/降冪" onclick="mwSortDir()">${dir>0?'▲ 升':'▼ 降'}</button></label></div>`:'';
   el.innerHTML=`<div class="wl-bar"><div class="mw-tabs">${tabs}<button class="mw-tab add" onclick="mwNewGroup()">＋ 新清單</button></div>${d.items.length?`<button class="wl-edit" onclick="mwEdit()">${_mw.edit?'完成':'編輯'}</button>`:''}</div>${ng}
@@ -7441,6 +7456,14 @@ function guideTab(k){
   document.querySelectorAll('.guide-sec').forEach(s=>s.classList.toggle('on',s.id==='guide-'+k));
 }
 function _cv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+// ★ 2026-11-11 P2-A B01：資訊密度切換——compact 只縮表格/列間距（主要閱讀文字維持 14px 下限），
+//   偏好存本機 localStorage（try/catch，私密模式失敗也能用），不影響任何模型參數或會員資料。
+function toggleDensity(){
+  const on=document.documentElement.classList.toggle('density-compact');
+  try{localStorage.setItem('dashDensity',on?'compact':'comfort');}catch(e){}
+  const b=document.getElementById('density-btn');if(b)b.setAttribute('aria-pressed',String(on));
+  try{toast(on?'已切換為緊湊密度（只縮間距，偏好存於本機）':'已切換為舒適密度');}catch(e){}
+}
 function toggleTheme(){
   const html=document.documentElement;
   const next=html.getAttribute('data-theme')==='dark'?'light':'dark';
