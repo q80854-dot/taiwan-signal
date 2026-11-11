@@ -988,6 +988,18 @@ def _position_view(r):
         out["error"] = str(e)[:80]
     return out
 
+def _pick_tracked_signal(history, active_signal):
+    """★ 2026-11-11 LIVE09：從個股歷史訊號挑出「仍在追蹤（未結案）」的既有訊號。
+    history 依 generated_at DESC；取最近一筆 status!='closed' 且 result 為 pending/active/None 者。
+    若它就是今日新訊號(active_signal) 本身，回 None（不重覆標示）。"""
+    tracked = next((s for s in (history or [])
+                    if s.get("status") != "closed"
+                    and s.get("result") in (None, "pending", "active")), None)
+    if tracked and active_signal and tracked.get("id") == active_signal.get("id"):
+        return None
+    return tracked
+
+
 def _autopsy_one(r):
     """停損解剖：為什麼這筆被洗出去。"""
     entry = r.get("entry_price") or 0
@@ -3328,8 +3340,11 @@ def api_instrument(ticker: str):
         from state_store import store
         history = [s for s in store.get_recent_signals(limit=300, days_back=180) if s.get("ticker") == t]
         out["signal_history"] = history[:20]
+        # ★ 2026-11-11 LIVE09：區分「今日新訊號(active)」與「仍在追蹤的既有訊號(tracked，非今日新發但未結案)」。
+        # 避免個股頁顯示「無有效訊號」卻在事件/持倉看到此股仍被追蹤的矛盾（active 僅指本日掃描新訊號）。
+        out["tracked_signal"] = _pick_tracked_signal(history, out.get("active_signal"))
     except Exception as e:
-        out["signal_history"] = []; out["signal_history_error"] = str(e)
+        out["signal_history"] = []; out["signal_history_error"] = str(e); out["tracked_signal"] = None
     # ★ 新增：2026-09-29——使用者要求「保證資料來源的正確性以及準確度」，把每
     # 一塊資料實際的來源、更新頻率、已知限制明白列出來，不要讓使用者自己猜。
     try:
