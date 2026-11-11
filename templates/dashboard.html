@@ -5178,7 +5178,7 @@ const F7_P=[['all','全部','依綜合分數排序',r=>true,['綜合分數排序
   ['accel','加速成長','單月成長高於累計',r=>r.yoy>=15&&r.cum_yoy!=null&&r.yoy-r.cum_yoy>=8&&(r.mom==null||r.mom>0),['單月年增 ≥ 15%','單月比累計多 8 個百分點','月增 > 0']],
   ['yield','高殖利率','殖利率 ≥ 4%、營收成長',r=>(r.yield||0)>=4&&r.yoy>0,['殖利率 ≥ 4%','營收年增 > 0']],
   ['value','低估值','本益比 ≤ 15、營收成長',r=>r.pe>0&&r.pe<=15&&r.yoy>0,['本益比 ≤ 15','營收年增 > 0']],
-  ['garp','合理價成長','本益比 ÷ 營收年增 < 1',r=>r.pe>0&&r.yoy>0&&r.pe/r.yoy<1,['本益比 ÷ 單月營收年增 < 1']]];
+  ['garp','PE低於營收年增','機械篩選：本益比 ÷ 單月營收年增 < 1（非合理價判斷）',r=>r.pe>0&&r.yoy>0&&r.pe/r.yoy<1,['本益比 ÷ 單月營收年增 < 1','用單月營收年增（非 EPS 成長），易受低基期／一次性營收影響；為篩選公式、非合理價或推薦標籤']]];
 async function f7Load(){
   const j=await x6Get('/api/fundamentals_radar?kind=all',600e3);_x7.f=(j&&j.rows)||[];
   if(!_x7.sel&&_x7.f.length)_x7.sel=_x7.f[0].code;
