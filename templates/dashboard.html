@@ -2679,6 +2679,17 @@ html[data-theme]{
 }
 /* 觸控目標輔助（驗收目標 44px）：只給新頁引用，不改既有元件 */
 .ts-tap{min-height:44px;min-width:44px}
+/* ── P2-E B08：全域搜尋「功能頁」分組 ── */
+html[data-theme] .gs-dd .gs-grp{padding:8px 14px 4px;font:600 11px/1 var(--sans);letter-spacing:.04em;color:var(--t3);text-transform:none}
+html[data-theme] .gs-dd .gs-pg{cursor:pointer}
+html[data-theme] .gs-dd .gs-pg .n{font-weight:500;color:var(--ink)}
+/* ── P2-E B07：熱圖圖例與缺值樣式 ── */
+html[data-theme] .rk-legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--t3)}
+html[data-theme] .rk-legend .rk-lg{display:inline-block;width:18px;height:10px;border-radius:2px;vertical-align:middle}
+html[data-theme] .rk-legend .rk-lg.up{background:rgba(200,16,46,.5)}
+html[data-theme] .rk-legend .rk-lg.down{background:rgba(14,159,110,.5)}
+html[data-theme] .rk-legend .rk-lg.na{background:var(--s3);border:1px dashed var(--line2)}
+html[data-theme] .hx.hx-na{background:var(--s2)!important;border:1px dashed var(--line2)!important;opacity:.85}
 /* ── P2-A B01：兩種資訊密度（compact 只縮間距，主要閱讀文字維持 14px 下限；偏好存本機） ── */
 html[data-theme].density-compact .tbl td,html[data-theme].density-compact .panel table td{padding:7px 10px!important}
 html[data-theme].density-compact .tbl th,html[data-theme].density-compact .panel table th{padding:7px 10px!important}
@@ -3782,15 +3793,38 @@ async function addInstEvents(code){
 }
 function esc2(x){return String(x==null?'':x).replace(/[<>&]/g,'');}
 var _gsT=null,_gsSel=-1,_gsItems=[];
+// ★ 2026-11-11 P2-E B08（搜尋導覽）：全域搜尋除股票（代號/名稱）外，加「功能頁」分組——
+//   輸入功能名（或別名）可直接跳頁；站主專屬頁依 is-owner 過濾（非站主不顯示，避免誤導）。
+//   既有側欄入口保留可見；Ctrl+K 快捷鍵不變、不與瀏覽器衝突（preventDefault）。
+const GS_PAGES=[
+  ['overview','總覽',''],['signals','今日訊號','訊號 signal'],['positions','持倉追蹤','部位 holdings'],
+  ['watchlist','自選股','觀察 watchlist'],['events','系統通知','通知'],['marketoverview','市場總覽','大盤'],
+  ['market','市場環境','regime'],['rank','排行榜','熱度 ranking'],['instrument','個股研究','個股'],
+  ['radar','基本面雷達','營收 財報'],['calendar','財經日曆','行事曆'],['report','每日報告','盤前 盤後'],
+  ['news','重大訊息公告','公告'],['freshness','資料更新狀態','新鮮度 資料'],['risk','風險管理','風控'],
+  ['perf','績效分析','績效 performance'],['history','交易歷史','歷史'],['autopsy','停損解剖','停損'],
+  ['method','方法論與風險聲明','方法 聲明'],['guide','使用說明','新手 help'],['feedback','問題回報','回報 bug'],
+  // 站主專屬（is-owner 才顯示）
+  ['learning','策略學習','研究 shadow',1],['audit','資料稽核','稽核',1],['backtest','回測','backtest',1],
+  ['health','系統檢查','健檢',1],['diag','系統診斷','診斷',1],['members','會員統計','會員',1],['fbadmin','回報管理','',1],
+];
+function gsPages(q){
+  const isOwner=document.documentElement.classList.contains('is-owner'),lq=q.toLowerCase();
+  return GS_PAGES.filter(p=>(!p[3]||isOwner)&&((p[1]+' '+(p[2]||'')).toLowerCase().includes(lq))).slice(0,5);
+}
+function gsGo(k){const i=document.getElementById('gs-in');i.value='';i.blur();document.getElementById('gs-dd').classList.remove('on');try{go(k);}catch(e){}}
 function gsQuery(){
   clearTimeout(_gsT);const q=(document.getElementById('gs-in').value||'').trim(),dd=document.getElementById('gs-dd');
   if(!q){dd.classList.remove('on');return;}
   _gsT=setTimeout(async()=>{
     try{
+      const pages=gsPages(q);
+      const pageHtml=pages.length?'<div class="gs-grp">功能頁</div>'+pages.map(p=>`<div class="gs-i gs-pg" onmousedown="gsGo('${p[0]}')"><span class="n">${esc2(p[1])}</span><em style="color:var(--t3)">前往 →</em></div>`).join(''):'';
       const d=await (await fetch('/api/screener?limit=8&q='+encodeURIComponent(q))).json();
       _gsItems=(d.items||[]).sort((a,b)=>(String(a.code).startsWith(q)?0:1)-(String(b.code).startsWith(q)?0:1));_gsSel=_gsItems.length?0:-1;
-      dd.innerHTML=_gsItems.length?_gsItems.map((x,i)=>{const c=x.change_pct;const col=c==null?'var(--t3)':c>0?'var(--up)':c<0?'var(--down)':'var(--t3)';
-        return `<div class="gs-i${i===0?' sel':''}" onmousedown="gsPick('${esc2(x.code)}')"><b>${esc2(x.code)}</b><span class="n">${esc2(x.name)}</span><span class="s">${esc2(x.sector||'')}</span><em style="color:${col}">${c==null?'—':(c>0?'+':'')+c.toFixed(2)+'%'}</em></div>`}).join(''):'<div class="gs-empty">找不到符合的股票</div>';
+      const stockHtml=_gsItems.length?(pages.length?'<div class="gs-grp">股票</div>':'')+_gsItems.map((x,i)=>{const c=x.change_pct;const col=c==null?'var(--t3)':c>0?'var(--up)':c<0?'var(--down)':'var(--t3)';
+        return `<div class="gs-i${i===0?' sel':''}" onmousedown="gsPick('${esc2(x.code)}')"><b>${esc2(x.code)}</b><span class="n">${esc2(x.name)}</span><span class="s">${esc2(x.sector||'')}</span><em style="color:${col}">${c==null?'—':(c>0?'+':'')+c.toFixed(2)+'%'}</em></div>`}).join(''):(pages.length?'':'<div class="gs-empty">找不到符合的股票或功能頁</div>');
+      dd.innerHTML=pageHtml+stockHtml;
       dd.classList.add('on');
     }catch(e){dd.classList.remove('on');}
   },160);
@@ -3813,11 +3847,16 @@ async function fetchRank(){
     const d=await (await fetch('/api/market/rankings')).json();if(d.error)throw new Error(d.error);
     _rk.data=d;
     const dateTxt=d.date?('資料日期 '+d.date+' 收盤'):'';
-    document.getElementById('rk-note').textContent=dateTxt+'　漲跌幅排行僅列成交量 500 張以上、非 ETF 的個股；產業熱度為該產業內所有個股的平均漲跌幅，色塊越深代表漲跌越大。';
-    const h=d.heat||[],mx=Math.max(3,...h.map(x=>Math.abs(x.avg)));
+    const h=d.heat||[],mx=Math.max(3,...h.map(x=>Math.abs(x.avg)).filter(v=>isFinite(v)));
+    // ★ 2026-11-11 P2-E B07（熱圖）：加圖例（色深＝|平均漲跌幅|、上限標註，可核對）＋缺值獨立樣式
+    //   （平均漲跌幅缺或家數為 0 的產業以中性灰呈現、不以 0% 冒充）＋表格替代（下方排行榜仍提供）。
+    const legend=`<div class="rk-legend" aria-hidden="true">色深＝當日平均漲跌幅絕對值（滿格 ±${mx.toFixed(1)}%）：<span class="rk-lg up"></span>漲　<span class="rk-lg down"></span>跌　<span class="rk-lg na"></span>無資料／家數 0</div>`;
+    document.getElementById('rk-note').innerHTML=esc2(dateTxt)+'　漲跌幅排行僅列成交量 500 張以上、非 ETF 的個股；產業熱度為該產業內所有個股的平均漲跌幅，色塊越深代表漲跌越大。需要逐檔明細改看下方排行榜（表格替代）。'+legend;
     document.getElementById('rk-heat').innerHTML=h.map(x=>{
+      const miss=(x.avg==null||!isFinite(x.avg)||((x.up||0)+(x.down||0))===0);
+      if(miss)return `<div class="hx hx-na"><div class="hx-n">${esc2(x.sector)}</div><div class="hx-v" style="color:var(--t3)">未取得</div><div class="hx-s">無有效漲跌資料（家數 0 或缺值）</div></div>`;
       const a=Math.min(1,Math.abs(x.avg)/mx),up=x.avg>=0,bg=up?`rgba(200,16,46,${(.06+a*.5).toFixed(2)})`:`rgba(14,159,110,${(.06+a*.5).toFixed(2)})`,col=up?'var(--up)':'var(--down)';
-      return `<div class="hx" style="background:${bg}"><div class="hx-n">${esc2(x.sector)}</div><div class="hx-v" style="color:${col}">${x.avg>0?'+':''}${x.avg.toFixed(2)}%</div><div class="hx-l" onclick="goToInstrument('${esc2(x.leader.code)}')">領漲 ${esc2(x.leader.name)} <b style="color:${x.leader.chg>0?'var(--up)':x.leader.chg<0?'var(--down)':'var(--t3)'}">${x.leader.chg>0?'+':''}${x.leader.chg.toFixed(1)}%</b></div><div class="hx-s">上漲 ${x.up}／下跌 ${x.down}　成交占比 ${x.share}%</div></div>`}).join('')||'<div class="empty">沒有資料</div>';
+      return `<div class="hx" style="background:${bg}"><div class="hx-n">${esc2(x.sector)}</div><div class="hx-v" style="color:${col}">${x.avg>0?'+':''}${x.avg.toFixed(2)}%</div>${x.leader?`<div class="hx-l" onclick="goToInstrument('${esc2(x.leader.code)}')">領漲 ${esc2(x.leader.name)} <b style="color:${x.leader.chg>0?'var(--up)':x.leader.chg<0?'var(--down)':'var(--t3)'}">${x.leader.chg>0?'+':''}${x.leader.chg.toFixed(1)}%</b></div>`:''}<div class="hx-s">上漲 ${x.up}／下跌 ${x.down}　成交占比 ${x.share}%</div></div>`}).join('')||'<div class="empty">沒有資料</div>';
     rkRender();
   }catch(e){document.getElementById('rk-heat').innerHTML='<div class="empty">載入失敗：'+esc2(e.message)+'</div>';}
   finally{_rk.loading=false;}
