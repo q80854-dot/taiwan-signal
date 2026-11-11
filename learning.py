@@ -179,8 +179,11 @@ def _boot_diff(a_rows, b_rows, n_boot=N_BOOT, seed=BOOT_SEED):
             diffs.append(sum(pa) / len(pa) - sum(pb) / len(pb))
     if len(diffs) < 2:
         return (round(obs, 3), 1.0, 0.0)
-    frac_le = sum(1 for d in diffs if d <= 0) / len(diffs)
-    frac_ge = sum(1 for d in diffs if d >= 0) / len(diffs)
+    # ★ 2026-11-11 SH10：蒙地卡羅 p 值採 (b+1)/(B+1) 加一校正，避免 p 顯示為 0（那只是重抽次數的
+    # 解析度下界、非真正機率為零）；p 的下界 ≈ 2/(B+1)，誠實反映解析度。
+    B = len(diffs)
+    frac_le = (sum(1 for d in diffs if d <= 0) + 1) / (B + 1)
+    frac_ge = (sum(1 for d in diffs if d >= 0) + 1) / (B + 1)
     p = min(1.0, 2 * min(frac_le, frac_ge))
     md = sum(diffs) / len(diffs)
     sd = math.sqrt(sum((d - md) ** 2 for d in diffs) / (len(diffs) - 1)) or 1e-9
