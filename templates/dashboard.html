@@ -6580,7 +6580,19 @@ function loginWall(){
   w=document.createElement('div');w.id='login-wall';
   w.setAttribute('role','dialog');w.setAttribute('aria-label','台股波段：歡迎');
   w.style.cssText='position:fixed;inset:0;z-index:9999;overflow-y:auto;scroll-behavior:smooth';
-  const go='onclick="location.href=\'/auth/google\'"';
+  // P1-B L10：登入 CTA 防重送——按下即鎖全部登入入口、顯示「前往中」，返回（bfcache）時復原。
+  window.lwGo=window.lwGo||function(b){
+    try{
+      document.querySelectorAll('#login-wall .lw-btn,#login-wall .lw-lk').forEach(x=>{x.style.pointerEvents='none';x.classList.add('busy');});
+      if(b&&b.tagName==='BUTTON'){b.dataset.txt=b.textContent;b.textContent='前往 Google 登入…';}
+    }catch(e){}
+    location.href='/auth/google';
+  };
+  if(!window._lwPageshow){window._lwPageshow=1;
+    window.addEventListener('pageshow',e=>{if(!e.persisted)return;const lw=document.getElementById('login-wall');if(!lw)return;
+      lw.querySelectorAll('.lw-btn,.lw-lk').forEach(x=>{x.style.pointerEvents='';x.classList.remove('busy');});
+      lw.querySelectorAll('button[data-txt]').forEach(t=>{t.textContent=t.dataset.txt;delete t.dataset.txt;});});}
+  const go='onclick="lwGo(this)"';
   const ic=(p,s=20)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${p}"/></svg>`;
   const SEAL=(s=34)=>`<span class="lw-seal" style="width:${s}px;height:${s}px;font-size:${Math.round(s*.53)}px" aria-hidden="true">台</span>`;
   const F=(icon,tone,t,b,k,id)=>`<article class="lw-card lw-feat"><span class="lw-ic ${tone}">${ic(icon)}</span><div class="lw-ft"><h3>${t}</h3><p>${b}</p></div><div class="lw-inset lw-fk"><span>${k}</span><b id="${id||''}">${id?'—':''}</b></div></article>`;
@@ -6588,6 +6600,8 @@ function loginWall(){
   let nx=new Date(tw);if(wd===0||wd===6||hm>=990){do{nx=new Date(nx.getTime()+864e5);}while(nx.getUTCDay()===0||nx.getUTCDay()===6);}
   const nextScan=`${nx.getUTCMonth()+1}/${nx.getUTCDate()}（${'日一二三四五六'[nx.getUTCDay()]}）16:30`;
   w.innerHTML=`<style>
+  /* P1-B 註：未登入首頁刻意固定淺色（行銷頁單一主題），值鏡像 ts-tokens 淺色組；
+     若日後改全站主題連動，另立 PR 驗深色整頁。 */
   #login-wall{--paper:#f3f1ec;--s1:#fff;--s2:#f5f5f3;--s3:#ececea;--line:#ebebe8;--line2:#dcdcd8;--ink:#111113;--t2:#4a4b50;--t3:#6b6c74;
     --acc:#6f55e0;--acc-soft:#efeaff;--up:#c8231a;--down:#0b7a40;--cup:#e5484d;--cdn:#18a957;--seal:#c8231a;--ok:#1c7a5e;
     --tm:#111113;--tm2:#1c1c1f;--tm3:#2a2a2e;--tm-t2:#a1a1a8;--sh:0 1px 2px rgba(17,17,19,.05),0 1px 3px rgba(17,17,19,.04);
@@ -6623,6 +6637,21 @@ function loginWall(){
   #login-wall .lw-sub{margin:0;max-width:480px;font:400 16px/26px var(--sans);color:var(--t2)}
   #login-wall .lw-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
   #login-wall .lw-trust{display:flex;flex-wrap:wrap;gap:18px;font-size:12px;color:var(--t3)}
+  /* P1-B D2 主視覺：研究流程示意（不帶績效數字；可暫停；reduce-motion 顯示靜態圖） */
+  #login-wall .lw-flow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 16px;border-radius:14px;background:var(--s2)}
+  #login-wall .lw-fl-node{display:inline-flex;align-items:center;gap:8px;font:500 13px/1 var(--sans);color:var(--t2);white-space:nowrap}
+  #login-wall .lw-fl-node i{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--acc-soft);color:var(--acc);font:600 11px/1 var(--mono);font-style:normal}
+  #login-wall .lw-fl-seg{position:relative;flex:1;min-width:30px;height:2px;border-radius:1px;background:var(--line2)}
+  #login-wall .lw-fl-seg b{position:absolute;top:-2px;left:0;width:6px;height:6px;border-radius:50%;background:var(--acc);animation:lwFlow 2.8s linear infinite}
+  #login-wall .lw-flow.paused .lw-fl-seg b{animation-play-state:paused}
+  #login-wall .lw-fl-pause{margin-left:auto;border:0;background:transparent;color:var(--t3);cursor:pointer;font-size:13px;line-height:1;padding:5px 7px;border-radius:7px}
+  #login-wall .lw-fl-pause:hover{background:var(--s3);color:var(--ink)}
+  @keyframes lwFlow{0%{left:0;opacity:0}12%{opacity:1}88%{opacity:1}100%{left:calc(100% - 6px);opacity:0}}
+  @media(prefers-reduced-motion:reduce){#login-wall .lw-fl-seg b{animation:none!important;left:calc(50% - 3px);opacity:1}#login-wall .lw-fl-pause{display:none}}
+  /* P1-B L10：CTA 前往中的鎖定態 */
+  #login-wall .lw-btn.busy,#login-wall .lw-lk.busy{opacity:.55;cursor:default}
+  /* P1-B L05：載入中／未取得（不以 0 或假數字裝飾） */
+  #login-wall .lw-big .ld{font:400 13px/1.5 var(--sans);color:var(--t3);letter-spacing:0}
   #login-wall .lw-side{grid-column:span 6;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
   #login-wall .lw-lbl{font:500 11px/14px var(--sans);color:var(--t3)}
   #login-wall .lw-dark .lw-lbl{color:var(--tm-t2)}
@@ -6718,8 +6747,14 @@ function loginWall(){
       <div class="lw-card lw-hero">
         <div style="display:flex;flex-direction:column;gap:18px">
           <span class="lw-tag ok" id="lw-scan-tag"><i></i>每個交易日 16:30 收盤後掃描全市場</span>
-          <h1>收盤後 30 分鐘，<br>知道明天該盯哪幾檔。</h1>
+          <h1>收盤後三小時，<br>知道明天該盯哪幾檔。</h1>
           <p class="lw-sub">每天掃描上市櫃全部股票，用同一套波段規則篩出訊號，附進場區間、停損、目標價，並依資金與單筆風險上限算好股數。</p>
+          <div class="lw-flow" id="lw-flow" role="img" aria-label="研究流程示意：訊號形成、風險檢核、影子追蹤">
+            <span class="lw-fl-node"><i>1</i>訊號形成</span><span class="lw-fl-seg"><b></b></span>
+            <span class="lw-fl-node"><i>2</i>風險檢核</span><span class="lw-fl-seg"><b style="animation-delay:1.4s"></b></span>
+            <span class="lw-fl-node"><i>3</i>影子追蹤</span>
+            <button class="lw-fl-pause" type="button" id="lw-fl-pause" aria-pressed="false" aria-label="暫停流程動態" title="暫停動態">⏸</button>
+          </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:18px">
           <div class="lw-row"><button class="lw-btn pri lg" ${go}>免費開始使用</button><a class="lw-btn lg" data-t="lw-preview">看今日訊號</a></div>
@@ -6729,17 +6764,17 @@ function loginWall(){
       <div class="lw-side">
         <div class="lw-card" style="grid-column:span 2;padding:20px 22px;gap:12px">
           <div style="display:flex;justify-content:space-between;align-items:center"><span class="lw-lbl" id="lw-ix-lbl">加權指數</span><span class="lw-tag" id="lw-ix-tag">—</span></div>
-          <div style="display:flex;align-items:baseline;gap:10px"><span class="lw-big" style="font-size:34px;line-height:40px" id="lw-ix-px">—</span><span style="font-size:13px" id="lw-ix-ch"></span></div>
+          <div style="display:flex;align-items:baseline;gap:10px"><span class="lw-big" style="font-size:34px;line-height:40px" id="lw-ix-px"><span class="ld">載入中…</span></span><span style="font-size:13px" id="lw-ix-ch"></span></div>
           <div id="lw-ix-k" style="height:90px"></div>
         </div>
         <div class="lw-card lw-sig" style="padding:18px;gap:10px">
           <div style="display:flex;align-items:center;gap:10px"><span class="lw-av">${ic('M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z M8 11V8a4 4 0 0 1 8 0v3',16)}</span><span style="flex:1;font:600 14px/18px var(--sans)">今日訊號<small style="display:block;font:400 11px/15px var(--mono);color:var(--t3)" id="lw-sig-date">最近一次掃描</small></span></div>
-          <div style="display:flex;align-items:baseline;gap:6px"><span class="lw-big" style="font-size:22px" id="lw-sig-n">—</span><span class="lw-tag">檔</span></div>
+          <div style="display:flex;align-items:baseline;gap:6px"><span class="lw-big" style="font-size:22px" id="lw-sig-n"><span class="ld">載入中…</span></span><span class="lw-tag">檔</span></div>
           <div class="lw-inset" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div class="lw-stat">停損<b>登入查看</b></div><div class="lw-stat">目標<b>登入查看</b></div></div>
         </div>
         <div class="lw-card lw-dark" style="padding:18px;gap:8px;justify-content:space-between">
           <span class="lw-lbl">單筆風險上限 · 以資金 20 萬為例</span>
-          <span style="font:500 30px/36px var(--sans);letter-spacing:-.03em" id="lw-risk-amt">—</span>
+          <span style="font:500 30px/36px var(--sans);letter-spacing:-.03em" id="lw-risk-amt"><span class="ld" style="color:var(--tm-t2)">載入中…</span></span>
           <div style="font-size:12px;color:var(--tm-t2)" id="lw-risk-note">依停損距離換算建議股數</div>
         </div>
       </div>
@@ -6747,9 +6782,9 @@ function loginWall(){
 
     <section class="lw-card lw-facts" aria-label="系統規模">
       <div><div class="lw-lbl">每日掃描</div><div class="lw-big" style="margin-top:6px">16:30</div><div class="s">收盤後自動執行</div></div>
-      <div><div class="lw-lbl">涵蓋標的</div><div class="lw-big" style="margin-top:6px" id="lw-f-uni">—</div><div class="s">上市、上櫃股票</div></div>
-      <div><div class="lw-lbl">已追蹤訊號</div><div class="lw-big" style="margin-top:6px" id="lw-f-trk">—</div><div class="s">每筆從進場追到出場</div></div>
-      <div><div class="lw-lbl">單筆風險上限</div><div class="lw-big" style="margin-top:6px" id="lw-f-risk">—</div><div class="s">依停損距離算股數</div></div>
+      <div><div class="lw-lbl">涵蓋標的</div><div class="lw-big" style="margin-top:6px" id="lw-f-uni"><span class="ld">載入中…</span></div><div class="s">上市、上櫃股票</div></div>
+      <div><div class="lw-lbl">已追蹤訊號</div><div class="lw-big" style="margin-top:6px" id="lw-f-trk"><span class="ld">載入中…</span></div><div class="s">每筆從進場追到出場</div></div>
+      <div><div class="lw-lbl">單筆風險上限</div><div class="lw-big" style="margin-top:6px" id="lw-f-risk"><span class="ld">載入中…</span></div><div class="s">依停損距離算股數</div></div>
     </section>
 
     <div class="lw-hd" id="lw-features"><div><span class="lw-eb">FEATURES</span><h2>盤後要做的研究，一個地方做完</h2></div></div>
@@ -6809,6 +6844,14 @@ function loginWall(){
   w.querySelectorAll('[data-t]').forEach(a=>a.addEventListener('click',()=>{const t=w.querySelector('#'+a.dataset.t);if(t)t.scrollIntoView({behavior:'smooth',block:'start'});}));
   const $=id=>w.querySelector('#'+id),fmt=(v,d=2)=>v==null||!isFinite(v)?'—':Number(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
   const setT=(id,t)=>{const e=$(id);if(e)e.textContent=t;};
+  // P1-B D2：流程動態可暫停（reduce-motion 時按鈕隱藏、動畫為靜態）
+  const fp=$('lw-fl-pause');
+  if(fp)fp.addEventListener('click',()=>{const f=$('lw-flow'),p=f.classList.toggle('paused');
+    fp.setAttribute('aria-pressed',String(p));fp.textContent=p?'▶':'⏸';
+    fp.setAttribute('aria-label',p?'播放流程動態':'暫停流程動態');fp.title=p?'播放動態':'暫停動態';});
+  // P1-B L05：載入結束後仍無值→「未取得」（不以 — 或 0 裝飾；真值一到會覆寫）
+  const lwFin=()=>['lw-f-uni','lw-f-trk','lw-f-risk','lw-risk-amt','lw-sig-n','lw-ix-px'].forEach(id=>{
+    const e=$(id);if(e&&e.querySelector&&e.querySelector('.ld'))e.innerHTML='<span class="ld">未取得</span>';});
   setT('lw-k1','08:20・16:30');setT('lw-k2','5 個');setT('lw-k3','12 項');setT('lw-k6','08:35・21:35');
   // 加權指數：即時快照
   fetch('/api/public/pulse',{cache:'no-store'}).then(r=>r.json()).then(d=>{
@@ -6851,7 +6894,8 @@ function loginWall(){
       let svg='';if(eq.length>1){const W=700,H=200,lo=Math.min(...eq.map(x=>x.v)),hi=Math.max(...eq.map(x=>x.v)),rg=(hi-lo)||1,pts=eq.map((x,i)=>(i?'L':'M')+(i*W/(eq.length-1)).toFixed(1)+','+(10+(H-20)*(1-(x.v-lo)/rg)).toFixed(1)).join(' ');
         svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block;width:100%;height:200px" role="img" aria-label="訊號追蹤資金曲線"><path d="M0 10H${W} M0 100H${W} M0 190H${W}" stroke="var(--tm3)" stroke-width="1" vector-effect="non-scaling-stroke"/><path d="${pts}" fill="none" stroke="#b8a8ff" stroke-width="2.4" vector-effect="non-scaling-stroke"/></svg>`;}
       const wr=pf.win_rate!=null?fmt(pf.win_rate,1)+'%':'—',pl=pf.avg_loss?fmt(Math.abs(pf.avg_win/pf.avg_loss),2):'—';
-      pc.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="lw-lbl">系統訊號實際追蹤 · 已平倉 ${fmt(pf.closed,0)} 筆 · 追蹤中 ${fmt((pf.total||0)-(pf.closed||0),0)} 筆</span><span class="lw-leg"><i style="background:#b8a8ff"></i>資金曲線</span></div>
+      const pd=eq.length>1?` · 期間 ${String(eq[0].d||'').slice(0,10)}–${String(eq[eq.length-1].d||'').slice(0,10)}`:'';
+      pc.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="lw-lbl">系統訊號實際追蹤 · 已平倉 ${fmt(pf.closed,0)} 筆 · 追蹤中 ${fmt((pf.total||0)-(pf.closed||0),0)} 筆${pd}</span><span class="lw-leg"><i style="background:#b8a8ff"></i>資金曲線</span></div>
         ${svg||'<div class="lw-lbl" style="padding:40px 0;text-align:center">資金曲線累積中</div>'}
         <div class="lw-pst" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">${stat('勝率',wr)}${stat('勝／負',`${pf.wins||0} / ${pf.losses||0}`)}${stat('最大回撤',pf.max_drawdown?'−'+fmt(Math.abs(pf.max_drawdown),1)+'%':'—','#4ee08a')}${stat('平均盈虧比',pl)}</div>`;
       setT('lw-honest',`目前已平倉 ${fmt(pf.closed,0)} 筆，勝率 ${wr}，${pf.wins||0} 勝 ${pf.losses||0} 負。這是系統訊號照價位實際追蹤的結果，不是事後挑選的回測。`);
@@ -6859,7 +6903,8 @@ function loginWall(){
       pc.innerHTML=`<div class="lw-lbl">系統訊號實際追蹤</div><div style="padding:30px 0;display:flex;flex-direction:column;gap:8px"><b style="font:600 20px/28px var(--sans)">樣本累積中</b><span style="font-size:14px;line-height:22px;color:var(--tm-t2)">目前追蹤中 ${fmt(pf.total||0,0)} 筆、尚無已平倉訊號。累積到足夠筆數後，這裡會直接公開勝率、資金曲線與最大回撤。</span></div>
         <div class="lw-pst" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">${stat('已平倉','0 筆')}${stat('追蹤中',fmt(pf.total||0,0)+' 筆')}${stat('勝率','—')}${stat('最大回撤','—')}</div>`;
     }
-  }).catch(()=>{const pc=$('lw-perf-card');if(pc)pc.innerHTML='<div class="lw-lbl">績效資料暫時載入失敗</div>';});
+    lwFin();
+  }).catch(()=>{lwFin();const pc=$('lw-perf-card');if(pc)pc.innerHTML='<div class="lw-lbl">績效資料暫時載入失敗——不以 0 或估計值代替，請稍後重新整理</div>';});
 }
 async function loadMembersPage(){
   let d;try{const r=await fetch('/api/admin/members',{cache:'no-store'});if(!r.ok)throw 0;d=await r.json();}
