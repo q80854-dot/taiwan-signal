@@ -779,6 +779,15 @@ def job_health_watch():
 
 def setup_scheduler():
     if not SCHEDULER_OK: return
+    # ★ 2026-11-11：測試環境不啟動背景排程器。app 於 import 時即 create_app()，排程器的 boot/
+    # interval 暖機工作（market_overview_warm、market_extras、finmind_warm 等）會在數十秒後觸發，
+    # 與測試並行時會呼叫到測試 monkeypatch 的函式（如 fetch_valuation_map），污染斷言計數，
+    # 造成 test_watchlist_views 等間歇性 CI flake（本機無外網不易重現）。pytest 在 sys.modules 中
+    # 必有 'pytest'，據此關閉；正式部署（gunicorn）不受影響。
+    import sys as _sys
+    if "pytest" in _sys.modules or os.getenv("DISABLE_SCHEDULER") == "1":
+        logger.info("偵測到測試環境（pytest）或 DISABLE_SCHEDULER=1，略過背景排程器啟動")
+        return
     # ★ 新增：2026-09-24——早盤前K線快取更新+完整性檢查，見 job_premarket_cache_refresh()
     # 說明。排在 08:00，早於 08:45 的早盤摘要與 09:00 開盤，晚於前一天收盤資料在
     # yfinance 定案的時間。
