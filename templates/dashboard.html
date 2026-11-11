@@ -7437,7 +7437,8 @@ async function fetchAudit(refresh){
   }catch(e){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--t3)">載入失敗：'+esc2(e.message)+'</td></tr>';}
 }
 
-const STI={ok:['✓','var(--t1)'],warn:['!','var(--warn)'],fail:['✕','var(--alert)'],info:['i','var(--t3)']};
+/* ★ LIVE14：unknown＝檢查無法完成（灰「?」，非綠勾、非異常）；na＝不適用（灰「—」）。 */
+const STI={ok:['✓','var(--t1)'],warn:['!','var(--warn)'],fail:['✕','var(--alert)'],info:['i','var(--t3)'],unknown:['?','var(--t3)'],na:['—','var(--t3)']};
 function chkRow(i){const m=STI[i.status]||STI.info;return `<div class="chk"><span class="chk-i" style="color:${m[1]};border-color:${m[1]}">${m[0]}</span><div class="chk-b"><b>${i.name}</b><span>${i.detail}</span></div></div>`;}
 async function fetchHealth(manual){
   if(!await adGuard(()=>fetchHealth(manual)))return;
@@ -7447,7 +7448,7 @@ async function fetchHealth(manual){
     const [h,st]=await Promise.all([fetch('/api/health',{cache:'no-store'}).then(r=>{if(r.status===401)throw new Error('401');return r.json();}),fetch('/api/settings',{cache:'no-store'}).then(r=>r.json())]);
     if(h.error)throw new Error(h.error);
     const V={ok:['全部正常','var(--t1)'],warn:['有需要留意的項目','var(--warn)'],fail:['有項目異常','var(--alert)']}[h.verdict];
-    setHtml('hl-sum',`<div style="font-family:var(--serif,'Noto Serif TC',serif);font-size:20px;font-weight:700;color:${V[1]}">${V[0]}</div><div style="font-size:12px;color:var(--t3);margin-top:4px">正常 ${h.counts.ok}　留意 ${h.counts.warn}　異常 ${h.counts.fail}　參考 ${h.counts.info}　・　${h.generated_at}（台北）</div>`);
+    setHtml('hl-sum',`<div style="font-family:var(--serif,'Noto Serif TC',serif);font-size:20px;font-weight:700;color:${V[1]}">${V[0]}</div><div style="font-size:12px;color:var(--t3);margin-top:4px">正常 ${h.counts.ok}　留意 ${h.counts.warn}　異常 ${h.counts.fail}${h.counts.unknown?`　未知 ${h.counts.unknown}`:''}${h.counts.na?`　不適用 ${h.counts.na}`:''}　參考 ${h.counts.info}　・　${h.generated_at}（台北）</div>${h.counts.unknown?`<div style="font-size:11px;color:var(--t3);margin-top:4px">「未知」＝該項檢查無法完成或取不到資料，不計入正常也不算異常；請以各項明細為準。</div>`:''}`);
     setHtml('hl-body',h.sections.map(sec=>`<div class="sec-label"><div class="bar"></div><div class="tx">${sec.title}</div></div><div class="panel card"><div class="panel-body" style="padding:6px 14px">${sec.items.map(chkRow).join('')}</div></div>`).join(''));
     setHtml('st-body',st.groups.map(g=>`<div class="panel card" style="margin-bottom:10px"><div class="panel-head"><span>${g.title}</span></div><div class="panel-body" style="padding:4px 14px">${g.items.map(x=>`<div class="kv" style="align-items:flex-start;gap:10px"><span style="flex:none;max-width:48%">${x.key}</span><span style="text-align:right;white-space:normal"><b>${x.value}</b>${x.note?`<br><small style="color:var(--t3);font-weight:400">${x.note}</small>`:''}</span></div>`).join('')}</div></div>`).join('')+`<div class="note-box">${st.note}</div>`);
   }catch(e){if(e.message==='401'){adLock('登入已逾時，請重新登入。');}else setHtml('hl-sum','<div class="empty">健檢失敗：'+esc2(e.message)+'</div>');}

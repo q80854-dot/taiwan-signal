@@ -1,6 +1,8 @@
 """
 系統健檢 + 下單前質檢。
-每一項檢查回傳 {name, status: ok|warn|fail|info, detail}，讓網頁用同一種方式顯示。
+每一項檢查回傳 {name, status: ok|warn|fail|info|unknown|na, detail}，讓網頁用同一種方式顯示。
+★ 2026-11-11 LIVE14：unknown＝檢查無法完成/資料取不到（不是 pass、也不是 fail）；na＝不適用。
+unknown 不得計入正常；整體 verdict 規則見 run_health()。
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -66,7 +68,7 @@ def check_data():
             else:
                 out.append(_c(f"{tk} 收盤對官方", "info", f"K 線最新 {d['dates'][-1][:10]}，官方報價日 {info.get('quote_date')}，日期不同故不比較"))
         else:
-            out.append(_c(f"{tk} 收盤對官方", "warn", "取不到資料"))
+            out.append(_c(f"{tk} 收盤對官方", "unknown", "取不到資料（無法判定，不計入正常/異常）"))
     return out
 
 
@@ -94,10 +96,14 @@ def check_engine():
     hist = store.get_scan_history(3)
     if hist:
         h = hist[0]
-        out.append(_c("最近一次掃描", "ok" if not h.get("errors") else "warn",
-                      f"{h.get('scan_date')}　掃描 {h.get('scanned')} 檔、找到 {h.get('signals_found')}、發送 {h.get('signals_sent')}、錯誤 {h.get('errors')}、{h.get('duration_min')} 分鐘"))
+        # ★ 2026-11-11 LIVE14：掃描錯誤不得被整體「異常 0」掩蓋——錯誤>0 一律 warn，並誠實標明
+        # scan_history 只存錯誤「數量」、未逐類別記錄（資料缺口），且錯誤可能代表部分標的未掃到、影響當日母體。
+        _errn = h.get("errors") or 0
+        out.append(_c("最近一次掃描", "ok" if not _errn else "warn",
+                      f"{h.get('scan_date')}　掃描 {h.get('scanned')} 檔、找到 {h.get('signals_found')}、發送 {h.get('signals_sent')}、錯誤 {_errn}、{h.get('duration_min')} 分鐘"
+                      + (f"；⚠ 本次掃描有 {_errn} 項錯誤——可能有標的未掃到（影響當日母體）。scan_history 僅存錯誤數、未逐類別記錄，來源別明細請見伺服器日誌" if _errn else "")))
     else:
-        out.append(_c("最近一次掃描", "warn", "尚無掃描紀錄"))
+        out.append(_c("最近一次掃描", "unknown", "尚無掃描紀錄（無法判定）"))
     a = store.get_meta("last_scan_audit")
     if a:
         out.append(_c("預篩自我稽核", "ok" if not a.get("mismatch") else "fail",
@@ -113,7 +119,7 @@ def check_engine():
         else:
             out.append(_c("排程器", "fail", "未運作"))
     except Exception as e:
-        out.append(_c("排程器", "warn", f"無法讀取：{e}"))
+        out.append(_c("排程器", "unknown", f"無法讀取：{e}"))
     try:
         durs = [h.get("duration_min") for h in hist if h.get("duration_min") and (h.get("scanned") or 0) > 100]
         if len(durs) >= 2 and durs[0] > 2 * (sum(durs[1:]) / len(durs[1:])):
@@ -164,7 +170,7 @@ def check_strategy():
         else:
             out.append(_c("最近一次學習資料收集", "info", "尚無收集紀錄（新版第一次掃描後產生）"))
     except Exception as e:
-        out.append(_c("學習資料（影子追蹤）", "warn", str(e)))
+        out.append(_c("學習資料（影子追蹤）", "unknown", str(e)))
     from config import THRESH, SHORT_SIGNAL_THRESH
     out.append(_c("進場門檻", "info", f"做多分數 ≥ {THRESH.get('min_score')}；做空 ≥ {SHORT_SIGNAL_THRESH['min_score']} 且週線必須偏空"))
     return out
@@ -182,7 +188,7 @@ def check_freshness():
         else:
             out.append(_c("三大法人資料", "fail", f"最近一次取得失敗：{i.get('err')}。這段期間的訊號沒有法人籌碼加減分"))
     except Exception as e:
-        out.append(_c("三大法人資料", "warn", str(e)))
+        out.append(_c("三大法人資料", "unknown", str(e)))
     try:
         from fundamentals import revenue_status, _rev_state
         st = revenue_status()
@@ -249,7 +255,7 @@ def check_infra():
         lvl, msg = source_health.summary()
         out.append(_c("對外資料來源連線", lvl, msg + "（詳見「資料更新狀態」頁的連線檢測）"))
     except Exception as e:
-        out.append(_c("對外資料來源連線", "warn", str(e)))
+        out.append(_c("對外資料來源連線", "unknown", str(e)))
     # 4 記憶體用量（容器資源）
     try:
         import os as _os
@@ -278,7 +284,7 @@ def check_security():
         out.append(_c("管理後台密碼", "ok" if admin_auth.configured() else "fail",
                       "已設定 ADMIN_PASSWORD，學習／稽核等後台需登入" if admin_auth.configured() else "未設定，後台目前鎖死"))
     except Exception as e:
-        out.append(_c("管理後台密碼", "warn", str(e)))
+        out.append(_c("管理後台密碼", "unknown", str(e)))
     # 2 會員登入牆
     try:
         import members
@@ -294,7 +300,7 @@ def check_security():
         out.append(_c("HTTP 安全標頭", "ok" if hdr_ok else "warn",
                       "HSTS、CSP、X-Frame-Options(SAMEORIGIN)、nosniff、Referrer-Policy、Permissions-Policy、COOP/CORP 皆已套用" if hdr_ok else "找不到安全標頭掛載"))
     except Exception as e:
-        out.append(_c("HTTP 安全標頭", "warn", str(e)))
+        out.append(_c("HTTP 安全標頭", "unknown", str(e)))
     # 4 Cookie 旗標
     out.append(_c("登入 Cookie 旗標", "ok", "管理：HttpOnly＋Secure＋SameSite=Strict；會員：HttpOnly＋Secure＋SameSite=Lax；改資料請求再加 Origin 同源檢查（CSRF 第二道）"))
     # 5 Debug 模式必須關閉
@@ -303,14 +309,14 @@ def check_security():
         dbg = bool(getattr(A.app, "debug", False))
         out.append(_c("Debug 模式", "fail" if dbg else "ok", "⚠ Flask debug 開啟中（會外洩堆疊）" if dbg else "已關閉（debug=False），錯誤不外洩內部細節"))
     except Exception as e:
-        out.append(_c("Debug 模式", "warn", str(e)))
+        out.append(_c("Debug 模式", "unknown", str(e)))
     # 6 流量防護
     try:
         import protect
         out.append(_c("流量與濫用防護", "ok" if hasattr(protect, "install") else "warn",
                       "全域限流、參數檢查、重端點並行上限、5xx 不外洩內容（protect.py）"))
     except Exception as e:
-        out.append(_c("流量與濫用防護", "warn", str(e)))
+        out.append(_c("流量與濫用防護", "unknown", str(e)))
     # 7 Telegram token 遮蔽
     out.append(_c("機密遮蔽", "ok", "日誌過濾器自動把 Telegram Bot Token 以 <bot-token> 遮蔽；一般會員回應移除本金相關欄位"))
     return out
@@ -318,12 +324,15 @@ def check_security():
 
 def run_health():
     sections = [("系統與基礎設施", check_infra), ("資安自我檢查", check_security), ("資料即時性", check_freshness), ("資料來源", check_data), ("基本面與消息", check_fundamentals), ("引擎與推播", check_engine), ("策略狀態", check_strategy)]
-    res, cnt = [], {"ok": 0, "warn": 0, "fail": 0, "info": 0}
+    res, cnt = [], {"ok": 0, "warn": 0, "fail": 0, "info": 0, "unknown": 0, "na": 0}
     for title, fn in sections:
         items = _safe(fn, title)
         for i in items: cnt[i["status"]] = cnt.get(i["status"], 0) + 1
         res.append({"title": title, "items": items})
-    verdict = "fail" if cnt["fail"] else ("warn" if cnt["warn"] else "ok")
+    # ★ 2026-11-11 LIVE14：unknown（檢查無法完成）不得計 pass——有 unknown 時整體至少 warn，
+    # 不再顯示「全部正常」假綠燈。Telegram 健檢告警只在 verdict=fail 觸發（app.job_health_watch），
+    # unknown 升 warn 不會製造新告警、也不改變 fail 的告警/恢復語意。na（不適用）不影響 verdict。
+    verdict = "fail" if cnt["fail"] else ("warn" if (cnt["warn"] or cnt["unknown"]) else "ok")
     return {"generated_at": _now_tpe().strftime("%Y-%m-%d %H:%M:%S"), "verdict": verdict, "counts": cnt, "sections": res}
 
 
@@ -356,9 +365,9 @@ def check_signal(key):
             else:
                 out.append(_c("價格與官方一致", "info", f"日期不同（K 線 {d['dates'][-1][:10]}／官方 {info.get('quote_date')}）"))
         else:
-            out.append(_c("價格與官方一致", "warn", "無法取得比對資料"))
+            out.append(_c("價格與官方一致", "unknown", "無法取得比對資料（無法判定）"))
     except Exception as e:
-        out.append(_c("價格與官方一致", "warn", str(e)))
+        out.append(_c("價格與官方一致", "unknown", str(e)))
 
     # 2 訊號新鮮度與狀態
     gen = (s.get("generated_at") or "")[:10]
@@ -408,7 +417,7 @@ def check_signal(key):
             out.append(_c("借券賣出餘額", "warn" if _hot else "info",
                           f"借券賣出 {_sh['sbl_short_lots']} 張（{_sh['chg_days']} 日 {_sh['sbl_short_chg_lots']:+} 張），空單餘額約為成交量 {_sh['short_vs_volume_days']} 天"))
     except Exception as e:
-        out.append(_c("交易限制／借券", "warn", str(e)))
+        out.append(_c("交易限制／借券", "unknown", str(e)))
     # 8 重大訊息
     try:
         from fundamentals import fetch_material_news_risk_map
@@ -418,7 +427,7 @@ def check_signal(key):
         else:
             out.append(_c("重大訊息", "ok" if tk.endswith(".TW") else "info", "無命中風險關鍵字" if tk.endswith(".TW") else "上櫃股未涵蓋重大訊息"))
     except Exception as e:
-        out.append(_c("重大訊息", "warn", str(e)))
+        out.append(_c("重大訊息", "unknown", str(e)))
     # 9 基本面
     try:
         from fund_score import build_fundamental_profile
@@ -429,7 +438,7 @@ def check_signal(key):
         else:
             out.append(_c("基本面", "ok" if fs >= 50 else ("warn" if fs >= 35 else "fail"), f"{fs} 分（{p.get('grade')}）；" + "、".join((p.get("tags") or [])[:3])))
     except Exception as e:
-        out.append(_c("基本面", "warn", str(e)))
+        out.append(_c("基本面", "unknown", str(e)))
     # 10 大盤環境
     try:
         from data_fetcher import fetch_market_overview
@@ -437,7 +446,7 @@ def check_signal(key):
         ss = get_system_status(fetch_market_overview())
         out.append(_c("大盤環境", "ok" if ss.get("can_trade") else "fail", f"{ss.get('env_status') or ''}（環境分 {ss.get('env_score')}）"))
     except Exception as e:
-        out.append(_c("大盤環境", "warn", str(e)))
+        out.append(_c("大盤環境", "unknown", str(e)))
     # 11 追高等級
     cl = s.get("chase_level")
     if cl:
