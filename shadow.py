@@ -1102,6 +1102,17 @@ def finish_run(universe=None, pre_skipped=None, pre_passed=None):
 
 
 # ───────────── 後台：總覽與匯出 ─────────────
+def _delivery_summary(sent, delivered) -> dict:
+    """★ 2026-11-11 SH11：推播送達對帳。delivered=1 只代表 provider 至少一目標回 200（已確認），
+    其餘（sent 但未 delivered）是 unknown（可能早期無對帳欄位或平台未回報），**非一定失敗**。
+    confirmed_rate 是『已確認比例』，不等於真實送達率。"""
+    s = int(sent or 0); d = int(delivered or 0)
+    return {"sent": s, "delivered": d, "unknown": max(0, s - d),
+            "confirmed_rate": round(d / s * 100, 1) if s else None,
+            "rate": round(d / s * 100, 1) if s else None,     # 保留相容欄位
+            "note": "confirmed_rate＝平台至少一目標回200的『已確認』比例，非真實送達率；未確認(unknown)不等於失敗。"}
+
+
 def overview():
     """給管理後台：資料量、各日收集量、每次掃描的收集紀錄、特徵覆蓋率、警示。"""
     ensure_table()
@@ -1181,8 +1192,7 @@ def overview():
     except Exception:
         pass
     _sent = int(_dlv.get("sent") or 0); _deliv = int(_dlv.get("delivered") or 0)
-    delivery = {"sent": _sent, "delivered": _deliv,
-                "rate": round(_deliv / _sent * 100, 1) if _sent else None}
+    delivery = _delivery_summary(_sent, _deliv)
     if _sent and _deliv < _sent:
         alerts.append(f"推播送達對帳：排入 {_sent} 筆、Telegram 確認送達 {_deliv} 筆"
                       f"（{_sent - _deliv} 筆未確認送達，可能是早期資料無對帳欄位，或實際未送達）")
