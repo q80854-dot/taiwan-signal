@@ -1269,6 +1269,22 @@ def api_learning_factor_ic():
         logger.error(f"api_learning_factor_ic: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/learning/ablation")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_ablation():
+    """站主：因子 ablation——逐一拿掉單一因子重訓，看樣本外淨期望 R 有沒有變差，判斷因子
+    值不值得接入正式策略。純研究、walk-forward、多空分開；資料不足時誠實回報 insufficient。"""
+    try:
+        import learning_model
+        direction = (request.args.get("direction") or "buy").strip().lower()
+        if direction not in ("buy", "sell"):
+            direction = "buy"
+        return jsonify(learning_model.factor_ablation(direction=direction))
+    except Exception as e:
+        logger.error(f"api_learning_ablation: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/learning/score_calibration")
 @members.owner_required
 @admin_auth.admin_required
