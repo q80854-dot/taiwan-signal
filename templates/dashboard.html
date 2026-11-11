@@ -4860,8 +4860,12 @@ function renderInstrument(d){
 
   html+='<div id="fm-stock"><div class="empty ld"><i class="spin"></i>載入深度分析（法人、融資券、營收、財報、股利）…</div></div>';
   html+=`<div class="sec-label"><div class="bar"></div><div class="tx">重大訊息公告</div></div>`;
-  if(!news.length){
-    html+=`<div class="panel card"><div class="panel-body"><div class="empty">目前無命中風險關鍵字的公告</div></div></div>`;
+  // ★ 2026-11-11 LIVE19：重大訊息來源僅涵蓋上市；上櫃未涵蓋，空清單是「未查核(unknown)」而非「無風險」。
+  const _nc=d.material_news_coverage||{};
+  if(_nc.covered===false){
+    html+=`<div class="panel card"><div class="panel-body"><div class="note-box" style="border-left-color:var(--warn);margin:0"><b>未涵蓋（${fmE(_nc.market||'—')}）</b>：${fmE(_nc.note||'重大訊息公告來源僅涵蓋上市，本檔未查核。')}此處無公告代表「未查核」，不代表「無重大訊息／無風險」。</div></div></div>`;
+  }else if(!news.length){
+    html+=`<div class="panel card"><div class="panel-body"><div class="empty">已查核上市重大訊息：目前無命中風險關鍵字的公告</div></div></div>`;
   }else{
     html+=`<div class="panel card"><div style="overflow-x:auto"><table class="tbl">
       <thead><tr><th>發言日期</th><th>公告主旨</th></tr></thead>
