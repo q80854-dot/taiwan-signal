@@ -12,6 +12,13 @@ from .base import Strategy
 class TrendFollowing(Strategy):
     name = "trend_following"
     direction = "long"
+    label = "趨勢追蹤"
+    hypothesis = {
+        "id": "H-TF-01",
+        "metric": "以 Champion 同口徑分批出場計算的平均淨 R（avg_champion_r）",
+        "acceptance": "已結算樣本 ≥ 30 筆且平均淨 R 顯著 > 0（叢集拔靴 95% 下界 > 0）才視為有證據；達不到即保留為資料不足／未達標",
+        "rationale": "多頭排列＋強 ADX＋週線不偏空＋未過度延伸，順勢做多應有正期望；避免追高以降低回撤。",
+    }
 
     adx_min = 25            # 強趨勢門檻（ADX）
     rsi_overheated = 72     # RSI 高於此視為過度延伸，避免追高
