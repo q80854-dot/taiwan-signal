@@ -1004,7 +1004,8 @@ def _autopsy_one(r):
     if sl_atr is not None and sl_atr < 1.2: tags.append(("停損過窄", f"停損僅 {sl_atr} ATR，一般日內波動即可觸發"))
     elif sl_atr is None and sl_pct and sl_pct < 2.5: tags.append(("停損偏窄", f"停損僅 {sl_pct:.1f}%，疑似過窄"))
     ext = raw.get("ext_atr"); lvl = raw.get("chase_level")
-    if lvl == "high" or (ext is not None and ext > 2.5): tags.append(("追高進場", f"進場時離 20 日線 {ext} ATR，已是強勢尾段"))
+    # ★ 2026-11-11 LIVE20：改描述性措辭（可量測），不下「尾段」這種事後因果判斷
+    if lvl == "high" or (ext is not None and ext > 2.5): tags.append(("追高進場（離均線遠）", f"進場時收盤離 20 日線 {ext} ATR（chase_level={lvl}）"))
     after = None
     try:
         data, idx = _bars_since(r.get("ticker"), gen)
@@ -1016,16 +1017,23 @@ def _autopsy_one(r):
             o = op[hit] if hit < len(op) else None
             if o and ((buy and o < sl) or ((not buy) and o > sl)):
                 tags.append(("跳空穿越", f"開盤 {o} 已越過停損 {sl}，實際成交較差"))
-            if hit == idx[0]: tags.append(("隔日即停損", "訊號隔天就被打掉，進場位置不佳"))
+            # ★ LIVE20：描述觀察事實，不加「進場位置不佳」等因果判斷
+            if hit == idx[0]: tags.append(("隔日即停損", "訊號後第一根 K 棒即觸及停損價"))
             later = [cl[j] for j in range(hit + 1, len(cl))]
+            n_after = len(later)
             if later:
                 rec = (max(later) if buy else min(later))
                 if (buy and rec > entry) or ((not buy) and rec < entry):
-                    tags.append(("洗盤後續行情", f"停損後價格回到進場價之外（{rec}），方向其實沒錯"))
-            after = {"stop_date": ds[hit], "last": cl[-1] if cl else None}
+                    # 事後觀察，非因果結論：回到進場價之外不等於「不停損即獲利」（未計重新進場成本、時間與後續再下跌風險）
+                    tags.append(("停損後曾回到進場價之外",
+                                 f"停損後觀察 {n_after} 根 K 棒，期間收盤{'最高' if buy else '最低'} {rec} 曾回到進場價 {entry} 之外；"
+                                 f"僅為事後觀察、未計重新進場成本與時間，不等於不停損即獲利"))
+            after = {"stop_date": ds[hit], "last": cl[-1] if cl else None, "bars_after": n_after}
     except Exception:
         pass
-    if not tags: tags.append(("正常停損", "未見結構性缺陷，屬於策略的正常虧損"))
+    # ★ LIVE20：無可檢項目時給中性描述，不宣稱「正常虧損」這種因果結論
+    if not tags: tags.append(("未命中可檢項目",
+                              "未命中上述可檢結構項（停損過窄／追高／跳空／隔日停損／停損後回到進場價）；此為描述、非「正常虧損」的因果判定"))
     return {"id": r.get("id"), "name": r.get("name"), "code": r.get("code"), "direction": r.get("direction"),
             "score": r.get("score"), "entry": entry, "stop": sl, "close_price": r.get("close_price"),
             "pnl_pct": r.get("pnl_pct"), "pnl_twd": r.get("pnl_twd"), "generated_at": r.get("generated_at"),
