@@ -226,6 +226,14 @@ def build_quality(code: str) -> Dict:
     def add(group, label, value, status, note):
         items.append({"group": group, "label": label, "value": value, "status": status, "note": note})
 
+    # ★ 2026-11-11 LIVE11：四態化。unknown＝有此檢核項但資料不足（不計分、不算失敗）；
+    # na＝此產業不適用（如金融保險的毛利率）。兩者都明確顯示、並揭露有效分母與覆蓋信心，
+    # 不再讓「資料顯示—」被體檢靜默當成 bad，也不以不適用項拉低分數。
+    def miss(group, label, reason, applicable=True):
+        items.append({"group": group, "label": label, "value": "—",
+                      "status": "na" if not applicable else "unknown",
+                      "note": reason})
+
     def band(v, good, warn, higher=True):
         if higher:
             return "good" if v >= good else "warn" if v >= warn else "bad"
@@ -235,16 +243,26 @@ def build_quality(code: str) -> Dict:
     if len(roe) >= 4:
         v = sum(r["value"] for r in roe[-4:])
         add("獲利能力", "ROE（近四季合計）", f"{v:.1f}%", band(v, 15, 8), "近四季單季 ROE 相加，≥15% 優、8~15% 普通、<8% 偏弱")
+    else:
+        miss("獲利能力", "ROE（近四季合計）", "近四季 ROE 資料不足，未納入評分")
     gm = _mrows(ind, "gross")
     if not fin and gm and gm[-1].get("yoy_pp") is not None:
         r = gm[-1]
         add("獲利能力", f"毛利率 {r['period']}", f"{r['value']:.1f}%（同比 {r['yoy_pp']:+.1f}pt）",
             band(r["yoy_pp"], 0, -2), "與去年同季比：持平或上升為佳，下滑超過 2 個百分點偏弱")
+    elif fin:
+        miss("獲利能力", "毛利率", "金融保險業財報結構不同，毛利率不適用", applicable=False)
+    else:
+        miss("獲利能力", "毛利率", "毛利率資料不足，未納入評分（非未通過）")
     om = _mrows(ind, "op")
     if om and not fin:
         r = om[-1]
         add("獲利能力", f"營業利益率 {r['period']}", f"{r['value']:.1f}%",
             "bad" if r["value"] <= 0 else band(r["value"], 10, 3), "本業賺錢能力，≥10% 優、虧損為差")
+    elif fin:
+        miss("獲利能力", "營業利益率", "金融保險業財報結構不同，營業利益率不適用", applicable=False)
+    else:
+        miss("獲利能力", "營業利益率", "營業利益率資料不足，未納入評分（非未通過）")
     eps = _mrows(ind, "eps")
     if eps and eps[-1].get("yoy") is not None:
         r = eps[-1]
@@ -293,8 +311,19 @@ def build_quality(code: str) -> Dict:
                 "近幾年是否年年配息")
     except Exception:
         pass
-    n = len(items)
-    score = round(sum(1 if i["status"] == "good" else 0.5 if i["status"] == "warn" else 0 for i in items) / n * 100) if n else None
-    return {"ok": n > 0, "score": score, "n": n, "items": items, "notes": notes, "industry": industry or None,
+    # ★ LIVE11：分數只算 good/warn/bad（unknown/na 不計分、不算失敗）；另揭露有效分母與覆蓋信心。
+    evaluated = [i for i in items if i["status"] in ("good", "warn", "bad")]
+    n_eval = len(evaluated)
+    n_unknown = sum(1 for i in items if i["status"] == "unknown")
+    n_na = sum(1 for i in items if i["status"] == "na")
+    score = round(sum(1 if i["status"] == "good" else 0.5 if i["status"] == "warn" else 0 for i in evaluated) / n_eval * 100) if n_eval else None
+    denom = n_eval + n_unknown                                   # 適用但未必有資料的項數（na 不列入覆蓋分母）
+    coverage_pct = round(n_eval / denom * 100) if denom else None
+    confidence = "none" if not n_eval else "high" if n_eval >= 9 else "medium" if n_eval >= 6 else "low"
+    return {"ok": n_eval > 0, "score": score, "n": n_eval,
+            "coverage": {"evaluated": n_eval, "unknown": n_unknown, "not_applicable": n_na,
+                         "coverage_pct": coverage_pct, "confidence": confidence},
+            "low_coverage": confidence in ("low", "none"),
+            "items": items, "notes": notes, "industry": industry or None,
             "date": ind.get("date"), "stale": ind.get("stale"),
             "grade": None if score is None else "優" if score >= 75 else "中" if score >= 50 else "弱"}
