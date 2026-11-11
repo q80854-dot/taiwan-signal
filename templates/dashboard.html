@@ -2781,12 +2781,27 @@ html[data-theme]{
     <div class="pad">
     <!-- 2026-10-28 v4：總覽依 Design 定稿（Overview.dc.html）重排：12 欄格線、白卡＋一張深色全球市場卡。舊區塊移到 #v4o-legacy（隱藏，保留給既有 JS 寫入與載入資料）。 -->
     <div class="v4o" id="v4o">
+      <!-- 2026-11-11 P1-C：總覽重排（brief §4 總覽／142）——上＝需處理風險＋資料可信狀態＋今日訊號
+           與追蹤結果；中＝圖與機會；下＝市場背景。只動卡片順序與新增 #v4o-attn，各卡 id 與 JS 寫入點不變。 -->
+      <section class="o-card o-c12" id="v4o-attn-card" aria-label="今日狀態">
+        <div class="o-ch"><div><h2>今日狀態</h2><span class="o-mt" id="v4o-attn-mt">需處理項目與資料可信狀態</span></div><span class="o-lk" onclick="go('freshness')">資料狀態 →</span></div>
+        <div class="o-cb" id="v4o-attn"><div class="skel-wrap"><i class="skel"></i></div></div>
+      </section>
+      <section class="o-card o-c4" aria-label="今日訊號"><div class="o-ch"><div><h2>今日訊號</h2><span class="o-mt" id="v4o-sig-mt"></span></div><span class="o-lk" onclick="go('signals')">訊號頁 →</span></div><div class="o-cb" id="v4o-sig"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
+      <section class="o-card o-c4" aria-label="持倉追蹤"><div class="o-ch"><div><h2>持倉追蹤</h2><span class="o-mt" id="v4o-pos-mt"></span></div><span class="o-lk" onclick="go('positions')">管理 →</span></div><div class="o-cb" id="v4o-pos" style="display:flex;flex-direction:column"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
+      <section class="o-card o-c4" aria-label="通知"><div class="o-ch"><div><h2>通知</h2><span class="o-mt" id="v4o-nt-mt"></span></div><span class="o-lk" onclick="go('watchlist')">全部 →</span></div><div class="o-cb" id="v4o-nt" style="padding-top:6px"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
       <section class="o-card o-c8" aria-label="加權指數走勢">
         <div class="o-ch"><div><h2>加權指數走勢</h2><span class="o-mt" id="v3c-range-chg"></span></div>
           <div class="o-tabs" id="v3-rng" role="tablist" aria-label="期間"><button class="tab" data-m="1" onclick="v3SetRange(1)">1M</button><button class="tab" data-m="3" onclick="v3SetRange(3)">3M</button><button class="tab" data-m="6" onclick="v3SetRange(6)">6M</button><button class="tab on" data-m="12" onclick="v3SetRange(12)">1Y</button></div></div>
         <div class="o-cb"><div class="v3-area" id="v3-area"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div><div class="v3-src mut" id="v3c-src"></div></div>
       </section>
       <section class="o-card o-c4" id="v4o-ix" aria-label="加權指數"><div class="o-ch"><div><h2>加權指數</h2><span class="o-mt">TAIEX</span></div></div><div class="o-cb"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></section>
+      <section class="o-card o-c12" aria-label="自選股">
+        <div class="o-ch"><div><h2>自選股</h2><span class="o-mt" id="v4o-wl-mt"></span></div>
+          <div class="o-row"><div class="o-tabs on-card" id="v4o-wlv"><button class="tab on" data-v="card" onclick="v4oWlView('card')">卡片</button><button class="tab" data-v="list" onclick="v4oWlView('list')">列表</button></div><span class="o-lk" onclick="go('watchlist')">管理 →</span></div></div>
+        <div class="o-cb" id="v4o-wl"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div>
+      </section>
+
       <!-- 2026-10-28 v9：市場脈動（全部為免費官方資料：證交所 BFI82U／MI_MARGN／FMTQIK、櫃買、期交所；每格標註資料日期） -->
       <section class="o-card o-c12 v9p" id="v9p" aria-label="市場脈動"><div class="o-ch"><div><h2>市場脈動</h2><span class="o-mt" id="v9p-mt">情緒、漲跌家數、法人與期貨，一眼看完今天的盤</span></div><span class="o-lk" onclick="go('market')">市場環境 →</span></div><div class="o-cb" id="v9p-b"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i><i class="skel s3"></i></div></div></section>
 
@@ -2798,16 +2813,6 @@ html[data-theme]{
           <div class="o-mks" id="v4o-mk"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div>
         </div>
       </section>
-
-      <section class="o-card o-c12" aria-label="自選股">
-        <div class="o-ch"><div><h2>自選股</h2><span class="o-mt" id="v4o-wl-mt"></span></div>
-          <div class="o-row"><div class="o-tabs on-card" id="v4o-wlv"><button class="tab on" data-v="card" onclick="v4oWlView('card')">卡片</button><button class="tab" data-v="list" onclick="v4oWlView('list')">列表</button></div><span class="o-lk" onclick="go('watchlist')">管理 →</span></div></div>
-        <div class="o-cb" id="v4o-wl"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div>
-      </section>
-
-      <section class="o-card o-c4" aria-label="今日訊號"><div class="o-ch"><div><h2>今日訊號</h2><span class="o-mt" id="v4o-sig-mt"></span></div><span class="o-lk" onclick="go('signals')">訊號頁 →</span></div><div class="o-cb" id="v4o-sig"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
-      <section class="o-card o-c4" aria-label="持倉追蹤"><div class="o-ch"><div><h2>持倉追蹤</h2><span class="o-mt" id="v4o-pos-mt"></span></div><span class="o-lk" onclick="go('positions')">管理 →</span></div><div class="o-cb" id="v4o-pos" style="display:flex;flex-direction:column"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
-      <section class="o-card o-c4" aria-label="通知"><div class="o-ch"><div><h2>通知</h2><span class="o-mt" id="v4o-nt-mt"></span></div><span class="o-lk" onclick="go('watchlist')">全部 →</span></div><div class="o-cb" id="v4o-nt" style="padding-top:6px"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
 
       <section class="o-card o-c8" aria-label="本週財經日曆"><div class="o-ch"><div><h2>本週財經日曆</h2><span class="o-mt" id="v4o-cal-mt"></span></div><span class="o-lk" onclick="go('calendar')">完整日曆 →</span></div><div class="o-cb" style="overflow-x:auto" id="v4o-cal"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
       <section class="o-card o-c4" aria-label="類股資金流向"><div class="o-ch"><div><h2>類股資金流向</h2><span class="o-mt" id="v4o-sec-mt">今日漲跌幅</span></div><span class="o-lk" onclick="go('rank')">排行 →</span></div><div class="o-cb" id="v4o-sec"><div class="skel-wrap"><i class="skel"></i><i class="skel s2"></i></div></div></section>
@@ -8569,14 +8574,18 @@ function v4oIndex(){
   const b=_v3Brd||{},useT=b.dates_mismatch&&b.tse,adv=useT?b.tse.advancers:b.advancers,dec=useT?b.tse.decliners:b.decliners,unc=useT?b.tse.unchanged:b.unchanged;
   const brd=(adv!=null&&dec!=null&&(adv+dec+(unc||0))>0)?`<div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px"><span class="up">▲ ${useT?'上市':''}上漲 ${adv}</span><span style="color:var(--t3)">平 ${unc??'—'}</span><span class="down">▼ ${useT?'上市':''}下跌 ${dec}</span></div><div class="o-bar" aria-hidden="true"><i style="flex:${adv};background:var(--o-cu)"></i><i style="flex:${unc||0};background:var(--s3)"></i><i style="flex:${dec};background:var(--o-cd)"></i></div></div>`:'';
   const src={fugle:'富果即時',twse_official:'證交所',twse:'證交所'}[ix.source]||'';
-  box.innerHTML=`<div class="o-ch"><div><h2>加權指數</h2><span class="o-mt">TAIEX${dt?' · '+dt+' 收盤':''}${src?' · '+src:''}</span></div>${ch!=null?v4oTag(ch):''}</div>
+  // ★ 2026-11-11 P1-C（LIVE08 同口徑）：主數值可能是即時報價（ix.price）或日線收盤（last.c），
+  //   兩者 session 不同——副標各帶自身時間，不以「{日期} 收盤」標即時值；開高低昨收為日線，另行標註。
+  const ixLive=ix.price!=null;
+  const asof=ixLive?('報價 '+(toTaipeiHM(mo.fetched_at)||'最新')):(dt?dt+' 收盤':'');
+  box.innerHTML=`<div class="o-ch"><div><h2>加權指數</h2><span class="o-mt">TAIEX${asof?' · '+asof:''}${src?' · '+src:''}</span></div>${ch!=null?v4oTag(ch):''}</div>
     <div class="o-cb" style="display:flex;flex-direction:column;gap:16px">
       <div><div class="o-big" style="font-size:36px;line-height:42px">${v3Fmt(px)}</div><div class="${v3Cls(ch)}" style="margin-top:4px;font:500 13px/18px var(--sans);font-variant-numeric:tabular-nums">${cp!=null?v3Arr(cp)+v3Fmt(Math.abs(cp)):'—'}${tv?' · 成交 '+v3Fmt(tv/1e8,0)+' 億':''}</div></div>
       ${kSvg}
       <div class="o-inset" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
         <div class="o-stat">開盤<b>${v3Fmt(last.o)}</b></div><div class="o-stat">最高<b class="up">${v3Fmt(last.h)}</b></div><div class="o-stat">最低<b class="down">${v3Fmt(last.l)}</b></div>
         <div class="o-stat">昨收<b>${prevBar?v3Fmt(prevBar.c):'—'}</b></div><div class="o-stat">量比 5 日<b>${vr?vr.toFixed(2)+'x':'—'}</b></div><div class="o-stat">外資<b class="${v3Cls(fn)}">${fy}</b></div>
-      </div>${brd}
+      </div>${dt?`<div class="o-lbl">開高低昨收為 ${dt} 日線${ixLive?'——與上方即時主數值非同一時點，不可互相驗證價位關係':''}</div>`:''}${brd}
     </div>`;
 }
 
@@ -8734,10 +8743,40 @@ async function v9Pulse(){
   const mt=document.getElementById('v9p-mt');if(mt)mt.textContent='資料來源：證交所、櫃買中心、期交所（每格標註資料日期）';
   el.innerHTML=(bits.length?`<div class="v9p-sum"><span class="o-tag solid-${(ixCh||0)>=0?'up':'dn'}">今日重點</span><p>${bits.join('，')}。</p></div>`:'')+`<div class="v9p-grid">${c1}${c2}${c3}${c4}</div>`;
 }
+// ★ 2026-11-11 P1-C：總覽「今日狀態」卡——需處理（重用持倉頁同一套定義：breached 已觸停待確認
+//   ／cushion_pct<3 近停損／stop_suggest 可上移停損）＋未讀通知＋資料可信狀態（/api/freshness 快取）。
+//   各資料源載入後各自呼叫、閒置渲染；缺資料顯示「未取得」，不以 ✓ 假裝沒事、不造數字。
+function v4oAttn(){
+  const el=document.getElementById('v4o-attn'),mt=document.getElementById('v4o-attn-mt');if(!el)return;
+  const op=window._v4oOpen;let need=[];
+  if(op==='err')need.push(['warn','持倉資料未取得——無法確認是否有需處理部位','positions']);
+  else if(Array.isArray(op))op.forEach(p=>{
+    if(p.breached)need.push(['alert',`${p.name} 已觸/穿越停損 ${v3Fmt(p.stop)}（穿越 ${v3Fmt(p.breach_pct,1)}%），待盤後結算確認`,'positions']);
+    else if(p.cushion_pct!=null&&p.cushion_pct<3)need.push(['alert',`${p.name} 距停損僅 ${v3Fmt(p.cushion_pct,1)}%`,'positions']);
+    else if(p.stop_suggest)need.push(['warn',`${p.name} 可上移停損（${p.stop_suggest_why||'保護既有獲利'}）`,'positions']);
+  });
+  if(window._v4oUnread)need.push(['brand',`${window._v4oUnread} 則未讀通知`,'watchlist']);
+  const dot=t=>t==='alert'?'var(--c-alert,var(--alert))':t==='warn'?'var(--c-warn,var(--warn))':'var(--c-brand,var(--acc))';
+  const nd=need.length?need.slice(0,4).map(([t,x,pg])=>`<div class="o-row2" style="align-items:flex-start;cursor:pointer" onclick="go('${pg}')"><span style="flex:none;width:8px;height:8px;border-radius:50%;margin-top:5px;background:${dot(t)}"></span><span style="flex:1;font-size:13px;line-height:19px">${v4oE(x)}</span></div>`).join('')
+    :(op===undefined?'<div class="o-lbl" style="padding:2px 0">載入中…</div>':'<div class="o-row2" style="align-items:center"><span style="color:var(--c-ok,var(--ok))">✓</span><span style="font-size:13px;color:var(--t2)">目前沒有需要立即處理的部位或通知</span></div>');
+  let fr=null;try{fr=_frLast;}catch(e){}
+  const it=(fr&&fr.items)||[],late=it.filter(i=>i.status==='late'),okN=it.filter(i=>i.status==='ok').length,unkN=it.filter(i=>i.status==='unknown').length;
+  const scanT=window._v4oScanT;
+  const frB=!fr?'<div class="o-lbl" style="padding:2px 0">資料狀態載入中…</div>'
+    :(!it.length?'<div class="o-lbl" style="padding:2px 0">資料狀態未取得</div>'
+    :`<div style="display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px"><span class="fresh-dot ${late.length?'warn':'ok'}"></span><span style="font-size:13px">${okN}/${it.length} 項資料已是最新</span></div>
+      ${late.length?`<div style="font-size:12px;line-height:17px;color:var(--c-warn,var(--warn))">尚未更新：${late.slice(0,3).map(i=>v4oE(i.name)).join('、')}${late.length>3?' 等 '+late.length+' 項':''}（多為官方尚未公布）</div>`:''}
+      ${unkN?`<div style="font-size:12px;line-height:17px;color:var(--t3)">另有 ${unkN} 項來源尚未提供資料（無資料≠正常，詳見資料狀態頁）</div>`:''}
+      <div style="font-size:11px;color:var(--t3)">${scanT?'最後掃描 '+v4oE(scanT)+' · ':''}檢查時間 ${fr.now?v4oE(String(fr.now).slice(5,16)):'—'}</div></div>`);
+  el.innerHTML=`<div style="display:flex;gap:24px;flex-wrap:wrap"><div style="flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:8px"><div class="o-lbl" style="margin-bottom:2px">需處理</div>${nd}</div><div style="flex:0 1 300px;min-width:240px"><div class="o-lbl" style="margin-bottom:8px">資料可信狀態</div>${frB}</div></div>`;
+  if(mt)mt.textContent=`${need.length?need.length+' 項需注意':(op===undefined?'載入中':'無需立即處理')}${it.length?` · 資料 ${okN}/${it.length} 最新`:''}`;
+}
 // 今日訊號：第一檔有效訊號＋價位尺（停損／進場區／目標 1／目標 2）
 function v4oSignal(d){
   const el=document.getElementById('v4o-sig'),mt=document.getElementById('v4o-sig-mt');if(!el)return;
   const sigs=(d&&d.active_signals)||[];
+  try{window._v4oScanT=d&&d.last_scan_time?toTaipeiHM(d.last_scan_time):window._v4oScanT;v4oAttn();}catch(e){}
   const nb=sigs.filter(s=>s.direction==='buy').length,ns=sigs.length-nb;
   // ★ 2026-11-11 LIVE07：顯示中的有效訊號可能是較早批次（例如昨日盤後），不得以「今日訊號」
   // 的標題讓人誤以為是今天新發——副標明示批次日期與「最近有效訊號（非今日新發）」。
@@ -8763,7 +8802,9 @@ function v4oSignal(d){
 // 持倉追蹤：系統追蹤中的訊號部位（/api/positions open）
 async function v4oPositions(){
   const el=document.getElementById('v4o-pos'),mt=document.getElementById('v4o-pos-mt');if(!el)return;
-  let op=[];try{const j=await(await fetch('/api/positions',{cache:'no-store'})).json();op=j.open||[];}catch(e){el.innerHTML='<div class="o-lbl">持倉載入失敗</div>';return;}
+  let op=[];try{const j=await(await fetch('/api/positions',{cache:'no-store'})).json();op=j.open||[];}
+  catch(e){el.innerHTML='<div class="o-lbl">持倉載入失敗</div>';window._v4oOpen='err';try{v4oAttn();}catch(e2){}return;}
+  window._v4oOpen=op;try{v4oAttn();}catch(e){}
   if(mt)mt.textContent=`${op.length} 檔追蹤中`;
   if(!op.length){el.innerHTML=`<div class="o-empty"><span class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z M9 7V5h6v2 M3 12h18"/></svg></span><b>目前沒有持倉</b><p>訊號成立後系統會自動追蹤停損與目標，跌破停損時提醒。</p><button class="btn sm" onclick="go('signals')">看今日訊號</button></div>`;return;}
   el.innerHTML=op.slice(0,4).map((p,i)=>{const buy=p.direction==='buy',last=Number(p.last),en=Number(p.entry),pnl=(isFinite(last)&&en)?((buy?last-en:en-last)/en*100):null;
@@ -8781,6 +8822,7 @@ async function v4oNotes(){
     else if(r.status===503){const j=await(await fetch('/api/events?limit=5',{cache:'no-store'})).json();rows=(j.events||[]).map(e=>({t:e.title,m:e.body,at:e.ts,c:/signal|訊號/.test(e.kind||'')?'var(--acc)':'var(--t3)'}));}
     else{el.innerHTML='<div class="o-lbl" style="padding:12px 0">登入後顯示你的通知</div>';return;}
   }catch(e){el.innerHTML='<div class="o-lbl">通知載入失敗</div>';return;}
+  window._v4oUnread=unread||0;try{v4oAttn();}catch(e){}
   if(mt)mt.textContent=unread!=null?`${unread} 則未讀`:'系統事件';
   if(!rows.length){el.innerHTML='<div class="o-lbl" style="padding:12px 0">目前沒有通知</div>';return;}
   el.innerHTML=rows.map(n=>`<div class="o-row2"><i style="width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none;background:${n.c}"></i><span style="flex:1;min-width:0"><span style="display:block;font:500 13px/18px var(--sans)">${v4oE(n.t)}</span><span style="display:block;font-size:12px;line-height:17px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v4oE(n.m)}</span></span><span style="font:400 11px/18px var(--mono);color:var(--t3)">${n.at?toTaipeiHM(n.at)||'':''}</span></div>`).join('');
@@ -9039,6 +9081,7 @@ async function pollFreshness(render){
     }
   }
   _frLast=d;
+  try{v4oAttn();}catch(e){}
   if(render||window._curPage==='freshness'){
     try{fr9Sum(d);}catch(e){}
     const tb=document.getElementById('fr-tbody');
