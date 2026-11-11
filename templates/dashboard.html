@@ -2881,6 +2881,7 @@ html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
       </select>
       <span style="font-size:11px;color:var(--t3)" id="sig-filter-info"></span>
       <span id="sig-chips" style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+      <span id="sig-ctx" style="font-size:11px;color:var(--t3);flex-basis:100%"></span>
     </div>
     <div id="signals-container"></div>
     </div>
@@ -3064,6 +3065,7 @@ html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
         <button class="tab" onclick="lrnNav('model',this)">模型與實驗</button>
         <button class="tab" onclick="lrnNav('raw',this)">原始資料</button>
       </div>
+      <div id="lrn-ctx" style="font-size:11px;color:var(--t3);margin:-8px 0 12px"></div>
 
       <div class="lrn-g" data-g="health">
       <div id="lr-progress" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:2px"></div>
@@ -5143,7 +5145,7 @@ function h8Draw(){
   if(!op.length){
     const act=((st||{}).active_signals)||[];
     el.innerHTML=ks+`<section class="o-card o-c8"><div class="o-cb">${v5Empty('目前沒有追蹤中的部位','訊號成立後，系統會依訊號價位與建議張數自動追蹤停損、目標與組合風險。')}${act.length?`<div style="margin-top:16px"><div class="o-lbl" style="margin-bottom:6px">今日訊號</div>${act.slice(0,3).map((s,i)=>`<div class="o-row2" style="align-items:center">${v4oAv(s.name,i)}<span style="flex:1;font:600 14px/18px var(--sans)">${v5E(s.name)} ${v5E(s.code||'')}<small style="display:block;font:400 11px/15px var(--sans);color:var(--t3)">${(s.suggested_shares||0).toLocaleString()} 股 · 停損 ${v5F(s.stop_loss)}</small></span><button class="btn sm" onclick="go('signals')">查看</button></div>`).join('')}</div>`:`<div style="display:flex;justify-content:center;margin-top:12px"><button class="btn primary" onclick="go('signals')">看今日訊號</button></div>`}</div></section>
-      <section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>風險設定</h2><span class="o-mt">系統實際使用</span></div></div><div class="o-cb" style="display:flex;flex-direction:column;gap:6px"><div class="b7-fld"><span>帳戶資金</span><b>${bal?v5F(bal,0):'—'}</b></div><div class="b7-fld"><span>單筆預算</span><b>${rk.per_trade_pct!=null?rk.per_trade_pct+'%':'—'}</b></div><div class="b7-fld"><span>單日新增上限</span><b>${rk.daily_new_pct!=null?rk.daily_new_pct+'%':'—'}</b></div><div class="b7-fld"><span>組合硬上限</span><b>${rk.portfolio_hard_cap_pct!=null?rk.portfolio_hard_cap_pct+'%':'—'}</b></div></div></section>`+h8Trades(cl);
+      <section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>風險設定</h2><span class="o-mt">系統實際使用</span></div></div><div class="o-cb" style="display:flex;flex-direction:column;gap:6px"><div class="b7-fld"><span>帳戶資金</span><b>${bal?v5F(bal,0):'—'}</b></div><div class="b7-fld"><span>單筆預算</span><b>${rk.per_trade_pct!=null?rk.per_trade_pct+'%':'—'}</b></div><div class="b7-fld"><span>單日新增上限</span><b>${rk.daily_new_pct!=null?rk.daily_new_pct+'%':'—'}</b></div><div class="b7-fld"><span>組合硬上限</span><b>${rk.portfolio_hard_cap_pct!=null?rk.portfolio_hard_cap_pct+'%':'—'}</b></div><div style="font-size:11px;color:#a1a1a8;margin-top:4px">參數版本 ${rk.config_version?'champion-'+v5E(rk.config_version):'未取得'}${rk.effective_at?'（凍結日 '+v5E(rk.effective_at)+'）':''}；歷史訊號依產生當時參數判讀</div></div></section>`+h8Trades(cl);
     return;
   }
   const f=_x8.hf||'all',rows=op.filter(p=>f==='win'?(p.r_now||0)>0:f==='loss'?(p.r_now||0)<0:true);
@@ -5152,7 +5154,7 @@ function h8Draw(){
   const tbl=v5Card('o-c8','持倉明細','進度條：停損 ← 進場 │ 現價 ● → 目標 1',`<div style="overflow-x:auto"><table class="r-t h8-t"><thead><tr><th>股票</th><th>股數</th><th>進場</th><th>現價</th><th>損益</th><th>停損 → 目標</th><th>持有</th><th>狀態</th></tr></thead><tbody>${rows.map((p,i)=>{const pl=((p.last||p.entry)-p.entry)*dir(p)*sh(p),[s,c]=stt(p);return `<tr onclick="goToInstrument('${v5E(p.code)}')" style="cursor:pointer"><td><span style="display:inline-flex;align-items:center;gap:8px">${v4oAv(p.name,i)}<span style="font-weight:500;color:var(--ink)">${v5E(p.name)}<small style="display:block;font:400 11px var(--mono);color:var(--t3)">${v5E(p.code)} · ${p.direction==='buy'?'多':'空'}</small></span></span></td><td>${v5F(x8Sh(p),0)}</td><td>${v5F(p.entry)}</td><td>${v5F(p.last)}</td><td><span class="${v5C(pl)}" style="display:block;font-weight:500">${v5S(pl)}</span><span class="${v5C(p.pnl_now_pct)}" style="font-size:11px">${v5S(p.pnl_now_pct,2)}% · ${v5S(p.r_now,2)}R</span></td><td style="min-width:150px"><div class="h8-prg"><b style="left:${((p.entry_mark||0)*100).toFixed(0)}%"></b><i style="left:${((p.progress||0)*100).toFixed(0)}%"></i></div><div style="display:flex;justify-content:space-between;margin-top:6px;font:400 10px/12px var(--mono)"><span class="down">${v5F(p.stop)}</span><span class="up">${v5F(p.tp1)}</span></div></td><td>${p.days_held??'—'} 天</td><td><span class="o-tag ${c}">${s}</span></td></tr>`;}).join('')}</tbody></table></div>`,
     `<div class="o-tabs">${[['all','全部 '+op.length],['win','獲利 '+op.filter(p=>(p.r_now||0)>0).length],['loss','虧損 '+op.filter(p=>(p.r_now||0)<0).length]].map(([k,n])=>`<button class="tab${k===f?' on':''}" onclick="_x8.hf='${k}';h8Draw()">${n}</button>`).join('')}</div>`);
   const rp=bal?curRisk/bal*100:null,al=[];op.forEach(p=>{if(p.breached)al.push(['⚠','#ff7a74',`${p.name} 現價 ${v5F(p.last)} 已觸/穿越停損 ${v5F(p.stop)}（穿越 ${v5F(p.breach_pct,1)}%），待盤後結算確認`]);else if(p.cushion_pct!=null&&p.cushion_pct<3)al.push(['✕','#ff7a74',`${p.name} 距停損 ${v5F(p.stop)} 僅 ${v5F(p.cushion_pct,1)}%`]);if(p.stop_suggest)al.push(['◆','#e8c35a',`${p.name}：${p.stop_suggest_why}（${v5F(p.stop_suggest)}）`]);});
-  const rkC=v5Card('o-c4 o-dark','風險監控','以停損價計算的潛在虧損',`<div style="display:flex;flex-direction:column;gap:16px"><div><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:500 30px/34px var(--sans);letter-spacing:-.03em">${rp!=null?v5F(rp,2)+'%':'—'}</span><span style="font-size:12px;color:#a1a1a8">組合風險 · 上限 ${v5F(cap*100,0)}%</span></div><div class="o-bar" style="height:8px;margin-top:10px;background:#2a2a2e"><i style="flex:${Math.min(rp||0,cap*100)};background:${(rp||0)>=cap*100?'#ff7a74':'#fff'}"></i><i style="flex:${Math.max(0,cap*100-(rp||0))}"></i></div><div style="font-size:12px;color:#a1a1a8;margin-top:8px">若全部從現價觸及停損，估計虧損 <b style="color:#fff">${v5F(curRisk,0)} 元</b><br><span style="font-size:11px">基準：現價→停損價×股數，未含手續費/稅；跳空或流動性不足時實際損失可能超過，非實損上限</span></div></div>
+  const rkC=v5Card('o-c4 o-dark','風險監控','以停損價計算的潛在虧損',`<div style="display:flex;flex-direction:column;gap:16px"><div><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:500 30px/34px var(--sans);letter-spacing:-.03em">${rp!=null?v5F(rp,2)+'%':'—'}</span><span style="font-size:12px;color:#a1a1a8">組合風險 · 上限 ${v5F(cap*100,0)}%</span></div><div class="o-bar" style="height:8px;margin-top:10px;background:#2a2a2e"><i style="flex:${Math.min(rp||0,cap*100)};background:${(rp||0)>=cap*100?'#ff7a74':'#fff'}"></i><i style="flex:${Math.max(0,cap*100-(rp||0))}"></i></div><div style="font-size:12px;color:#a1a1a8;margin-top:8px">若全部從現價觸及停損，估計虧損 <b style="color:#fff">${v5F(curRisk,0)} 元</b><br><span style="font-size:11px">基準：現價→停損價×股數，未含手續費/稅；跳空或流動性不足時實際損失可能超過，非實損上限</span><br><span style="font-size:11px">參數版本 ${rk.config_version?'champion-'+v5E(rk.config_version):'未取得'}${rk.effective_at?'（凍結日 '+v5E(rk.effective_at)+'）':''} · run_id：後端未記錄（缺口）</span></div></div>
     <div><div class="o-lbl" style="margin-bottom:8px">各部位風險占比</div>${op.map(p=>{const r=Math.max(0,((p.last||p.entry)-p.stop)*dir(p))*sh(p),w=curRisk?r/curRisk*100:0;return `<div class="h8-rk"><span>${v5E(p.name)}</span><div class="o-bar" style="height:6px;background:#2a2a2e"><i style="flex:${w};background:#fff"></i><i style="flex:${100-w}"></i></div><span class="o-mono">${v5F(w,0)}%</span></div>`;}).join('')}</div>
     <div><div class="o-lbl" style="margin-bottom:8px">提醒</div>${al.length?al.slice(0,4).map(([i,c,t2])=>`<div class="h8-al"><span style="color:${c}">${i}</span><span>${v5E(t2)}</span></div>`).join(''):'<div class="h8-al"><span>✓</span><span>目前沒有需要處理的部位</span></div>'}</div></div>`);
   // 權益曲線：系統追蹤資金 vs 加權指數（同期間，起點＝100）
@@ -7848,6 +7850,8 @@ async function fetchLearning(){
     loadScoreCalib();
     loadFactorIC();
     try{lrnClampSync();}catch(e2){}
+    // P2-C B04：研究脈絡（策略版本/凍結日一致；run_id 列缺口；各區塊評估口徑見其標示）
+    try{tsCtx().then(()=>{const e=document.getElementById('lrn-ctx');if(e)e.textContent=tsCtxLine();});}catch(e2){}
   }catch(e){
     document.getElementById('ad-gate').style.display='none';
     document.getElementById('ad-main').style.display='block';
@@ -8984,6 +8988,20 @@ function renderSigFreshness(){
   html+='<div style="font-size:11px;color:var(--t3);margin-top:6px">訊號以收盤為基準、收盤後產生，最早下一交易日開盤成交；此處標示資料新鮮度與完整度，資料缺漏時請降低對訊號的信賴。</div></div>';
   el.innerHTML=html;el.style.display='';
 }
+// ★ 2026-11-11 P2-C B04（研究脈絡）：策略版本/凍結日取自單一事實來源 risk_basis
+//   （/api/public/summary risk.config_version＝strategy_version.config_hash[:12]），全頁一致、
+//   不前端猜值；run_id 後端未記錄→誠實列缺口（scan_run_id 綁定為既宣告的資料契約缺口）。
+async function tsCtx(){
+  if(window._tsCtx)return window._tsCtx;
+  try{const s=await(await fetch('/api/public/summary',{cache:'no-store'})).json();
+    window._tsCtx={cfg:(s.risk||{}).config_version||null,eff:(s.risk||{}).effective_at||null};}
+  catch(e){window._tsCtx={cfg:null,eff:null};}
+  return window._tsCtx;
+}
+function tsCtxLine(extra){
+  const c=window._tsCtx||{};
+  return `研究脈絡：策略版本 ${c.cfg?('champion-'+c.cfg):'未取得'}${c.eff?'（參數凍結日 '+esc2(String(c.eff))+'）':''}${extra||''} · run_id：後端未記錄（資料契約缺口）`;
+}
 // P2-B B03：移除單一篩選或重置全部（只動 select 值與重繪，不保存、不動資料）
 function sigClearFilter(k){
   if(k==='dir'||k==='all')document.getElementById('sig-filter-dir').value='';
@@ -9008,6 +9026,10 @@ function renderSignals(){
   renderSigFreshness();
   const _sd=(_state&&_state.last_scan_time)?new Date(_state.last_scan_time):null;
   const scanDateStr=(_sd&&!isNaN(_sd))?_sd.toLocaleDateString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric'}):'—';
+  // P2-C B04：研究脈絡行（策略版本/凍結日/批次 as_of；run_id 列缺口）
+  {const cx=document.getElementById('sig-ctx');
+   if(cx){if(window._tsCtx)cx.textContent=tsCtxLine(` · 批次 ${scanDateStr}${_sd?' '+_sd.toLocaleTimeString('zh-TW',{hour12:false,timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}):''}`);
+     else tsCtx().then(()=>{try{if(window._curPage==='signals')renderSignals();}catch(e){}});}}
   if(!sigs.length){container.innerHTML='<div class="empty"><div class="empty-label">訊號</div>無符合條件訊號</div>';return;}
   container.innerHTML=sigs.map(s=>{
     const isBuy=s.direction==='buy';
