@@ -1857,6 +1857,14 @@ def api_fundamentals(code: str):
     except Exception as e:
         logger.error(f"api_fundamentals: {e}"); return jsonify({"error": str(e)}), 500
 
+# ★ 2026-11-11 LIVE13：現金殖利率異常上限。台股正常現金殖利率罕見 >15%，超過多為資料問題
+# （除權息基準／面額變更／拆分／幣別／單位錯置）。此處僅作「顯示層」隔離：標示待核對、不當高殖利率、
+# 不進「高殖利率」篩選；未核對的異常值不得拿來加分或標高殖利率。
+# 註：計分面（fund_score._valuation 的殖利率加分 → 正式訊號 fund_adjustment）屬 risk:champion，
+# 需使用者核准＋OOS 後另行處理，本處不改計分。
+YIELD_ANOMALY_PCT = 15.0
+
+
 @app.route("/api/fundamentals_radar")
 def api_fundamentals_radar():
     """營收動能榜：不看 K 線，直接用月營收＋估值在全市場找基本面轉強的公司。"""
@@ -1885,19 +1893,28 @@ def api_fundamentals_radar():
             except Exception: pe = None
             try: y = float(y) if y not in (None, "", "-") else None
             except Exception: y = None
+            # ★ LIVE13：殖利率異常（>15%）隔離——不得當作高殖利率條件（顯示仍保留原值並標示待核對）
+            y_anom = (y is not None and y > YIELD_ANOMALY_PCT)
+            y_ok = (y if (y is not None and not y_anom) else None)
             ok = False
             if kind == "growth":  ok = yoy >= 20 and (cum is None or cum >= 10)
             elif kind == "accel": ok = yoy >= 15 and cum is not None and (yoy - cum) >= 8 and (mom is None or mom > 0)
-            elif kind == "value": ok = yoy > 0 and pe is not None and 0 < pe <= 15 and (y or 0) >= 4
+            elif kind == "value": ok = yoy > 0 and pe is not None and 0 < pe <= 15 and (y_ok or 0) >= 4
             elif kind == "all": ok = True   # 2026-10-28 基本面雷達（Design 定稿）：前端自行套用六種預設篩選
             if not ok: continue
             g = _growth(r, []); vv = _valuation(v)
             lite = round((g["got"] + (vv["got"] if vv else 0)) / (g["max"] + (vv["max"] if vv else 0)) * 100) if g else None
             rows.append({"code": code, "name": r.get("name"), "sector": r.get("sector_name"), "period": r.get("period"),
                          "revenue_yi": round(amt / 100000, 1), "yoy": yoy, "mom": mom, "cum_yoy": cum,
-                         "pe": pe, "yield": y, "score": lite, "has_signal": code in sig_codes})
-        rows.sort(key=lambda x: ((x.get("score") or 0), (x.get("yoy") if kind != "value" else x.get("yield")) or 0), reverse=True)
-        return jsonify({"kind": kind, "count": len(rows), "rows": rows[:(400 if kind == "all" else 60)]})
+                         "pe": pe, "yield": y, "yield_anomaly": y_anom, "score": lite, "has_signal": code in sig_codes})
+        # ★ LIVE13：value 排序改用已隔離異常的 yield（異常值不得把自己排到高殖利率榜首）
+        def _sort_key(x):
+            yv = x.get("yield")
+            yv = None if (yv is not None and yv > YIELD_ANOMALY_PCT) else yv
+            return ((x.get("score") or 0), (x.get("yoy") if kind != "value" else yv) or 0)
+        rows.sort(key=_sort_key, reverse=True)
+        return jsonify({"kind": kind, "count": len(rows), "rows": rows[:(400 if kind == "all" else 60)],
+                        "yield_anomaly_pct": YIELD_ANOMALY_PCT})
     except Exception as e:
         logger.error(f"api_fundamentals_radar: {e}"); return jsonify({"error": str(e)}), 500
 
