@@ -484,6 +484,8 @@ def portfolio_risk(open_rows: List[Dict], balance: float = None) -> Dict:
             "largest": {"code": largest.get("code"), "name": largest.get("name"),
                         "value": round(largest["value"], 0), "pct": pct(largest["value"])},
             "scenarios": scenarios, "flags": flags,
+            "loss_basis": "最壞同時停損＝各部位（進場價−停損價）×股數之總和，未含手續費/稅與跳空；"
+                          "實際遇開盤跳空或流動性不足時損失可能超過此數，非實損上限。",
             "note": "情境為 beta=1 簡化假設（部位隨大盤等比變動），非精確個股 beta；僅供組合風險概覽，不構成投資建議。"}
 
 
