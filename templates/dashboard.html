@@ -5908,7 +5908,7 @@ function v5TabOv(){
   const score=`<section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>系統評分</h2><span class="o-mt">技術 40% · 籌碼 30% · 基本面 30%</span></div></div><div class="o-cb" style="display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;align-items:flex-end;gap:14px"><span style="font:500 64px/60px var(--sans);letter-spacing:-.04em">${sc.tot??'—'}</span><span style="padding-bottom:6px"><span style="display:block;font:600 15px/20px var(--sans)">${sc.lab}</span><span style="display:block;font-size:12px;color:#a1a1a8">本頁規則計算 · 非掃描訊號分數</span></span></div>
     <div style="display:flex;flex-direction:column;gap:10px">${bar('技術面',sc.tech)}${bar('籌碼面',sc.chip)}${bar('基本面',sc.fund)}</div>
-    <div><div class="o-lbl" style="margin-bottom:2px">關鍵價位</div>${v5Lv()}</div>
+    <div><div class="o-lbl" style="margin-bottom:2px">關鍵價位${info.live?'（含今日暫定K棒，未收盤）':''}</div>${v5Lv()}</div>
     <div class="o-inset" style="font-size:12px;line-height:18px;color:#a1a1a8">${plan}</div></div></section>`;
   // 研究摘要
   const it=((d.indicator_reading||{}).items||[]),ins=(fm&&fm.insights)||[];
@@ -5917,7 +5917,7 @@ function v5TabOv(){
   const sr=(d.indicators||{}).support_resistance||{};
   const act=sg?`已有${sg.direction==='buy'?'多':'空'}方訊號（評分 ${v5E(sg.score)}）：進場 ${v5F(sg.entry_zone_low)}–${v5F(sg.entry_zone_high)}、停損 ${v5F(sg.stop_loss)}、目標 ${v5F(sg.tp1)}。`:`尚未觸發訊號。${sr.nearest_resistance?`最近壓力 <b>${v5F(sr.nearest_resistance)}</b>、支撐 <b>${v5F(sr.nearest_support)}</b>，`:''}收盤後掃描符合條件時會產生訊號。`;
   const ul=(a,ic,c)=>a.length?a.map(s=>`<div style="display:flex;gap:8px;font-size:13px;line-height:20px"><span style="flex:none;color:${c}">${ic}</span><span>${v5E(s)}</span></div>`).join(''):'<div class="o-lbl">—</div>';
-  const summ=`<section class="o-card o-c12"><div class="o-ch"><div><h2>研究摘要</h2><span class="o-mt">依技術、籌碼、財報規則自動整理 · ${v5E((info.quote_date||'').slice(5).replace('-','/'))} 收盤</span></div><span class="o-tag r-dk">結論：${sc.lab}</span></div>
+  const summ=`<section class="o-card o-c12"><div class="o-ch"><div><h2>研究摘要</h2><span class="o-mt">依技術、籌碼、財報規則自動整理 · ${v5E((info.quote_date||'').slice(5).replace('-','/'))} ${info.live?'盤中（暫定，未收盤——今日K棒未完成，收盤後數字可能不同）':'收盤'}</span></div><span class="o-tag r-dk">結論：${sc.lab}</span></div>
     <div class="o-cb r-3"><div style="display:flex;flex-direction:column;gap:8px"><div class="o-lbl">多方理由</div>${ul(bull,'▲','var(--o-up)')}</div><div style="display:flex;flex-direction:column;gap:8px"><div class="o-lbl">留意事項</div>${ul(risk,'◆','var(--warn)')}</div>
     <div class="o-inset" style="display:flex;flex-direction:column;gap:10px;background:var(--acc-soft)"><div class="o-lbl" style="color:var(--acc)">操作建議</div><div style="font:500 14px/22px var(--sans)">${act}</div><div class="o-row" style="gap:8px;flex-wrap:wrap">${_me&&_me.user?`<button class="btn primary sm" onclick="mwAlertOpen('${v5E(info.code)}','${escA(info.name||'')}',${info.close??"''"})">設價格提醒</button>`:''}<span>${wlStar(d.ticker)}</span></div></div></div></section>`;
   // 基本面體檢
@@ -5994,7 +5994,7 @@ function v5TabTech(){
     const mx=Math.max(...bins)||1,px=b[b.length-1].c,cur=Math.min(n-1,Math.floor((px-lo)/st)),top=bins.indexOf(mx);
     vpB=bins.map((v,i)=>({i,v})).reverse().map(({i,v})=>`<div class="r-vp"${i===cur?' style="color:var(--ink)"':''}><span>${v5F(lo+st*(i+.5),px>1000?0:1)}</span><i style="width:${(v/mx*100).toFixed(0)}%;background:${i===cur?'var(--ink)':i===top?'var(--acc)':'var(--s3)'}"></i></div>`).join('')+`<div style="font-size:11px;color:var(--t3);margin-top:6px">黑色為現價所在區間，紫色為最大量區 ${v5F(lo+st*top,0)}–${v5F(lo+st*(top+1),0)}。</div>`;}
   const vpC=v5Card('o-c4','量價分布','近 60 日各價位成交量',`<div style="display:flex;flex-direction:column;gap:4px">${vpB}</div>`);
-  const lvC=`<section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>關鍵價位</h2><span class="o-mt">依支撐壓力與均線</span></div></div><div class="o-cb">${v5Lv()}</div></section>`;
+  const lvC=`<section class="o-card o-dark o-c4"><div class="o-ch"><div><h2>關鍵價位</h2><span class="o-mt">依支撐壓力與均線${(_v5.d&&_v5.d.info&&_v5.d.info.live)?'（含今日暫定K棒，未收盤）':''}</span></div></div><div class="o-cb">${v5Lv()}</div></section>`;
   return techC+perfC+vpC+lvC;
 }
 function v5TabChip(){
@@ -6153,7 +6153,7 @@ function v5Render(el,d){
       <div style="display:flex;align-items:center;gap:14px;min-width:0">${v4oAv(info.name,0).replace('o-av','o-av r-av56')}<div style="min-width:0"><div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><span class="o-big" style="font-size:36px;line-height:42px">${v5F(info.close)}</span><span class="o-tag ${v5C(info.change_pct)}" style="height:26px;font-size:13px">${v3Arr(info.change_pct)}${v5F(Math.abs(ch),2)} · ${v5F(Math.abs(info.change_pct),2)}%</span></div><div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">${tags.join('')}</div></div></div>
       <div class="r-ohlc"><div class="o-stat">開盤<b>${v5F(OP)}</b></div><div class="o-stat">最高<b class="up">${v5F(HI)}</b></div><div class="o-stat">最低<b class="down">${v5F(LO)}</b></div><div class="o-stat">昨收<b>${v5F(prev)}</b></div><div class="o-stat">成交量<b>${v5F(info.volume_lots,0)} 張</b></div><div class="o-stat">成交值<b>${info.volume_lots?v5F(info.close*info.volume_lots*1000/1e8,1)+' 億':'—'}</b></div></div></div>
       <div class="r-qd"><div class="o-stat">漲停／跌停<b><span class="up">${v5F(q.limit_up,dg)}</span> / <span class="down">${v5F(q.limit_down,dg)}</span></b></div><div class="o-stat">振幅<b>${amp!=null?v5F(amp,2)+'%':'—'}</b></div><div class="o-stat">本益比<b>${v5F(val.pe,1)}</b></div><div class="o-stat">股價淨值比<b>${v5F(val.pb,2)}</b></div><div class="o-stat">殖利率<b>${v5F(val.yield_pct,2)}%</b></div><div class="o-stat">規模<b>${v5E(info.size_cat||'—')}</b></div><div class="o-stat">掃描池<b>${info.in_scan_universe?'在內':'未達門檻'}</b></div>
-        <div class="o-stat">52 週區間<b>${v5F(lo52,dg)} – ${v5F(hi52,dg)}</b>${pos!=null?`<div class="o-pos" style="margin-top:7px;height:4px"><i style="left:${pos.toFixed(0)}%;width:10px;height:10px;margin-left:-5px;top:-3px"></i></div>`:''}</div></div></section>
+        <div class="o-stat">52 週區間<b>${v5F(lo52,dg)} – ${v5F(hi52,dg)}</b>${pos!=null?`<div class="o-pos" style="margin-top:7px;height:4px"><i style="left:${pos.toFixed(0)}%;width:10px;height:10px;margin-left:-5px;top:-3px"></i></div>`:''}</div></div>${info.live?`<div style="font-size:11px;color:var(--t3);padding:0 2px 6px">⏱ 價格為盤中即時；本益比／淨值比／殖利率為官方收盤後估值（非盤中同一時點），成交量為暫定值、收盤後以官方日線為準。</div>`:''}</section>
     <nav class="r-tabs" id="v5-tabs" aria-label="個股研究分頁">${[['ov','總覽'],['tech','技術'],['chip','籌碼'],['fin','財務'],['co','公司']].map(([k,n2])=>`<button data-t="${k}" onclick="v5Set('tab','${k}')">${n2}</button>`).join('')}</nav>
     <div id="v5-body"></div>
     <div class="o-foot"><b>i</b><span>評分與研究摘要為本頁依技術、籌碼、財報規則計算，不構成投資建議。資料來源：證交所、櫃買中心、FinMind；財報為最新公告季度。</span></div>
