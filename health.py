@@ -188,7 +188,8 @@ def check_freshness():
         st = revenue_status()
         e = st["expected_period"]
         if st.get("n_total"):
-            pct = round(st["n_expected"] / st["n_total"] * 100)
+            # ★ LIVE12：分子＝已公布本期(n_expected)、分母＝全市場(n_total)；夾在 0~100%，超出即回報母體版本差異
+            pct = min(100, round(st["n_expected"] / st["n_total"] * 100))
             from fundamentals import _taipei_now
             early = _taipei_now().day <= 10     # 法定截止日(10日)前，公司陸續公告，覆蓋率低屬正常
             lvl = "ok" if pct >= 90 else ("info" if early else ("warn" if st.get("in_window") else "info"))

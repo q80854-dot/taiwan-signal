@@ -314,6 +314,10 @@ def revenue_status(code: str = "") -> Dict:
     return {"expected_period": exp, "have_period": have or None, "is_latest": have >= exp if have else False,
             "fetched_at": _rev_state.get("fetched_at"), "n_expected": _rev_state.get("n_expected"),
             "n_total": _rev_state.get("n_total"), "mops_added": _rev_state.get("mops_added"),
+            # ★ 2026-11-11 LIVE12：欄位語意易混（n_expected＝已公布本期家數=分子、n_total＝全市場總數=分母）。
+            # 另給明確命名的別名，前端一律用此，避免再出現「1988/1849 已公布」這種分子分母顛倒、>100% 的顯示。
+            "received_for_period": _rev_state.get("n_expected"),   # 已公布本期營收家數（分子）
+            "universe_total": _rev_state.get("n_total"),           # 全市場有營收資料總家數（分母）
             "source": cur.get("source"), "in_window": n.day <= 15,
             "deadline": f"{n.year}/{n.month:02d}/10 前（公開發行公司法定申報截止日）" if n.day <= 15 else ""}
 
