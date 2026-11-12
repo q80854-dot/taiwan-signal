@@ -8861,7 +8861,9 @@ function v4oWorld(){
   const el=document.getElementById('v4o-mk');if(!el)return;
   const W=_world.data||{},mo=(_v3State||{}).market_overview||{},I=mo.index||{};
   const find=(g,k)=>((W[g]||[]).find(x=>x.key===k))||{};
-  const wv=(g,k,n,tag,dg)=>{const x=find(g,k);return {n:n||x.name,tag,price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,dg};};
+  // LIVE08：逐項 note 帶來源資料日（該標的最後一根日線的交易日）；後端沒給就不標、不冒充
+  const _wN=(x,base)=>{const d=x&&x.asof?_wAd(x.asof):'';return d?(d+(base?' '+base:'')):(base||undefined);};
+  const wv=(g,k,n,tag,dg)=>{const x=find(g,k);return {n:n||x.name,tag,price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,dg,note:_wN(x,'日線')};};
   const ser=(_v3Hist&&_v3Hist.series)||[],lb=ser[ser.length-1]||{};
   const tw={n:'加權指數',tag:'TW',price:(I.twii||{}).price??lb.c,chg:(I.twii||{}).chg,spark:ser.slice(-22).map(p=>p.c),lo:lb.l,hi:lb.h};
   const tp={n:'上櫃指數',tag:'TW',price:(I.tpex||{}).price,chg:(I.tpex||{}).chg};
@@ -8869,9 +8871,9 @@ function v4oWorld(){
   const fo={n:'外資動向',tag:fd||'TW',vtxt:(typeof fn==='number')?(fn>=0?'買超 ':'賣超 ')+v3Fmt(Math.abs(fn)/1e8,0)+' 億':'暫無',ctxt:'外資及陸資現貨',ccls:v3Cls(fn),note:'上市'};
   const sets={
     all:[tw,tp,wv('indices','sp500','S&P 500','US'),wv('futures','vix','VIX','US'),wv('fx','dxy','美元指數','DXY'),wv('commodities','gold','黃金','XAU',1),wv('crypto','btc','比特幣','BTC',0),fo],
-    idx:[tw,tp,...(W.indices||[]).map(x=>({n:x.name,tag:'',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi})),...(W.futures||[]).map(x=>({n:x.name,tag:'期',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi}))],
-    fx:[...(W.fx||[]).map(x=>({n:x.name,tag:'FX',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,dg:x.key==='dxy'?2:3})),...(W.commodities||[]).map(x=>({n:x.name,tag:'商品',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi})),...(W.bonds||[]).map(x=>({n:x.name,tag:'%',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,dg:3}))],
-    crypto:(W.crypto||[]).map(x=>({n:x.name,tag:x.key.toUpperCase(),price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,dg:0,note:'24h'}))
+    idx:[tw,tp,...(W.indices||[]).map(x=>({n:x.name,tag:'',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,note:_wN(x,'日線')})),...(W.futures||[]).map(x=>({n:x.name,tag:'期',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,note:_wN(x,'日線')}))],
+    fx:[...(W.fx||[]).map(x=>({n:x.name,tag:'FX',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,dg:x.key==='dxy'?2:3,note:_wN(x,'日線')})),...(W.commodities||[]).map(x=>({n:x.name,tag:'商品',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,note:_wN(x,'日線')})),...(W.bonds||[]).map(x=>({n:x.name,tag:'%',price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,dg:3,note:_wN(x,'日線')}))],
+    crypto:(W.crypto||[]).map(x=>({n:x.name,tag:x.key.toUpperCase(),price:x.price,chg:x.chg,spark:x.spark,lo:x.lo,hi:x.hi,dg:0,note:_wN(x,'24h')}))
   };
   const list=sets[_v4o.wtab]||sets.all;
   el.innerHTML=list.length?list.map(v4oMk).join(''):'<div class="o-lbl" style="padding:12px 0">暫無資料</div>';
@@ -9427,9 +9429,12 @@ function _wcard(it){
   const arrow=(!it.ok||c==null)?'':up?'▲':down?'▼':'';
   const val=(it.ok&&it.price!=null)?_fmtN(it.price,2):'<span style="color:var(--t3);font-size:13px;font-weight:500">暫無</span>';
   const chg=(it.ok&&c!=null)?`${arrow} ${it.chg_pt!=null?_sg(it.chg_pt,2):''}（${_sg(c,2)}%）`:'';
+  // LIVE08 資料契約：逐項顯示來源資料日（該標的最後一根日線的交易日），後端沒給就不顯示、不以全板時間冒充
+  const asof=it.asof?`<div class="wc" style="color:var(--t3);font-size:10px" title="此標的資料自身最後交易日（日線，延遲）">資料日 ${escH(_wAd(it.asof))}</div>`:'';
   return `<div class="wcard"><div class="wn" title="${escH(it.name)}">${escH(it.name)}</div>`
-    +`<div class="wp" style="color:${col}">${val}</div><div class="wc" style="color:${col}">${chg}</div></div>`;
+    +`<div class="wp" style="color:${col}">${val}</div><div class="wc" style="color:${col}">${chg}</div>${asof}</div>`;
 }
+const _wAd=a=>a?String(a).slice(5).replace('-','/'):'';
 const _wgrid=list=>`<div class="wgrid">${(list||[]).map(_wcard).join('')}</div>`;
 function worldDraw(){
   try{v4oWorld();}catch(e){}

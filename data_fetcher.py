@@ -509,9 +509,13 @@ def _fetch_yf_single(sym: str, valid_range: tuple = None) -> Optional[Dict]:
             pv = float(close.iloc[-2])
             if valid_range and not (valid_range[0] < p < valid_range[1]):
                 continue
+            try:
+                _asof = str(h.index[-1].date())   # 資料自身最後一根日線的交易日（來源時點，日粒度）
+            except Exception:
+                _asof = None
             return {"price": round(p,2), "prev": round(pv,2),
                     "chg": round((p-pv)/pv*100,2), "chg_pt": round(p-pv,2),
-                    "source": "yfinance"}
+                    "source": "yfinance", "asof": _asof}
         except Exception as e:
             logger.warning(f"{sym} {period}: {e}")
         time.sleep(0.2)
@@ -856,8 +860,12 @@ def _fetch_yf_board(sym: str, valid_range: tuple = None) -> Optional[Dict]:
     p, pv = float(close.iloc[-1]), float(close.iloc[-2])
     if valid_range and not (valid_range[0] < p < valid_range[1]):
         return _fetch_yf_single(sym, valid_range)
+    try:
+        _asof = str(h.index[-1].date())   # 資料自身最後一根日線的交易日（來源時點，日粒度）
+    except Exception:
+        _asof = None
     out = {"price": round(p, 2), "prev": round(pv, 2), "chg": round((p - pv) / pv * 100, 2),
-           "chg_pt": round(p - pv, 2), "source": "yfinance",
+           "chg_pt": round(p - pv, 2), "source": "yfinance", "asof": _asof,
            "spark": [round(float(x), 4) for x in close.tolist()[-22:]]}
     try:
         out["lo"], out["hi"] = round(float(h["Low"].iloc[-1]), 4), round(float(h["High"].iloc[-1]), 4)
@@ -868,8 +876,9 @@ def _fetch_yf_board(sym: str, valid_range: tuple = None) -> Optional[Dict]:
 
 def fetch_world_board(force: bool = False) -> Dict:
     """首頁全球市場看板。回傳 {futures:[...], indices:[...], commodities:[...], fx:[...],
-    bonds:[...], at: epoch}。每個項目 {key, name, price, chg(%), chg_pt, ok}；抓不到 ok=False、
-    price=None（顯示暫無，不編造）。整體以記憶體快取 600 秒，另由排程預熱，首頁讀到的是快取。"""
+    bonds:[...], at: epoch}。每個項目 {key, name, price, chg(%), chg_pt, ok, asof}；asof＝資料
+    自身最後一根日線的交易日（來源時點，日粒度；LIVE08 資料契約——不以全板快取時間冒充逐項
+    來源時間），取不到＝None。抓不到 ok=False、price=None（顯示暫無，不編造）。整體以記憶體快取 600 秒，另由排程預熱，首頁讀到的是快取。"""
     if not force:
         if c := _cache_get("world_board", 600):
             return c
@@ -887,8 +896,10 @@ def fetch_world_board(force: bool = False) -> Dict:
         if r and r.get("price") is not None:
             return (grp, {"key": key, "name": name, "price": r["price"],
                           "chg": r.get("chg"), "chg_pt": r.get("chg_pt"), "ok": True,
-                          "spark": r.get("spark"), "lo": r.get("lo"), "hi": r.get("hi")})
-        return (grp, {"key": key, "name": name, "price": None, "chg": None, "chg_pt": None, "ok": False})
+                          "spark": r.get("spark"), "lo": r.get("lo"), "hi": r.get("hi"),
+                          "asof": r.get("asof")})
+        return (grp, {"key": key, "name": name, "price": None, "chg": None, "chg_pt": None,
+                      "ok": False, "asof": None})
 
     out = {g: [] for g in _WORLD_GROUPS}
     try:
