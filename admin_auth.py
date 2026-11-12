@@ -79,7 +79,12 @@ def _retry_after(ip):
     with _lock:
         _gfails[:] = [t for t in _gfails if now - t < WINDOW]
         lst = [t for t in _fails.get(ip, []) if now - t < WINDOW]
-        _fails[ip] = lst
+        # ★ 2026-11-12（承接 security/hardening-auth-rate-limits 分支）：沒有失敗紀錄的來源不留空殼，
+        # 否則每個查詢過的 IP 都會永久佔一格（記憶體只增不減）。
+        if lst:
+            _fails[ip] = lst
+        else:
+            _fails.pop(ip, None)
         if len(lst) >= PER_IP_MAX:
             return int(WINDOW - (now - lst[0])) + 1
         if len(_gfails) >= GLOBAL_MAX:
@@ -90,6 +95,16 @@ def _retry_after(ip):
 def _record_fail(ip):
     now = time.time()
     with _lock:
+        if ip not in _fails and len(_fails) >= 5000:
+            for key, times in list(_fails.items()):
+                live = [t for t in times if now - t < WINDOW]
+                if live:
+                    _fails[key] = live
+                else:
+                    _fails.pop(key, None)
+            if len(_fails) >= 5000:
+                _gfails.append(now)          # 表仍滿：不再新增來源，全域限流照常累計（記憶體有上限）
+                return
         _fails.setdefault(ip, []).append(now)
         _gfails.append(now)
 

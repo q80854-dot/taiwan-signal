@@ -1715,6 +1715,7 @@ def api_admin_tools_run():
 
 
 @app.route("/api/admin/shadow/export.csv")
+@members.owner_required
 @admin_auth.admin_required
 def api_admin_export():
     try:

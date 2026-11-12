@@ -531,8 +531,18 @@ def auth_rate_ok(limit: int = 30, window: int = 600) -> bool:
     now = time.time()
     k = _ip()
     q = [t for t in _AUTH_RATE.get(k, []) if now - t < window]
-    if len(_AUTH_RATE) > 5000:
-        _AUTH_RATE.clear()
+    # ★ 2026-11-12（承接 security/hardening-auth-rate-limits 分支）：表滿時原本整張清空——
+    # 等於只要湊滿 5000 個來源，所有人（含正在被限流的攻擊者）的計數都被歸零。改為只清掉已過期
+    # 的鍵；清完仍滿就拒絕「新的」來源，既有來源的限流不受影響。
+    if k not in _AUTH_RATE and len(_AUTH_RATE) >= 5000:
+        for key, times in list(_AUTH_RATE.items()):
+            live = [t for t in times if now - t < window]
+            if live:
+                _AUTH_RATE[key] = live
+            else:
+                _AUTH_RATE.pop(key, None)
+        if len(_AUTH_RATE) >= 5000:
+            return False
     if len(q) >= limit:
         _AUTH_RATE[k] = q
         return False

@@ -64,8 +64,16 @@ def _hit(bucket: dict, key: str, limit: int, window: int = 60) -> bool:
     now = time.time()
     q = bucket.get(key)
     if q is None:
-        if len(bucket) > 8000:
-            bucket.clear()
+        if len(bucket) >= 8000:
+            # ★ 2026-11-12（承接 security/hardening-auth-rate-limits 分支）：表滿時只清已過期的鍵，
+            # 不整張清空（否則湊滿 8000 個來源就能把所有人的限流計數歸零）；清完仍滿則拒絕新來源。
+            for old_key, old_q in list(bucket.items()):
+                while old_q and now - old_q[0] > window:
+                    old_q.popleft()
+                if not old_q:
+                    bucket.pop(old_key, None)
+            if len(bucket) >= 8000:
+                return False
         q = bucket[key] = deque()
     while q and now - q[0] > window:
         q.popleft()
