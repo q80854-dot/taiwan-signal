@@ -41,7 +41,7 @@
 | S-P0-05 每檔每日只能一筆 | 屬實（當初設計） | 新建事件表屬大型 schema 變更，需先討論 | ⏸ |
 | S-P0-06 模型標籤 | 屬實 | 正名；新增 `target="champion"`（僅 final 樣本），只評估不落地 | ✅ |
 | S-P1-01 事件式狀態機 | — | 已有 pending／closed／unresolved（nodata、bad_risk、no_new_bars、no_fresh_price）＋ Champion 四狀態；完整事件表併入 S-P0-05 | 🟡 |
-| S-P1-02 過期價結算 | 屬實 | Research 與策略假想訊號皆改為 `no_fresh_price`。**正式訊號（`signals` 表）的結算未改** | 🟡 |
+| S-P1-02 過期價結算 | 屬實 | Research 與策略假想訊號皆改為 `no_fresh_price`；正式訊號到期時也先等「到期日當天或之後」的 K 棒（寬限 7 天），仍無才結算並註明 | ✅ |
 | S-P1-03 candidate ≠ sent | 屬實（2,511 vs 15） | `cohort_report()` 漏斗：candidate／sent／delivered／closed／champion_final；`filled` 留空 | ✅ |
 | S-P1-04 配對對照組 | 屬實 | 需重新設計抽樣（同日同產業同流動性），另案 | ⏸ |
 | S-P1-05 區塊拔靴敏感度 | — | 既有日叢集拔靴＋BH-FDR 保留；二維敏感度另案 | ⏸ |
