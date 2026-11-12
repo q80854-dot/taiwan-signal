@@ -2,8 +2,14 @@
 app.py — Flask 主應用 v1.2
 修正：改用 send_from_directory 繞過 Jinja2 解析 dashboard.html
 """
-import sys, os, signal, logging, threading
+import sys, os, signal, logging, threading, warnings
 from datetime import datetime, timezone, timedelta
+
+# ★ 2026-11-12 可觀測性：yfinance 內部對 pandas 3.x 的 inplace 棄用警告，每次抓價噴約 12 行，
+# 全市場掃描時每秒數十行，把真正的錯誤（掃描崩潰、結算失敗）完全淹沒在日誌裡。
+# 只過濾「yfinance 模組發出、訊息為 inplace 棄用」這一類，我們自己程式碼的警告照常顯示。
+warnings.filterwarnings("ignore", message=r"The inplace keyword in DataFrame\.\w+ is deprecated",
+                        module=r"yfinance")
 from flask import Flask, jsonify, request, send_from_directory
 from config import SYSTEM, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
 
@@ -574,6 +580,98 @@ def job_refresh_universe():
         refresh_universe_daily()
     except Exception as e: logger.error(f"job_refresh_universe: {e}")
 
+def _last_scan_tpe_date() -> str:
+    """最近一次「完成」的盤後掃描日（台北時間 YYYY-MM-DD）。last_scan_at 存 UTC ISO，
+    重啟後由資料庫還原；只有掃描真正跑完才會寫入，被砍掉的掃描不會寫。取不到回空字串。"""
+    try:
+        from scanner import scanner
+        raw = scanner.last_scan_at or ""
+        if not raw:
+            return ""
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(TZ_TAIPEI).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
+_SCAN_AUTORETRY_MAX = 2      # 每日自動補跑上限：防止「掃描→崩潰→重啟→補跑→崩潰」無限迴圈
+
+
+def _try_autoretry_scan(today: str, reason: str) -> bool:
+    """★ 2026-11-12：當日盤後掃描未完成時自動補跑一次（背景執行）。回傳是否已啟動補跑。
+    背景：2026-11-11 16:40 一次部署把進行中的掃描（第 22/27 批）砍掉，當天訊號、影子收集、
+    結算全部遺失；原本 watchdog 只發警示不補跑。推播只在掃描最後一步發出，被砍掉的掃描
+    不會推出任何訊號，所以補跑不會造成重複推播。run_daily_scan 自帶非阻塞鎖，不會雙跑。"""
+    try:
+        from scanner import scanner
+        from state_store import store
+        if scanner.is_scanning:
+            return False
+        st = store.get_meta("scan_autoretry", {}) or {}
+        n = int(st.get("n", 0)) if st.get("date") == today else 0
+        if n >= _SCAN_AUTORETRY_MAX:
+            logger.error(f"_try_autoretry_scan: 今日（{today}）已自動補跑 {n} 次仍未完成，停止補跑避免迴圈")
+            return False
+        store.set_meta("scan_autoretry", {"date": today, "n": n + 1, "reason": reason,
+                                          "at": datetime.now(TZ_TAIPEI).isoformat(timespec="seconds")})
+        threading.Thread(target=job_daily_scan, daemon=True, name="scan-autoretry").start()
+        logger.warning(f"_try_autoretry_scan: 今日盤後掃描未完成，已自動補跑（第 {n + 1} 次，原因：{reason}）")
+        return True
+    except Exception as e:
+        logger.error(f"_try_autoretry_scan: {e}", exc_info=True)
+        return False
+
+
+def job_scan_boot_catchup():
+    """★ 2026-11-12：啟動時補跑被砍掉的盤後掃描。條件：交易日、台北 16:35～21:00、
+    今日盤後掃描尚未完成、目前沒有掃描在跑。典型情境＝部署／重啟剛好砍掉進行中的掃描。"""
+    try:
+        now = datetime.now(TZ_TAIPEI)
+        if now.weekday() >= 5:
+            return
+        hm = now.hour * 60 + now.minute
+        if not (16 * 60 + 35 <= hm <= 21 * 60):
+            return
+        from data_fetcher import get_market_session
+        if get_market_session().get("session") == "holiday":
+            return
+        today = now.strftime("%Y-%m-%d")
+        if _last_scan_tpe_date() == today:
+            return
+        if _try_autoretry_scan(today, "啟動補跑（疑似部署／重啟砍掉掃描）"):
+            try:
+                from telegram_bot import send_alert
+                send_alert(f"🔁 系統重啟後偵測到今日（{today}）盤後掃描未完成，已自動補跑（背景執行，完成後照常推播）", "warning")
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f"job_scan_boot_catchup: {e}", exc_info=True)
+
+
+def job_shadow_resolve(reason: str = "排程"):
+    """★ 2026-11-12：影子／策略結算與掃描解耦。原本 shadow.resolve_pending() 只在盤後掃描的
+    最後一步呼叫，掃描一被砍（部署、崩潰）就整天不結算——2026-11-11 起「已結算 8156」三十多小時
+    不動、逾期卡單修正也遲遲無法生效，即此原因。本工作只讀資料庫既有日 K 快取（不對外連線、
+    不改訊號決策、可重複執行），於啟動後與每日盤後獨立執行。掃描進行中則跳過（由掃描收尾結算）。"""
+    try:
+        from scanner import scanner
+        if scanner.is_scanning:
+            logger.info(f"⏰ 影子結算（{reason}）：掃描進行中，交由掃描收尾結算，本次跳過")
+            return
+        import shadow
+        r = shadow.resolve_pending()
+        logger.info(f"⏰ 影子結算（{reason}）完成：{r}")
+        try:
+            from strategies import store as _ss
+            logger.info(f"⏰ 策略假想訊號結算（{reason}）完成：{_ss.resolve_pending()}")
+        except Exception as e:
+            logger.warning(f"job_shadow_resolve strategies: {e}")
+    except Exception as e:
+        logger.error(f"job_shadow_resolve: {e}", exc_info=True)
+
+
 def job_scan_watchdog():
     # ★ 新增：2026-09-16——稽核時發現過一次長達 5.5 天（2026-09-03 17:00 UTC～
     # 2026-09-09 03:34 UTC）完全無 log 的服務停擺，期間 3 個交易日完全沒有掃描
@@ -598,14 +696,22 @@ def job_scan_watchdog():
         from scanner import scanner
         from telegram_bot import send_alert
         today = datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
-        last  = (scanner.last_scan_at or "")[:10]
+        last  = _last_scan_tpe_date()
+        # ★ 2026-11-12：掃描仍在進行中＝慢、不是沒跑，原本會誤報「沒有執行」，改為只記錄不告警
+        if last != today and scanner.is_scanning:
+            logger.info("job_scan_watchdog: 今日掃描仍在進行中（尚未跑完），不告警")
+            return
         if last != today:
+            # ★ 2026-11-12：原本只發警示、要人手動補跑（2026-11-11 掃描被部署砍掉即因此整天遺失）。
+            # 改為自動補跑一次（每日上限 _SCAN_AUTORETRY_MAX），警示內容同步說明是否已補跑。
+            retried = _try_autoretry_scan(today, "17:00 看門狗偵測未完成")
             msg = (
-                f"🚨 排程異常：預定 16:30 的每日掃描今天（{today}）似乎沒有執行\n"
-                f"最後一次掃描時間：{scanner.last_scan_at or '從未執行過'}\n"
-                f"請檢查 Render 服務狀態，或至網站手動觸發「立即掃描」"
+                f"🚨 排程異常：預定 16:30 的每日掃描今天（{today}）沒有跑完\n"
+                f"最後一次完成的掃描：{scanner.last_scan_at or '從未執行過'}\n"
+                + ("✅ 已自動補跑今日掃描（背景執行，完成後照常推播）" if retried else
+                   "⚠️ 今日自動補跑已達上限仍未完成，請檢查 Render 服務狀態或至網站手動觸發「立即掃描」")
             )
-            logger.error(f"job_scan_watchdog: 今日掃描未執行，last_scan_at={scanner.last_scan_at}")
+            logger.error(f"job_scan_watchdog: 今日掃描未完成，last_scan_at={scanner.last_scan_at}，自動補跑={retried}")
             send_alert(msg, "error")
         else:
             logger.info(f"job_scan_watchdog: 今日掃描已正常執行 last_scan_at={scanner.last_scan_at}")
@@ -833,6 +939,10 @@ def setup_scheduler():
     scheduler.add_job(job_warm_instrument, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=20), id="warm_instrument_boot", replace_existing=True)
     scheduler.add_job(job_rescale_open_once, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=60), id="rescale_open_once", replace_existing=True)
     scheduler.add_job(job_report_boot_catchup, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=120), id="report_boot_catchup", replace_existing=True)
+    # ★ 2026-11-12：結算與掃描解耦＋被砍掉的掃描自動補跑（見 job_shadow_resolve／job_scan_boot_catchup）
+    scheduler.add_job(lambda: job_shadow_resolve("啟動補結算"), "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=210), id="shadow_resolve_boot", replace_existing=True)
+    scheduler.add_job(job_scan_boot_catchup, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=240), id="scan_boot_catchup", replace_existing=True)
+    scheduler.add_job(lambda: job_shadow_resolve("盤後獨立結算"), CronTrigger(hour=17, minute=25, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="shadow_resolve_daily", replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     scheduler.add_job(job_warm_instrument, "interval", minutes=20, id="warm_instrument", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_refresh_universe_if_stale, CronTrigger(hour="15-21", minute=35, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="refresh_universe_stale", replace_existing=True, max_instances=1, coalesce=True)
     # 2026-10-08：各資料是否已更新到應有日期，沒到就只重抓那一種（freshness.py）。
