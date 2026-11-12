@@ -273,6 +273,19 @@ class TWScanEngine:
         all_signals   = []
         scanned_count = 0
         error_count   = 0
+        # ★ 2026-11-12 掃描錯誤逐類別明細（LIVE14 缺口補齊）：按類型（逾時/例外類名）與市場
+        # （上市/上櫃）聚計、記受影響標的（上限 30 檔）——健檢可逐類別呈現，不再只有總數。
+        err_detail = {"timeout": 0, "exception": 0, "by_exc": {}, "by_market": {}, "tickers": []}
+
+        def _rec_err(kind, tk, exc=None):
+            err_detail[kind] = err_detail.get(kind, 0) + 1
+            mk = "上櫃" if str(tk).endswith(".TWO") else ("上市" if str(tk).endswith(".TW") else "其他")
+            err_detail["by_market"][mk] = err_detail["by_market"].get(mk, 0) + 1
+            if exc is not None:
+                nm = type(exc).__name__
+                err_detail["by_exc"][nm] = err_detail["by_exc"].get(nm, 0) + 1
+            if len(err_detail["tickers"]) < 30:
+                err_detail["tickers"].append(str(tk))
 
         # ★ 修正：2026-09-03——原本這裡是完全序列化：一檔一檔掃、每檔掃完固定
         # sleep(scan_delay_sec=1.5秒)，860 檔光是這個刻意的延遲就佔了約 21.5
@@ -317,9 +330,11 @@ class TWScanEngine:
                         scanned_count += 1
                     except concurrent.futures.TimeoutError:
                         error_count += 1
+                        _rec_err("timeout", ticker)
                         logger.warning(f"[{ticker}] 掃描逾時（{self._SCAN_SINGLE_TIMEOUT_SEC}秒），放棄這檔繼續下一檔")
                     except Exception as e:
                         error_count += 1
+                        _rec_err("exception", ticker, e)
                         logger.warning(f"[{ticker}] 掃描錯誤: {e}")
             if batch_idx < len(batches) - 1:
                 time.sleep(2)
@@ -491,6 +506,7 @@ class TWScanEngine:
             "duration_min":  round((time.time() - start_time) / 60, 1),
             "duration_sec":  round(time.time() - start_time, 1),
             "run_id":        run_id,
+            "errors_detail": err_detail if error_count else None,   # 無錯誤存 NULL、不存空殼
         }
         store.save_scan_history(stats)
         try:

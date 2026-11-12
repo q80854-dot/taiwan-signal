@@ -102,12 +102,27 @@ def check_engine():
     hist = store.get_scan_history(3)
     if hist:
         h = hist[0]
-        # ★ 2026-11-11 LIVE14：掃描錯誤不得被整體「異常 0」掩蓋——錯誤>0 一律 warn，並誠實標明
-        # scan_history 只存錯誤「數量」、未逐類別記錄（資料缺口），且錯誤可能代表部分標的未掃到、影響當日母體。
+        # ★ 2026-11-11 LIVE14：掃描錯誤不得被整體「異常 0」掩蓋——錯誤>0 一律 warn。
+        # ★ 2026-11-12 缺口補齊：scan_history 現有 errors_detail（逾時/例外類名/市場別/受影響標的），
+        # 有明細時逐類別呈現；舊列無明細者保留原誠實措辭（不假造）。
         _errn = h.get("errors") or 0
+        _ed = h.get("errors_detail") or None
+        if _errn and _ed:
+            _mk = "、".join(f"{k} {v}" for k, v in (_ed.get("by_market") or {}).items())
+            _ex = "、".join(f"{k}×{v}" for k, v in sorted((_ed.get("by_exc") or {}).items(), key=lambda x: -x[1])[:3])
+            _tk = (_ed.get("tickers") or [])[:5]
+            _err_txt = (f"；⚠ 本次掃描有 {_errn} 項錯誤——可能有標的未掃到（影響當日母體）。"
+                        f"逐類別：逾時 {_ed.get('timeout', 0)}、例外 {_ed.get('exception', 0)}"
+                        + (f"（{_ex}）" if _ex else "") + (f"；市場別：{_mk}" if _mk else "")
+                        + (f"；受影響標的（前 {len(_tk)}）：{'、'.join(_tk)}" if _tk else ""))
+        elif _errn:
+            _err_txt = (f"；⚠ 本次掃描有 {_errn} 項錯誤——可能有標的未掃到（影響當日母體）。"
+                        f"本筆為舊紀錄、無逐類別明細（2026-11-12 起記錄），來源別請見伺服器日誌")
+        else:
+            _err_txt = ""
         out.append(_c("最近一次掃描", "ok" if not _errn else "warn",
                       f"{h.get('scan_date')}　掃描 {h.get('scanned')} 檔、找到 {h.get('signals_found')}、發送 {h.get('signals_sent')}、錯誤 {_errn}、{h.get('duration_min')} 分鐘"
-                      + (f"；⚠ 本次掃描有 {_errn} 項錯誤——可能有標的未掃到（影響當日母體）。scan_history 僅存錯誤數、未逐類別記錄，來源別明細請見伺服器日誌" if _errn else "")))
+                      + _err_txt))
     else:
         out.append(_c("最近一次掃描", "unknown", "尚無掃描紀錄（無法判定）"))
     a = store.get_meta("last_scan_audit")

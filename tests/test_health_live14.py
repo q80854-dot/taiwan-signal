@@ -53,7 +53,8 @@ def test_scan_errors_flagged_with_population_note(monkeypatch):
     items = health.check_engine()
     scan = next(i for i in items if i["name"] == "最近一次掃描")
     assert scan["status"] == "warn"
-    assert "3" in scan["detail"] and "母體" in scan["detail"] and "未逐類別" in scan["detail"]
+    # ★ 2026-11-12 缺口補齊後：無 errors_detail 的舊列誠實標「無逐類別明細（2026-11-12 起記錄）」
+    assert "3" in scan["detail"] and "母體" in scan["detail"] and "無逐類別明細" in scan["detail"]
 
 
 def test_scan_no_errors_ok(monkeypatch):
