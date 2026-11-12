@@ -1212,7 +1212,11 @@ def cleanup_absurd_metrics(force: bool = False) -> dict:
         return {"ran": False, "error": str(e)}
 
 
-def resolve_pending(max_rows=8000):
+_RESOLVE_COLS = ("id, bar_date, ticker, kind, direction, status, entry, stop, tp1, tp2, tp3, expire_days, "
+                 "gap_pct, r1, r5, r10, r20, mfe_r, mae_r, bars_held, mae_bars, mfe_bars, tp1_before_sl")
+
+
+def resolve_pending(max_rows=30000):
     """掃描完成後呼叫：用資料庫已更新的日K快取結算（不對外連線）。
     只寫入『有變動』的列，並把 r5/r10 補齊給近 30 天的列。"""
     t0 = time.time()
@@ -1241,9 +1245,13 @@ def resolve_pending(max_rows=8000):
                 # 再生（線上日誌：每次結算都重複出現 bad_risk 2 筆、更新 3 筆），也白做工。
                 # ★ 2026-11-12（S-P1-04）：改為補到 r20 為止（原本只補到 r10）。先停損出場的列原本永遠拿不到
                 # 20 日報酬，配對比較只剩沒停損的列 → 系統性偏樂觀。回看由 30 天放寬為 45 天（20 根 K 棒約 28 天）。
-                "SELECT * FROM shadow_signals WHERE status='pending' "
+                # ★ 2026-11-12：到期延長為 60 天＋補到 r20 後，待處理列數會超過原本的 8000 上限（線上首次啟動即撈滿）。
+                # 原本由舊到新排序，撈滿時「最新」的未結案列會一直輪不到。改為：未結案（pending）優先、各自由舊到新；
+                # 已結案只補 r20 的列排在後面；上限提高到 30000（線上 8000 列約 5 秒）。
+                # 只取結算用得到的欄位（不含 features／alt_exits 等大欄位），上限提高後記憶體仍可控。
+                f"SELECT {_RESOLVE_COLS} FROM shadow_signals WHERE status='pending' "
                 "OR (status='closed' AND r20 IS NULL AND bar_date>=?) "
-                "ORDER BY bar_date LIMIT ?", (cutoff, max_rows)).fetchall()]
+                "ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, bar_date LIMIT ?", (cutoff, max_rows)).fetchall()]
         if not rows:
             logger.info("shadow: 結算完成，沒有需要處理的紀錄")
             return {"updated": 0, "closed": 0, "rows": 0}
