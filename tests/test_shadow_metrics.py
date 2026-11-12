@@ -114,4 +114,5 @@ def test_unresolved_rows_are_not_reselected_and_redirtied(monkeypatch):
     monkeypatch.setattr(shadow, "cleanup_absurd_metrics", lambda *a, **k: None)
     shadow.resolve_pending()
     sel = [q for q in seen if q.startswith("SELECT * FROM shadow_signals WHERE status='pending'")]
-    assert sel and "(status='closed' AND r10 IS NULL AND bar_date>=?)" in sel[0]
+    assert sel and "(status='closed' AND r20 IS NULL AND bar_date>=?)" in sel[0]   # 補到 r20（S-P1-04）；仍不含 unresolved
+    assert "unresolved" not in sel[0]

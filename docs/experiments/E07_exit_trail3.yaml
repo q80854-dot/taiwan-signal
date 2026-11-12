@@ -28,6 +28,7 @@ min_effect_r: 0.05
 success_rule: OOS 成對差的 95% CI 下界 > 0.05R，且縮尾後成對差的 95% CI 下界 > 0
 tail_dependent_rule: 成對差下界 > 0.05R 但縮尾後不成立 → 判定「靠極端值」，不建議採用
 failure_rule: OOS 成對差的 95% CI 上界 < 0.05R
+robustness_rule: supported 另須二維拔靴（訊號日 × 股票）95% 區間下界 > 0；只有日分群成立者判 fragile（不穩健），不提案、繼續累積（2026-11-12 加入，早於任何樣本外資料；依據 docs/research/MATCHED_AND_BOOTSTRAP_2020_2026.md）
 caveats:
   - 最長持有 60 天，定案比 Champion 慢約一個半月；累積到判定門檻可能需要四個月以上
   - 候選遠多於實際會做的單（同時最多 5 檔）；靠少數大單的方案在只做其中幾筆時變異極大

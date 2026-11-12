@@ -7806,7 +7806,7 @@ async function qcRun(key){
   }catch(e){bx.innerHTML='<div class="empty" style="padding:30px">質檢失敗：'+esc2(e.message)+'</div>';}
 }
 
-const AD_KIND={candidate:'候選',rejected:'被擋下',control:'對照'};
+const AD_KIND={candidate:'候選',rejected:'被擋下',control:'對照',matched:'配對對照'};
 function adGate(state,msg){
   document.getElementById('ad-main').style.display='none';
   document.getElementById('ad-gate').style.display='block';

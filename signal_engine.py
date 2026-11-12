@@ -687,6 +687,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                       f"止損 {round(abs(price-sl)/price*100,1)}% / TP1 +{round(abs(tp_info['tp1']-price)/price*100,1)}%")
         signal={
             "id":sig_id,"ticker":ticker,"code":code,"name":name,"sector":sector,"size_cat":size_cat,
+            "volume_lots":stock_info.get("volume_lots"),   # 2026-11-12：影子配對對照用（成交金額＝價×張數），不影響訊號
             "emoji":stock_info.get("emoji","📊"),"emoji_grade":emoji_g,
             "direction":direction,"direction_zh":"做多 📈" if direction=="buy" else "做空 📉",
             "score":score,"grade":grade,"action":action,

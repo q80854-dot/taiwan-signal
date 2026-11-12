@@ -24,6 +24,7 @@ min_oos_trades: 30
 min_effect_r: 0.05
 success_rule: OOS 平均淨 R 的 95% CI 下界 > 0.05R
 failure_rule: OOS 平均淨 R 的 95% CI 上界 < 0.05R
+robustness_rule: supported 另須二維拔靴（訊號日 × 股票）95% 區間下界 > 0；只有日分群成立者判 fragile（不穩健），不提案、繼續累積（2026-11-12 加入，早於任何樣本外資料；依據 docs/research/MATCHED_AND_BOOTSTRAP_2020_2026.md）
 caveats:
   - 重挫日本來就少（單日跌幅達熔斷門檻一年可能只有數次），累積到 8 個重挫日可能需要很久
   - 重挫日隔天常見跳空與劇烈反彈；放空另有券源、借券費率、強制回補與軋空風險，系統目前沒有這些資料
