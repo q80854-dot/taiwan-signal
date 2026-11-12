@@ -1274,6 +1274,83 @@ def finalize_champion_tracks(max_rows=5000, today=None) -> dict:
     return out
 
 
+def _safe_cohorts():
+    try:
+        return cohort_report()
+    except Exception as e:
+        logger.debug(f"cohort_report: {e}")
+        return None
+
+
+def data_quality_counts() -> dict:
+    """★ 2026-11-12（S-P0-02）：影子資料的不變量稽核計數（只讀）。正式資料庫不對外開放，
+    這些數字寫進結算工作的日誌，才能確認歷史髒資料（缺停損的對照組、±9e9 的 MFE/MAE 哨兵值）
+    是否真的已清乾淨——不是只憑「清洗程式有測試」就宣稱已修。"""
+    ensure_table()
+    from state_store import store
+    q = {
+        "closed_without_r": "status='closed' AND r_multiple IS NULL",
+        "closed_missing_stop": "status='closed' AND (stop IS NULL OR stop<=0 OR entry IS NULL OR entry<=0)",
+        "absurd_mfe_mae": "(ABS(mfe_r)>1000 OR ABS(mae_r)>1000)",
+        "absurd_r": "ABS(r_multiple)>50",
+        "champion_provisional": "champion_status='provisional'",
+        "champion_no_fresh_price": "champion_status='no_fresh_price'",
+        "champion_legacy_unverified": "champion_status='legacy_unverified'",
+        "champion_legacy_pending_reaudit": "status='closed' AND champion_status IS NULL AND champion_r IS NOT NULL",
+    }
+    out = {}
+    with store._conn() as conn:
+        for k, cond in q.items():
+            row = conn.execute(f"SELECT COUNT(*) AS n FROM shadow_signals WHERE {cond}").fetchone()
+            out[k] = int((dict(row) if row else {}).get("n") or 0)
+    return out
+
+
+def cohort_report() -> dict:
+    """★ 2026-11-12（S-P1-03／S-P1-08）候選漏斗與成熟度，多空分開。
+
+    漏斗：candidate（通過規則的全部候選）≠ sent（真的排入推播）≠ delivered（Telegram 確認收下）。
+    歷史匯出中 2,511 筆候選只有 15 筆 sent——把全部候選的統計當成「線上實績」會有嚴重的選擇偏差，
+    因此各階段筆數必須並列；且沒有券商成交回報，任何一階都不能稱為實際成交。
+
+    成熟度：停損通常比停利先發生，早結案的樣本偏向虧損；只看「已結案」會有截尾偏差。
+    因此另算「成熟訊號日」（該日候選已全部離開 pending）的平均 R，並揭露未成熟比例。"""
+    ensure_table()
+    from state_store import store
+    with store._conn() as conn:
+        rows = [dict(x) for x in conn.execute(
+            "SELECT bar_date, direction, status, sent, delivered, r_multiple, champion_r, champion_status "
+            "FROM shadow_signals WHERE kind='candidate'").fetchall()]
+    out = {}
+    for d in ("buy", "sell"):
+        rs = [r for r in rows if r.get("direction") == d]
+        by_day = {}
+        for r in rs:
+            by_day.setdefault(r["bar_date"], []).append(r)
+        mature_days = [k for k, v in by_day.items() if all(x.get("status") != "pending" for x in v)]
+        closed = [r for r in rs if r.get("status") == "closed" and r.get("r_multiple") is not None]
+        mature = [r for r in closed if r["bar_date"] in set(mature_days)]
+        avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
+        out[d] = {
+            "funnel": {"candidate": len(rs),
+                       "sent": sum(1 for r in rs if r.get("sent") == 1),
+                       "delivered": sum(1 for r in rs if r.get("delivered") == 1),
+                       "closed_valid_r": len(closed),
+                       "champion_final": sum(1 for r in rs if r.get("champion_status") == "final"),
+                       "filled": None},          # 無券商成交回報：誠實留空，不以推播數代替
+            "maturity": {"signal_days": len(by_day), "mature_days": len(mature_days),
+                         "pending": sum(1 for r in rs if r.get("status") == "pending"),
+                         "pending_share": round(sum(1 for r in rs if r.get("status") == "pending") / len(rs), 3) if rs else None,
+                         "unresolved": sum(1 for r in rs if r.get("status") == "unresolved"),
+                         "all_closed_avg_r": avg([r["r_multiple"] for r in closed]),
+                         "mature_days_avg_r": avg([r["r_multiple"] for r in mature]),
+                         "n_mature": len(mature)}}
+    out["note"] = ("candidate≠sent≠delivered≠實際成交（無券商回報，filled 留空）。"
+                   "all_closed_avg_r 含未成熟訊號日（先停損者先結案，偏悲觀或偏樂觀皆可能）；"
+                   "mature_days_avg_r 只計候選已全部離開 pending 的訊號日。")
+    return out
+
+
 def finish_run(universe=None, pre_skipped=None, pre_passed=None):
     """整次掃描收尾：把這次收集了多少、花多久、有沒有錯誤寫進 shadow_runs（後台『收集紀錄』）。"""
     global _run
@@ -1366,7 +1443,7 @@ def overview():
             "WHERE kind='candidate' AND status='closed' AND r_multiple IS NOT NULL "
             "GROUP BY champion_status").fetchall()]
     # 特徵覆蓋率（每種來源各自算）
-    cov, cnt = {}, {}
+    cov, cnt, _distinct = {}, {}, {}
     for x in sample:
         try:
             f = json.loads(x["features"] or "{}")
@@ -1376,9 +1453,17 @@ def overview():
         for k in f:
             cov.setdefault(k, {}).setdefault(x["kind"], 0)
             cov[k][x["kind"]] += 1
+            if f[k] is not None and len(_distinct.setdefault(k, set())) < 3:
+                try:
+                    _distinct[k].add(f[k] if isinstance(f[k], (str, int, float, bool)) else str(f[k]))
+                except Exception:
+                    pass
     coverage = []
     for k, d in cov.items():
-        coverage.append({"key": k, "pct": {kd: round(d.get(kd, 0) / cnt[kd] * 100) for kd in cnt}})
+        # ★ 2026-11-12（S-P1-07）：抽樣中只有一種取值的特徵（如歷史上恆為 0 的 news_neg）沒有
+        # 鑑別力，逐一檢定只會增加虛假比較數。標示 constant 供研究端隔離；不刪原始資料。
+        coverage.append({"key": k, "pct": {kd: round(d.get(kd, 0) / cnt[kd] * 100) for kd in cnt},
+                         "constant": len(_distinct.get(k, ())) <= 1})
     coverage.sort(key=lambda z: -max(z["pct"].values()))
     for x in recent:
         try:
@@ -1425,6 +1510,7 @@ def overview():
             "delivery": delivery, "feature_schema": {"current": FEATURE_SCHEMA_VERSION, "dist": _fsv},
             "champion_edge": champion_edge,
             "champion_state": {x["st"]: int(x["n"] or 0) for x in _champ_state},
+            "cohorts": _safe_cohorts(),
             "reasons": REASONS, "control_rate": CONTROL_RATE,
             "caps": {"per_reason": REJ_PER_REASON, "total": REJ_TOTAL}}
 

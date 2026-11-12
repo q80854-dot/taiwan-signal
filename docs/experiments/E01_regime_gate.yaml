@@ -1,0 +1,30 @@
+id: E01
+name: 弱勢市場不做多（行情濾網）
+registered_at: 2026-11-12
+status: registered            # registered → 累積 OOS → 人工審查；程式不自動採用
+direction: buy                # 多空分開，本實驗只看做多
+hypothesis: >
+  做多訊號在市場情緒偏弱時期望值較差；只在情緒分數 >= 50 時保留做多候選，
+  留下組的 Champion 淨 R 高於不設濾網的基準。
+motivation: >
+  2026-10-05～2026-11-03 探索期：做多候選 17 個訊號日中 16 天平均 R 為負。
+  此觀察只用來提出假說，不作為證據。
+filter: features.sentiment >= 50
+threshold_source: 沿用掃描既有的情緒分級（<40 單次最多 2 檔、<50 最多 3 檔），非依探索期結果調整
+baseline: 同期間全部已定案的做多候選（特徵缺漏者兩組皆不計）
+primary_endpoint: Champion 分批淨 R（champion_status = final），留下組平均 − 基準平均
+uncertainty: 以訊號日為叢集的成對拔靴，95% 信賴區間
+exploratory_window: "<= 2026-11-12"
+oos_window: ">= 2026-11-13"
+min_oos_days: 40
+min_oos_trades_kept: 200
+min_effect_r: 0.05
+success_rule: OOS 差異的 95% CI 下界 > 0.05R
+failure_rule: OOS 差異的 95% CI 上界 < 0.05R
+secondary: [交易保留率, 未定案比例, 留下組與基準的訊號日數]
+costs: 與影子追蹤同口徑（滑價、手續費、證交稅；放空另計借券費）
+multiple_testing: 與 E02 同屬一個 family（size = 2）；新增實驗須更新 family_size
+guardrails:
+  - 不得以探索期資料作為採用依據
+  - 不得在看到 OOS 結果後修改門檻；要改必須另立新編號
+  - supported 仍須人工審查回撤、尾端風險、可成交性，並經使用者同意
