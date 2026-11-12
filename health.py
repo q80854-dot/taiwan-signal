@@ -207,7 +207,11 @@ def check_freshness():
         elif i.get("ok"):
             out.append(_c("三大法人資料", "ok", f"{i.get('n')} 檔，資料日 {i.get('date')}，耗時 {i.get('secs')}s"))
         else:
-            out.append(_c("三大法人資料", "fail", f"最近一次取得失敗：{i.get('err')}。這段期間的訊號沒有法人籌碼加減分"))
+            # ★ 2026-11-12 使用者核准降級（LIVE14 口徑）：來源取得失敗＝檢查無法完成→unknown
+            # （整體升 warn、不觸發 fail Telegram 告警），不是系統異常 fail。功能性後果仍誠實標明。
+            out.append(_c("三大法人資料", "unknown",
+                          f"最近一次取得失敗：{i.get('err')}。這段期間的訊號沒有法人籌碼加減分"
+                          "（來源取得失敗＝檢查無法完成，非系統異常；將於下次掃描重試）"))
     except Exception as e:
         out.append(_c("三大法人資料", "unknown", str(e)))
     try:

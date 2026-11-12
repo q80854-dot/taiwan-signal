@@ -67,6 +67,24 @@ def test_scan_no_errors_ok(monkeypatch):
     assert scan["status"] == "ok" and "母體" not in scan["detail"]
 
 
+def test_inst_fetch_fail_is_unknown_not_fail(monkeypatch):
+    """B-4（2026-11-12 使用者核准降級）：三大法人來源取得失敗＝檢查無法完成→unknown
+    （升 warn、不觸發 fail Telegram 告警），非系統異常 fail；功能性後果（該期間訊號
+    沒有法人籌碼加減分）仍誠實標明，不掩蓋。"""
+    import data_fetcher
+    import fundamentals
+    monkeypatch.setattr(data_fetcher, "inst_status", lambda: {"at": 123, "ok": False, "err": "timeout"})
+    monkeypatch.setattr(fundamentals, "revenue_status", lambda: {"expected_period": "202610", "n_total": 0})
+    items = health.check_freshness()
+    inst = [i for i in items if i["name"] == "三大法人資料"][0]
+    assert inst["status"] == "unknown"                      # 取得失敗＝unknown，非 fail
+    assert "非系統異常" in inst["detail"]
+    assert "沒有法人籌碼加減分" in inst["detail"]            # 功能後果誠實保留
+    _patch_all(monkeypatch, {"check_freshness": items})
+    h = health.run_health()
+    assert h["verdict"] == "warn" and h["counts"]["fail"] == 0
+
+
 def test_material_news_fetch_fail_is_unknown_not_fail(monkeypatch):
     """LIVE14 補漏：重大訊息來源取得失敗＝檢查無法完成→unknown（升 warn、不觸發 fail 告警），
     不是系統異常 fail。先前用 'fail' 會讓來源短暫失敗就發「系統健檢異常」Telegram 告警。"""
