@@ -980,14 +980,13 @@ def cleanup_absurd_metrics(force: bool = False) -> dict:
     把任一 R 欄位 |值| > _ABSURD_R（非物理值）的列：R 欄位全部清 NULL、狀態改
     unresolved/result=bad_risk，使其離開勝率與平均 R 統計、也不再被 learning 當訓練標籤。
     以 state_store meta 旗標保證整個資料庫只跑一次（force=True 可手動重跑）。回傳處理筆數。"""
+    # ★ 2026-11-12：原本以 meta 旗標保證「整個資料庫只跑一次」。但上線後的稽核計數顯示清洗過後
+    # 仍有 1 筆 |MFE/MAE|>1000 的列——髒列會再生（見 resolve_pending 選列條件的修正），一次性清洗
+    # 抓不到之後才出現的。改為每次結算都檢查（一次 COUNT，成本很低）；清洗前先把問題列的
+    # 識別資訊寫進日誌，才查得出是哪一檔、為什麼。force 參數保留相容。
     global _cleanup_done
-    if _cleanup_done and not force:
-        return {"ran": False, "reason": "done_this_process"}
     try:
         from state_store import store
-        if not force and store.get_meta(_CLEANUP_META):
-            _cleanup_done = True
-            return {"ran": False, "reason": "done_before"}
         ensure_table()
         cond = " OR ".join(f"ABS({c}) > ?" for c in _R_COLS)
         params = tuple([_ABSURD_R] * len(_R_COLS))
@@ -996,10 +995,18 @@ def cleanup_absurd_metrics(force: bool = False) -> dict:
             n = conn.execute(f"SELECT COUNT(*) AS n FROM shadow_signals WHERE {cond}", params).fetchone()
             n = (dict(n).get("n") if n else 0) or 0
             if n:
+                try:
+                    bad = [dict(x) for x in conn.execute(
+                        f"SELECT id,ticker,bar_date,kind,direction,status,result,entry,stop,r_multiple,mae_r,mfe_r "
+                        f"FROM shadow_signals WHERE {cond} LIMIT 20", params).fetchall()]
+                    logger.warning(f"shadow.cleanup_absurd_metrics：發現 {n} 筆非物理值列（清洗前明細，最多 20 筆）：{bad}")
+                except Exception as _e:
+                    logger.debug(f"cleanup_absurd_metrics detail: {_e}")
                 conn.execute(
                     f"UPDATE shadow_signals SET {null_set}, status='unresolved', result='bad_risk' "
                     f"WHERE {cond}", params)
-        store.set_meta(_CLEANUP_META, {"at": datetime.now(timezone.utc).isoformat(), "cleaned": int(n)})
+        if n or not _cleanup_done:
+            store.set_meta(_CLEANUP_META, {"at": datetime.now(timezone.utc).isoformat(), "cleaned": int(n)})
         _cleanup_done = True
         if n:
             logger.info(f"shadow.cleanup_absurd_metrics：清洗 {n} 筆爆量髒列（|R|>{_ABSURD_R:.0f}），已標 bad_risk")
@@ -1019,7 +1026,7 @@ def resolve_pending(max_rows=8000):
         ensure_table()
         from state_store import store
         from config import CIRCUIT_BREAKER, COMMISSION_RATE, TAX_RATE_SELL, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL
-        cleanup_absurd_metrics()      # ★ 2026-11-06：首次結算時清洗既有爆量髒列（meta 旗標保證只跑一次）
+        cleanup_absurd_metrics()      # 每次結算都檢查非物理值列（2026-11-12 起不再只跑一次）
         expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
         cutoff = (datetime.now(TPE) - timedelta(days=30)).strftime("%Y-%m-%d")
         # 退市／長期無資料的訊號若一直留在 pending，壞結果（下市、停牌）會從統計中消失（存活者偏誤）。
@@ -1034,7 +1041,11 @@ def resolve_pending(max_rows=8000):
         unfilled_limit = [] # ★ 2026-11-12：進場當根漲跌停鎖死、確定無法成交（Q-P0-07）
         with store._conn() as conn:
             rows = [dict(x) for x in conn.execute(
-                "SELECT * FROM shadow_signals WHERE status='pending' OR (r10 IS NULL AND bar_date>=?) "
+                # ★ 2026-11-12：補 r5/r10 只針對「已結案」的列。原本條件是 (r10 IS NULL AND 近期)，
+                # 連已標 unresolved 的列也會每次被撈回來重新模擬、重寫 MFE/MAE——被清洗掉的髒值因此
+                # 再生（線上日誌：每次結算都重複出現 bad_risk 2 筆、更新 3 筆），也白做工。
+                "SELECT * FROM shadow_signals WHERE status='pending' "
+                "OR (status='closed' AND r10 IS NULL AND bar_date>=?) "
                 "ORDER BY bar_date LIMIT ?", (cutoff, max_rows)).fetchall()]
         if not rows:
             logger.info("shadow: 結算完成，沒有需要處理的紀錄")
