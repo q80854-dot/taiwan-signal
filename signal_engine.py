@@ -16,6 +16,17 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+def grade_fields(score):
+    """分數 → 評級／建議文字／圖示的單一來源。
+    ★ 2026-11-12 策略檢查：評級原本只在 generate_signal_tw 算一次；之後 scanner._filter_and_rank
+    還會依籌碼、獲利品質、基本面調整分數，卻沒有重算評級——推播出去的訊號可能分數已掉到 78
+    卻仍標「A 強力訊號」。分數最終定案後須以本函式重算（見 scanner._filter_and_rank 結尾）。"""
+    grade = "A" if score >= 85 else "B" if score >= 75 else "C"
+    return {"grade": grade,
+            "action": {"A":"🔥 強力訊號，建議進場","B":"✅ 良好訊號，可以考慮","C":"👀 待觀察，可小量試探"}[grade],
+            "emoji_grade": {"A":"🟢","B":"🟡","C":"⚪"}[grade]}
+
+
 def calc_trade_cost(price, shares, direction):
     total_value = price * shares
     commission  = max(MIN_COMMISSION, total_value * COMMISSION_RATE)
@@ -97,6 +108,30 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
     }
 
 
+def resize_position(pos, price, stop_loss, shares, balance=None):
+    """把部位改成指定股數並重算風險／金額／成本欄位（供放空整張化等調整使用）。"""
+    balance = balance or ACCOUNT_BALANCE_TWD
+    rps = abs(price - stop_loss)
+    pv = shares * price
+    rt = calc_trade_cost(price, shares, "buy")["total_cost"] + calc_trade_cost(price, shares, "sell")["total_cost"]
+    out = dict(pos)
+    out.update({"shares": shares, "lots": round(shares / SHARES_PER_LOT, 3),
+                "risk_twd": round(shares * rps, 0), "risk_pct": round(shares * rps / balance * 100, 2),
+                "position_value": round(pv, 0), "margin_pct": round(pv / balance * 100, 1),
+                "roundtrip_cost": round(rt, 0), "breakeven_pct": round(rt / pv * 100, 3) if pv else 0})
+    return out
+
+
+def short_whole_lots(shares):
+    """★ 2026-11-12（Q-P0-07）：放空只能以整張（1,000 股）為單位——零股交易不得融券、不得借券賣出。
+    回傳可放空的整張股數（不足 1 張回 0）。原本放空訊號沿用做多的零股部位算法，可能建議
+    「放空 200 股」這種現實中無法下單的部位。"""
+    try:
+        return (int(shares) // SHARES_PER_LOT) * SHARES_PER_LOT
+    except Exception:
+        return 0
+
+
 def fit_to_cash(sig, cash, risk_left=None):
     """把訊號的建議股數壓到「剩餘現金」以內（以進場價計），並可同時壓到「組合剩餘風險額度」以內
     （risk_left＝帳戶資金 × MAX_DAILY_RISK − 既有部位風險）。回傳調整後的 sig；放不下 1 股回傳 None。
@@ -109,9 +144,12 @@ def fit_to_cash(sig, cash, risk_left=None):
     lim = math.floor(max(0.0, cash) / price)
     if risk_left is not None and rps > 0:
         lim = min(lim, math.floor(max(0.0, risk_left) / rps))
-    if shares <= lim:
+    is_short = sig.get("direction") == "sell"
+    if shares <= lim and not (is_short and shares % SHARES_PER_LOT):
         return sig
-    new = lim
+    new = min(shares, lim)
+    if is_short:
+        new = short_whole_lots(new)          # 放空須整張：縮股數後仍須是整張，不足 1 張即不發
     if new < 1:
         return None
     bal = ACCOUNT_BALANCE_TWD
@@ -277,6 +315,7 @@ def check_multi_timeframe_tw(tf_data, disabled_factors=None):
             bear_score=max(0,bear_score-2); conds_fail.append("⚠️ 週線偏多，逆勢風險")
         else: conds_met.append(f"週線確認({weekly_bias}) ✓")
     direction = "buy" if bull_score>=5 and bull_score>bear_score else "sell" if bear_score>=5 and bear_score>bull_score else "none"
+    resonance = False
     if direction=="none": score=0
     else:
         # ★ 修正：2026-09-16——使用者回報「交易訊號幾乎都錯誤」，追查後發現原本
@@ -306,7 +345,10 @@ def check_multi_timeframe_tw(tf_data, disabled_factors=None):
         resonance="hourly" in results and (("bullish" in results["hourly"].get("ema",{}).get("bias","") and direction=="buy") or ("bearish" in results["hourly"].get("ema",{}).get("bias","") and direction=="sell"))
         if resonance: base+=10
         score=min(100,int(base))
-    return {"direction":direction,"score":score,"resonance":"hourly" in results,
+    # ★ 2026-11-12 策略檢查：resonance 原本回傳的是「有沒有小時線資料」，不是「小時線是否與方向
+    # 共振」（真正決定 +10 分的那個條件）——影子特徵 resonance 因此幾乎恆為同一個值、毫無資訊。
+    # 改回傳真正的共振結果，另以 has_hourly 保留原語意。不影響分數與訊號決策（+10 的判定未變）。
+    return {"direction":direction,"score":score,"resonance":bool(resonance),"has_hourly":"hourly" in results,
             "bull_score":bull_score,"bear_score":bear_score,"weekly_bias":weekly_bias,"daily_bias":ema_bias,
             "rsi_value":rsi_val,"adx_value":adx_val,"adx_bias":adx_bias,"vol_ratio":vol_ratio,
             "conditions_met":conds_met,"conditions_fail":conds_fail,"entry_indicators":daily}
@@ -316,7 +358,17 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         from indicators import calc_all_indicators
         name=stock_info.get("name",ticker); sector=stock_info.get("sector","其他")
         size_cat=stock_info.get("size_cat","中型股"); code=stock_info.get("code",ticker.replace(".TW","").replace(".TWO",""))
-        if not market_overview.get("can_trade",True): return None
+        # ★ 2026-11-12 策略檢查：can_trade=False 有兩種成因，原本一律在這裡直接 return——
+        #   · data_error（大盤資料抓不到）：沒有可信的市場狀態，直接不產生訊號（維持）。
+        #   · stop（大盤重挫）：正式訊號照舊全部暫停（多空皆停，行為不變）；但原本連影子追蹤都
+        #     不記錄，恰好在「最想知道規則有沒有用」的重挫日留下資料空白，也無從驗證掃描日誌寫的
+        #     「只掃空單」是否值得開放。改為照常評分並以 market_stop 記成『被擋下的假想單』，
+        #     正式訊號仍不產生。
+        _market_stop = False
+        if not market_overview.get("can_trade",True):
+            if market_overview.get("market_status") != "stop":
+                return None
+            _market_stop = True
         daily_data=tf_data.get("daily")
         if not daily_data: return None
         daily_ind=calc_all_indicators(daily_data)
@@ -357,6 +409,12 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             if _sh is not None:
                 _sh.note_reject(ticker, stock_info, daily_data, daily_ind, mtf, direction, score, reason,
                                 market_overview, sl_)
+        # 重挫日：做多一律在此擋下（記 market_stop 假想單）。放空則繼續走完與平日完全相同的全部
+        # 關卡（大盤環境／週線／ADX 方向／分數／量能／事件／追價／停損距離／盈虧比／部位），
+        # 通過者才在最後以 market_stop 記成假想單——這樣影子裡的「market_stop＋放空」就精確等於
+        # 「若開放重挫日放空，當天真的會發出的訊號」（實驗 E03）。正式訊號仍不產生。
+        if _market_stop and direction != "sell":
+            _rej("market_stop"); return None
         # ★ 修正：2026-09-28（第二輪）——上一輪重新開放放空後，把 ChatGPT／
         # Perplexity 兩邊的審查意見貼回去複查，兩邊獨立收斂出同一個架構問題：
         # 原本把「大盤環境」「個股方向」「個股訊號強度」全部塞進同一組
@@ -562,8 +620,18 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         pos=calc_position_size(price,sl,size_cat=size_cat,avg_volume_lots=stock_info.get("volume_lots"))
         if pos["shares"]<=0:
             _rej("size_zero", sl); return None
+        if direction=="sell":
+            # ★ 2026-11-12（Q-P0-07）：放空須以整張為單位（零股不得融券／借券賣出）。不足 1 張＝無法執行。
+            _lot_sh=short_whole_lots(pos["shares"])
+            if _lot_sh<SHARES_PER_LOT:
+                logger.info(f"[{ticker}] 放空建議部位 {pos['shares']} 股不足 1 張，零股不能放空，略過")
+                _rej("short_odd_lot", sl); return None
+            if _lot_sh!=pos["shares"]:
+                pos=resize_position(pos, price, sl, _lot_sh)
         if pos.get("liquidity_capped"):
             logger.info(f"[{ticker}] 建議部位因流動性上限（當日成交量10%）被下修至 {pos['shares']} 股")
+        if _market_stop:
+            _rej("market_stop", sl); return None      # 通過全部放空關卡，但重挫日不發正式訊號（E03 影子驗證中）
         ema_ind=daily_ind.get("ema",{})
         ema5_val=ema_ind.get("e_fast") if ema_ind.get("valid") else None
         # ★ 修正：2026-09-16——稽核發現這裡原本不分方向，buy/sell 都套同一組公式
@@ -579,9 +647,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             entry_zone_low=round(price*0.995,2)
             entry_zone_high=round(max(price*1.02, ema5_val*1.01) if ema5_val else price*1.02, 2)
         sig_id=f"{ticker}_{direction}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-        grade="A" if score>=85 else "B" if score>=75 else "C"
-        action={"A":"🔥 強力訊號，建議進場","B":"✅ 良好訊號，可以考慮","C":"👀 待觀察，可小量試探"}[grade]
-        emoji_g={"A":"🟢","B":"🟡","C":"⚪"}[grade]
+        _g=grade_fields(score); grade=_g["grade"]; action=_g["action"]; emoji_g=_g["emoji_grade"]
         vol_desc=f"爆量({vol_ratio:.1f}x)" if vol_ratio>=2.0 else f"量增({vol_ratio:.1f}x)" if vol_ratio>=1.5 else f"正常量({vol_ratio:.1f}x)"
         weekly_desc={"bullish":"週線多頭","strong_bullish":"週線強多","bearish":"週線空頭","neutral":"週線橫盤"}.get(mtf.get("weekly_bias","neutral"),"週線中性")
         reason_full=(f"【技術面】{ema_ind.get('alignment','')} / RSI {mtf['rsi_value']:.0f} / "

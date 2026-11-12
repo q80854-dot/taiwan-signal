@@ -1,0 +1,30 @@
+id: E02
+name: 避免追高（追高風險為「高」者不做多）
+registered_at: 2026-11-12
+status: registered
+direction: buy
+hypothesis: >
+  追高風險等級為 high（當日漲幅 >= 4% 或距 20 日線 > 2.5 ATR）的做多候選期望值較差；
+  排除後留下組的 Champion 淨 R 高於基準。
+motivation: >
+  探索期做多候選停損比例 58.79%；分數愈高平均 R 並未愈好（Spearman 約 -0.07）。
+  此觀察只用來提出假說，不作為證據。
+filter: features.chase_level != 'high'
+threshold_source: 沿用訊號引擎既有的追高分級（low／mid／high），非依探索期結果調整
+baseline: 同期間全部已定案的做多候選（特徵缺漏者兩組皆不計）
+primary_endpoint: Champion 分批淨 R（champion_status = final），留下組平均 − 基準平均
+uncertainty: 以訊號日為叢集的成對拔靴，95% 信賴區間
+exploratory_window: "<= 2026-11-12"
+oos_window: ">= 2026-11-13"
+min_oos_days: 40
+min_oos_trades_kept: 200
+min_effect_r: 0.05
+success_rule: OOS 差異的 95% CI 下界 > 0.05R
+failure_rule: OOS 差異的 95% CI 上界 < 0.05R
+secondary: [交易保留率, 未定案比例, 留下組與基準的訊號日數]
+costs: 與影子追蹤同口徑（滑價、手續費、證交稅；放空另計借券費）
+multiple_testing: 與 E01／E02／E03 同屬一個 family（size = 3）；新增實驗須更新 family_size
+guardrails:
+  - 不得以探索期資料作為採用依據
+  - 不得在看到 OOS 結果後修改門檻；要改必須另立新編號
+  - supported 仍須人工審查回撤、尾端風險、可成交性，並經使用者同意

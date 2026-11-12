@@ -17,13 +17,49 @@ R 一律以傳入的 risk（＝|規劃進場價−停損|）為分母，跨筆�
 """
 from datetime import datetime, timezone, timedelta
 
-SIM_VERSION = "exit-v2-2026-11-09"            # v2：加到期窗截斷＋同根 K tp1_before_sl 保守化（Phase B）
-STAGED_SIM_VERSION = "staged-v2-2026-11-09"   # v2：加 expire_days 到期窗截斷（Phase B）
+SIM_VERSION = "exit-v3-2026-11-12"            # v3：漲跌停鎖死日無法出場則順延（Q-P0-07）；v2：到期窗截斷
+STAGED_SIM_VERSION = "staged-v3-2026-11-12"   # v3：同上；v2：加 expire_days 到期窗截斷（Phase B）
 _TPE = timezone(timedelta(hours=8))
+
+LIMIT_LOCK_PCT = 9.5     # 台股漲跌幅限制 10%；因升降單位取整，鎖死價相對前收的實際幅度略小於 10%
+
+
+def limit_locked(bar, prev_close):
+    """★ 2026-11-12（Q-P0-07 可成交性）：這根日 K 是否「一價到底鎖在漲停或跌停」。
+    回傳 "up"／"down"／None。判定只用既有日 K（不需額外資料）：整天最高＝最低（沒有任何價格區間）
+    且相對前一日收盤漲跌幅 ≥ 9.5%。鎖漲停＝買不到（賣得掉）；鎖跌停＝賣不掉（買得到）。
+    盤中曾打開過的漲跌停（最高≠最低）仍有成交機會，不算鎖死——只擋「確定無法成交」的情形，
+    不做樂觀或悲觀的猜測。缺前收或資料不全回 None（不判定）。"""
+    try:
+        hi, lo, cl = bar.get("high"), bar.get("low"), bar.get("close")
+        if not prev_close or prev_close <= 0 or hi is None or lo is None or cl is None:
+            return None
+        if abs(hi - lo) > 1e-9:
+            return None
+        chg = (cl / prev_close - 1) * 100
+        if chg >= LIMIT_LOCK_PCT:
+            return "up"
+        if chg <= -LIMIT_LOCK_PCT:
+            return "down"
+    except Exception:
+        return None
+    return None
+
+
+def entry_blocked_by_limit(direction, bar, prev_close):
+    """進場當根是否因鎖死而確定無法成交：做多遇鎖漲停（買不到）、放空遇鎖跌停（賣不出）。"""
+    lk = limit_locked(bar, prev_close)
+    return (direction == "buy" and lk == "up") or (direction == "sell" and lk == "down")
+
+
+def exit_blocked_by_limit(direction, bar, prev_close):
+    """出場當根是否因鎖死而確定無法成交：多單遇鎖跌停（賣不掉）、空單遇鎖漲停（補不回）。"""
+    lk = limit_locked(bar, prev_close)
+    return (direction == "buy" and lk == "down") or (direction == "sell" and lk == "up")
 
 
 def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_date,
-                  expire_days, risk, tp1=None, tp2=None, tp3=None, now=None):
+                  expire_days, risk, tp1=None, tp2=None, tp3=None, now=None, prev_close=None):
     """依後續 K 棒判定出場，回傳與 shadow._simulate 相同結構的 dict。
 
     參數：
@@ -37,6 +73,8 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
       risk           1R 的分母（>0；呼叫端須先確保非退化）。
       tp1/tp2/tp3    停利價（可缺）。
       now            覆寫「現在時間」（測試用）；預設台北現在。
+      prev_close     訊號日收盤（判定第一根是否鎖死用；之後各根以前一根收盤判定）。缺則第一根不判定。
+    v3：出場當根若一價鎖死在不利方向（多單鎖跌停／空單鎖漲停），確定無法成交，該根不出場、順延。
     """
     buy = direction == "buy"
     sgn = 1 if buy else -1
@@ -61,8 +99,11 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
         _sig_dt = None
     mfe, mae = -9e9, 9e9
     mfe_i = mae_i = tp1_i = sl_i = None
+    _pc = prev_close
     for i, b in enumerate(after):
         hi, lo, op = b["high"], b["low"], b.get("open")
+        _locked = exit_blocked_by_limit(direction, b, _pc)
+        _pc = b.get("close") or _pc
         fav = sgn * ((hi if buy else lo) - entry_fill) / risk
         adv = sgn * ((lo if buy else hi) - entry_fill) / risk
         if fav > mfe:
@@ -77,6 +118,8 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
             tp1_i = i + 1
         if sl_hit and sl_i is None:
             sl_i = i + 1
+        if _locked:
+            continue                                  # 鎖死無法出場：MAE/MFE 照記，出場順延到可成交的 K 棒
         if not (sl_hit or h1 or h2 or h3):
             # ★ 2026-11-09 Phase B：到期窗截斷（消除 look-ahead）。本根未觸及任何出場，
             # 若其日曆天齡已達 expire_days，則以本根收盤結算 expired 並停止往後掃描——
@@ -122,8 +165,115 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
     return out
 
 
+def staged_open_at_end(sim, gen_date, expire_days) -> bool:
+    """★ 2026-11-12（S-P0-01／S-P1-02）：分批模擬結束時是否「其實還有部位在場」。
+    simulate_staged_exit 對沒出完的部位，一律以最後一根 K 棒收盤補一腿 expired。那一腿只有在
+    該 K 棒的日曆天齡已達 expire_days 時才是真正的到期結算；否則只是「以最新收盤暫估」，
+    呼叫端不得把它當定案值。未設 expire_days 時無到期概念，補的那一腿一律視為暫估。"""
+    legs = (sim or {}).get("legs") or []
+    if not legs or legs[-1].get("stage") != "expired":
+        return False
+    if not expire_days:
+        return True
+    try:
+        age = (datetime.strptime(str(sim.get("exit_date"))[:10], "%Y-%m-%d")
+               - datetime.strptime(str(gen_date)[:10], "%Y-%m-%d")).days
+    except Exception:
+        return True
+    return age < expire_days
+
+
+class StagedPosition:
+    """★ 2026-11-12（Q-P0-01）分批出場的『逐棒狀態機』。simulate_staged_exit 與組合級回測共用，
+    兩者的出場規則因此不可能漂移：TP1/TP2/TP3 各出 1/3；TP1 觸及後停損移至成本、TP2 觸及後
+    移至 TP1；同一根 K 棒停損優先於停利（保守）；跳空穿越停損以開盤價成交；到期窗以該根收盤
+    結算剩餘。每餵一根 K 棒回傳這根新成交的腿，呼叫端可即時更新資金、風險與權益曲線。"""
+
+    def __init__(self, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, pnl_fn, expire_days=None,
+                 prev_close=None):
+        self.prev_close = prev_close          # 判定漲跌停鎖死用：初值＝訊號日收盤，之後逐棒更新
+        self.entry, self.direction, self.shares = entry, direction, shares
+        self.buy = direction == "buy"
+        self.gen_date, self.pnl_fn, self.expire_days = gen_date, pnl_fn, expire_days
+        s1 = shares // 3; s2 = shares // 3; s3 = shares - s1 - s2
+        self.leg_sh = {"tp1": s1, "tp2": s2, "tp3": s3}
+        self.tgt = {"tp1": tp1, "tp2": tp2, "tp3": tp3}
+        self.done = {"tp1": False, "tp2": False, "tp3": False}
+        self.tp1 = tp1
+        self.remaining = shares
+        self.current_sl = sl
+        self.legs = []
+        self.exit_date = None
+
+    def days(self, bd):
+        try:
+            return max(0, (datetime.strptime(bd[:10], "%Y-%m-%d")
+                           - datetime.strptime(self.gen_date[:10], "%Y-%m-%d")).days)
+        except Exception:
+            return 0
+
+    def _leg(self, stage, price, shares, bd):
+        leg = {"stage": stage, "price": price, "shares": shares,
+               "pnl": self.pnl_fn(self.entry, price, self.direction, shares, days_held=self.days(bd))}
+        self.legs.append(leg)
+        self.remaining -= shares
+        self.exit_date = bd[:10]
+        return leg
+
+    def on_bar(self, b):
+        """餵入一根 K 棒，回傳這根新成交的腿（可能為空）。部位已出清時不做事。"""
+        if self.remaining <= 0:
+            return []
+        # v3（Q-P0-07）：一價鎖死在不利方向（多單鎖跌停／空單鎖漲停）＝確定賣不掉／補不回，
+        # 這根不產生任何成交，停損與到期都順延到下一根可成交的 K 棒。
+        locked = exit_blocked_by_limit(self.direction, b, self.prev_close)
+        self.prev_close = b.get("close") or self.prev_close
+        if locked:
+            self.locked_bars = getattr(self, "locked_bars", 0) + 1
+            return []
+        new = []
+        buy = self.buy
+        op, hi, lo, bd = b.get("open"), b["high"], b["low"], b["bar_date"]
+        hit_stop = (lo <= self.current_sl) if buy else (hi >= self.current_sl)
+        if hit_stop:
+            px = self.current_sl
+            if op and ((buy and op < self.current_sl) or (not buy and op > self.current_sl)):
+                px = op                      # 跳空穿越停損：以較差的開盤價成交
+            new.append(self._leg("stop", px, self.remaining, bd))
+            return new
+        for stage in ("tp1", "tp2", "tp3"):
+            if self.done[stage] or self.leg_sh[stage] <= 0:
+                continue
+            t = self.tgt[stage]
+            if not t:
+                continue
+            hit = (hi >= t) if buy else (lo <= t)
+            if not hit:
+                break                        # 較近的目標沒碰到，當天更遠的目標不可能碰到
+            new.append(self._leg(stage, t, self.leg_sh[stage], bd))
+            self.done[stage] = True
+            if stage == "tp1":   self.current_sl = self.entry      # 移至保本
+            elif stage == "tp2": self.current_sl = self.tp1        # 移至 TP1 鎖利
+        # ★ 2026-11-09 Phase B：到期窗截斷。本根收盤時若已達 expire_days 且仍有未出場部位，
+        # 以本根收盤結算剩餘為 expired，停止往後掃描——否則到期日之後才觸及的停利會被誤計入
+        # 出場（高估勝率/報酬）。與 simulate_exit 的到期語意一致。
+        if self.expire_days and self.remaining > 0 and self.days(bd) >= self.expire_days:
+            new.append(self._leg("expired", b["close"], self.remaining, bd))
+        return new
+
+    def force_close(self, b, stage="expired"):
+        """以指定 K 棒收盤結算剩餘部位（資料用盡時的暫估／回測期末平倉）。"""
+        if self.remaining <= 0:
+            return None
+        return self._leg(stage, b["close"], self.remaining, b["bar_date"])
+
+    def result(self):
+        tp_hits = [l["stage"] for l in self.legs if l["stage"] in ("tp1", "tp2", "tp3")]
+        return tp_hits[-1] if tp_hits else ("sl" if any(l["stage"] == "stop" for l in self.legs) else "expired")
+
+
 def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, pnl_fn,
-                         expire_days=None):
+                         expire_days=None, prev_close=None):
     """分批出場模擬器（2026-11-08，Phase 1：backtester 與此共用同一實作）。
     忠實模擬推播給使用者的操作計畫：TP1/TP2/TP3 各出 1/3；TP1 觸及後停損移至成本、
     TP2 觸及後移至 TP1；同一根 K 棒停損優先於停利（保守）；跳空穿越停損以開盤價成交；
@@ -136,65 +286,23 @@ def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_
     bars：訊號日之後、時間升冪的日K清單，每筆含 bar_date/open/high/low/close。
     回傳 {result, exit_price, pnl, pnl_pct, legs, exit_date, sim_version}；result 取「觸及的最高
     停利」以相容既有勝率定義（tp*/sl/expired），pnl 為各段加總的真實損益。
+
+    ★ 2026-11-12：內部改由 StagedPosition 逐棒狀態機執行（行為與輸出完全不變，由既有特徵化
+    測試鎖定）；組合級回測直接使用同一個狀態機。
     """
-    buy = direction == "buy"
-    s1 = shares // 3; s2 = shares // 3; s3 = shares - s1 - s2
-    leg_sh = {"tp1": s1, "tp2": s2, "tp3": s3}
-    tgt = {"tp1": tp1, "tp2": tp2, "tp3": tp3}
-    done = {"tp1": False, "tp2": False, "tp3": False}
-    remaining = shares; current_sl = sl; legs = []; exit_date = None
-
-    def _days(bd):
-        try:
-            return max(0, (datetime.strptime(bd[:10], "%Y-%m-%d") - datetime.strptime(gen_date[:10], "%Y-%m-%d")).days)
-        except Exception:
-            return 0
-
+    pos = StagedPosition(entry, sl, tp1, tp2, tp3, direction, shares, gen_date, pnl_fn, expire_days,
+                         prev_close=prev_close)
     for b in bars:
-        if remaining <= 0:
+        if pos.remaining <= 0:
             break
-        op, hi, lo, bd = b.get("open"), b["high"], b["low"], b["bar_date"]
-        hit_stop = (lo <= current_sl) if buy else (hi >= current_sl)
-        if hit_stop:
-            px = current_sl
-            if op and ((buy and op < current_sl) or (not buy and op > current_sl)):
-                px = op                      # 跳空穿越停損：以較差的開盤價成交
-            legs.append({"stage": "stop", "price": px, "shares": remaining,
-                         "pnl": pnl_fn(entry, px, direction, remaining, days_held=_days(bd))})
-            exit_date = bd[:10]; remaining = 0
-            break
-        for stage in ("tp1", "tp2", "tp3"):
-            if done[stage] or leg_sh[stage] <= 0:
-                continue
-            t = tgt[stage]
-            if not t:
-                continue
-            hit = (hi >= t) if buy else (lo <= t)
-            if not hit:
-                break                        # 較近的目標沒碰到，當天更遠的目標不可能碰到
-            legs.append({"stage": stage, "price": t, "shares": leg_sh[stage],
-                         "pnl": pnl_fn(entry, t, direction, leg_sh[stage], days_held=_days(bd))})
-            done[stage] = True; remaining -= leg_sh[stage]; exit_date = bd[:10]
-            if stage == "tp1":   current_sl = entry        # 移至保本
-            elif stage == "tp2": current_sl = tp1          # 移至 TP1 鎖利
-        # ★ 2026-11-09 Phase B：到期窗截斷。本根收盤時若已達 expire_days 且仍有未出場部位，
-        # 以本根收盤結算剩餘為 expired，停止往後掃描——否則到期日之後才觸及的停利會被誤計入
-        # 出場（高估勝率/報酬）。與 simulate_exit 的到期語意一致。
-        if expire_days and remaining > 0 and _days(bd) >= expire_days:
-            legs.append({"stage": "expired", "price": b["close"], "shares": remaining,
-                         "pnl": pnl_fn(entry, b["close"], direction, remaining, days_held=_days(bd))})
-            exit_date = bd[:10]; remaining = 0
-            break
-    if remaining > 0 and bars:
-        last = bars[-1]
-        legs.append({"stage": "expired", "price": last["close"], "shares": remaining,
-                     "pnl": pnl_fn(entry, last["close"], direction, remaining, days_held=_days(last["bar_date"]))})
-        exit_date = last["bar_date"][:10]; remaining = 0
+        pos.on_bar(b)
+    if pos.remaining > 0 and bars:
+        pos.force_close(bars[-1])
+    legs, exit_date = pos.legs, pos.exit_date
     if not legs:
         return None
     total_pnl = round(sum(l["pnl"] for l in legs), 0)
-    tp_hits = [l["stage"] for l in legs if l["stage"] in ("tp1", "tp2", "tp3")]
-    result = tp_hits[-1] if tp_hits else ("sl" if any(l["stage"] == "stop" for l in legs) else "expired")
+    result = pos.result()
     sh = sum(l["shares"] for l in legs)
     exit_price = round(sum(l["price"] * l["shares"] for l in legs) / sh, 2) if sh else entry
     pnl_pct = round(total_pnl / (entry * shares) * 100, 2) if entry and shares else 0

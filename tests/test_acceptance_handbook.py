@@ -232,8 +232,10 @@ def test_backtest_same_bar_sl_tp_is_conservative():
     import inspect
     import backtester
     src = inspect.getsource(backtester.walk_forward_backtest_tw)
-    # 保守規則：先判斷 hit_sl，命中即以停損價成交（不因同時觸及停利而取較樂觀的 tp1）
-    assert '("sl",sl) if hit_sl else ("tp1",tp1)' in src
+    # 保守規則：先判斷 hit_sl，命中即以停損成交（不因同時觸及停利而取較樂觀的 tp1）。
+    # 2026-11-12：出場判定抽成 _wf_exit（進場當日也會檢查），停損優先的順序不變；
+    # 行為面驗證見 tests/test_single_backtest_alignment.py。
+    assert "if hit_sl:" in src and src.index("if hit_sl:") < src.index("elif hit_tp1:")
 
 
 def test_notify_prefs_endpoint_owner_only(cl):

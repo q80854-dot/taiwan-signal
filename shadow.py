@@ -58,9 +58,11 @@ REASONS = {
     "gate_weekly": "放空：週線不是空頭",
     "gate_adxdir": "放空：ADX 方向不是空方主導",
     "short_score": "放空：分數未達放空門檻",
+    "short_odd_lot": "放空：部位不足 1 張（零股不能放空）",
     "adx_low": "ADX 趨勢強度不足",
     "vol_low": "量能不足",
     "macro_stop": "大盤／外資熔斷擋下多單",
+    "market_stop": "大盤重挫日暫停所有新訊號（多空皆停）",
     "score_after_adj": "總經扣分後未達門檻",
     "chase_limit": "當日接近漲跌停（追價風險）",
     "extension": "離 20 日線太遠（延伸過度）",
@@ -160,6 +162,17 @@ def ensure_table():
             store._migrate_add_column("shadow_signals", "champion_r", "REAL")
         except Exception as e:
             logger.debug(f"shadow migrate champion_r: {e}")
+        # 2026-11-12（S-P0-01 兩軌生命週期）：champion_r 只存「定案值」（最後一腿真的出場或到期）。
+        # champion_status：final＝已定案／provisional＝仍有未出場部位（暫估值另存 champion_r_prov，
+        # 不進任何統計）／no_fresh_price＝到期前資料就停更，不以舊收盤價代替／legacy_unverified＝
+        # 舊值無法以真實 K 棒重驗。champion_r_legacy＝重算前的舊值（保留供稽核比對，不覆寫、不刪）。
+        # champion_exit_date＝Champion 軌最後一腿的出場日（標籤實現日；與 Research 的 exit_date 不同）。
+        for col, typ in (("champion_status", "TEXT"), ("champion_r_prov", "REAL"),
+                         ("champion_r_legacy", "REAL"), ("champion_exit_date", "TEXT")):
+            try:
+                store._migrate_add_column("shadow_signals", col, typ)
+            except Exception as e:
+                logger.debug(f"shadow migrate {col}: {e}")
         # 2026-11-11（策略引擎 Phase 1）：standalone 策略的假想訊號以 strategy_name 標記（如
         # 'trend_following'），既有 Champion 候選視為 'champion'。純 shadow 研究、不影響線上訊號。
         try:
@@ -804,8 +817,25 @@ def _simulate(row, bars, expire_days):
     out = execution.simulate_exit(
         planned_entry=planned_entry, entry_fill=entry, stop=stop, direction=row["direction"],
         bars_after=after, bar_date=row["bar_date"], expire_days=expire_days, risk=risk,
-        tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"))
+        tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"),
+        prev_close=_signal_close(row, bars))
     return out
+
+
+def _signal_close(row, bars):
+    """訊號日（含）以前最後一根 K 棒的收盤：判定訊號後第一根是否漲跌停鎖死的基準。無則 None。"""
+    before = [b for b in bars if b["bar_date"][:10] <= row["bar_date"]]
+    return before[-1].get("close") if before else None
+
+
+def _entry_unfillable(row, bars):
+    """★ 2026-11-12（Q-P0-07）：訊號後第一根是否一價鎖死、確定無法進場（做多鎖漲停／放空鎖跌停）。
+    這種假想單在現實中買不到／空不到，不得當成已成交的樣本。"""
+    after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
+    if not after:
+        return False
+    import execution
+    return execution.entry_blocked_by_limit(row["direction"], after[0], _signal_close(row, bars))
 
 
 def _shadow_staged_pnl_factory():
@@ -845,6 +875,64 @@ def _champion_r(row, bars, expire_days):
     if not sim:
         return None
     return round(sim["pnl"] / (risk * shares), 3)
+
+
+CHAMPION_GRACE_DAYS = 7      # 到期後仍等不到「到期日當天或之後」的 K 棒，超過此寬限即判 no_fresh_price
+
+
+def _champion_track(row, bars, expire_days, today=None):
+    """★ 2026-11-12（S-P0-01）Champion 軌生命週期：回傳 {"r": 淨R, "status": ...} 或 None（無資料／退化）。
+
+    Research 軌（單次出場）在第一次觸價就結案；但 Champion 軌是分批出場，TP1 觸及後還有 2/3
+    部位在場。原本在 Research 結案當下就把 champion_r 寫死，而 simulate_staged_exit 對「還沒出完、
+    也還沒到期」的部位是用『最後一根已知收盤』暫估——之後不再更新，暫估值就被當成定案值。
+
+    status：
+      final          最後一腿已真的出場（停損／TP3），或已有「到期日當天或之後」的 K 棒可結算。
+      provisional    仍有未出場部位且尚未到期：r 為以最新收盤暫估，僅供參考，不得進統計。
+      no_fresh_price 已過到期日＋寬限，但 K 棒在到期日之前就停更：不以舊收盤價當到期價，r=None。
+    """
+    planned_entry, stop = row.get("entry"), row.get("stop")
+    if not _risk_ok(planned_entry, stop):
+        return None
+    after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
+    if not after:
+        return None
+    import execution
+    risk = abs(planned_entry - stop)
+    fill = after[0].get("open") or planned_entry                   # 與單次出場同基準（訊號日後第一根開盤）
+    shares = 3000                                                  # 名目股數（可被 3 整除，R 正規化後相消）
+    sim = execution.simulate_staged_exit(
+        after, entry=fill, sl=stop, tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"),
+        direction=row["direction"], shares=shares, gen_date=row["bar_date"],
+        pnl_fn=_shadow_staged_pnl_factory(), expire_days=expire_days,
+        prev_close=_signal_close(row, bars))
+    if not sim:
+        return None
+    r = round(sim["pnl"] / (risk * shares), 3)
+    if not execution.staged_open_at_end(sim, row["bar_date"], expire_days):
+        return {"r": r, "status": "final", "exit_date": sim.get("exit_date")}
+    try:
+        ref = today or datetime.now(TPE).replace(tzinfo=None)
+        age = (ref - datetime.strptime(row["bar_date"][:10], "%Y-%m-%d")).days
+    except Exception:
+        age = 0
+    if expire_days and age >= expire_days + CHAMPION_GRACE_DAYS:
+        return {"r": None, "status": "no_fresh_price"}
+    return {"r": r, "status": "provisional"}
+
+
+def _champion_fields(track):
+    """把 _champion_track 的結果轉成 UPDATE 欄位：champion_r 只在 final 時寫入。"""
+    if not track:
+        return [], []
+    st = track["status"]
+    if st == "final":
+        return (["champion_r=?", "champion_r_prov=NULL", "champion_status='final'", "champion_exit_date=?"],
+                [track["r"], track.get("exit_date")])
+    if st == "provisional":
+        return ["champion_r=NULL", "champion_r_prov=?", "champion_status='provisional'"], [track["r"]]
+    return ["champion_r=NULL", "champion_r_prov=NULL", "champion_status='no_fresh_price'"], []
 
 
 def _load_bars(tickers, since):
@@ -942,6 +1030,8 @@ def resolve_pending(max_rows=8000):
         unresolved = []
         bad_risk = []       # ★ 2026-11-06：entry≈stop 退化列，R 無意義，標 unresolved/bad_risk 離開統計
         no_new_bars = []    # ★ 2026-11-12：有舊 K 棒但訊號日後無新棒（停牌/下市/停更），逾期後離開佇列
+        no_fresh_price = [] # ★ 2026-11-12：K 棒在到期日前就停更，不以舊收盤價當到期價（S-P1-02）
+        unfilled_limit = [] # ★ 2026-11-12：進場當根漲跌停鎖死、確定無法成交（Q-P0-07）
         with store._conn() as conn:
             rows = [dict(x) for x in conn.execute(
                 "SELECT * FROM shadow_signals WHERE status='pending' OR (r10 IS NULL AND bar_date>=?) "
@@ -977,9 +1067,29 @@ def resolve_pending(max_rows=8000):
             if not _risk_ok(r2.get("entry"), r2.get("stop")):
                 bad_risk.append(row["id"])          # 退化風險：不結算、離開佇列、不入統計
                 continue
+            # ★ 2026-11-12（Q-P0-07）：訊號後第一根一價鎖死（做多鎖漲停／放空鎖跌停）＝確定無法進場，
+            # 標 unresolved/unfilled_limit 離開佇列，不當成已成交樣本、不計入勝率與平均 R。
+            if row["status"] == "pending" and _entry_unfillable(r2, bars):
+                unfilled_limit.append(row["id"])
+                continue
             sim = _simulate(r2, bars, expire_days)
             if not sim:
                 continue
+            # ★ 2026-11-12（S-P1-02）：到期結算必須有「到期日當天或之後」的 K 棒。simulate_exit 在
+            # 沒有這種 K 棒時會以『最後一根已知收盤』結算 expired——若資料在到期日前就停更，那是
+            # 一個過期價。此時先留 pending 等新棒；超過寬限仍等不到 → unresolved/no_fresh_price，
+            # 不以舊收盤價當到期價、不計入勝率與平均 R。
+            if row["status"] == "pending" and sim.get("result") == "expired" and sim.get("exit_date"):
+                try:
+                    _exit_age = (datetime.strptime(sim["exit_date"], "%Y-%m-%d")
+                                 - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days
+                except Exception:
+                    _exit_age = expire_days
+                if _exit_age < expire_days:
+                    if age >= expire_days + NODATA_GRACE:
+                        no_fresh_price.append(row["id"])
+                        continue
+                    sim = dict(sim, result=None, exit_price=None, exit_date=None)
             new = {"gap_pct": sim["gap"], "r1": sim["r1"], "r5": sim["r5"], "r10": sim["r10"], "r20": sim["r20"],
                    "mfe_r": sim["mfe"], "mae_r": sim["mae"], "bars_held": sim["bars_held"],
                    "mae_bars": sim["mae_bars"], "mfe_bars": sim["mfe_bars"], "tp1_before_sl": sim["tp1_before_sl"]}
@@ -1009,13 +1119,15 @@ def resolve_pending(max_rows=8000):
                 fields += ["status='closed'", "result=?", "exit_price=?", "exit_date=?", "r_multiple=?"]
                 vals += [sim["result"], exitp, sim["exit_date"], round(net_r, 3)]
                 # ★ 2026-11-09 Shadow 雙軌：另存 Champion Track（分批出場）淨 R，與單次出場 r_multiple 並列。
+                # ★ 2026-11-12（S-P0-01）：Research 結案不等於 Champion 結案。仍有未出場部位者只記
+                # 暫估（champion_r_prov / provisional），由 finalize_champion_tracks 於最後一腿
+                # 真的出場或到期後才寫入 champion_r。
                 try:
-                    champ = _champion_r(r2, bars, expire_days)
+                    _cf, _cv = _champion_fields(_champion_track(r2, bars, expire_days, today=_today))
                 except Exception as e:
-                    champ = None
+                    _cf, _cv = [], []
                     logger.debug(f"champion_r 計算失敗 id={row['id']}: {e}")
-                if champ is not None:
-                    fields.append("champion_r=?"); vals.append(champ)
+                fields += _cf; vals += _cv
                 closed += 1
             updates.append((f"UPDATE shadow_signals SET {', '.join(fields)} WHERE id=?", vals + [row["id"]]))
         if updates:
@@ -1038,9 +1150,21 @@ def resolve_pending(max_rows=8000):
                     conn.execute("UPDATE shadow_signals SET status='unresolved', result='no_new_bars' WHERE id=?", (_id,))
             logger.info(f"shadow: {len(no_new_bars)} 筆訊號逾期仍無『訊號日之後』的 K 棒"
                         f"（疑似停牌／下市／資料源停更），標記 unresolved/no_new_bars")
+        if no_fresh_price:
+            with store._conn() as conn:
+                for _id in no_fresh_price:
+                    conn.execute("UPDATE shadow_signals SET status='unresolved', result='no_fresh_price' WHERE id=?", (_id,))
+            logger.info(f"shadow: {len(no_fresh_price)} 筆訊號逾期但 K 棒在到期日前就停更，"
+                        f"不以舊收盤價結算，標記 unresolved/no_fresh_price")
+        if unfilled_limit:
+            with store._conn() as conn:
+                for _id in unfilled_limit:
+                    conn.execute("UPDATE shadow_signals SET status='unresolved', result='unfilled_limit' WHERE id=?", (_id,))
+            logger.info(f"shadow: {len(unfilled_limit)} 筆訊號進場當根漲跌停鎖死、無法成交，標記 unresolved/unfilled_limit")
         res = {"updated": len(updates), "closed": closed, "rows": len(rows),
                "rescaled": int(rescaled), "unresolved": len(unresolved), "bad_risk": len(bad_risk),
-               "no_new_bars": len(no_new_bars)}
+               "no_new_bars": len(no_new_bars), "no_fresh_price": len(no_fresh_price),
+               "unfilled_limit": len(unfilled_limit)}
         logger.info(f"shadow: 結算完成，檢查 {len(rows)} 筆、更新 {len(updates)} 筆、新結案 {closed} 筆"
                     f"（除權息還原調整 {int(rescaled)} 筆），耗時 {time.time() - t0:.1f}s")
         if r is not None:
@@ -1085,20 +1209,178 @@ def backfill_champion_r(max_rows=20000) -> dict:
             continue
         r2, _scale = _rescale(row, bars)          # 與 resolve_pending 相同的除權息還原口徑
         try:
-            champ = _champion_r(r2, bars, expire_days)
+            track = _champion_track(r2, bars, expire_days)
         except Exception as e:
             logger.debug(f"backfill champion_r id={row['id']}: {e}")
-            champ = None
-        if champ is None:                         # 缺真實 K 棒/退化 → 留 NULL，不猜
+            track = None
+        if track is None or track["status"] != "final":   # 缺真實 K 棒/退化/尚未定案 → 留 NULL，不猜
             skipped += 1
             continue
-        updates.append((champ, row["id"]))
+        updates.append((track["r"], track.get("exit_date"), row["id"]))
     if updates:
         with store._conn() as conn:
-            for champ, _id in updates:
-                conn.execute("UPDATE shadow_signals SET champion_r=? WHERE id=?", (champ, _id))
+            for champ, _xd, _id in updates:
+                conn.execute("UPDATE shadow_signals SET champion_r=?, champion_status='final', "
+                             "champion_exit_date=? WHERE id=?", (champ, _xd, _id))
     logger.info(f"champion_r 回填：掃 {len(rows)} 筆、填 {len(updates)} 筆、缺真實資料略過 {skipped} 筆")
     return {"scanned": len(rows), "filled": len(updates), "skipped_nodata": skipped}
+
+
+def finalize_champion_tracks(max_rows=5000, today=None) -> dict:
+    """★ 2026-11-12（S-P0-01）Champion 軌定案與舊值重驗。只讀資料庫既有日 K、冪等、可重複執行。
+
+    處理兩種列（皆為 Research 已結案者）：
+      1) champion_status 為 provisional／no_fresh_price：有新 K 棒後重算，最後一腿真的出場或到期
+         才寫入 champion_r（final）。
+      2) 舊列（champion_status 為 NULL 且已有 champion_r）：這些值是在 Research 結案當下寫死的，
+         可能含暫估。以真實 K 棒重算；舊值一律先存進 champion_r_legacy（不覆寫、不刪除），再依
+         重算結果寫入 final／provisional／no_fresh_price；K 棒已不存在而無法重驗者標
+         legacy_unverified、移出統計（值仍留在 champion_r_legacy）。
+    回傳含新舊差異統計，供稽核（不是只宣稱已修）。"""
+    ensure_table()
+    from state_store import store
+    from config import CIRCUIT_BREAKER
+    expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
+    ref = today or datetime.now(TPE).replace(tzinfo=None)
+    cutoff = (ref - timedelta(days=120)).strftime("%Y-%m-%d")
+    with store._conn() as conn:
+        rows = [dict(x) for x in conn.execute(
+            "SELECT * FROM shadow_signals WHERE status='closed' AND r_multiple IS NOT NULL AND ("
+            "(champion_status IN ('provisional','no_fresh_price') AND bar_date>=?) "
+            "OR (champion_status IS NULL AND champion_r IS NOT NULL)) "
+            "ORDER BY bar_date LIMIT ?", (cutoff, max_rows)).fetchall()]
+    out = {"scanned": len(rows), "finalized": 0, "still_provisional": 0, "no_fresh_price": 0,
+           "legacy_checked": 0, "legacy_changed": 0, "legacy_unverified": 0,
+           "legacy_mean_abs_diff": None, "legacy_max_abs_diff": None}
+    if not rows:
+        return out
+    since = (datetime.strptime(min(r["bar_date"] for r in rows), "%Y-%m-%d")
+             - timedelta(days=10)).strftime("%Y-%m-%d")
+    bars_by = _load_bars(sorted({r["ticker"] for r in rows}), since)
+    updates, diffs = [], []
+    for row in rows:
+        legacy = row.get("champion_status") is None
+        bars = bars_by.get(row["ticker"])
+        track = None
+        if bars:
+            try:
+                r2, _scale = _rescale(row, bars)
+                track = _champion_track(r2, bars, expire_days, today=ref)
+            except Exception as e:
+                logger.debug(f"finalize champion id={row['id']}: {e}")
+        if legacy:
+            out["legacy_checked"] += 1
+            old = row.get("champion_r")
+            if track is None:
+                out["legacy_unverified"] += 1
+                updates.append(("UPDATE shadow_signals SET champion_r_legacy=COALESCE(champion_r_legacy,?), "
+                                "champion_r=NULL, champion_status='legacy_unverified' WHERE id=?",
+                                [old, row["id"]]))
+                continue
+            f, v = _champion_fields(track)
+            updates.append((f"UPDATE shadow_signals SET champion_r_legacy=COALESCE(champion_r_legacy,?), "
+                            f"{', '.join(f)} WHERE id=?", [old] + v + [row["id"]]))
+            if track["status"] == "final" and old is not None:
+                d = abs(track["r"] - old)
+                diffs.append(d)
+                out["legacy_changed"] += d > 0.0005
+        else:
+            if track is None:
+                continue
+            if track["status"] == row.get("champion_status") and track["status"] != "provisional":
+                continue
+            f, v = _champion_fields(track)
+            updates.append((f"UPDATE shadow_signals SET {', '.join(f)} WHERE id=?", v + [row["id"]]))
+        if track is not None:
+            key = {"final": "finalized", "provisional": "still_provisional",
+                   "no_fresh_price": "no_fresh_price"}[track["status"]]
+            out[key] += 1
+    if updates:
+        with store._conn() as conn:
+            for q, v in updates:
+                conn.execute(q, v)
+    if diffs:
+        out["legacy_mean_abs_diff"] = round(sum(diffs) / len(diffs), 4)
+        out["legacy_max_abs_diff"] = round(max(diffs), 3)
+    logger.info(f"shadow Champion 軌定案：{out}")
+    return out
+
+
+def _safe_cohorts():
+    try:
+        return cohort_report()
+    except Exception as e:
+        logger.debug(f"cohort_report: {e}")
+        return None
+
+
+def data_quality_counts() -> dict:
+    """★ 2026-11-12（S-P0-02）：影子資料的不變量稽核計數（只讀）。正式資料庫不對外開放，
+    這些數字寫進結算工作的日誌，才能確認歷史髒資料（缺停損的對照組、±9e9 的 MFE/MAE 哨兵值）
+    是否真的已清乾淨——不是只憑「清洗程式有測試」就宣稱已修。"""
+    ensure_table()
+    from state_store import store
+    q = {
+        "closed_without_r": "status='closed' AND r_multiple IS NULL",
+        "closed_missing_stop": "status='closed' AND (stop IS NULL OR stop<=0 OR entry IS NULL OR entry<=0)",
+        "absurd_mfe_mae": "(ABS(mfe_r)>1000 OR ABS(mae_r)>1000)",
+        "absurd_r": "ABS(r_multiple)>50",
+        "champion_provisional": "champion_status='provisional'",
+        "champion_no_fresh_price": "champion_status='no_fresh_price'",
+        "champion_legacy_unverified": "champion_status='legacy_unverified'",
+        "champion_legacy_pending_reaudit": "status='closed' AND champion_status IS NULL AND champion_r IS NOT NULL",
+    }
+    out = {}
+    with store._conn() as conn:
+        for k, cond in q.items():
+            row = conn.execute(f"SELECT COUNT(*) AS n FROM shadow_signals WHERE {cond}").fetchone()
+            out[k] = int((dict(row) if row else {}).get("n") or 0)
+    return out
+
+
+def cohort_report() -> dict:
+    """★ 2026-11-12（S-P1-03／S-P1-08）候選漏斗與成熟度，多空分開。
+
+    漏斗：candidate（通過規則的全部候選）≠ sent（真的排入推播）≠ delivered（Telegram 確認收下）。
+    歷史匯出中 2,511 筆候選只有 15 筆 sent——把全部候選的統計當成「線上實績」會有嚴重的選擇偏差，
+    因此各階段筆數必須並列；且沒有券商成交回報，任何一階都不能稱為實際成交。
+
+    成熟度：停損通常比停利先發生，早結案的樣本偏向虧損；只看「已結案」會有截尾偏差。
+    因此另算「成熟訊號日」（該日候選已全部離開 pending）的平均 R，並揭露未成熟比例。"""
+    ensure_table()
+    from state_store import store
+    with store._conn() as conn:
+        rows = [dict(x) for x in conn.execute(
+            "SELECT bar_date, direction, status, sent, delivered, r_multiple, champion_r, champion_status "
+            "FROM shadow_signals WHERE kind='candidate'").fetchall()]
+    out = {}
+    for d in ("buy", "sell"):
+        rs = [r for r in rows if r.get("direction") == d]
+        by_day = {}
+        for r in rs:
+            by_day.setdefault(r["bar_date"], []).append(r)
+        mature_days = [k for k, v in by_day.items() if all(x.get("status") != "pending" for x in v)]
+        closed = [r for r in rs if r.get("status") == "closed" and r.get("r_multiple") is not None]
+        mature = [r for r in closed if r["bar_date"] in set(mature_days)]
+        avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
+        out[d] = {
+            "funnel": {"candidate": len(rs),
+                       "sent": sum(1 for r in rs if r.get("sent") == 1),
+                       "delivered": sum(1 for r in rs if r.get("delivered") == 1),
+                       "closed_valid_r": len(closed),
+                       "champion_final": sum(1 for r in rs if r.get("champion_status") == "final"),
+                       "filled": None},          # 無券商成交回報：誠實留空，不以推播數代替
+            "maturity": {"signal_days": len(by_day), "mature_days": len(mature_days),
+                         "pending": sum(1 for r in rs if r.get("status") == "pending"),
+                         "pending_share": round(sum(1 for r in rs if r.get("status") == "pending") / len(rs), 3) if rs else None,
+                         "unresolved": sum(1 for r in rs if r.get("status") == "unresolved"),
+                         "all_closed_avg_r": avg([r["r_multiple"] for r in closed]),
+                         "mature_days_avg_r": avg([r["r_multiple"] for r in mature]),
+                         "n_mature": len(mature)}}
+    out["note"] = ("candidate≠sent≠delivered≠實際成交（無券商回報，filled 留空）。"
+                   "all_closed_avg_r 含未成熟訊號日（先停損者先結案，偏悲觀或偏樂觀皆可能）；"
+                   "mature_days_avg_r 只計候選已全部離開 pending 的訊號日。")
+    return out
 
 
 def finish_run(universe=None, pre_skipped=None, pre_passed=None):
@@ -1187,8 +1469,13 @@ def overview():
             "AVG(r_multiple) AS research_avg_r, AVG(champion_r) AS champion_avg_r "
             "FROM shadow_signals WHERE kind='candidate' AND status='closed' AND champion_r IS NOT NULL "
             "GROUP BY direction").fetchall()]
+        # ★ 2026-11-12（S-P0-01）：Champion 軌尚未定案／無法定案的筆數，與定案值分開揭露。
+        _champ_state = [dict(x) for x in conn.execute(
+            "SELECT COALESCE(champion_status,'(舊值待重驗)') AS st, COUNT(*) AS n FROM shadow_signals "
+            "WHERE kind='candidate' AND status='closed' AND r_multiple IS NOT NULL "
+            "GROUP BY champion_status").fetchall()]
     # 特徵覆蓋率（每種來源各自算）
-    cov, cnt = {}, {}
+    cov, cnt, _distinct = {}, {}, {}
     for x in sample:
         try:
             f = json.loads(x["features"] or "{}")
@@ -1198,9 +1485,17 @@ def overview():
         for k in f:
             cov.setdefault(k, {}).setdefault(x["kind"], 0)
             cov[k][x["kind"]] += 1
+            if f[k] is not None and len(_distinct.setdefault(k, set())) < 3:
+                try:
+                    _distinct[k].add(f[k] if isinstance(f[k], (str, int, float, bool)) else str(f[k]))
+                except Exception:
+                    pass
     coverage = []
     for k, d in cov.items():
-        coverage.append({"key": k, "pct": {kd: round(d.get(kd, 0) / cnt[kd] * 100) for kd in cnt}})
+        # ★ 2026-11-12（S-P1-07）：抽樣中只有一種取值的特徵（如歷史上恆為 0 的 news_neg）沒有
+        # 鑑別力，逐一檢定只會增加虛假比較數。標示 constant 供研究端隔離；不刪原始資料。
+        coverage.append({"key": k, "pct": {kd: round(d.get(kd, 0) / cnt[kd] * 100) for kd in cnt},
+                         "constant": len(_distinct.get(k, ())) <= 1})
     coverage.sort(key=lambda z: -max(z["pct"].values()))
     for x in recent:
         try:
@@ -1246,6 +1541,8 @@ def overview():
             "coverage": coverage[:60], "coverage_n": cnt, "recent": recent, "alerts": alerts,
             "delivery": delivery, "feature_schema": {"current": FEATURE_SCHEMA_VERSION, "dist": _fsv},
             "champion_edge": champion_edge,
+            "champion_state": {x["st"]: int(x["n"] or 0) for x in _champ_state},
+            "cohorts": _safe_cohorts(),
             "reasons": REASONS, "control_rate": CONTROL_RATE,
             "caps": {"per_reason": REJ_PER_REASON, "total": REJ_TOTAL}}
 
@@ -1284,7 +1581,7 @@ def export_csv(kind=None, status=None):
             keys[k] = keys.get(k, 0) + 1
     fkeys = [k for k, _ in sorted(keys.items(), key=lambda z: -z[1])][:500]   # 2026-10-16：上限 150→500，幾乎匯出全部特徵
     base = ["id", "bar_date", "ticker", "code", "name", "kind", "direction", "score", "entry", "stop", "tp1", "tp2",
-            "tp3", "size_cat", "sector", "sent", "status", "result", "exit_price", "exit_date", "r_multiple", "champion_r",
+            "tp3", "size_cat", "sector", "sent", "status", "result", "exit_price", "exit_date", "r_multiple", "champion_r", "champion_status", "champion_exit_date", "champion_r_prov", "champion_r_legacy",
             "mfe_r", "mae_r", "bars_held", "gap_pct", "r1", "r5", "r10", "r20", "mae_bars", "mfe_bars", "tp1_before_sl", "created_at"]
     # 2026-10-16：加上離線分析常用的衍生欄位，省得每次自己算
     WIN = ("tp1", "tp2", "tp3")

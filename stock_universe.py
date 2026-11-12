@@ -1151,6 +1151,17 @@ def get_etf_list() -> List[str]:
     return [s["ticker"] for s in build_universe() if s.get("is_etf")]
 
 def get_tw50_components() -> List[str]:
+    """臺灣 50 『目前』的成分股。★ 2026-11-12：改由 tw50_history（歷史異動紀錄）推得今日名單；
+    原本寫死的清單與真實成分差了 18 檔。歷史回測請用 tw50_history.members_on(日期)，不要用本函式
+    回推過去。歷史資料載入失敗時退回下方舊清單。"""
+    try:
+        import tw50_history as _h
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        cur = _h.members_on((_dt.now(_tz.utc) + _td(hours=8)).strftime("%Y-%m-%d"))
+        if cur and len(cur) in (49, 50):
+            return _h.tickers(cur)
+    except Exception:
+        pass
     return [
         "2330.TW","2317.TW","2454.TW","2308.TW","2382.TW",
         "2412.TW","2303.TW","3711.TW","2881.TW","2882.TW",

@@ -664,6 +664,16 @@ def job_shadow_resolve(reason: str = "排程"):
         r = shadow.resolve_pending()
         logger.info(f"⏰ 影子結算（{reason}）完成：{r}")
         try:
+            # ★ 2026-11-12（S-P0-01）：Champion 軌定案——最後一腿真的出場或到期才寫 champion_r；
+            # 並以真實 K 棒重驗舊值（舊值保留於 champion_r_legacy）。只讀資料庫、冪等。
+            logger.info(f"⏰ Champion 軌定案（{reason}）完成：{shadow.finalize_champion_tracks()}")
+        except Exception as e:
+            logger.warning(f"job_shadow_resolve finalize_champion_tracks: {e}")
+        try:
+            logger.info(f"⏰ 影子資料品質（{reason}）：{shadow.data_quality_counts()}")
+        except Exception as e:
+            logger.warning(f"job_shadow_resolve data_quality_counts: {e}")
+        try:
             from strategies import store as _ss
             logger.info(f"⏰ 策略假想訊號結算（{reason}）完成：{_ss.resolve_pending()}")
         except Exception as e:
@@ -1442,6 +1452,19 @@ def api_learning_ablation():
         return jsonify(learning_model.factor_ablation(direction=direction))
     except Exception as e:
         logger.error(f"api_learning_ablation: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/learning/experiments")
+@members.owner_required
+@admin_auth.admin_required
+def api_learning_experiments():
+    """站主：預先登錄的 Challenger 影子實驗（E01 行情濾網、E02 避免追高）。只評估、不改正式訊號、
+    不寫設定、不自動升級；探索期與樣本外分開回報，樣本外不足時誠實回 insufficient。"""
+    try:
+        import experiments
+        return jsonify(experiments.report())
+    except Exception as e:
+        logger.error(f"api_learning_experiments: {e}", exc_info=True); return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/learning/backfill_champion_r", methods=["POST"])

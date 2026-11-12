@@ -40,6 +40,15 @@ def risk_basis(balance: float = None) -> Dict:
         "account_balance_twd": bal,
         "config_version": cfg_ver,
         "effective_at": _RISK_EFFECTIVE_AT,
+        # ★ 2026-11-12（Q-P1-03）實際生效的檢查點（只描述現況、不改行為）：
+        "enforcement": {
+            "daily_realized_loss": f"當日已實現虧損累計達本金 {MAX_DAILY_RISK*100:.1f}% → 當日暫停新訊號"
+                                   "（掃描前閘門；狀態讀不到時同樣暫停）",
+            "open_risk_budget": f"發訊號前：既有未平倉部位的停損風險＋新訊號風險合計 ≤ 本金 {MAX_DAILY_RISK*100:.1f}%"
+                                "（scanner 以 fit_to_cash 縮股數或不發）——此上限涵蓋『全部未平倉』，不只當日新單",
+            "portfolio_hard_cap": f"{MAX_PORTFOLIO_RISK*100:.0f}% 硬上限僅用於組合風險面板的警示；因 open_risk_budget "
+                                  "更嚴，正式發訊流程不會先觸及此上限（check_margin_usage 未接入發訊流程）",
+        },
         "basis": "三個上限語意不同、不可混用：單筆預算＝每筆停損最多虧本金比例；單日新增＝當日所有新單"
                  "風險總和上限；組合硬上限＝所有部位最壞同時停損總和的硬上限（超過即暫停新單、不動既有部位）。"
                  "參數隨程式部署生效（effective_at 為現行凍結日）；歷史訊號的風險%為產生當時的實算值，不回填現行上限。",

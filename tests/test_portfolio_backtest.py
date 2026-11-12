@@ -22,7 +22,7 @@ def _ohlcv(n=160):
 
 def test_portfolio_backtest_shared_account_and_cap(monkeypatch):
     import stock_universe, data_fetcher, signal_engine
-    monkeypatch.setattr(stock_universe, "get_tw50_components", lambda: ["A.TW", "B.TW"])
+    monkeypatch.setattr(bt, "_tw50_targets", lambda *a, **k: ["A.TW", "B.TW"])
     monkeypatch.setattr(stock_universe, "get_stock_info", lambda t: {"size_cat": "中型股", "volume_lots": 999999})
     monkeypatch.setattr(data_fetcher, "fetch_ohlcv", lambda t, tf="daily": _ohlcv())
 
@@ -50,7 +50,7 @@ def test_portfolio_backtest_shared_account_and_cap(monkeypatch):
 
 def test_portfolio_backtest_no_data(monkeypatch):
     import stock_universe, data_fetcher
-    monkeypatch.setattr(stock_universe, "get_tw50_components", lambda: ["A.TW"])
+    monkeypatch.setattr(bt, "_tw50_targets", lambda *a, **k: ["A.TW"])
     monkeypatch.setattr(data_fetcher, "fetch_ohlcv", lambda t, tf="daily": {"closes": []})
     out = bt.portfolio_backtest_tw()
     assert "error" in out

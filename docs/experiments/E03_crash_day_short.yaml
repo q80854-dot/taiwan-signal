@@ -1,0 +1,35 @@
+id: E03
+name: 開放大盤重挫日放空
+registered_at: 2026-11-12
+status: registered            # 使用者 2026-11-12 表示要開放；依約先做影子驗證，正式訊號維持不發
+type: blocked_rule            # 評估「被某條規則擋下的假想單」，不是在候選裡加濾網
+direction: sell
+hypothesis: >
+  大盤重挫日（加權指數單日跌幅達熔斷門檻）目前多空皆停；其中通過全部放空關卡的假想放空單，
+  Champion 淨 R 的期望值為正，值得開放。
+motivation: >
+  程式原意似為「重挫日只做空」（掃描日誌曾寫「本次只掃空單」），但 can_trade=False 使放空從未在
+  重挫日發出過，也沒有留下任何影子資料——沒有任何證據可判斷該不該開放。
+filter: kind = rejected AND features.reject = 'market_stop' AND direction = sell
+threshold_source: 放空關卡與平日完全相同，不新增或調整任何門檻；只評估『重挫日不發』這條規則本身
+data_collection: >
+  2026-11-12 起，重挫日的放空候選會走完與平日相同的全部關卡（大盤環境、週線、ADX 方向、分數、量能、
+  事件、追價、停損距離、盈虧比、部位），通過者以 market_stop 記成假想單；正式訊號不產生。
+primary_endpoint: Champion 分批淨 R（champion_status = final）的平均值
+uncertainty: 以訊號日為叢集的拔靴，95% 信賴區間
+exploratory_window: "<= 2026-11-12"
+oos_window: ">= 2026-11-13"
+min_oos_days: 8
+min_oos_trades: 30
+min_effect_r: 0.05
+success_rule: OOS 平均淨 R 的 95% CI 下界 > 0.05R
+failure_rule: OOS 平均淨 R 的 95% CI 上界 < 0.05R
+caveats:
+  - 重挫日本來就少（單日跌幅達熔斷門檻一年可能只有數次），累積到 8 個重挫日可能需要很久
+  - 重挫日隔天常見跳空與劇烈反彈；放空另有券源、借券費率、強制回補與軋空風險，系統目前沒有這些資料
+  - 同一天的假想單高度相關，有效樣本數遠小於筆數
+multiple_testing: 與 E01、E02 同屬一個 family（size = 3）
+guardrails:
+  - 影子驗證期間正式訊號維持「重挫日多空皆停」
+  - supported 也只代表可以提案；須人工審查券源、軋空與尾端風險，並經使用者同意後才開放
+  - 不得在看到 OOS 結果後修改關卡；要改必須另立新編號
