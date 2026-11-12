@@ -466,6 +466,20 @@ class TWScanEngine:
             logger.warning(f"shadow.mark_sent: {e}")
         for _s in final_signals:                      # run_id 血緣：記憶體 dict＋save_signal raw_json 同步帶
             _s["scan_run_id"] = run_id
+        # ★ 2026-11-12 逐棒資料契約階段 2（LIVE10）：每筆訊號附「產生當下所用末根日K」的定案狀態
+        # 與來源（讀快取最後一棒，與訊號引擎用的是同一條快取路徑）。舊棒無紀錄＝None，不猜。
+        _bar_sum = {"final": 0, "provisional": 0, "unknown": 0}
+        for _s in final_signals:
+            try:
+                _b = (store.get_cached_ohlcv_bars(_s.get("ticker", ""), "daily", limit=1) or [{}])[0]
+                _s["bar_date_used"] = _b.get("bar_date")
+                _s["bar_final"] = _b.get("is_final")
+                _s["bar_source"] = _b.get("source")
+                _bar_sum["final" if _b.get("is_final") == 1
+                         else "provisional" if _b.get("is_final") == 0 else "unknown"] += 1
+            except Exception:
+                _s["bar_date_used"] = _s["bar_final"] = _s["bar_source"] = None
+                _bar_sum["unknown"] += 1
         self.signals_today = final_signals
         self.scan_count   += 1
         _now_iso = datetime.now(timezone.utc).isoformat()
@@ -520,6 +534,8 @@ class TWScanEngine:
                 "audited": pre["audited"], "mismatch": pre["mismatch"],
                 "recon_checked": pre["recon_checked"], "recon_fixed": pre["recon_fixed"],
                 "recon_samples": pre["recon_samples"], "duration_sec": stats["duration_sec"],
+                # ★ 2026-11-12 逐棒階段 2：本批訊號所用末棒定案統計（unknown＝舊棒無紀錄，誠實列出）
+                "bar_final_summary": _bar_sum,
             })
         except Exception as e:
             logger.warning(f"寫入掃描稽核失敗: {e}")

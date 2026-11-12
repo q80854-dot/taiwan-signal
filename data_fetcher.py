@@ -1138,6 +1138,7 @@ def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
     dates   = [b["bar_date"] if "bar_date" in b else b["date"] for b in cached]
     if not closes or closes[-1] <= 0:
         return None
+    _lb = cached[-1]   # ★ 2026-11-12 逐棒資料契約階段 2：帶出末棒血緣（NULL＝舊棒無紀錄，不猜）
     return {
         "ticker": ticker, "tf_key": tf_key, "label": tf["label"],
         "closes": closes, "opens": opens, "highs": highs, "lows": lows,
@@ -1146,6 +1147,8 @@ def _fetch_ohlcv_incremental(ticker: str, tf_key: str) -> Optional[Dict]:
         "prev_close":    closes[-2] if len(closes)>1 else closes[-1],
         "change_pct":    round((closes[-1]-closes[-2])/closes[-2]*100,2) if len(closes)>1 else 0,
         "bar_count":     len(closes), "source": "ohlcv_cache",
+        "last_bar_final": _lb.get("is_final"), "last_bar_source": _lb.get("source"),
+        "last_bar_source_time": _lb.get("source_time"), "last_bar_session": _lb.get("session"),
     }
 
 def fill_from_finmind(ticker: str) -> int:
