@@ -80,7 +80,16 @@ REASONS = {
 FEATURE_SCHEMA_VERSION = "fs-v1-2026-11-08"
 
 _COLS = ("bar_date,ticker,code,name,kind,direction,score,entry,stop,tp1,tp2,tp3,size_cat,sector,"
-         "sent,features,status,created_at,model_prob,feat_schema_ver")
+         "sent,features,status,created_at,model_prob,feat_schema_ver,config_ver")
+
+
+def _config_ver():
+    """寫入當下的策略版本（config_hash 前 12 碼）；取不到回 None，不猜。"""
+    try:
+        import strategy_version as _sv
+        return _sv.config_hash()[:12]
+    except Exception:
+        return None
 
 # ───────────── 一次掃描的收集狀態 ─────────────
 _run = None
@@ -181,6 +190,22 @@ def ensure_table():
             store._migrate_add_column("shadow_signals", "strategy_name", "TEXT")
         except Exception as e:
             logger.debug(f"shadow migrate strategy_name: {e}")
+        # 2026-11-12（S-P0-04 逐列血緣）：config_ver＝這筆被記錄當下的策略版本（config_hash 前 12 碼）；
+        # champion_sim_ver＝算出 champion_r 定案值的分批模擬器版本。策略規則一改（例如 11-12 停發放空、
+        # 做多門檻 75），同一張表裡就混著不同規則下產生的列；沒有這兩欄就只能靠日期推測。
+        # 既有列不回填（當時沒記錄，不用日期反推來假裝有記錄）——NULL＝未記錄。
+        for col in ("config_ver", "champion_sim_ver"):
+            try:
+                store._migrate_add_column("shadow_signals", col, "TEXT")
+            except Exception as e:
+                logger.debug(f"shadow migrate {col}: {e}")
+        # 2026-11-12（出場 Challenger）：alt_exits＝同一筆候選以其他出場方案（execution.EXIT_CHALLENGERS）
+        # 模擬的結果（JSON：{方案: {status, r, exit_date}, "sim": 版本}）。只供實驗 E07／E08 比較，
+        # 不影響正式訊號，也不進任何既有統計。
+        try:
+            store._migrate_add_column("shadow_signals", "alt_exits", "TEXT")
+        except Exception as e:
+            logger.debug(f"shadow migrate alt_exits: {e}")
         _ready = True
 
 
@@ -473,17 +498,18 @@ def _insert(rows):
     ensure_table()
     _add_sector_rel(rows)
     from state_store import store
+    _cfg_ver = _config_ver()
     with store._conn() as conn:
         before = (conn.execute("SELECT COUNT(*) AS n FROM shadow_signals").fetchone() or {"n": 0})["n"]
         for r in rows:
             try:
                 conn.execute(
-                    f"INSERT INTO shadow_signals ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    f"INSERT INTO shadow_signals ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT (bar_date, ticker) DO NOTHING",
                     (r["bar_date"], r["ticker"], r["code"], r["name"], r["kind"], r["direction"], r["score"],
                      r["entry"], r["stop"], r["tp1"], r["tp2"], r["tp3"], r["size_cat"], r["sector"],
                      0, json.dumps(r["features"], ensure_ascii=False), "pending", r["created_at"],
-                     r.get("model_prob"), FEATURE_SCHEMA_VERSION))
+                     r.get("model_prob"), FEATURE_SCHEMA_VERSION, _cfg_ver))
             except Exception as e:
                 logger.warning(f"shadow insert {r.get('ticker')}: {e}")
                 _err(f"insert {r.get('ticker')}: {e}")
@@ -502,6 +528,46 @@ def _as_float(sl):
     if isinstance(sl, dict):
         sl = sl.get("stop_loss")
     return float(sl) if sl is not None else None
+
+
+STOPPED_CLASS_REASONS = ("short_off", "gate_weekly_long", "long_score")   # 2026-11-12 Champion 變更停發的三類
+PRIOR_BLOCKED_DAYS = 15                                                    # 回看的日曆天數（＝一筆訊號的有效天數）
+
+
+def _add_prior_blocked(rows):
+    """★ 2026-11-12 特徵 prior_blocked：這檔股票在訊號日之前 15 個日曆天內，是否出現過「被停發類別」的
+    假想單（做多但週線不偏多／做多但分數未達 75／放空）。值為最近一筆的原因代碼，沒有則 "none"。
+    只記錄、不影響訊號——供實驗 E10 驗證「剛轉強的股票第一時間追進去是否較差」。
+    查詢失敗時不寫這個特徵（缺漏＝不猜），不影響候選記錄。"""
+    if not rows:
+        return
+    try:
+        from state_store import store
+        days = sorted({r["bar_date"] for r in rows})
+        lo = (datetime.strptime(days[0], "%Y-%m-%d") - timedelta(days=PRIOR_BLOCKED_DAYS)).strftime("%Y-%m-%d")
+        tickers = sorted({r["ticker"] for r in rows})
+        prior = {}
+        with store._conn() as conn:
+            for i in range(0, len(tickers), 250):
+                chunk = tickers[i:i + 250]
+                ph = ",".join("?" * len(chunk))
+                rs = conn.execute(
+                    f"SELECT ticker, bar_date, features FROM shadow_signals WHERE kind='rejected' "
+                    f"AND bar_date>=? AND bar_date<? AND ticker IN ({ph}) ORDER BY bar_date",
+                    (lo, days[-1]) + tuple(chunk)).fetchall()
+                for x in rs:
+                    try:
+                        reason = (json.loads(x["features"] or "{}") or {}).get("reject")
+                    except Exception:
+                        reason = None
+                    if reason in STOPPED_CLASS_REASONS:
+                        prior.setdefault(x["ticker"], []).append((x["bar_date"], reason))
+        for r in rows:
+            floor = (datetime.strptime(r["bar_date"], "%Y-%m-%d") - timedelta(days=PRIOR_BLOCKED_DAYS)).strftime("%Y-%m-%d")
+            hits = [(d, why) for d, why in prior.get(r["ticker"], []) if floor <= d < r["bar_date"]]
+            r["features"]["prior_blocked"] = hits[-1][1] if hits else "none"
+    except Exception as e:
+        logger.debug(f"shadow prior_blocked: {e}")
 
 
 def capture_candidates(signals, market_overview):
@@ -542,6 +608,7 @@ def capture_candidates(signals, market_overview):
                          "entry": s.get("entry_price"), "stop": s.get("stop_loss"), "tp1": s.get("tp1"),
                          "tp2": s.get("tp2"), "tp3": s.get("tp3"), "size_cat": s.get("size_cat"),
                          "sector": s.get("sector"), "created_at": now, "features": feats, "model_prob": mp})
+        _add_prior_blocked(rows)
         n = _insert(rows)
         logger.info(f"shadow: 候選已記錄 {n}/{len(rows)} 筆（其餘為當日已記錄過）")
         if r is not None:
@@ -930,8 +997,10 @@ def _champion_fields(track):
         return [], []
     st = track["status"]
     if st == "final":
-        return (["champion_r=?", "champion_r_prov=NULL", "champion_status='final'", "champion_exit_date=?"],
-                [track["r"], track.get("exit_date")])
+        import execution
+        return (["champion_r=?", "champion_r_prov=NULL", "champion_status='final'", "champion_exit_date=?",
+                 "champion_sim_ver=?"],
+                [track["r"], track.get("exit_date"), execution.STAGED_SIM_VERSION])
     if st == "provisional":
         return ["champion_r=NULL", "champion_r_prov=?", "champion_status='provisional'"], [track["r"]]
     return ["champion_r=NULL", "champion_r_prov=NULL", "champion_status='no_fresh_price'"], []
@@ -1235,12 +1304,111 @@ def backfill_champion_r(max_rows=20000) -> dict:
             continue
         updates.append((track["r"], track.get("exit_date"), row["id"]))
     if updates:
+        import execution as _exec
         with store._conn() as conn:
             for champ, _xd, _id in updates:
                 conn.execute("UPDATE shadow_signals SET champion_r=?, champion_status='final', "
-                             "champion_exit_date=? WHERE id=?", (champ, _xd, _id))
+                             "champion_exit_date=?, champion_sim_ver=? WHERE id=?",
+                             (champ, _xd, _exec.STAGED_SIM_VERSION, _id))
     logger.info(f"champion_r 回填：掃 {len(rows)} 筆、填 {len(updates)} 筆、缺真實資料略過 {skipped} 筆")
     return {"scanned": len(rows), "filled": len(updates), "skipped_nodata": skipped}
+
+
+def _alt_exit_tracks(row, bars, today=None):
+    """★ 2026-11-12 出場 Challenger：以 execution.EXIT_CHALLENGERS 的各方案模擬同一筆假想單。
+    回傳 {方案: {"status": final／provisional／no_fresh_price／no_atr, "r": 淨R或None, "exit_date"}}；
+    無資料／退化風險回 None。進場、成本、R 的分母與 Champion 軌完全相同，只有出場規則不同：
+      final          部位已全部出場（停損／停利／移動停損／到期）。
+      provisional    還有部位在場、也還沒到期：不存數字（不以暫估值當結果）。
+      no_fresh_price 已過到期日＋寬限，K 棒卻在到期前就停更。
+      no_atr         方案需要 ATR，但這筆沒有記錄停損的 ATR 倍數：不猜。"""
+    planned_entry, stop = row.get("entry"), row.get("stop")
+    if not _risk_ok(planned_entry, stop):
+        return None
+    after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
+    if not after:
+        return None
+    import execution
+    risk = abs(planned_entry - stop)
+    fill = after[0].get("open") or planned_entry
+    shares = 3000
+    try:
+        f = row.get("features")
+        f = json.loads(f) if isinstance(f, str) else (f or {})
+        sl_atr = float(f.get("sl_atr")) if f.get("sl_atr") else None
+    except Exception:
+        sl_atr = None
+    atr = risk / sl_atr if sl_atr and sl_atr > 0 else None         # 與停損同一把尺（還原縮放後仍一致）
+    try:
+        ref = today or datetime.now(TPE).replace(tzinfo=None)
+        age = (ref - datetime.strptime(row["bar_date"][:10], "%Y-%m-%d")).days
+    except Exception:
+        age = 0
+    out = {}
+    for name, spec in execution.EXIT_CHALLENGERS.items():
+        if spec.get("trail_atr") and not atr:
+            out[name] = {"status": "no_atr", "r": None}
+            continue
+        sim = execution.simulate_alt_exit(spec, after, fill, stop, row.get("tp1"), row.get("tp2"), row.get("tp3"),
+                                          row["direction"], shares, row["bar_date"], _shadow_staged_pnl_factory(),
+                                          atr=atr, prev_close=_signal_close(row, bars))
+        if sim is None:
+            out[name] = {"status": "no_atr" if spec.get("trail_atr") else "provisional", "r": None}
+        elif not sim["open_end"]:
+            out[name] = {"status": "final", "r": round(sim["pnl"] / (risk * shares), 3), "exit_date": sim["exit_date"]}
+        elif age >= spec["expire"] + CHAMPION_GRACE_DAYS:
+            out[name] = {"status": "no_fresh_price", "r": None}
+        else:
+            out[name] = {"status": "provisional", "r": None}
+    return out
+
+
+def finalize_alt_exit_tracks(max_rows=5000, today=None) -> dict:
+    """出場 Challenger 的定案：對「Champion 軌已定案」的候選，補算／更新其他出場方案的結果。
+    只讀資料庫既有日 K、冪等、可重複執行；全部方案都定案（或確定無法計算）後就不再重算。"""
+    ensure_table()
+    from state_store import store
+    import execution
+    ref = today or datetime.now(TPE).replace(tzinfo=None)
+    cutoff = (ref - timedelta(days=150)).strftime("%Y-%m-%d")
+    with store._conn() as conn:
+        rows = [dict(x) for x in conn.execute(
+            "SELECT * FROM shadow_signals WHERE kind='candidate' AND status='closed' AND champion_status='final' "
+            "AND bar_date>=? AND (alt_exits IS NULL OR alt_exits LIKE ?) ORDER BY bar_date LIMIT ?",
+            (cutoff, '%"provisional"%', max_rows)).fetchall()]
+    out = {"scanned": len(rows), "updated": 0, "no_bars": 0}
+    out.update({f"{k}_final": 0 for k in execution.EXIT_CHALLENGERS})
+    if not rows:
+        return out
+    since = (datetime.strptime(min(r["bar_date"] for r in rows), "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")
+    bars_by = _load_bars(sorted({r["ticker"] for r in rows}), since)
+    updates = []
+    for row in rows:
+        bars = bars_by.get(row["ticker"])
+        if not bars:
+            out["no_bars"] += 1
+            continue
+        try:
+            r2, _scale = _rescale(row, bars)
+            tracks = _alt_exit_tracks(r2, bars, today=ref)
+        except Exception as e:
+            logger.debug(f"alt exit id={row['id']}: {e}")
+            tracks = None
+        if not tracks:
+            continue
+        for k, t in tracks.items():
+            out[f"{k}_final"] += t["status"] == "final"
+        tracks["sim"] = execution.ALT_EXIT_SIM_VERSION
+        new = json.dumps(tracks, ensure_ascii=False, sort_keys=True)
+        if new != row.get("alt_exits"):
+            updates.append((new, row["id"]))
+    if updates:
+        with store._conn() as conn:
+            for v, _id in updates:
+                conn.execute("UPDATE shadow_signals SET alt_exits=? WHERE id=?", (v, _id))
+    out["updated"] = len(updates)
+    logger.info(f"shadow 出場 Challenger 定案：{out}")
+    return out
 
 
 def finalize_champion_tracks(max_rows=5000, today=None) -> dict:
@@ -1368,9 +1536,24 @@ def cohort_report() -> dict:
     from state_store import store
     with store._conn() as conn:
         rows = [dict(x) for x in conn.execute(
-            "SELECT bar_date, direction, status, sent, delivered, r_multiple, champion_r, champion_status "
+            "SELECT bar_date, direction, status, sent, delivered, r_multiple, champion_r, champion_status, config_ver "
             "FROM shadow_signals WHERE kind='candidate'").fetchall()]
     out = {}
+    # ★ 2026-11-12（S-P0-04）依策略版本分組：規則一改，候選的母體就不同（例如 3bdbd319e626 起不再有放空、
+    # 做多只剩週線偏多且 ≥75 分者），不同版本的平均不可直接合併解讀。NULL＝該列產生時尚未記錄版本。
+    by_ver = {}
+    for r in rows:
+        v = by_ver.setdefault((r.get("config_ver") or "未記錄", r.get("direction")), {"n": 0, "rs": [], "days": set()})
+        v["n"] += 1
+        v["days"].add(r.get("bar_date"))
+        if r.get("champion_status") == "final" and r.get("champion_r") is not None:
+            v["rs"].append(r["champion_r"])
+    out["by_config_ver"] = [
+        {"config_ver": k[0], "direction": k[1], "candidates": v["n"], "signal_days": len(v["days"]),
+         "first_day": min(v["days"]) if v["days"] else None, "last_day": max(v["days"]) if v["days"] else None,
+         "champion_final": len(v["rs"]),
+         "champion_avg_r": round(sum(v["rs"]) / len(v["rs"]), 3) if v["rs"] else None}
+        for k, v in sorted(by_ver.items(), key=lambda kv: (min(kv[1]["days"]) if kv[1]["days"] else "", kv[0][1] or ""))]
     for d in ("buy", "sell"):
         rs = [r for r in rows if r.get("direction") == d]
         by_day = {}
@@ -1599,6 +1782,7 @@ def export_csv(kind=None, status=None):
     fkeys = [k for k, _ in sorted(keys.items(), key=lambda z: -z[1])][:500]   # 2026-10-16：上限 150→500，幾乎匯出全部特徵
     base = ["id", "bar_date", "ticker", "code", "name", "kind", "direction", "score", "entry", "stop", "tp1", "tp2",
             "tp3", "size_cat", "sector", "sent", "status", "result", "exit_price", "exit_date", "r_multiple", "champion_r", "champion_status", "champion_exit_date", "champion_r_prov", "champion_r_legacy",
+            "config_ver", "champion_sim_ver", "feat_schema_ver", "strategy_name",
             "mfe_r", "mae_r", "bars_held", "gap_pct", "r1", "r5", "r10", "r20", "mae_bars", "mfe_bars", "tp1_before_sl", "created_at"]
     # 2026-10-16：加上離線分析常用的衍生欄位，省得每次自己算
     WIN = ("tp1", "tp2", "tp3")

@@ -39,6 +39,19 @@ def _keep_e02(f: dict) -> Optional[bool]:
     return None if lv not in ("low", "mid", "high") else lv != "high"
 
 
+def _keep_e09(f: dict) -> Optional[bool]:
+    d = f.get("dist_hi52")
+    try:
+        return None if d is None else float(d) >= -10
+    except Exception:
+        return None
+
+
+def _keep_e10(f: dict) -> Optional[bool]:
+    p = f.get("prior_blocked")
+    return None if p is None else p == "none"
+
+
 REGISTRY: List[Dict] = [
     {"id": "E01", "name": "弱勢市場不做多（行情濾網）", "direction": "buy",
      "hypothesis": "做多訊號在市場情緒偏弱時期望值較差；只在情緒分數 ≥ 50 時保留做多候選，"
@@ -52,6 +65,17 @@ REGISTRY: List[Dict] = [
      "filter": "features.chase_level != 'high'",
      "threshold_source": "沿用訊號引擎既有的追高分級（low／mid／high），非依 10 月結果調整",
      "keep": _keep_e02, "doc": "docs/experiments/E02_chase_filter.yaml"},
+    {"id": "E09", "name": "只做接近一年高點的股票", "direction": "buy",
+     "hypothesis": "收盤在近 250 日最高價九成以上的做多候選期望值較好；只保留這類，留下組的 Champion 淨 R 高於基準。",
+     "filter": "features.dist_hi52 >= -10",
+     "threshold_source": "研究前寫死的整數門檻（九成）；重播 2020–2026 兩期方向一致，但未通過多重比較校正，故以樣本外驗證",
+     "keep": _keep_e09, "doc": "docs/experiments/E09_near_high.yaml"},
+    {"id": "E10", "name": "剛轉強的不追（近 15 天內曾是被停發類別者不做）", "direction": "buy",
+     "hypothesis": "同一檔股票近 15 個日曆天內曾出現被停發類別的假想單（週線不偏多／分數未達 75）者，"
+                   "轉為合格後第一時間進場的期望值較差；排除後留下組的 Champion 淨 R 高於基準。",
+     "filter": "features.prior_blocked == 'none'",
+     "threshold_source": "回看天數＝訊號有效天數 15 天，非依結果調整；重播中這類訊號兩期皆約 −0.16R",
+     "keep": _keep_e10, "doc": "docs/experiments/E10_fresh_turn.yaml"},
 ]
 
 
@@ -90,6 +114,87 @@ BLOCKED_REGISTRY: List[Dict] = [
      "review_note": "仍須人工審查回撤與尾端風險，並經使用者同意後才可恢復，不自動開放。",
      "doc": "docs/experiments/E06_restore_long_score.yaml"},
 ]
+
+
+# 「出場 Challenger」型實驗：同一批做多候選、同樣的進場與成本，只換出場規則；比較逐筆成對差
+# （方案淨 R − Champion 淨 R）。資料來自 shadow_signals.alt_exits（shadow.finalize_alt_exit_tracks）。
+ALT_EXIT_REGISTRY: List[Dict] = [
+    {"id": "E07", "name": "出場改為全程 3 ATR 移動停損（不分批、最長 60 天）", "direction": "buy", "track": "trail3",
+     "hypothesis": "不分批、不設停利，全程以進場後最高價減 3 ATR 移動停損、最長持有 60 天，"
+                   "逐筆淨 R 高於現行分批出場；且優勢不是只靠極少數大漲的單。",
+     "filter": "kind = candidate AND direction = buy AND alt_exits.trail3.status = final AND champion_status = final",
+     "threshold_source": "方案與倍數在出場研究前寫死（V5）；不依樣本外結果調整",
+     "doc": "docs/experiments/E07_exit_trail3.yaml"},
+    {"id": "E08", "name": "到期由 15 天延長為 60 天（分批停利不變）", "direction": "buy", "track": "hold60",
+     "hypothesis": "分批停利與移動保本規則不變，只把到期由 15 個日曆天延長為 60 天，逐筆淨 R 高於現行出場。",
+     "filter": "kind = candidate AND direction = buy AND alt_exits.hold60.status = final AND champion_status = final",
+     "threshold_source": "方案在出場研究前寫死（V3）；不依樣本外結果調整",
+     "doc": "docs/experiments/E08_exit_hold60.yaml"},
+]
+WINSOR_R = 3.0          # 縮尾檢查：每筆淨 R 截在 ±3R 再比一次，確認優勢不是只靠極端值
+
+
+def _alt_window(exp: Dict, rows: List[Dict], oos: bool) -> Dict:
+    in_win = [r for r in rows if r.get("kind", "candidate") == "candidate" and r.get("direction") == exp["direction"]
+              and ((r.get("bar_date") or "") >= OOS_START) == oos]
+    pairs, n_pending = [], 0
+    for r in in_win:
+        t = (r.get("alt") or {}).get(exp["track"]) or {}
+        if r.get("champion_status") != "final" or r.get("champion_r") is None:
+            continue
+        if t.get("status") != "final" or t.get("r") is None:
+            n_pending += 1                       # Champion 已定案、方案尚未出場（或無法計算）：不納入成對比較
+            continue
+        pairs.append((r["bar_date"], float(t["r"]), float(r["champion_r"])))
+    diff, wdiff = {}, {}
+    clip = lambda x: max(-WINSOR_R, min(WINSOR_R, x))
+    for d, a, c in pairs:
+        diff.setdefault(d, []).append(a - c)
+        wdiff.setdefault(d, []).append(clip(a) - clip(c))
+    dv = [x for v in diff.values() for x in v]
+    lo, hi = _boot_mean_ci(diff) if dv else (None, None)
+    wlo, whi = _boot_mean_ci(wdiff) if dv else (None, None)
+    alt = sorted(a for _, a, _ in pairs)
+    out = {"window": "oos" if oos else "exploratory", "n_candidates": len(in_win), "n_pairs": len(pairs),
+           "n_alt_not_final": n_pending, "n_days": len(diff),
+           "alt_avg_r": round(_mean(alt), 3) if alt else None,
+           "champion_avg_r": round(_mean([c for _, _, c in pairs]), 3) if pairs else None,
+           "diff": round(_mean(dv), 3) if dv else None, "diff_ci95": [lo, hi],
+           "diff_winsorized": round(_mean([x for v in wdiff.values() for x in v]), 3) if dv else None,
+           "diff_winsorized_ci95": [wlo, whi],
+           "alt_median_r": round(alt[len(alt) // 2], 3) if alt else None,
+           "alt_win_rate": round(sum(1 for a in alt if a > 0) / len(alt) * 100, 1) if alt else None}
+    if not oos:
+        out["verdict"] = "exploratory_only"
+        out["verdict_note"] = "探索期：不得作為採用依據。"
+    elif len(diff) < MIN_OOS_DAYS or len(pairs) < MIN_OOS_TRADES or lo is None or wlo is None:
+        out["verdict"] = "insufficient"
+        out["verdict_note"] = (f"樣本外資料不足：需 ≥ {MIN_OOS_DAYS} 個訊號日且 ≥ {MIN_OOS_TRADES} 筆成對樣本"
+                               f"（目前 {len(diff)} 日、{len(pairs)} 筆）。方案最長持有 60 天，定案比 Champion 慢；不下結論。")
+    elif lo > MIN_EFFECT_R and wlo > 0:
+        out["verdict"] = "supported"
+        out["verdict_note"] = ("成對差的 95% 區間下界超過最低經濟重要差異，且縮尾（±3R）後下界仍 > 0："
+                               "優勢不是只靠極端值。仍須人工審查持有期變長對資金與同時持倉的影響，並經使用者同意，不自動採用。")
+    elif hi < MIN_EFFECT_R:
+        out["verdict"] = "not_supported"
+        out["verdict_note"] = "成對差的 95% 區間上界低於最低經濟重要差異：此出場方案未顯示實用改善。"
+    elif lo > MIN_EFFECT_R:
+        out["verdict"] = "tail_dependent"
+        out["verdict_note"] = ("平均成對差顯著為正，但縮尾（±3R）後不成立：優勢集中在極少數大漲的單，"
+                               "實際只做其中少數幾筆時很可能拿不到。不建議採用。")
+    else:
+        out["verdict"] = "inconclusive"
+        out["verdict_note"] = "95% 區間跨越最低經濟重要差異：尚無法判定，繼續累積。"
+    return out
+
+
+def evaluate_alt_exit(exp_id: str, rows: Optional[List[Dict]] = None) -> Dict:
+    exp = next((e for e in ALT_EXIT_REGISTRY if e["id"] == exp_id), None)
+    if exp is None:
+        return {"ok": False, "reason": "unknown_experiment", "id": exp_id}
+    rows = _load_rows() if rows is None else rows
+    return {"ok": True, "type": "alt_exit", **exp,
+            "exploratory": _alt_window(exp, rows, oos=False), "oos": _alt_window(exp, rows, oos=True)}
 
 
 def _boot_mean_ci(by_day: Dict[str, list], n_boot=N_BOOT, seed=BOOT_SEED):
@@ -160,7 +265,7 @@ def _load_rows() -> List[Dict]:
     shadow.ensure_table()
     with store._conn() as conn:
         rs = [dict(r) for r in conn.execute(
-            "SELECT bar_date, kind, direction, status, champion_r, champion_status, features "
+            "SELECT bar_date, kind, direction, status, champion_r, champion_status, features, alt_exits "
             "FROM shadow_signals WHERE kind IN ('candidate','rejected') ORDER BY bar_date").fetchall()]
     for r in rs:
         try:
@@ -168,6 +273,11 @@ def _load_rows() -> List[Dict]:
             r["f"] = f if isinstance(f, dict) else {}
         except Exception:
             r["f"] = {}
+        try:
+            a = json.loads(r.get("alt_exits") or "{}")
+            r["alt"] = a if isinstance(a, dict) else {}
+        except Exception:
+            r["alt"] = {}
     return rs
 
 
@@ -261,9 +371,10 @@ def report() -> Dict:
                               "min_effect_r": MIN_EFFECT_R,
                               "supported": "OOS 差異 CI 下界 > min_effect_r",
                               "not_supported": "OOS 差異 CI 上界 < min_effect_r",
-                              "family_size": len(REGISTRY) + len(BLOCKED_REGISTRY)},
+                              "family_size": len(REGISTRY) + len(BLOCKED_REGISTRY) + len(ALT_EXIT_REGISTRY)},
             "experiments": [evaluate(e["id"], rows) for e in REGISTRY]
-                           + [evaluate_blocked(e["id"], rows) for e in BLOCKED_REGISTRY],
+                           + [evaluate_blocked(e["id"], rows) for e in BLOCKED_REGISTRY]
+                           + [evaluate_alt_exit(e["id"], rows) for e in ALT_EXIT_REGISTRY],
             "note": "純影子評估：不改正式訊號、不寫設定、不自動升級。supported 也只代表『可以提案』，"
                     "仍須人工審查回撤、尾端風險與可成交性，並經使用者同意。同時評估多個實驗有多重比較問題，"
                     "新增實驗須另立編號並更新 family_size。"}

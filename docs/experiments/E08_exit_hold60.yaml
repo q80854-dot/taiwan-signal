@@ -1,0 +1,37 @@
+id: E08
+name: 到期由 15 天延長為 60 天（分批停利不變）
+registered_at: 2026-11-12
+status: registered
+type: alt_exit
+direction: buy
+track: hold60                 # execution.EXIT_CHALLENGERS["hold60"]
+hypothesis: >
+  TP1／TP2／TP3 分批停利與移動保本規則完全不變，只把到期由 15 個日曆天延長為 60 天；
+  逐筆淨 R 高於現行出場。
+motivation: >
+  出場方式研究（docs/research/EXIT_STUDY_2020_2026.md）：現行出場有四到五成的單在 15 天到期時還沒走完。
+  延長為 60 天後，全市場抽樣的成對差為 +0.161R（2020–2023）／+0.051R（2024–2026），臺灣 50 為
+  +0.099R／+0.111R，四格的 95% 區間皆不含零；因為仍有 TP3 封頂，不靠極端值（縮尾後大致不變），勝率不降。
+  但全市場抽樣在 2025、2026 兩年的成對差接近零，且依事前規則被選中的是移動停損方案而非本方案，
+  故先以樣本外資料驗證。
+data_collection: >
+  shadow.finalize_alt_exit_tracks 對 Champion 軌已定案的候選補算本方案結果，存於 shadow_signals.alt_exits。
+  部位未出場前不存數字。
+primary_endpoint: 逐筆成對差（本方案淨 R − Champion 淨 R）的平均
+robustness_endpoint: 每筆截在 ±3R 後的成對差平均（縮尾）
+uncertainty: 以訊號日為叢集的拔靴，95% 信賴區間
+exploratory_window: "<= 2026-11-12"
+oos_window: ">= 2026-11-13"
+min_oos_days: 40
+min_oos_trades: 200
+min_effect_r: 0.05
+success_rule: OOS 成對差的 95% CI 下界 > 0.05R，且縮尾後成對差的 95% CI 下界 > 0
+failure_rule: OOS 成對差的 95% CI 上界 < 0.05R
+caveats:
+  - 最長持有 60 天，定案比 Champion 慢；累積到判定門檻可能需要四個月以上
+  - 持有期變長會占用同時持倉名額（平均持有約由 11 天變為 19～23 天），本實驗量的是每筆期望值
+multiple_testing: 與 E01～E10 同屬一個 family（size = 10）
+guardrails:
+  - 只記錄與評估，不改正式訊號；程式不自動採用
+  - 不得在看到樣本外結果後修改門檻或方案；要改必須另立新編號
+  - supported 也只代表可以提案；須人工審查並經使用者同意

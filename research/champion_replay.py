@@ -43,11 +43,41 @@ FIELDS = ["ticker", "signal_date", "size_cat", "direction", "score", "grade", "a
           "fwd5_pct", "fwd10_pct", "fwd20_pct", "mkt5_pct", "mkt10_pct", "mkt20_pct", "cost_r"]
 
 
-def _market_maps(start):
-    """加權指數逐日：單日漲跌幅、中期趨勢（與 data_fetcher._regime_from_closes 同一函式）。"""
+def load_history(ticker, tf_key, cache_dir=None, tries=3):
+    """抓某檔的完整還原日／週 K（backtester._fetch_long_history_tw）。
+    · cache_dir：有給就先讀磁碟快取，抓到後寫回——同一批研究（重播、出場研究…）用同一份資料，
+      結果可重現，也不必重複向資料來源請求。只快取「真的有資料」的結果。
+    · 資料來源限流時 _fetch_long_history_tw 會回 None；這裡退避重試，仍抓不到才回 None
+      （呼叫端記為 no_data，不以假資料代替）。"""
+    import json
     import backtester as bt
+    path = os.path.join(cache_dir, f"{ticker.replace('^', '_')}.{tf_key}.json") if cache_dir else None
+    if path and os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    for k in range(tries):
+        bt._long_hist_cache.pop(f"{ticker}|{tf_key}|max", None)      # 失敗結果不留在記憶體快取，才重試得到
+        d = bt._fetch_long_history_tw(ticker, tf_key, "max")
+        if d and d.get("closes"):
+            if path:
+                os.makedirs(cache_dir, exist_ok=True)
+                tmp = f"{path}.{os.getpid()}.tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(d, f)
+                os.replace(tmp, path)
+            return d
+        if k < tries - 1:
+            time.sleep(4 * (k + 1))
+    return None
+
+
+def _market_maps(start, cache_dir=None):
+    """加權指數逐日：單日漲跌幅、中期趨勢（與 data_fetcher._regime_from_closes 同一函式）。"""
     from data_fetcher import _regime_from_closes
-    d = bt._fetch_long_history_tw("^TWII", "daily", "max")
+    d = load_history("^TWII", "daily", cache_dir, tries=5)
     if not d:
         raise SystemExit("抓不到 ^TWII 歷史資料，無法重播（不以假資料代替）")
     out = {}
@@ -74,7 +104,7 @@ def _overview(m):
 
 
 def replay_ticker(args):
-    ticker, start, end, size_cat, pit, mkt = args
+    ticker, start, end, size_cat, pit, mkt, cache_dir = args
     import backtester as bt
     import config
     import event_filter
@@ -84,8 +114,8 @@ def replay_ticker(args):
     event_filter.check = lambda code, within_days=2: {}        # 無歷史除權息／重大訊息資料：不套用（已於說明揭露）
     rows = []
     try:
-        d = bt._fetch_long_history_tw(ticker, "daily", "max")
-        w = bt._fetch_long_history_tw(ticker, "weekly", "max")
+        d = load_history(ticker, "daily", cache_dir)
+        w = load_history(ticker, "weekly", cache_dir) if d else None
     except Exception:
         d = w = None
     if not d or len(d.get("closes") or []) < DAILY_WINDOW + 5:
@@ -192,15 +222,16 @@ def main():
     ap.add_argument("--size-cat", default="大型股", help="大型股／中型股／小型股，或 auto（依訊號日當時的收盤與均量分類）")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", default="champion_replay.csv")
+    ap.add_argument("--cache-dir", default=None, help="歷史 K 棒的磁碟快取目錄（可重現、避免重複請求資料來源）")
     a = ap.parse_args()
     if a.universe == "tw50_pit":
         import tw50_history as h
         tickers, pit = h.tickers(h.members_between(a.start, a.end)), "tw50"
     else:
         tickers, pit = [x.strip() for x in open(a.universe, encoding="utf-8") if x.strip()], None
-    mkt = _market_maps(a.start)
+    mkt = _market_maps(a.start, a.cache_dir)
     t0 = time.time()
-    jobs = [(t, a.start, a.end, a.size_cat, pit, mkt) for t in tickers]
+    jobs = [(t, a.start, a.end, a.size_cat, pit, mkt, a.cache_dir) for t in tickers]
     n_sig, no_data = 0, []
     with open(a.out, "w", newline="", encoding="utf-8") as f, Pool(a.workers) as pool:
         wr = csv.DictWriter(f, fieldnames=FIELDS)

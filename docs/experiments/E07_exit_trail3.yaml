@@ -1,0 +1,39 @@
+id: E07
+name: 出場改為全程 3 ATR 移動停損（不分批、最長 60 天）
+registered_at: 2026-11-12
+status: registered
+type: alt_exit                # 同一批候選、同樣的進場與成本，只換出場規則，比逐筆成對差
+direction: buy
+track: trail3                 # execution.EXIT_CHALLENGERS["trail3"]
+hypothesis: >
+  不分批、不設停利，全程以「進場後最高價 − 3 ATR」移動停損（只收緊、不放寬原始停損），最長持有 60 個
+  日曆天；逐筆淨 R 高於現行分批出場，而且優勢不是只靠極少數大漲的單。
+motivation: >
+  出場方式研究（docs/research/EXIT_STUDY_2020_2026.md）：8 個事前寫死的方案中，本方案依事前規則被選中
+  並在驗證期確認（全市場抽樣成對差 +0.119R，臺灣 50 +0.259R）。但穩健性檢查顯示優勢集中在極端值：
+  全市場抽樣把每筆截在 ±3R 後，驗證期成對差變成 −0.078R；拿掉最好的 5% 交易後比現行出場更差；
+  勝率由約 39% 降為約 30%。因此不改正式出場，改以樣本外資料驗證，並把縮尾檢查列為成立條件。
+data_collection: >
+  shadow.finalize_alt_exit_tracks 對 Champion 軌已定案的候選補算本方案結果，存於 shadow_signals.alt_exits。
+  ATR＝停損距離 ÷ 訊號當時記錄的停損 ATR 倍數；沒有該紀錄者標 no_atr、不納入（不猜）。
+  部位未出場前不存數字（不以暫估值當結果）。
+primary_endpoint: 逐筆成對差（本方案淨 R − Champion 淨 R）的平均
+robustness_endpoint: 每筆截在 ±3R 後的成對差平均（縮尾）
+uncertainty: 以訊號日為叢集的拔靴，95% 信賴區間
+exploratory_window: "<= 2026-11-12"
+oos_window: ">= 2026-11-13"
+min_oos_days: 40
+min_oos_trades: 200
+min_effect_r: 0.05
+success_rule: OOS 成對差的 95% CI 下界 > 0.05R，且縮尾後成對差的 95% CI 下界 > 0
+tail_dependent_rule: 成對差下界 > 0.05R 但縮尾後不成立 → 判定「靠極端值」，不建議採用
+failure_rule: OOS 成對差的 95% CI 上界 < 0.05R
+caveats:
+  - 最長持有 60 天，定案比 Champion 慢約一個半月；累積到判定門檻可能需要四個月以上
+  - 候選遠多於實際會做的單（同時最多 5 檔）；靠少數大單的方案在只做其中幾筆時變異極大
+  - 持有期變長會占用同時持倉名額，本實驗量的是每筆期望值，不是帳戶淨值
+multiple_testing: 與 E01～E10 同屬一個 family（size = 10）
+guardrails:
+  - 只記錄與評估，不改正式訊號；程式不自動採用
+  - 不得在看到樣本外結果後修改門檻或方案；要改必須另立新編號
+  - supported 也只代表可以提案；須人工審查並經使用者同意
