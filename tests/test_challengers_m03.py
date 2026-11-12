@@ -1,9 +1,11 @@
-"""M03 第一刀（第三階段審查）：內層 dev 折選模、封存段只評一次（並列對照）。
+"""M03 協定（第三階段審查）：內層 dev 折選模、封存段只評一次。
 
 - 選模（inner_dev_rank）只用 dev 段日期感知 OOF，不接觸封存段。
 - 封存段只評選中者＋規則基準＋現任 champion 設定（同批重評），各一次。
 - 封存邊界按日對齊：同一 bar_date 不跨 dev/封存。
-- 既有 entries/recommendation 口徑不變（切換需使用者核准）；attempts 記錄查看次數。
+- 2026-11-12 使用者核准切換：m03 成為 run_challengers 主口徑（entries/recommendation/gates），
+  舊 holdout 排名口徑降為 legacy_holdout_ranked 對照；m03 不可用時誠實退回並明標。
+- attempts 記錄封存段查看次數；promote 中繼資料用 sealed_once 誠實數字。
 """
 import datetime as dt
 import json
@@ -75,21 +77,45 @@ def test_m03_day_aligned_boundary(monkeypatch):
     assert p["n_dev"] + p["n_holdout"] + p["excluded_undated"] == out["n"]
 
 
-def test_m03_sidecar_keeps_existing_contract_and_counts_attempts(monkeypatch):
+def test_m03_is_default_and_legacy_kept_for_reference(monkeypatch):
+    """2026-11-12 使用者核准切換：m03 為主口徑、舊 holdout 排名口徑降為對照。"""
     mem = _MemStore()
     out = _run(monkeypatch, mem)
-    # 既有口徑不變：entries 仍按 holdout 排名（切換需核准）、recommendation 原樣
-    assert len(out["entries"]) == len(lm._COMPETITION_CONFIGS)
-    aucs = [e["holdout_auc"] for e in out["entries"] if e["holdout_auc"] is not None]
-    assert aucs == sorted(aucs, reverse=True)
-    assert "m03_note" in out and out["m03"]["holdout_note"]
+    assert out["protocol_default"] == "m03_inner_dev_sealed_once"
+    assert out["recommendation"] == out["m03"]["recommendation"]        # 晉升建議依 m03
+    assert out["gates_ok"] == out["m03"]["gates_ok"]
+    assert [e["id"] for e in out["entries"]] == [e["id"] for e in out["m03"]["inner_dev_rank"]]
+    assert all(e["rank"] == e["dev_rank"] for e in out["entries"])      # entries＝dev 排名
+    lg = out["legacy_holdout_ranked"]                                    # 舊口徑誠實保留對照
+    aucs = [e["holdout_auc"] for e in lg["entries"] if e["holdout_auc"] is not None]
+    assert aucs == sorted(aucs, reverse=True) and "缺陷" in lg["note"]
+    assert "主口徑＝M03" in out["m03_note"]
     assert out["m03"]["attempts"] == 1
     out2 = lm.run_challengers()
     assert out2["m03"]["attempts"] == 2                   # 查看次數誠實累計
 
 
-def test_m03_too_few_days_honest(monkeypatch):
+def test_m03_too_few_days_honest_fallback(monkeypatch):
     monkeypatch.setattr(state_store, "store", _MemStore())
     monkeypatch.setattr(lm, "_rows", lambda direction="buy": _rows_dated(days=5))
     out = lm.run_challengers()
     assert out["m03"]["ok"] is False and out["m03"]["reason"] == "too_few_days"
+    # 誠實退回舊口徑並明標、不假裝已切換
+    assert out["protocol_default"] == "legacy_holdout_ranked"
+    assert "不可用" in out["m03_note"]
+    assert all("holdout_auc" in e for e in out["entries"])
+
+
+def test_promote_uses_sealed_once_metadata(monkeypatch):
+    """晉升中繼資料用 m03 封存段一次性評估的誠實數字（非舊 holdout 排名數字）。"""
+    mem = _MemStore()
+    monkeypatch.setattr(state_store, "store", mem)
+    monkeypatch.setattr(lm, "_rows", lambda direction="buy": _rows_dated())
+    res = lm.run_challengers()
+    assert res["gates_ok"] is True
+    sel = res["m03"]["selected_id"]
+    out = lm.promote_champion(sel)
+    assert out["ok"] is True
+    ch = out["champion"]
+    assert ch["holdout_auc"] == res["m03"]["sealed_once"]["selected"]["auc"]   # sealed-once 數字
+    assert "m03" in ch.get("metric_note", "") and ch.get("dev_auc") is not None

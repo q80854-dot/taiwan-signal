@@ -131,22 +131,28 @@ def test_challengers_insufficient_blocks_promote(monkeypatch):
     out = lm.run_challengers()
     assert out["ok"] and out["gates_ok"] is False
     assert out["recommendation"]["promote"] is None
+    assert out["protocol_default"] == "legacy_holdout_ranked"   # 無日期 → m03 不可用、誠實退回
 
 
 def test_challengers_with_dates_ranks_and_gates(monkeypatch):
-    # B：跨多個交易日 → 通過資料關卡、依 holdout AUC 排名
+    # B：跨多個交易日 → 通過資料關卡；2026-11-12 切換後主口徑＝m03（內層 dev 排名）
     import state_store
     monkeypatch.setattr(state_store, "store", _MemStore())
     monkeypatch.setattr(lm, "_rows", lambda direction="buy": _synth_rows_dated(n=800, days=120))
     out = lm.run_challengers()
     assert out["ok"] and out["gates_ok"] is True
+    assert out["protocol_default"] == "m03_inner_dev_sealed_once"
     assert out["n_holdout"] >= lm.MIN_HOLDOUT and out["holdout_days"] >= lm.MIN_HOLDOUT_DAYS
     assert len(out["entries"]) == len(lm._COMPETITION_CONFIGS)
     ranks = [e["rank"] for e in out["entries"]]
     assert ranks == list(range(1, len(ranks) + 1))
-    aucs = [e["holdout_auc"] for e in out["entries"] if e["holdout_auc"] is not None]
-    assert aucs == sorted(aucs, reverse=True)      # holdout AUC 由高到低
+    aucs = [e["dev_auc"] for e in out["entries"] if e["dev_auc"] is not None]
+    assert aucs == sorted(aucs, reverse=True)      # dev AUC 由高到低（選模排名）
     assert "promote" in out["recommendation"]
+    # 舊口徑降為對照、仍誠實保留
+    lg = out["legacy_holdout_ranked"]
+    laucs = [e["holdout_auc"] for e in lg["entries"] if e["holdout_auc"] is not None]
+    assert laucs == sorted(laucs, reverse=True)
 
 
 def test_promote_refused_when_gates_fail(monkeypatch):
