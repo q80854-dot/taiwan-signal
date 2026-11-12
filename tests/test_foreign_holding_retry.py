@@ -83,3 +83,39 @@ def test_freshness_cooldown_prevents_hammering(monkeypatch):
     freshness._last_try["foreign_holding"] -= freshness._RETRY_COOLDOWN_SEC + 1
     freshness.job_poll()
     assert len(tries) == 2                               # 冷卻過後才再試
+
+
+# ── 2026-11-12 線上診斷日誌證實：兩端點對 11-09～11-11 都回 stat=OK，但頂層無 data ──
+# 證交所新版把資料放在 tables[*].fields/data；原本 `not j.get("data")` 把有資料的回應當失敗。
+_NEW_FMT = {"stat": "OK", "date": "20261111",
+            "tables": [{"title": "外資及陸資投資持股統計",
+                        "fields": ["證券代號", "證券名稱", "全體外資及陸資持股比率", "全體外資及陸資投資上限比率"],
+                        "data": [["2330", "台積電", "72.10", "100.00"], ["2454", "聯發科", "55.20", "100.00"]]}]}
+
+
+def test_new_tables_format_is_parsed(monkeypatch):
+    calls = []
+
+    def fake(url, **k):
+        calls.append(url)
+        if len(calls) <= 2:
+            return _Resp(200, {"stat": "查詢日期大於可查詢最大日期，請重新查詢!"})   # 今日尚未公布
+        return _Resp(200, _NEW_FMT)
+    monkeypatch.setattr(ci.requests, "get", fake)
+    m = ci._build_foreign_holding_map()
+    assert m["2330"]["ratio"] == 72.10 and m["2454"]["ratio"] == 55.20      # 新格式能解析
+    assert m["2330"]["date"] == "20261111"
+
+
+def test_stat_ok_without_any_table_logs_response_shape(monkeypatch, caplog):
+    monkeypatch.setattr(ci.requests, "get",
+                        lambda url, **k: _Resp(200, {"stat": "OK", "date": "20261111", "title": "x", "notes": []}))
+    with caplog.at_level("WARNING"):
+        assert ci._build_foreign_holding_map() == {}
+    assert "stat=OK 但無資料表" in caplog.text
+    assert "'notes'" in caplog.text and "'title'" in caplog.text            # 頂層欄位名稱可見
+
+
+def test_old_top_level_format_still_parsed(monkeypatch):
+    monkeypatch.setattr(ci.requests, "get", lambda url, **k: _Resp(200, _OK))
+    assert ci._build_foreign_holding_map()["2317"]["ratio"] == 40.50        # 舊格式相容

@@ -156,8 +156,24 @@ _QFIIS_URLS = (
 )
 
 
-def _parse_qfiis(j: dict, ds: str) -> dict:
-    fields = j.get("fields") or []
+def _qfiis_tables(j: dict) -> list:
+    """★ 2026-11-12：證交所回應格式有兩種——舊版頂層 fields/data；新版放在 tables[*].fields/data。
+    線上診斷日誌證實：MI_QFIIS 兩個端點對 11-09～11-11 都回 stat=OK，但頂層沒有 data，
+    原本 `not j.get("data")` 便把有資料的回應當成失敗——外資持股比率長期「無」的真正原因。"""
+    out = []
+    if j.get("data"):
+        out.append((j.get("fields") or [], j.get("data")))
+    for t in (j.get("tables") or []):
+        if isinstance(t, dict) and t.get("data"):
+            out.append((t.get("fields") or [], t.get("data")))
+    return out
+
+
+def _parse_qfiis(j: dict, ds: str, fields=None, rows=None) -> dict:
+    if fields is None:
+        fields = j.get("fields") or []
+    if rows is None:
+        rows = j.get("data") or []
     ci = _col_idx(fields, "證券代號", "代號", "Code")
     ri = _col_idx(fields, "持股比率", "Percentage of shares", exclude=("可投資", "尚可", "available"))
     cei = _col_idx(fields, "上限", "available investment")
@@ -167,7 +183,7 @@ def _parse_qfiis(j: dict, ds: str) -> dict:
     if ci is None:
         ci = 0                          # 退而求其次：代號多半在第 0 欄
     m = {}
-    for row in j.get("data") or []:
+    for row in rows:
         try:
             code = str(row[ci]).strip()
             if not code or not code.isdigit():
@@ -210,13 +226,19 @@ def _build_foreign_holding_map() -> dict:
             except Exception:
                 broken.add(tmpl); fails.append(f"{ds}/{tag} 回應非 JSON")
                 continue
-            if j.get("stat") != "OK" or not j.get("data"):
+            if j.get("stat") != "OK":
                 fails.append(f"{ds}/{tag} stat={str(j.get('stat'))[:20]}")
                 continue                              # 端點正常、該日無資料 → 往前一天
-            m = _parse_qfiis(j, ds)
-            if m:
-                return m
-            fails.append(f"{ds}/{tag} 欄位無法解析")
+            tables = _qfiis_tables(j)
+            if not tables:
+                # stat=OK 卻找不到資料表：記下頂層欄位名稱，讓回應結構一次可見
+                fails.append(f"{ds}/{tag} stat=OK 但無資料表（頂層欄位：{sorted(j.keys())[:10]}）")
+                continue
+            for _flds, _rows in tables:
+                m = _parse_qfiis(j, ds, _flds, _rows)
+                if m:
+                    return m
+            fails.append(f"{ds}/{tag} 欄位無法解析（欄位：{[str(f)[:12] for f in tables[0][0]][:8]}）")
         if len(broken) == len(_QFIIS_URLS):
             break                                     # 兩個端點都失效，不再往前打
     logger.warning("外資持股比率（證交所 MI_QFIIS）取得失敗：" + "；".join(fails[:8]))
