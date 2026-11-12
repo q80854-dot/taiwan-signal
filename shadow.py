@@ -745,7 +745,13 @@ def mark_sent(tickers):
         from state_store import store
         with store._conn() as conn:
             for t in tickers:
-                conn.execute("UPDATE shadow_signals SET sent=1 WHERE ticker=? AND kind='candidate' AND bar_date="
+                # ★ 2026-11-12 對帳口徑修正：排入推播時同步把 delivered 初始化為 0（已確認者保持 1）。
+                # delivered 欄 2026-11-06 才新增、且原本只在「送達成功」時寫 1，失敗/未回報與
+                # 「欄位還不存在的舊紀錄」同樣是 NULL，無法區分，導致對帳分母把結構上無法對帳的
+                # 舊資料也算成「未送達」。初始化為 0 後，往後每筆推播都明確落在可對帳母體內
+                # （0＝排入未確認、1＝已確認）。歷史列維持 NULL＝誠實的「無對帳欄位」，不回填。
+                conn.execute("UPDATE shadow_signals SET sent=1, delivered=COALESCE(delivered,0) "
+                             "WHERE ticker=? AND kind='candidate' AND bar_date="
                              "(SELECT MAX(bar_date) FROM shadow_signals WHERE ticker=? AND kind='candidate')", (t, t))
     except Exception as e:
         logger.warning(f"shadow.mark_sent 失敗: {e}")
@@ -935,6 +941,7 @@ def resolve_pending(max_rows=8000):
         _today = datetime.now(TPE).replace(tzinfo=None)
         unresolved = []
         bad_risk = []       # ★ 2026-11-06：entry≈stop 退化列，R 無意義，標 unresolved/bad_risk 離開統計
+        no_new_bars = []    # ★ 2026-11-12：有舊 K 棒但訊號日後無新棒（停牌/下市/停更），逾期後離開佇列
         with store._conn() as conn:
             rows = [dict(x) for x in conn.execute(
                 "SELECT * FROM shadow_signals WHERE status='pending' OR (r10 IS NULL AND bar_date>=?) "
@@ -946,15 +953,24 @@ def resolve_pending(max_rows=8000):
         bars_by = _load_bars(sorted({x["ticker"] for x in rows}), since)
         updates, closed, rescaled = [], 0, 0
         for row in rows:
+            try:
+                age = (_today - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days
+            except Exception:
+                age = 0
             bars = bars_by.get(row["ticker"])
             if not bars:
                 # 無任何 K 棒：超過到期＋寬限仍抓不到就標記 unresolved，否則留著下次再試
-                try:
-                    age = (_today - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days
-                except Exception:
-                    age = 0
                 if row["status"] == "pending" and age >= expire_days + NODATA_GRACE:
                     unresolved.append(row["id"])
+                continue
+            # ★ 2026-11-12 永久卡單修正：標的有「舊」K 棒、但訊號日之後一根都沒有（停牌／下市／
+            # 資料源停更）。此時 _simulate 必回 result=None，原本不會被上面的 `not bars` 逾期保護
+            # 攔到，於是永遠留在 pending——後台因此長期顯示「超過有效期，可能結算流程卡住」。
+            # 逾期＋寬限後標 unresolved/no_new_bars 離開佇列，於原因拆分誠實列出；
+            # 不猜測結果、不計入勝率與平均 R（與 nodata 同樣的誠實處理）。
+            if (row["status"] == "pending" and age >= expire_days + NODATA_GRACE
+                    and not any(b["bar_date"][:10] > row["bar_date"] for b in bars)):
+                no_new_bars.append(row["id"])
                 continue
             r2, scale = _rescale(row, bars)
             rescaled += scale != 1.0
@@ -1016,8 +1032,15 @@ def resolve_pending(max_rows=8000):
                 for _id in bad_risk:
                     conn.execute("UPDATE shadow_signals SET status='unresolved', result='bad_risk' WHERE id=?", (_id,))
             logger.info(f"shadow: {len(bad_risk)} 筆訊號進場價≈停損（風險退化、R 無意義），標記 unresolved/bad_risk")
+        if no_new_bars:
+            with store._conn() as conn:
+                for _id in no_new_bars:
+                    conn.execute("UPDATE shadow_signals SET status='unresolved', result='no_new_bars' WHERE id=?", (_id,))
+            logger.info(f"shadow: {len(no_new_bars)} 筆訊號逾期仍無『訊號日之後』的 K 棒"
+                        f"（疑似停牌／下市／資料源停更），標記 unresolved/no_new_bars")
         res = {"updated": len(updates), "closed": closed, "rows": len(rows),
-               "rescaled": int(rescaled), "unresolved": len(unresolved), "bad_risk": len(bad_risk)}
+               "rescaled": int(rescaled), "unresolved": len(unresolved), "bad_risk": len(bad_risk),
+               "no_new_bars": len(no_new_bars)}
         logger.info(f"shadow: 結算完成，檢查 {len(rows)} 筆、更新 {len(updates)} 筆、新結案 {closed} 筆"
                     f"（除權息還原調整 {int(rescaled)} 筆），耗時 {time.time() - t0:.1f}s")
         if r is not None:
@@ -1102,15 +1125,25 @@ def finish_run(universe=None, pre_skipped=None, pre_passed=None):
 
 
 # ───────────── 後台：總覽與匯出 ─────────────
-def _delivery_summary(sent, delivered) -> dict:
-    """★ 2026-11-11 SH11：推播送達對帳。delivered=1 只代表 provider 至少一目標回 200（已確認），
-    其餘（sent 但未 delivered）是 unknown（可能早期無對帳欄位或平台未回報），**非一定失敗**。
-    confirmed_rate 是『已確認比例』，不等於真實送達率。"""
+def _delivery_summary(sent, delivered, no_field=None, unconfirmed=None) -> dict:
+    """★ 2026-11-11 SH11／2026-11-12 分母修正：推播送達對帳。delivered=1 只代表 provider 至少一
+    目標回 200（已確認），**未確認非一定失敗**；confirmed_rate 是『已確認比例』，不等於真實送達率。
+
+    2026-11-12：分母正名。delivered 欄 2026-11-06 才新增，更早的推播結構上**無對帳欄位**
+    （NULL），永遠不可能被確認；原本把它們一起算進分母，會讓已確認率長期偏低並誤報告警。
+    改為：可對帳母體(reconcilable)＝已確認(delivered)＋可對帳但未確認(unconfirmed)；
+    無對帳欄位(no_field)的舊列**不納入比率**、單獨揭露，不回填、不假裝已送達。
+    未帶新參數時沿用舊行為（向後相容）。"""
     s = int(sent or 0); d = int(delivered or 0)
+    nf = int(no_field or 0)
+    unc = int(unconfirmed) if unconfirmed is not None else max(0, s - d - nf)
+    recon = d + unc
     return {"sent": s, "delivered": d, "unknown": max(0, s - d),
-            "confirmed_rate": round(d / s * 100, 1) if s else None,
-            "rate": round(d / s * 100, 1) if s else None,     # 保留相容欄位
-            "note": "confirmed_rate＝平台至少一目標回200的『已確認』比例，非真實送達率；未確認(unknown)不等於失敗。"}
+            "no_field": nf, "unconfirmed": unc, "reconcilable": recon,
+            "confirmed_rate": round(d / recon * 100, 1) if recon else None,
+            "rate": round(d / recon * 100, 1) if recon else None,     # 保留相容欄位
+            "note": "confirmed_rate＝可對帳母體中『平台至少一目標回200』的已確認比例，非真實送達率；"
+                    "未確認(unknown)不等於失敗；no_field＝2026-11-06 前無對帳欄位的舊紀錄，不納入分母。"}
 
 
 def overview():
@@ -1135,9 +1168,14 @@ def overview():
             "SELECT bar_date,ticker,name,kind,direction,score,entry,stop,status,result,r_multiple,features "
             "FROM shadow_signals ORDER BY id DESC LIMIT 40").fetchall()]
         # ★ 2026-11-06：sent→delivered 送達對帳（候選列）。sent=1＝排入推播；delivered=1＝Telegram 真收下。
+        # ★ 2026-11-12 對帳分母正名：把「排入推播」拆成三類——已確認(delivered=1)、
+        # 可對帳但未確認(delivered=0)、無對帳欄位(delivered IS NULL，2026-11-06 前的舊紀錄，
+        # 結構上永遠無法確認)。只有前兩類構成可對帳母體，舊紀錄不得混入分母造成誤報。
         _dlv = dict(conn.execute(
-            "SELECT COALESCE(SUM(sent),0) AS sent, "
-            "COALESCE(SUM(CASE WHEN delivered=1 THEN 1 ELSE 0 END),0) AS delivered "
+            "SELECT COALESCE(SUM(CASE WHEN sent=1 THEN 1 ELSE 0 END),0) AS sent, "
+            "COALESCE(SUM(CASE WHEN sent=1 AND delivered=1 THEN 1 ELSE 0 END),0) AS delivered, "
+            "COALESCE(SUM(CASE WHEN sent=1 AND delivered=0 THEN 1 ELSE 0 END),0) AS unconfirmed, "
+            "COALESCE(SUM(CASE WHEN sent=1 AND delivered IS NULL THEN 1 ELSE 0 END),0) AS no_field "
             "FROM shadow_signals WHERE kind='candidate'").fetchone() or {})
         # ★ 2026-11-08：特徵 schema 版本分布（偵測漂移／標示未標版的舊資料）
         _fsv = [dict(x) for x in conn.execute(
@@ -1192,10 +1230,14 @@ def overview():
     except Exception:
         pass
     _sent = int(_dlv.get("sent") or 0); _deliv = int(_dlv.get("delivered") or 0)
-    delivery = _delivery_summary(_sent, _deliv)
-    if _sent and _deliv < _sent:
-        alerts.append(f"推播送達對帳：排入 {_sent} 筆、Telegram 確認送達 {_deliv} 筆"
-                      f"（{_sent - _deliv} 筆未確認送達，可能是早期資料無對帳欄位，或實際未送達）")
+    _unconf = int(_dlv.get("unconfirmed") or 0); _nofield = int(_dlv.get("no_field") or 0)
+    delivery = _delivery_summary(_sent, _deliv, _nofield, _unconf)
+    # ★ 2026-11-12：只有「可對帳母體內未確認」才可能是真的沒送達；無對帳欄位的舊紀錄
+    # 結構上無法確認，不再混進告警（原本會長期誤報），改由 KPI 誠實分列。
+    if _unconf:
+        alerts.append(f"推播送達對帳：可對帳 {_deliv + _unconf} 筆中有 {_unconf} 筆未確認送達"
+                      f"（Telegram 未回報成功，可能實際未送達）"
+                      + (f"；另有 {_nofield} 筆舊紀錄無對帳欄位，不納入對帳" if _nofield else ""))
     champion_edge = [{"direction": c.get("direction"), "n": int(c.get("n") or 0),
                       "research_avg_r": round(c["research_avg_r"], 3) if c.get("research_avg_r") is not None else None,
                       "champion_avg_r": round(c["champion_avg_r"], 3) if c.get("champion_avg_r") is not None else None}
