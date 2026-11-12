@@ -78,12 +78,40 @@ def test_cleanup_reclassifies_absurd_and_keeps_good(monkeypatch):
     assert g1["status"] == "closed" and g1["r_multiple"] == 1.8 and g1["mae_r"] == -0.9
 
 
-def test_cleanup_is_idempotent_once(monkeypatch):
+def test_cleanup_runs_every_time_and_catches_rows_dirtied_later(monkeypatch):
+    """2026-11-12：清洗不再只跑一次。上線後的稽核計數顯示一次性清洗之後仍有髒列再生，
+    必須每次結算都檢查；重跑本身冪等（沒有新髒列就清 0 筆、不動正常列）。"""
     from state_store import store
     shadow._cleanup_done = False
     store.set_meta(shadow._CLEANUP_META, None)
     _insert(store, "IDEMP1.TW", r_multiple=1.0)
-    first = shadow.cleanup_absurd_metrics()        # 無 force：跑一次並寫旗標
-    second = shadow.cleanup_absurd_metrics()       # 第二次應被旗標擋下
-    assert first["ran"] is True
-    assert second["ran"] is False
+    first = shadow.cleanup_absurd_metrics()
+    second = shadow.cleanup_absurd_metrics()
+    assert first["ran"] is True and second["ran"] is True and second["cleaned"] == 0   # 冪等
+    assert _get(store, "IDEMP1.TW")["r_multiple"] == 1.0
+    _insert(store, "LATEBAD.TW", r_multiple=0.4, mae_r=-8.9e9)       # 第一次清洗「之後」才出現的髒列
+    third = shadow.cleanup_absurd_metrics()
+    assert third["cleaned"] >= 1
+    late = _get(store, "LATEBAD.TW")
+    assert late["status"] == "unresolved" and late["result"] == "bad_risk" and late["mae_r"] is None
+
+
+def test_unresolved_rows_are_not_reselected_and_redirtied(monkeypatch):
+    """已標 unresolved 的列不得再被撈回來重新模擬（原本 r10 IS NULL 的條件會撈到，髒值因此再生）。"""
+    seen = []
+
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, q, p=()):
+            seen.append(" ".join(q.split()))
+            return self
+        def fetchall(self): return []
+        def fetchone(self): return None
+    from state_store import store
+    monkeypatch.setattr(store, "_conn", lambda: _Conn())
+    monkeypatch.setattr(shadow, "ensure_table", lambda: None)
+    monkeypatch.setattr(shadow, "cleanup_absurd_metrics", lambda *a, **k: None)
+    shadow.resolve_pending()
+    sel = [q for q in seen if q.startswith("SELECT * FROM shadow_signals WHERE status='pending'")]
+    assert sel and "(status='closed' AND r10 IS NULL AND bar_date>=?)" in sel[0]
