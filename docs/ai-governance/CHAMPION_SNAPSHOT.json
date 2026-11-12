@@ -1,5 +1,5 @@
 {
-  "config_hash": "3bdbd319e62639955e6c0b11a96f8e619bc3498ed53ea437418a77d2e8b6219b",
+  "config_hash": "0c49884d59deebc02944bd43f6d3dd28219156f411bccdb684ea16815e18ab41",
   "constants": {
     "CIRCUIT_BREAKER": {
       "foreign_sell_caution": -50000000000.0,
@@ -7,7 +7,7 @@
       "foreign_sell_stop": -180000000000.0,
       "margin_change_warning": -5.0,
       "max_daily_signals": 10,
-      "signal_expire_days": 15,
+      "signal_expire_days": 60,
       "twii_drop_caution": -2.0,
       "twii_drop_stop": -3.5,
       "vix_extreme": 40,
@@ -171,5 +171,5 @@
   },
   "frozen_at": "2026-11-12",
   "note": "此為 Champion 正式策略/風控常數的凍結快照。要更新，須有意識地改 config 常數並經使用者核准後重新產生本檔（python scripts/freeze_champion.py）。",
-  "strategy_version": "champion-3bdbd319e626"
+  "strategy_version": "champion-0c49884d59de"
 }

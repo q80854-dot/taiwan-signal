@@ -611,6 +611,19 @@ class TWScanEngine:
         )
         return stats
 
+    @staticmethod
+    def _signal_expire_days(sig) -> int:
+        """這筆正式訊號適用的到期天數：產生時寫進 raw_json 的 expire_days；讀不到者＝舊訊號，用舊規則。"""
+        from config import LEGACY_SIGNAL_EXPIRE_DAYS
+        try:
+            import json as _json
+            raw = sig.get("raw_json")
+            raw = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+            v = int(sig.get("expire_days") or raw.get("expire_days") or 0)
+            return v if v > 0 else LEGACY_SIGNAL_EXPIRE_DAYS
+        except Exception:
+            return LEGACY_SIGNAL_EXPIRE_DAYS
+
     _STALE_PRICE_GRACE_DAYS = 7   # 到期後等待「到期日當天或之後」K 棒的寬限（日曆天）
 
     @staticmethod
@@ -696,7 +709,9 @@ class TWScanEngine:
                 shares = sig.get("suggested_shares") or sig.get("suggested_lots") or 1  # 明確股數優先；suggested_lots 為歷史遺留欄位（實存股數）
                 if not bars or not entry:
                     continue
-                expire_days = CB.get("signal_expire_days", 15)
+                # ★ 2026-11-12：到期天數以「這筆訊號產生時記錄的」為準（raw_json.expire_days）；沒有紀錄的
+                # 舊訊號適用當時的 15 天。規則改為 60 天後，已經發出去的訊號不會被悄悄延長。
+                expire_days = self._signal_expire_days(sig)
                 # ★ 2026-11-09 Phase B：把到期窗傳入模擬器，到期日之後才觸及的停利/停損不再計入
                 # （look-ahead 修正）；仍由下方 aged_out 閘門決定「尚未到期、未出場」者留 pending。
                 # prev_close：鎖跌停賣不掉／鎖漲停補不回的日子不成交、出場順延（Q-P0-07，execution v3）

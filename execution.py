@@ -339,10 +339,14 @@ def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_
 # 對同一批訊號逐筆比較 8 個事前寫死的出場方案。延長持有與移動停損在訓練期、驗證期的平均淨 R 都
 # 高於現行出場，但移動停損的優勢幾乎全來自極少數大漲的單（縮尾後優勢消失）。因此不改正式出場，
 # 先把下列兩個方案掛進影子追蹤平行記錄，以登錄日之後的真實資料驗證（實驗 E07／E08）。
-ALT_EXIT_SIM_VERSION = "alt-exit-v1-2026-11-12"
+ALT_EXIT_SIM_VERSION = "alt-exit-v2-2026-11-12"   # v2：新增 exp15；與該列 Champion 相同的方案不重複計算
 EXIT_CHALLENGERS = {
-    # 分批停利不變，只把到期由 15 個日曆天延長為 60 天（研究的 V3）
-    "hold60": {"name": "分批停利不變、到期延長為 60 天", "expire": 60, "ladder": True},
+    # 2026-11-12 使用者核准把正式到期改為 60 天。之後產生的列，Champion 本身就是 60 天，改以
+    # 「原本的 15 天到期」當對照（exp15），持續確認延長到期是否真的較好；之前產生的列（Champion＝15 天）
+    # 則以 hold60 當對照。與該列自己的 Champion 出場相同的方案不重複計算（見 shadow._alt_exit_tracks）。
+    "exp15": {"name": "分批停利不變、到期 15 天（2026-11-12 以前的正式出場）", "expire": 15, "ladder": True},
+    # 分批停利不變，到期 60 個日曆天（研究的 V3；2026-11-12 起即正式出場）
+    "hold60": {"name": "分批停利不變、到期 60 天", "expire": 60, "ladder": True},
     # 不分批、不設停利：全程以「進場後最高（低）價 ∓ 3 ATR」移動停損，最長 60 天（研究的 V5）
     "trail3": {"name": "不分批：全程 3 ATR 移動停損、最長 60 天", "expire": 60, "ladder": False,
                "trail_atr": 3.0, "trail_after": "entry"},

@@ -23,6 +23,9 @@ def _flat(n=200):
 
 def _setup(monkeypatch, data, direction="buy", shares=3000):
     import stock_universe, data_fetcher, signal_engine
+    # 這些測試驗的是回測的「到期機制」本身，固定用 15 天（資料長度依此設計），與現行設定值（60 天）無關
+    import config as _cfg
+    monkeypatch.setitem(_cfg.CIRCUIT_BREAKER, "signal_expire_days", 15)
     monkeypatch.setattr(stock_universe, "get_stock_info", lambda t: {"size_cat": "中型股", "volume_lots": 999999})
     monkeypatch.setattr(data_fetcher, "fetch_ohlcv", lambda t, tf="daily": data if tf == "daily" else None)
 

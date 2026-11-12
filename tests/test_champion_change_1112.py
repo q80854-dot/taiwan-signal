@@ -49,7 +49,7 @@ def test_config_and_hash_reflect_the_change():
     assert config.LONG_REQUIRE_WEEKLY_BULLISH is True and config.LONG_SIGNAL_THRESH["min_score"] == 75
     assert config.SIGNAL_THRESHOLDS["min_score"] == 65            # 保留為影子觀察下限
     assert {"LONG_SIGNAL_THRESH", "LONG_REQUIRE_WEEKLY_BULLISH", "ENABLE_SHORT_SIGNALS"} <= set(sv._TRACKED)
-    assert sv.config_hash().startswith("3bdbd319e626")            # 新的 Champion 版本
+    assert sv.config_hash().startswith("0c49884d59de")            # 目前的 Champion 版本（含同日的到期 15→60 天）
     assert se.min_score_for("buy") == 75 and se.min_score_for("sell") == 65
 
 

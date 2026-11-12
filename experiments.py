@@ -125,9 +125,12 @@ ALT_EXIT_REGISTRY: List[Dict] = [
      "filter": "kind = candidate AND direction = buy AND alt_exits.trail3.status = final AND champion_status = final",
      "threshold_source": "方案與倍數在出場研究前寫死（V5）；不依樣本外結果調整",
      "doc": "docs/experiments/E07_exit_trail3.yaml"},
-    {"id": "E08", "name": "到期由 15 天延長為 60 天（分批停利不變）", "direction": "buy", "track": "hold60",
-     "hypothesis": "分批停利與移動保本規則不變，只把到期由 15 個日曆天延長為 60 天，逐筆淨 R 高於現行出場。",
-     "filter": "kind = candidate AND direction = buy AND alt_exits.hold60.status = final AND champion_status = final",
+    {"id": "E08", "name": "確認：到期 60 天優於原本的 15 天（分批停利不變）", "direction": "buy", "track": "exp15",
+     "legacy_track": "hold60", "champion_is_treatment": True,
+     "hypothesis": "分批停利與移動保本規則不變，到期 60 個日曆天的逐筆淨 R 高於到期 15 天。"
+                   "2026-11-12 經使用者核准已採用 60 天；本實驗持續以原 15 天為對照，檢查這個決定在樣本外是否成立。",
+     "filter": "kind = candidate AND direction = buy AND champion_status = final AND alt_exits.exp15.status = final"
+               "（expire_days = 60 的列：champion − exp15；此前的列：hold60 − champion）",
      "threshold_source": "方案在出場研究前寫死（V3）；不依樣本外結果調整",
      "doc": "docs/experiments/E08_exit_hold60.yaml"},
 ]
@@ -139,13 +142,22 @@ def _alt_window(exp: Dict, rows: List[Dict], oos: bool) -> Dict:
               and ((r.get("bar_date") or "") >= OOS_START) == oos]
     pairs, n_pending = [], 0
     for r in in_win:
-        t = (r.get("alt") or {}).get(exp["track"]) or {}
         if r.get("champion_status") != "final" or r.get("champion_r") is None:
             continue
+        alts = r.get("alt") or {}
+        # 一般情形：方案（alt）對 Champion。E08 在正式出場改為 60 天後，Champion 本身就是「方案」，
+        # 對照組是原本的 15 天（exp15）；改之前的列則相反（Champion＝15 天，方案＝hold60）。
+        # 兩種列都換算成同一個方向：(60 天的淨 R, 15 天的淨 R)。
+        if exp.get("champion_is_treatment") and int(r.get("expire_days") or 0) == 60:
+            t = alts.get(exp["track"]) or {}
+            pair = (float(r["champion_r"]), t.get("r"))
+        else:
+            t = alts.get(exp.get("legacy_track") or exp["track"]) or {}
+            pair = (t.get("r"), float(r["champion_r"]))
         if t.get("status") != "final" or t.get("r") is None:
-            n_pending += 1                       # Champion 已定案、方案尚未出場（或無法計算）：不納入成對比較
+            n_pending += 1                       # Champion 已定案、另一邊尚未出場（或無法計算）：不納入成對比較
             continue
-        pairs.append((r["bar_date"], float(t["r"]), float(r["champion_r"])))
+        pairs.append((r["bar_date"], float(pair[0]), float(pair[1])))
     diff, wdiff = {}, {}
     clip = lambda x: max(-WINSOR_R, min(WINSOR_R, x))
     for d, a, c in pairs:
@@ -157,8 +169,10 @@ def _alt_window(exp: Dict, rows: List[Dict], oos: bool) -> Dict:
     alt = sorted(a for _, a, _ in pairs)
     out = {"window": "oos" if oos else "exploratory", "n_candidates": len(in_win), "n_pairs": len(pairs),
            "n_alt_not_final": n_pending, "n_days": len(diff),
-           "alt_avg_r": round(_mean(alt), 3) if alt else None,
-           "champion_avg_r": round(_mean([c for _, _, c in pairs]), 3) if pairs else None,
+           "treatment": "到期 60 天" if exp.get("champion_is_treatment") else exp["name"],
+           "control": "到期 15 天" if exp.get("champion_is_treatment") else "現行 Champion 出場",
+           "alt_avg_r": round(_mean(alt), 3) if alt else None,                       # 方案（treatment）的平均淨 R
+           "champion_avg_r": round(_mean([c for _, _, c in pairs]), 3) if pairs else None,   # 對照（control）的平均淨 R
            "diff": round(_mean(dv), 3) if dv else None, "diff_ci95": [lo, hi],
            "diff_winsorized": round(_mean([x for v in wdiff.values() for x in v]), 3) if dv else None,
            "diff_winsorized_ci95": [wlo, whi],
@@ -174,10 +188,14 @@ def _alt_window(exp: Dict, rows: List[Dict], oos: bool) -> Dict:
     elif lo > MIN_EFFECT_R and wlo > 0:
         out["verdict"] = "supported"
         out["verdict_note"] = ("成對差的 95% 區間下界超過最低經濟重要差異，且縮尾（±3R）後下界仍 > 0："
-                               "優勢不是只靠極端值。仍須人工審查持有期變長對資金與同時持倉的影響，並經使用者同意，不自動採用。")
+                               "優勢不是只靠極端值。"
+                               + ("樣本外資料支持已採用的 60 天到期。" if exp.get("champion_is_treatment") else
+                                  "仍須人工審查持有期變長對資金與同時持倉的影響，並經使用者同意，不自動採用。"))
     elif hi < MIN_EFFECT_R:
         out["verdict"] = "not_supported"
-        out["verdict_note"] = "成對差的 95% 區間上界低於最低經濟重要差異：此出場方案未顯示實用改善。"
+        out["verdict_note"] = ("成對差的 95% 區間上界低於最低經濟重要差異："
+                               + ("樣本外資料未顯示 60 天到期優於 15 天，應向使用者提出是否改回。"
+                                  if exp.get("champion_is_treatment") else "此出場方案未顯示實用改善。"))
     elif lo > MIN_EFFECT_R:
         out["verdict"] = "tail_dependent"
         out["verdict_note"] = ("平均成對差顯著為正，但縮尾（±3R）後不成立：優勢集中在極少數大漲的單，"
@@ -265,7 +283,7 @@ def _load_rows() -> List[Dict]:
     shadow.ensure_table()
     with store._conn() as conn:
         rs = [dict(r) for r in conn.execute(
-            "SELECT bar_date, kind, direction, status, champion_r, champion_status, features, alt_exits "
+            "SELECT bar_date, kind, direction, status, champion_r, champion_status, features, alt_exits, expire_days "
             "FROM shadow_signals WHERE kind IN ('candidate','rejected') ORDER BY bar_date").fetchall()]
     for r in rs:
         try:

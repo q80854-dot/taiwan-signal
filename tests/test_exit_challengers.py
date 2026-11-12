@@ -22,14 +22,26 @@ def _row(**k):
     return r
 
 
-def test_challengers_are_fixed_and_not_the_production_exit():
-    assert set(execution.EXIT_CHALLENGERS) == {"hold60", "trail3"}
-    assert execution.EXIT_CHALLENGERS["hold60"] == {"name": execution.EXIT_CHALLENGERS["hold60"]["name"],
-                                                    "expire": 60, "ladder": True}
+def test_challengers_are_fixed():
+    assert set(execution.EXIT_CHALLENGERS) == {"exp15", "hold60", "trail3"}
+    assert (execution.EXIT_CHALLENGERS["exp15"]["expire"], execution.EXIT_CHALLENGERS["exp15"]["ladder"]) == (15, True)
+    assert (execution.EXIT_CHALLENGERS["hold60"]["expire"], execution.EXIT_CHALLENGERS["hold60"]["ladder"]) == (60, True)
     t = execution.EXIT_CHALLENGERS["trail3"]
     assert (t["expire"], t["ladder"], t["trail_atr"], t["trail_after"]) == (60, False, 3.0, "entry")
     import config
-    assert config.CIRCUIT_BREAKER["signal_expire_days"] == 15           # 正式出場未改
+    assert config.CIRCUIT_BREAKER["signal_expire_days"] == 60           # 2026-11-12 使用者核准：正式到期 60 天
+    assert config.LEGACY_SIGNAL_EXPIRE_DAYS == 15
+
+
+def test_track_identical_to_the_rows_own_champion_exit_is_not_recomputed():
+    """舊列（Champion＝15 天）以 hold60 當對照；新列（Champion＝60 天）以 exp15 當對照。"""
+    stop = _bars([(100, 100, 100, 100), (100, 101, 99, 100), (100, 100, 94, 94.5)])
+    old = shadow._alt_exit_tracks(_row(), stop)                          # 沒有 expire_days＝舊列
+    assert set(old) == {"hold60", "trail3"}
+    new = shadow._alt_exit_tracks(_row(expire_days=60), stop)
+    assert set(new) == {"exp15", "trail3"}
+    assert shadow._row_expire_days({}) == 15 and shadow._row_expire_days({"expire_days": 60}) == 60
+    assert shadow._row_expire_days({"expire_days": None}) == 15 and shadow._row_expire_days({"expire_days": "x"}) == 15
 
 
 def test_tracks_are_final_only_when_the_position_really_exited():
@@ -206,3 +218,70 @@ def test_finalize_alt_exit_tracks_writes_once_and_is_idempotent():
         assert n1 == 0 and again["updated"] == 0                             # 已定案者不再重選；未變者不重寫
     finally:
         _clean()
+
+
+def test_e08_compares_60_vs_15_days_in_the_same_direction_for_old_and_new_rows():
+    """新列：Champion（60 天）− exp15；舊列：hold60 − Champion（15 天）。兩者都是「60 天 − 15 天」。"""
+    days = _days(45)
+    new = [dict(_er(d, 0.0, 0.5, track="exp15"), expire_days=60) for d in days for _ in range(6)]   # 60 天 0.5、15 天 0.0
+    for i, r in enumerate(new):
+        r["champion_r"] = 0.5 + (0.05 if i % 2 else -0.05)
+    o = ex.evaluate_alt_exit("E08", new)["oos"]
+    assert o["n_pairs"] == 270 and o["diff"] == 0.5 and o["verdict"] == "supported"
+    assert o["treatment"] == "到期 60 天" and o["control"] == "到期 15 天" and "支持已採用" in o["verdict_note"]
+    old = [_er("2026-10-01", 0.8, 0.2, track="hold60") for _ in range(10)]                           # 60 天 0.8、15 天 0.2
+    e = ex.evaluate_alt_exit("E08", old)["exploratory"]
+    assert e["n_pairs"] == 10 and e["diff"] == 0.6 and e["verdict"] == "exploratory_only"
+    worse = [dict(_er(d, 0.0, -0.3 + (0.05 if j % 2 else -0.05), track="exp15"), expire_days=60)
+             for d in days for j in range(6)]
+    o = ex.evaluate_alt_exit("E08", worse)["oos"]
+    assert o["verdict"] == "not_supported" and "是否改回" in o["verdict_note"]
+
+
+def test_formal_signals_keep_the_expiry_they_were_issued_with():
+    import scanner
+    f = scanner.TWScanEngine._signal_expire_days
+    assert f({"raw_json": json.dumps({"expire_days": 15})}) == 15        # 改規則前發出的訊號：維持 15 天
+    assert f({"raw_json": json.dumps({"expire_days": 60})}) == 60        # 新訊號：60 天
+    assert f({"raw_json": json.dumps({})}) == 15 and f({}) == 15         # 沒有紀錄＝舊訊號：15 天
+    assert f({"raw_json": "not json"}) == 15 and f({"raw_json": None}) == 15
+    assert f({"expire_days": 60}) == 60
+    import config, signal_engine
+    assert signal_engine.CB["signal_expire_days"] == config.CIRCUIT_BREAKER["signal_expire_days"] == 60
+
+
+def test_shadow_rows_record_their_own_expiry_and_old_rows_stay_at_15(monkeypatch):
+    from state_store import store
+    shadow.ensure_table()
+    with store._conn() as conn:
+        conn.execute("DELETE FROM shadow_signals WHERE ticker IN ('EXP1.TW','EXP2.TW')")
+    try:
+        monkeypatch.setattr(shadow, "_add_sector_rel", lambda rows: None)
+        shadow._insert([{"bar_date": "2031-04-01", "ticker": "EXP1.TW", "code": "9999", "name": "測試",
+                         "kind": "candidate", "direction": "buy", "score": 80, "entry": 100.0, "stop": 95.0,
+                         "tp1": 107.5, "tp2": 112.5, "tp3": 120.0, "size_cat": "中型股", "sector": "",
+                         "created_at": "2031-04-01", "features": {}}])
+        _ins("EXP2.TW", "2031-04-01", "candidate")                       # 模擬舊列：沒有 expire_days
+        with store._conn() as conn:
+            got = {x["ticker"]: dict(x) for x in conn.execute(
+                "SELECT * FROM shadow_signals WHERE ticker IN ('EXP1.TW','EXP2.TW')").fetchall()}
+        assert got["EXP1.TW"]["expire_days"] == 60 and got["EXP2.TW"]["expire_days"] is None
+        assert shadow._row_expire_days(got["EXP1.TW"]) == 60 and shadow._row_expire_days(got["EXP2.TW"]) == 15
+    finally:
+        with store._conn() as conn:
+            conn.execute("DELETE FROM shadow_signals WHERE ticker IN ('EXP1.TW','EXP2.TW')")
+
+
+def test_stopped_class_hypotheticals_are_all_kept_beyond_the_caps(monkeypatch):
+    kept = {}
+    monkeypatch.setattr(shadow, "_insert", lambda rows: kept.setdefault("rows", rows) and len(rows))
+    monkeypatch.setattr(shadow, "_fund_features", lambda code, cache: {})
+    mk = lambda i, reason: {"ticker": f"T{i}.TW", "code": str(i), "features": {"reject": reason}}
+    run = {"rejects": [mk(i, "long_score") for i in range(120)] + [mk(1000 + i, "adx_low") for i in range(120)],
+           "fund": {}, "stats": {"rej_seen": 240, "rej_saved": 0, "secs_capture": 0.0}}
+    monkeypatch.setattr(shadow, "_run", run)
+    shadow.flush_rejects()
+    by = {}
+    for r in kept["rows"]:
+        by[r["features"]["reject"]] = by.get(r["features"]["reject"], 0) + 1
+    assert by["long_score"] == 120 and by["adx_low"] == shadow.REJ_PER_REASON      # 被停發類別全留；其他照舊抽樣
