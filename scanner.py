@@ -152,6 +152,48 @@ class TWScanEngine:
             self._mode = "close"
             self._scan_lock.release()
 
+    def _risk_gate(self, store) -> Dict:
+        """掃描前的風控閘門。回傳 {skip, hc_mode, hc_record, msgs, risk_unknown}。
+
+        ★ 2026-11-12（Q-P0-06）fail-closed：風控所需的狀態「讀不到」時不得放行新訊號。
+        原本只判斷 exceeded：當日虧損狀態讀取失敗（unavailable）、持倉清單讀取失敗（被當成 0 個
+        持倉）、或檢查本身丟例外，掃描都照常產生並推播新訊號。審查報告以為下游的
+        risk_manager.run_all_checks 會擋，但該函式在正式流程從未被呼叫。
+        skip=True 時影子追蹤照常記錄、既有部位照常結算，只停新訊號；極高信心例外（hc_mode）
+        只在「單純持倉滿額、且風險狀態已知」時才可能開啟。"""
+        out = {"skip": False, "hc_mode": False, "hc_record": {}, "msgs": [], "risk_unknown": False}
+        try:
+            from risk_manager import check_daily_loss_limit, check_max_positions
+            _ps_status, active_signals = store.read_pending_signals()
+            daily_loss = check_daily_loss_limit()
+            max_pos    = check_max_positions(active_signals)
+            if _ps_status != "ok":
+                out["skip"] = True; out["risk_unknown"] = True
+                out["msgs"].append("🔴 未平倉部位暫時無法讀取（資料庫），無法確認持倉與風險上限，為安全起見暫停新增訊號")
+            if daily_loss.get("unavailable"):
+                out["skip"] = True; out["risk_unknown"] = True
+                out["msgs"].append(daily_loss.get("message", "🔴 風控狀態暫時無法讀取，為安全起見暫停新增訊號"))
+            if daily_loss.get("exceeded"):
+                out["skip"] = True
+                out["msgs"].append(daily_loss.get("message", "今日虧損達上限"))
+            if max_pos.get("exceeded"):
+                out["skip"] = True
+                out["msgs"].append(max_pos.get("message", "持倉數達上限"))
+            if out["skip"] and max_pos.get("exceeded") and not daily_loss.get("exceeded") and not out["risk_unknown"]:
+                try:
+                    from risk_manager import high_conf_record
+                    out["hc_record"] = high_conf_record(store.get_closed_trades(limit=200))
+                    out["hc_mode"] = bool(out["hc_record"].get("perfect"))
+                    logger.info(f"持倉滿額：極高信心例外 {'開啟' if out['hc_mode'] else '關閉'}（已平倉 {out['hc_record'].get('n')} 筆、獲利 {out['hc_record'].get('wins')} 筆）")
+                except Exception as e:
+                    out["hc_mode"] = False; out["hc_record"] = {}
+                    logger.warning(f"極高信心例外判斷失敗（視為關閉）: {e}")
+        except Exception as e:
+            logger.error(f"risk_manager 熔斷檢查失敗，風險狀態未知，本次掃描不產生新訊號（fail-closed）: {e}", exc_info=True)
+            out = {"skip": True, "hc_mode": False, "hc_record": {}, "risk_unknown": True,
+                   "msgs": ["🔴 風控檢查失敗，風險狀態未知，為安全起見暫停新增訊號（既有部位照常結算）"]}
+        return out
+
     def _run_daily_scan_impl(self) -> Dict:
         start_time = time.time()
         # ★ 2026-11-12 scan_run_id（LIVE07 完整版）：每次掃描產生唯一 run_id，寫入本批每筆訊號
@@ -199,29 +241,13 @@ class TWScanEngine:
         # 掃描開始前實際檢查一次：任一熔斷觸發就跳過本次 Step 2/3（不產生新訊號），但
         # Step 0 的舊訊號結算、Step 5 的（空）推播仍正常執行，並推播一則警示讓機主知道
         # 今天為什麼沒有新訊號，而不是誤以為系統掛了。
-        skip_new_signals = False
-        hc_mode = False       # 僅因「持倉滿額」被擋時，允許極高信心例外（見 risk_manager.high_conf_ok）
-        hc_record = {}
+        # ★ 2026-11-12（Q-P0-06）：風控閘門抽成 _risk_gate()，狀態未知一律 fail-closed（見該函式）。
+        gate = self._risk_gate(store)
+        skip_new_signals = gate["skip"]
+        hc_mode = gate["hc_mode"]       # 僅因「持倉滿額」被擋時，允許極高信心例外（見 risk_manager.high_conf_ok）
+        hc_record = gate["hc_record"]
+        block_msgs = gate["msgs"]
         try:
-            from risk_manager import check_daily_loss_limit, check_max_positions
-            active_signals = store.get_pending_signals()
-            daily_loss = check_daily_loss_limit()
-            max_pos    = check_max_positions(active_signals)
-            block_msgs = []
-            if daily_loss.get("exceeded"):
-                skip_new_signals = True
-                block_msgs.append(daily_loss.get("message", "今日虧損達上限"))
-            if max_pos.get("exceeded"):
-                skip_new_signals = True
-                block_msgs.append(max_pos.get("message", "持倉數達上限"))
-            if skip_new_signals and max_pos.get("exceeded") and not daily_loss.get("exceeded"):
-                try:
-                    from risk_manager import high_conf_record
-                    hc_record = high_conf_record(store.get_closed_trades(limit=200))
-                    hc_mode = bool(hc_record.get("perfect"))
-                    logger.info(f"持倉滿額：極高信心例外 {'開啟' if hc_mode else '關閉'}（已平倉 {hc_record.get('n')} 筆、獲利 {hc_record.get('wins')} 筆）")
-                except Exception as e:
-                    logger.warning(f"極高信心例外判斷失敗（視為關閉）: {e}")
             if skip_new_signals:
                 logger.warning(f"風控熔斷觸發，本次掃描跳過產生新訊號：{'；'.join(block_msgs)}")
                 # ★ 修正：2026-09-29——見下面 _push_signals() 「今日已推播過一次
@@ -249,7 +275,7 @@ class TWScanEngine:
                     except Exception as e:
                         logger.warning(f"風控熔斷通知推播失敗: {e}")
         except Exception as e:
-            logger.warning(f"risk_manager 熔斷檢查失敗（不影響本次掃描繼續）: {e}", exc_info=True)
+            logger.warning(f"風控熔斷通知流程失敗（不影響閘門結果，新訊號仍依閘門決定）: {e}")
 
         # 2. 品種清單
         logger.info("Step 2/5: 建立掃描清單...")
@@ -374,7 +400,9 @@ class TWScanEngine:
         # 訊號」的標的，同一檔要等前一筆訊號觸及停損/停利/逾期平倉後，才會再次
         # 出現在候選名單中。
         try:
-            _pending = store.get_pending_signals()
+            _pst, _pending = store.read_pending_signals()
+            if _pst != "ok":
+                raise RuntimeError("未平倉訊號清單讀取失敗")
             active_tickers = {s.get("ticker") for s in _pending}
             # ★ 新增：2026-09-16——連同已在手上、尚未平倉的訊號的 sector 一起
             # 傳給 _filter_and_rank()，讓相關性群組上限（MAX_PER_CORRELATION_GROUP）
@@ -388,9 +416,12 @@ class TWScanEngine:
             # ticker 讓每筆不明產業的持倉自成一組。
             active_positions = _pending
         except Exception as e:
-            logger.warning(f"取得未平倉訊號清單失敗（不影響本次掃描繼續）: {e}")
+            # ★ 2026-11-12（Q-P0-06）：讀不到既有持倉時，名額／資金／組合風險上限都無從計算，
+            # 不可當成「沒有持倉」放行——本次不發新訊號（原本以空清單繼續）。
+            logger.error(f"取得未平倉訊號清單失敗，無法計算持倉與風險上限，本次不產生新訊號（fail-closed）: {e}")
             active_tickers = set()
             active_positions = []
+            all_signals = []
         filtered = self._filter_and_rank(all_signals, market_overview, active_tickers, active_positions)
         # ★ 修正：2026-09-27——使用者回報系統顯示「已有14個持倉，暫停新增（上限5）」，
         # 查證後發現這不是 _resolve_pending_signals() 逾期平倉邏輯失效（14筆訊號查

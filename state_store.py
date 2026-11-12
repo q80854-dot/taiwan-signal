@@ -533,6 +533,13 @@ class StateStore:
         # 每次掃描前的結算階段就要逐筆重新抓歷史K棒判斷停損停利，耗時隨筆數線性增加。
         # 現在 scanner.py 已經會主動把超過 signal_expire_days 天還沒觸價的訊號強制平倉，
         # 這裡的 LIMIT 是第二層保險，避免萬一結算邏輯本身出錯時筆數還是失控增長。
+        return self.read_pending_signals(limit)[1]
+
+    def read_pending_signals(self, limit: int = 500):
+        """★ 2026-11-12（Q-P0-06）：回傳 (status, rows)，status 為 "ok" 或 "error"。
+        get_pending_signals 讀取失敗時回空清單——對風控而言「讀不到持倉」與「沒有持倉」不可混為
+        一談：前者若被當成 0 個持倉，持倉上限、資金上限、組合風險上限都會被無聲放行。需要判斷
+        可交易性的呼叫端請用本函式，以便在 error 時 fail-closed。"""
         try:
             with self._conn() as conn:
                 rows = conn.execute(
@@ -540,10 +547,10 @@ class StateStore:
                     "ORDER BY generated_at DESC LIMIT ?",
                     (limit,)
                 ).fetchall()
-            return [with_share_units(dict(r)) for r in rows]
+            return "ok", [with_share_units(dict(r)) for r in rows]
         except Exception as e:
             logger.warning(f"get_pending_signals: {e}")
-            return []
+            return "error", []
 
     # ── 績效 ──
     def _equity_stats(self, trades):
