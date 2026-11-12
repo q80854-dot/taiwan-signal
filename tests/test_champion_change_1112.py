@@ -137,7 +137,7 @@ def test_blocked_classes_have_preregistered_restoration_watch():
         assert e["id"] == eid and e["direction"] == direction and f"id: {eid}" in doc
         assert f"min_oos_days: {e['min_oos_days']}" in doc and f"min_oos_trades: {e['min_oos_trades']}" in doc
         assert e["min_oos_days"] == ex.MIN_OOS_DAYS and e["min_oos_trades"] == ex.MIN_OOS_TRADES
-        assert "正式訊號維持停發" in doc and "size = 6" in doc
+        assert "正式訊號維持停發" in doc and "size = 10" in doc
 
     def row(day, r, reason, direction):
         return {"bar_date": day, "kind": "rejected", "direction": direction, "status": "closed", "champion_r": r,
@@ -153,4 +153,4 @@ def test_blocked_classes_have_preregistered_restoration_watch():
     o = ex.evaluate_blocked("E04", winning + losing)["oos"]                          # 不同原因互不混入
     assert o["n_final"] == 270 and o["verdict"] == "supported" and "不自動開放" in o["verdict_note"]
     assert ex.evaluate_blocked("E04", [row("2026-11-10", 5.0, "short_off", "sell")] * 300)["exploratory"]["verdict"] == "exploratory_only"
-    assert len(ex.REGISTRY) + len(ex.BLOCKED_REGISTRY) == 6      # family_size（各定義檔同步寫 size = 6）
+    assert len(ex.REGISTRY) + len(ex.BLOCKED_REGISTRY) + len(ex.ALT_EXIT_REGISTRY) == 10   # family_size（各定義檔同步寫 size = 10）

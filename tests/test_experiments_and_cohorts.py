@@ -16,7 +16,7 @@ def _row(day, r, sentiment=60, chase="low", status="final", direction="buy"):
 
 
 def test_registry_is_frozen_and_documented():
-    assert [e["id"] for e in ex.REGISTRY] == ["E01", "E02"] and ex.OOS_START > ex.FROZEN_AT
+    assert [e["id"] for e in ex.REGISTRY] == ["E01", "E02", "E09", "E10"] and ex.OOS_START > ex.FROZEN_AT
     for e in ex.REGISTRY:
         doc = open(e["doc"], encoding="utf-8").read()
         assert f"id: {e['id']}" in doc and e["filter"] in doc          # 程式與登錄文件的濾網定義一致

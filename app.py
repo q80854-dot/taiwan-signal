@@ -670,6 +670,10 @@ def job_shadow_resolve(reason: str = "排程"):
         except Exception as e:
             logger.warning(f"job_shadow_resolve finalize_champion_tracks: {e}")
         try:
+            logger.info(f"⏰ 出場 Challenger 定案（{reason}）完成：{shadow.finalize_alt_exit_tracks()}")
+        except Exception as e:
+            logger.warning(f"job_shadow_resolve finalize_alt_exit_tracks: {e}")
+        try:
             logger.info(f"⏰ 影子資料品質（{reason}）：{shadow.data_quality_counts()}")
         except Exception as e:
             logger.warning(f"job_shadow_resolve data_quality_counts: {e}")

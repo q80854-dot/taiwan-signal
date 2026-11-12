@@ -1,0 +1,28 @@
+id: E09
+name: 只做接近一年高點的股票
+registered_at: 2026-11-12
+status: registered
+direction: buy
+hypothesis: >
+  收盤在近 250 日最高價九成以上的做多候選期望值較好；只保留這類，留下組的 Champion 淨 R 高於不設濾網的基準。
+motivation: >
+  相對強弱研究（docs/research/EXIT_STUDY_2020_2026.md 第二部分）：6 個事前寫死的濾網中，只有這一個在
+  兩個期間方向一致（留下組 − 全部：+0.041R／+0.078R），但訓練期未通過多重比較校正，依事前規則不算成立；
+  留下組本身也只是接近打平（−0.004R／−0.017R），不是正期望值。此觀察只用來提出假說，不作為證據。
+filter: features.dist_hi52 >= -10
+threshold_source: 研究前寫死的整數門檻（九成），非依結果調整
+baseline: 同期間全部已定案的做多候選（特徵缺漏者兩組皆不計）
+primary_endpoint: Champion 分批淨 R（champion_status = final），留下組平均 − 基準平均
+uncertainty: 以訊號日為叢集的成對拔靴，95% 信賴區間
+exploratory_window: "<= 2026-11-12"
+oos_window: ">= 2026-11-13"
+min_oos_days: 40
+min_oos_trades_kept: 200
+min_effect_r: 0.05
+success_rule: OOS 差異的 95% CI 下界 > 0.05R
+failure_rule: OOS 差異的 95% CI 上界 < 0.05R
+multiple_testing: 與 E01～E10 同屬一個 family（size = 10）
+guardrails:
+  - 只記錄與評估，不改正式訊號；程式不自動採用
+  - 不得在看到樣本外結果後修改門檻或方案；要改必須另立新編號
+  - supported 也只代表可以提案；須人工審查並經使用者同意

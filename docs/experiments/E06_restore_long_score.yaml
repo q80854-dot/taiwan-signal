@@ -28,7 +28,7 @@ caveats:
   - 本類只含週線偏多者；週線不偏多者歸 E05
   - 同一天的假想單高度相關，有效樣本數遠小於筆數
   - 40 個訊號日約兩個月，只涵蓋一種行情；supported 不代表長期有效，須與 7 年重播的結論一併權衡
-multiple_testing: 與 E01～E06 同屬一個 family（size = 6）
+multiple_testing: 與 E01～E10 同屬一個 family（size = 10；2026-11-12 同日登錄，皆在樣本外資料產生之前）
 guardrails:
   - 觀察期間正式訊號維持停發
   - supported 也只代表可以提案；須人工審查並經使用者同意後才恢復

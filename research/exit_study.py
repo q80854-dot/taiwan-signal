@@ -54,67 +54,27 @@ VARIANTS = [
 
 
 def _position_cls():
+    """沿用舊介面（測試與外部腳本會傳入）；實作已移到 execution.FlexStagedPosition，影子追蹤共用同一份。"""
     import execution
-
-    class FlexPosition(execution.StagedPosition):
-        """在正式狀態機之上加：移動停損、時間停損。其餘成交慣例完全沿用父類別。"""
-
-        def configure(self, trail_atr=None, atr=None, trail_after="entry", time_stop=None):
-            self.trail_atr, self.atr, self.trail_after, self.time_stop = trail_atr, atr, trail_after, time_stop
-            self.extreme = None
-            return self
-
-        def on_bar(self, b):
-            # 一價鎖死（賣不掉／補不回）要在呼叫父類別之前判定——父類別會更新 prev_close
-            locked = execution.bar_ok(b) and execution.exit_blocked_by_limit(self.direction, b, self.prev_close)
-            legs = super().on_bar(b)
-            if self.remaining <= 0 or not execution.bar_ok(b) or locked:
-                return legs
-            bd = b["bar_date"]
-            # 時間停損：到指定日曆天、仍未成交任何一段停利 → 以本根收盤出場（鎖死的那根已在上面順延）
-            if self.time_stop and not self.done["tp1"] and self.days(bd) >= self.time_stop:
-                leg = self.force_close(b, stage="time_stop")
-                return legs + ([leg] if leg else [])
-            # 移動停損：以本根（含）為止的極值更新，下一根才生效
-            if self.trail_atr and self.atr and (self.trail_after == "entry" or self.done["tp1"]):
-                if self.buy:
-                    self.extreme = b["high"] if self.extreme is None else max(self.extreme, b["high"])
-                    self.current_sl = max(self.current_sl, self.extreme - self.trail_atr * self.atr)
-                else:
-                    self.extreme = b["low"] if self.extreme is None else min(self.extreme, b["low"])
-                    self.current_sl = min(self.current_sl, self.extreme + self.trail_atr * self.atr)
-            return legs
-
-    return FlexPosition
+    return execution.FlexStagedPosition
 
 
-def simulate(v, sig, bars, pnl_fn, cls):
+def simulate(v, sig, bars, pnl_fn, cls=None):
     """回傳 {r, exit_date, hold_days, open_end} 或 None。sig 為重播 CSV 的一列（已轉型）。"""
     import execution
     entry, sl, risk = sig["fill"], sig["stop"], abs(sig["entry_plan"] - sig["stop"])
     if not entry or risk <= 0 or not bars:
         return None
-    ladder = v.get("ladder", True)
-    tp1 = sig["tp1"] if ladder else None
-    tp2 = sig["tp2"] if ladder else None
-    tp3 = sig["tp3"] if (ladder and not v.get("drop_tp3")) else None
-    pos = cls(entry, sl, tp1, tp2, tp3, sig["direction"], SHARES, sig["signal_date"], pnl_fn,
-              v["expire"], prev_close=sig["prev_close"])
     atr = risk / sig["sl_atr"] if sig.get("sl_atr") else None
-    pos.configure(v.get("trail_atr"), atr, v.get("trail_after", "entry"), v.get("time_stop"))
-    if v.get("trail_atr") and not atr:
+    o = execution.simulate_alt_exit(v, bars, entry, sl, sig["tp1"], sig["tp2"], sig["tp3"], sig["direction"],
+                                    SHARES, sig["signal_date"], pnl_fn, atr=atr, prev_close=sig["prev_close"])
+    if o is None:
         return None
-    for b in bars:
-        if pos.remaining <= 0:
-            break
-        pos.on_bar(b)
-    open_end = pos.remaining > 0            # 資料用盡仍未出場：不納入（不以暫估值當結果）
-    if open_end or not pos.legs:
+    if o["open_end"]:                       # 資料用盡仍未出場：不納入（不以暫估值當結果）
         return {"open_end": True}
-    pnl = sum(l["pnl"] for l in pos.legs)
-    hold = (datetime.strptime(pos.exit_date, "%Y-%m-%d") - datetime.strptime(sig["signal_date"], "%Y-%m-%d")).days
-    return {"r": pnl / (risk * SHARES), "exit_date": pos.exit_date, "hold_days": hold, "open_end": False,
-            "last": pos.legs[-1]["stage"]}
+    hold = (datetime.strptime(o["exit_date"], "%Y-%m-%d") - datetime.strptime(sig["signal_date"], "%Y-%m-%d")).days
+    return {"r": o["pnl"] / (risk * SHARES), "exit_date": o["exit_date"], "hold_days": hold, "open_end": False,
+            "last": o["last"]}
 
 
 def _boot(by_day, n_boot=N_BOOT, seed=SEED, alpha=0.05):

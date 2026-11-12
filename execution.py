@@ -332,3 +332,73 @@ def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_
     pnl_pct = round(total_pnl / (entry * shares) * 100, 2) if entry and shares else 0
     return {"result": result, "exit_price": exit_price, "pnl": total_pnl, "pnl_pct": pnl_pct,
             "legs": legs, "exit_date": exit_date, "sim_version": STAGED_SIM_VERSION}
+
+
+# ───────────── 出場 Challenger（只供影子追蹤與研究；正式訊號不使用） ─────────────
+# 2026-11-12 出場方式研究（docs/research/EXIT_STUDY_2020_2026.md）：把正式訊號重播 2020–2026，
+# 對同一批訊號逐筆比較 8 個事前寫死的出場方案。延長持有與移動停損在訓練期、驗證期的平均淨 R 都
+# 高於現行出場，但移動停損的優勢幾乎全來自極少數大漲的單（縮尾後優勢消失）。因此不改正式出場，
+# 先把下列兩個方案掛進影子追蹤平行記錄，以登錄日之後的真實資料驗證（實驗 E07／E08）。
+ALT_EXIT_SIM_VERSION = "alt-exit-v1-2026-11-12"
+EXIT_CHALLENGERS = {
+    # 分批停利不變，只把到期由 15 個日曆天延長為 60 天（研究的 V3）
+    "hold60": {"name": "分批停利不變、到期延長為 60 天", "expire": 60, "ladder": True},
+    # 不分批、不設停利：全程以「進場後最高（低）價 ∓ 3 ATR」移動停損，最長 60 天（研究的 V5）
+    "trail3": {"name": "不分批：全程 3 ATR 移動停損、最長 60 天", "expire": 60, "ladder": False,
+               "trail_atr": 3.0, "trail_after": "entry"},
+}
+
+
+class FlexStagedPosition(StagedPosition):
+    """在正式分批狀態機之上加『移動停損』與『時間停損』，其餘成交慣例完全沿用父類別（同一根 K 棒
+    停損優先、跳空以開盤價成交、一價鎖死順延、無效 K 棒略過）。移動停損以「到本根為止」的極值
+    更新、下一根才生效——沒有未來函數；只會收緊，不會放寬原始停損。"""
+
+    def configure(self, trail_atr=None, atr=None, trail_after="entry", time_stop=None):
+        self.trail_atr, self.atr, self.trail_after, self.time_stop = trail_atr, atr, trail_after, time_stop
+        self.extreme = None
+        return self
+
+    def on_bar(self, b):
+        # 一價鎖死（賣不掉／補不回）要在呼叫父類別之前判定——父類別會更新 prev_close
+        locked = bar_ok(b) and exit_blocked_by_limit(self.direction, b, self.prev_close)
+        legs = super().on_bar(b)
+        if self.remaining <= 0 or not bar_ok(b) or locked:
+            return legs
+        bd = b["bar_date"]
+        # 時間停損：到指定日曆天仍未成交任何一段停利 → 以本根收盤出場
+        if self.time_stop and not self.done["tp1"] and self.days(bd) >= self.time_stop:
+            leg = self.force_close(b, stage="time_stop")
+            return legs + ([leg] if leg else [])
+        if self.trail_atr and self.atr and (self.trail_after == "entry" or self.done["tp1"]):
+            if self.buy:
+                self.extreme = b["high"] if self.extreme is None else max(self.extreme, b["high"])
+                self.current_sl = max(self.current_sl, self.extreme - self.trail_atr * self.atr)
+            else:
+                self.extreme = b["low"] if self.extreme is None else min(self.extreme, b["low"])
+                self.current_sl = min(self.current_sl, self.extreme + self.trail_atr * self.atr)
+        return legs
+
+
+def simulate_alt_exit(spec, bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, pnl_fn,
+                      atr=None, prev_close=None):
+    """以某個出場方案（spec：expire／ladder／drop_tp3／trail_atr／trail_after／time_stop）模擬。
+    回傳 {pnl, exit_date, last, open_end}；open_end=True 代表資料用盡時仍有部位在場（不補暫估腿，
+    由呼叫端決定如何標示）。需要 ATR 的方案在 atr 缺漏時回 None（不猜）。"""
+    if spec.get("trail_atr") and not atr:
+        return None
+    ladder = spec.get("ladder", True)
+    pos = FlexStagedPosition(entry, sl, tp1 if ladder else None, tp2 if ladder else None,
+                             tp3 if (ladder and not spec.get("drop_tp3")) else None,
+                             direction, shares, gen_date, pnl_fn, spec.get("expire"), prev_close=prev_close)
+    pos.configure(spec.get("trail_atr"), atr, spec.get("trail_after", "entry"), spec.get("time_stop"))
+    for b in bars:
+        if pos.remaining <= 0:
+            break
+        pos.on_bar(b)
+    if pos.remaining > 0:
+        return {"open_end": True, "pnl": None, "exit_date": pos.exit_date, "last": None}
+    if not pos.legs:
+        return None
+    return {"open_end": False, "pnl": sum(l["pnl"] for l in pos.legs), "exit_date": pos.exit_date,
+            "last": pos.legs[-1]["stage"]}

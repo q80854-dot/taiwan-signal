@@ -1,0 +1,34 @@
+id: E10
+name: 剛轉強的不追（近 15 天內曾是被停發類別者不做）
+registered_at: 2026-11-12
+status: registered
+direction: buy
+hypothesis: >
+  同一檔股票在訊號日之前 15 個日曆天內曾出現被停發類別的假想單（做多但週線不偏多、做多但分數未達 75）者，
+  轉為合格後第一時間進場的期望值較差；排除後留下組的 Champion 淨 R 高於不設濾網的基準。
+motivation: >
+  以新規則重跑重播時發現：被停發的訊號不再占住該檔股票，因此多放出 1,226 筆原本不會發的後續訊號，
+  這批在兩個期間都明顯較差（−0.156R／−0.160R，95% 區間皆不含零）；其中前一筆是「週線不偏多」者最差
+  （−0.276R／−0.241R）——週線才剛翻多就追進去。這是事後才發現的型態，只用來提出假說，不作為證據。
+filter: features.prior_blocked == 'none'
+threshold_source: 回看天數＝訊號有效天數 15 天，非依結果調整
+data_collection: >
+  2026-11-13 起，候選寫入時查同一檔近 15 天內的 rejected 列，原因屬 short_off／gate_weekly_long／long_score
+  者記為特徵 prior_blocked（最近一筆的原因；沒有則 "none"）。此前的列沒有這個特徵，不回填、兩組皆不計。
+baseline: 同期間全部已定案的做多候選（特徵缺漏者兩組皆不計）
+primary_endpoint: Champion 分批淨 R（champion_status = final），留下組平均 − 基準平均
+uncertainty: 以訊號日為叢集的成對拔靴，95% 信賴區間
+exploratory_window: "<= 2026-11-12"
+oos_window: ">= 2026-11-13"
+min_oos_days: 40
+min_oos_trades_kept: 200
+min_effect_r: 0.05
+success_rule: OOS 差異的 95% CI 下界 > 0.05R
+failure_rule: OOS 差異的 95% CI 上界 < 0.05R
+caveats:
+  - 重播的定義是「前一筆假想單尚未出場」，線上以「15 天內曾出現」近似，兩者不完全相同
+multiple_testing: 與 E01～E10 同屬一個 family（size = 10）
+guardrails:
+  - 只記錄與評估，不改正式訊號；程式不自動採用
+  - 不得在看到樣本外結果後修改門檻或方案；要改必須另立新編號
+  - supported 也只代表可以提案；須人工審查並經使用者同意
