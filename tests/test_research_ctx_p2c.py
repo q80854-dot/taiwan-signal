@@ -22,9 +22,13 @@ def test_single_source_of_truth():
     assert "未取得" in s[s.index("function tsCtxLine"):s.index("function tsCtxLine") + 500]
 
 
-def test_run_id_gap_honest():
+def test_run_id_recorded_and_old_data_honest():
+    # ★ 2026-11-12 缺口已補：run_id 落盤（scanner→signals raw_json/scan_history/audit meta）。
+    # 共用脈絡行：有本批 rid 顯示之；無（跨批頁/舊資料）誠實指向逐筆紀錄並標明起記日。
     s = _dash()
-    assert s.count("run_id：後端未記錄") >= 2             # 訊號/學習共用行＋持倉風險卡
+    assert "run_id：後端未記錄" not in s                   # 缺口措辭應已移除
+    assert "tsCtxLine(extra,rid)" in s.replace(" ", "") or "function tsCtxLine(extra,rid)" in s
+    assert "2026-11-12 起記錄" in s                        # 舊資料誠實標示（不回填、不假造）
 
 
 def test_three_pages_mounted():
