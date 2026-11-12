@@ -227,7 +227,7 @@ class StateStore:
                     id            SERIAL PRIMARY KEY,
                     scan_date     TEXT, scanned INTEGER, signals_found INTEGER,
                     signals_sent  INTEGER, duration_min REAL, errors INTEGER, created_at TEXT,
-                    run_id        TEXT
+                    run_id        TEXT, errors_detail TEXT
                 );
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY, value TEXT, updated_at TEXT
@@ -289,7 +289,7 @@ class StateStore:
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
                     scan_date     TEXT, scanned INTEGER, signals_found INTEGER,
                     signals_sent  INTEGER, duration_min REAL, errors INTEGER, created_at TEXT,
-                    run_id        TEXT
+                    run_id        TEXT, errors_detail TEXT
                 );
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY, value TEXT, updated_at TEXT
@@ -357,6 +357,8 @@ class StateStore:
         # scan_history 記每次掃描的 run_id；signals 的 scan_run_id 走 raw_json（save_signal 全量
         # 序列化）免遷移、讀取時由 get_recent_signals 提取。舊列 run_id 為 NULL＝誠實的「無紀錄」。
         self._migrate_add_column("scan_history", "run_id", "TEXT")
+        # ★ 2026-11-12 掃描錯誤逐類別明細（LIVE14 缺口補齊）：JSON（timeout/exception/by_exc/by_market/tickers）
+        self._migrate_add_column("scan_history", "errors_detail", "TEXT")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_revenue", "REAL")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_gross_profit", "REAL")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_operating_income", "REAL")
@@ -693,14 +695,16 @@ class StateStore:
     def save_scan_history(self, stats: Dict):
         try:
             with self._conn() as conn:
+                _ed = stats.get("errors_detail")
                 conn.execute("""
                     INSERT INTO scan_history
-                    (scan_date,scanned,signals_found,signals_sent,duration_min,errors,created_at,run_id)
-                    VALUES (?,?,?,?,?,?,?,?)
+                    (scan_date,scanned,signals_found,signals_sent,duration_min,errors,created_at,run_id,errors_detail)
+                    VALUES (?,?,?,?,?,?,?,?,?)
                 """, (datetime.now().strftime("%Y-%m-%d"),stats.get("scanned",0),
                       stats.get("signals_found",0),stats.get("signals_sent",0),
                       stats.get("duration_min",0),stats.get("errors",0),
-                      datetime.now(timezone.utc).isoformat(),stats.get("run_id")))
+                      datetime.now(timezone.utc).isoformat(),stats.get("run_id"),
+                      json.dumps(_ed, ensure_ascii=False) if _ed else None))
         except Exception as e: logger.error(f"save_scan_history: {e}")
 
     # ── Meta ──
@@ -1394,8 +1398,14 @@ except NameError:
 def _scan_hist(self, n: int = 5):
     try:
         with self._conn() as conn:
-            rows = conn.execute("SELECT scan_date,scanned,signals_found,signals_sent,duration_min,errors,run_id FROM scan_history ORDER BY id DESC LIMIT ?", (n,)).fetchall()
-        return [dict(r) for r in rows]
+            rows = conn.execute("SELECT scan_date,scanned,signals_found,signals_sent,duration_min,errors,run_id,errors_detail FROM scan_history ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+        out = [dict(r) for r in rows]
+        for r in out:                               # errors_detail：JSON 還原；壞值/NULL → None（誠實無明細）
+            try:
+                r["errors_detail"] = json.loads(r["errors_detail"]) if r.get("errors_detail") else None
+            except Exception:
+                r["errors_detail"] = None
+        return out
     except Exception as e:
         logger.warning(f"get_scan_history: {e}")
         return []
