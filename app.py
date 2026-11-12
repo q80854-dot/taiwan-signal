@@ -1552,6 +1552,23 @@ def api_admin_tools_run():
         if action == "recheck_holiday":
             _df.refresh_typhoon_state()
             return jsonify({"ok": True, "msg": "已重新判定今日市場狀態：" + (_df.get_market_session().get("session_zh") or "")})
+        if action == "resolve_shadow":
+            # ★ 2026-11-12：只用資料庫既有日K快取重跑影子／策略結算，不對外連線、不改訊號決策，
+            # 盤中亦可安全執行。用於「卡住的追蹤紀錄」在不等盤後全市場掃描的情況下立即離開佇列。
+            import shadow as _sh
+            _r = _sh.resolve_pending()
+            _msg = (f"影子追蹤結算完成：檢查 {_r.get('rows', 0)} 筆、"
+                    f"新結案 {_r.get('closed', 0)} 筆、"
+                    f"逾期無K棒 {_r.get('unresolved', 0)} 筆、"
+                    f"訊號日後無新K棒 {_r.get('no_new_bars', 0)} 筆、"
+                    f"風險退化 {_r.get('bad_risk', 0)} 筆")
+            try:
+                from strategies import store as _ss
+                _r2 = _ss.resolve_pending()
+                _msg += f"；策略假想訊號新結案 {_r2.get('closed', 0)} 筆"
+            except Exception as _e:
+                logger.warning(f"resolve_shadow strategies: {_e}")
+            return jsonify({"ok": True, "msg": _msg})
         if action == "scan":
             from scanner import scanner
             if scanner.is_scanning:

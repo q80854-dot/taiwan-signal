@@ -3538,6 +3538,7 @@ html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
       <div class="panel-body">
         <div id="tools-status" class="mut" style="font-size:13px;line-height:1.9">載入中…</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+          <button class="btn" onclick="adminTool('resolve_shadow',this)">立即結算影子追蹤</button>
           <button class="btn" onclick="adminTool('scan',this)">立即全市場掃描</button>
           <button class="btn" onclick="adminTool('refresh_universe',this)">重抓品種清單</button>
           <button class="btn" onclick="adminTool('warm_finmind',this)">預熱大盤／期貨</button>
@@ -3548,7 +3549,7 @@ html[data-theme].density-compact .o-row2{padding-top:5px;padding-bottom:5px}
           <button class="btn" onclick="fetchAdminTools()">重新整理狀態</button>
         </div>
         <div id="ops-out" style="font-size:12.5px;margin-top:10px"></div>
-        <p class="mut" style="font-size:12px;margin-top:10px">這些都是對既有功能的安全包裝，可重複執行、不會刪資料；遇到資料過期或卡住時可自行處理。「備份還原驗證」會把備份匯出並試著還原、確認筆數一致；「測試健檢告警」立即跑一次健檢，異常時依節流規則發 Telegram（平時每交易日 09:17／13:17／17:17 自動執行）。</p>
+        <p class="mut" style="font-size:12px;margin-top:10px">這些都是對既有功能的安全包裝，可重複執行、不會刪資料；遇到資料過期或卡住時可自行處理。「立即結算影子追蹤」只用資料庫既有日K快取重跑結算（不對外連線、盤中可執行），用於讓逾期卡住的追蹤紀錄立刻離開佇列，不必等盤後掃描。「備份還原驗證」會把備份匯出並試著還原、確認筆數一致；「測試健檢告警」立即跑一次健檢，異常時依節流規則發 Telegram（平時每交易日 09:17／13:17／17:17 自動執行）。</p>
       </div></div>
     <div class="panel card"><div class="panel-head"><div class="bar"></div><span class="panel-title">通知偏好（Telegram 逐檔訊號）</span></div>
       <div class="panel-body" id="notify-prefs-body">
