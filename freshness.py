@@ -150,14 +150,27 @@ def status(now: Optional[datetime] = None, dates: Optional[Dict[str, Optional[st
             "late": [i["key"] for i in items if i["status"] == "late"]}
 
 
+# ★ 2026-11-12：同一資料源兩次重抓至少相隔這麼久。原本設計「抓到就停」，但若來源**永遠抓不到**
+# （例：外資持股比率 MI_QFIIS 端點失效），只要有人開著網頁，/api/freshness 每分鐘就觸發一次補抓，
+# 外資持股一次最多打 8 個證交所請求——一小時數百次，恐使伺服器 IP 遭證交所限流、拖垮其他 TWSE 資料。
+_RETRY_COOLDOWN_SEC = 600
+_last_try: Dict[str, float] = {}
+
+
 def job_poll() -> Dict:
-    """公布時段每 10 分鐘：只重抓還沒到應有日期的那幾種資料。"""
+    """公布時段每 10 分鐘：只重抓還沒到應有日期的那幾種資料（同一來源至少隔 _RETRY_COOLDOWN_SEC）。"""
     now = now_tpe()
     st = {i["key"]: i for i in status(now)["items"]}
     did = []
 
     def late(k):
-        return st.get(k, {}).get("status") in ("late", "unknown")
+        if st.get(k, {}).get("status") not in ("late", "unknown"):
+            return False
+        t = time.time()
+        if t - _last_try.get(k, 0.0) < _RETRY_COOLDOWN_SEC:
+            return False                  # 冷卻中：剛試過、仍未到應有日期，先不重打外部來源
+        _last_try[k] = t
+        return True
 
     try:
         if late("taifex"):

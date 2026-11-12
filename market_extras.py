@@ -18,7 +18,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import requests
@@ -64,7 +64,7 @@ def _get(url: str, timeout: int = 20):
 
 
 def _now_tpe() -> datetime:
-    return datetime.utcnow() + timedelta(hours=8)
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=8)
 
 
 def build_flags(now: Optional[datetime] = None) -> Dict:

@@ -21,7 +21,7 @@ def _cached(key, ttl, fn):
 
 
 def _tw_taipei_today():
-    return (dt.datetime.utcnow() + dt.timedelta(hours=8)).date()
+    return (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) + dt.timedelta(hours=8)).date()
 
 
 def _parse_date(raw):
