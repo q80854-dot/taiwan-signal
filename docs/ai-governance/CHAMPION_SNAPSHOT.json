@@ -1,5 +1,5 @@
 {
-  "config_hash": "02595bc0c1283d98ba2400bc94096d75852c55c1b6ae1f726f39c56d6668af52",
+  "config_hash": "3bdbd319e62639955e6c0b11a96f8e619bc3498ed53ea437418a77d2e8b6219b",
   "constants": {
     "CIRCUIT_BREAKER": {
       "foreign_sell_caution": -50000000000.0,
@@ -52,7 +52,7 @@
       ]
     ],
     "EARNINGS_SEASON_LOOKBACK_DAYS": 14,
-    "ENABLE_SHORT_SIGNALS": true,
+    "ENABLE_SHORT_SIGNALS": false,
     "EVENT_EXDIV_BLOCK_DAYS": 2,
     "EVENT_MATERIAL_NEWS_PENALTY": 20.0,
     "INDICATOR_PARAMS": {
@@ -85,6 +85,10 @@
       "support_lookback": 60,
       "vol_period": 20,
       "vol_surge_ratio": 1.5
+    },
+    "LONG_REQUIRE_WEEKLY_BULLISH": true,
+    "LONG_SIGNAL_THRESH": {
+      "min_score": 75
     },
     "MAX_DAILY_RISK": 0.06,
     "MAX_PER_CORRELATION_GROUP": 2,
@@ -167,5 +171,5 @@
   },
   "frozen_at": "2026-11-12",
   "note": "此為 Champion 正式策略/風控常數的凍結快照。要更新，須有意識地改 config 常數並經使用者核准後重新產生本檔（python scripts/freeze_champion.py）。",
-  "strategy_version": "champion-02595bc0c128"
+  "strategy_version": "champion-3bdbd319e626"
 }

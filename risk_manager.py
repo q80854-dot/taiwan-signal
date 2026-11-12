@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # ★ 2026-11-11 LIVE03：風險上限的單一事實來源。三個語意不同、不可混用的上限，各頁一律讀此處、
 # 不得各自硬編（審查 §9.5 LIVE03：各頁把單日 6% 當組合上限、歷史訊號 1.2% 與設定頁 2% 混淆）。
-_RISK_EFFECTIVE_AT = "2026-11-08"   # 現行風控/Champion 凍結日（CHAMPION_SNAPSHOT.frozen_at）
+_RISK_EFFECTIVE_AT = "2026-11-12"   # 現行風控/Champion 凍結日（CHAMPION_SNAPSHOT.frozen_at）
 
 
 def risk_basis(balance: float = None) -> Dict:

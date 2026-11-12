@@ -142,6 +142,7 @@ def test_short_signal_below_one_lot_is_rejected_end_to_end(monkeypatch):
         return lambda p, sl, **k: {"shares": shares, "lots": shares / 1000, "risk_twd": 1000, "risk_pct": 0.2,
                                    "position_value": shares * p, "margin_pct": 1, "roundtrip_cost": 100,
                                    "breakeven_pct": 0.1, "liquidity_capped": False}
+    monkeypatch.setattr(se, "ENABLE_SHORT_SIGNALS", True)        # 測整張規則本身：暫時開啟放空
     monkeypatch.setattr(se, "calc_position_size", size(510))
     assert se.generate_signal_tw("9999.TW", stock, {"daily": daily}, mo) is None
     assert calls == ["short_odd_lot"]

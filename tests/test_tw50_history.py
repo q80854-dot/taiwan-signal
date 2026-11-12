@@ -84,7 +84,7 @@ def test_portfolio_backtest_only_enters_while_ticker_is_a_member(monkeypatch):
 
     def _mtf(tf, **k):
         if len(tf["daily"]["closes"]) == 150:
-            return {"direction": "buy", "score": 90, "adx_value": 30, "vol_ratio": 2.0,
+            return {"direction": "buy", "score": 90, "adx_value": 30, "vol_ratio": 2.0, "weekly_bias": "bullish",
                     "entry_indicators": {"atr": {"value": 2.0}}}
         return {"direction": "none", "score": 0}
     monkeypatch.setattr(signal_engine, "check_multi_timeframe_tw", _mtf)
@@ -115,7 +115,7 @@ def test_single_symbol_backtest_respects_membership(monkeypatch):
     monkeypatch.setattr(stock_universe, "get_stock_info", lambda t: {"size_cat": "中型股", "volume_lots": 999999})
     monkeypatch.setattr(data_fetcher, "fetch_ohlcv", lambda t, tf="daily": d if tf == "daily" else None)
     monkeypatch.setattr(signal_engine, "check_multi_timeframe_tw",
-                        lambda tf, **k: ({"direction": "buy", "score": 90, "adx_value": 30, "vol_ratio": 2.0,
+                        lambda tf, **k: ({"direction": "buy", "score": 90, "adx_value": 30, "vol_ratio": 2.0, "weekly_bias": "bullish",
                                           "entry_indicators": {"atr": {"value": 2.0}}}
                                          if len(tf["daily"]["closes"]) == 150 else {"direction": "none", "score": 0}))
     monkeypatch.setattr(signal_engine, "calc_stop_loss_tw", lambda d_, p, a, ind, sc, lo, hi: round(p * 0.95, 2))

@@ -20,7 +20,9 @@ def _base_sell_sig(executable):
 
 
 def test_config_short_relaxed_and_executable():
-    assert config.ENABLE_SHORT_SIGNALS is True
+    # 2026-11-12 Champion 變更：放空停發正式訊號（7 年重播兩個期間皆顯著為負，見
+    # docs/research/CHAMPION_REPLAY_2020_2026.md）；放空關卡與門檻保留，供影子假想單判定。
+    assert config.ENABLE_SHORT_SIGNALS is False
     assert config.SHORT_EXECUTABLE is True
     # 放空門檻仍高於做多，但已依指示小幅放寬
     assert config.SHORT_SIGNAL_THRESH["min_score"] == 70

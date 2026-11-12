@@ -1,0 +1,35 @@
+id: E06
+name: 恢復 65～74 分的做多
+registered_at: 2026-11-12
+status: registered            # 停發後的「恢復觀察」；正式訊號維持不發，程式不自動恢復
+type: blocked_rule            # 評估「被某條規則擋下的假想單」，不是在候選裡加濾網
+direction: buy
+hypothesis: >
+  最終分數 65～74（週線偏多）的做多已停發；其中通過其餘全部做多關卡的假想單，Champion 淨 R 的期望值轉為正，值得恢復。
+motivation: >
+  2026-11-12 Champion 變更（champion-3bdbd319e626）停發此類訊號。依據是把正式訊號引擎重播 2020–2026
+  （docs/research/CHAMPION_REPLAY_2020_2026.md）：此類在 2020–2023 與 2024–2026 兩個期間的 Champion 淨 R
+  皆顯著為負（−0.133R／−0.212R，共 3,515 筆（重播的分類含週線不偏多者；本實驗只含週線偏多者））。行情結構可能改變，所以停發後仍持續記錄假想單，並預先寫好恢復的判定條件。
+filter: kind = rejected AND features.reject = 'long_score' AND direction = buy
+threshold_source: 其餘關卡與停發前完全相同，不新增或調整任何門檻
+data_collection: >
+  2026-11-13 起，此類訊號會走完與停發前相同的全部關卡，通過者以 long_score 記成假想單
+  （＝若未停發，當天真的會發出的訊號）；沒通過其他關卡者維持原本的原因，不混入。
+primary_endpoint: Champion 分批淨 R（champion_status = final）的平均值
+uncertainty: 以訊號日為叢集的拔靴，95% 信賴區間
+exploratory_window: "<= 2026-11-12"
+oos_window: ">= 2026-11-13"
+min_oos_days: 40
+min_oos_trades: 200
+min_effect_r: 0.05
+success_rule: OOS 平均淨 R 的 95% CI 下界 > 0.05R
+failure_rule: OOS 平均淨 R 的 95% CI 上界 < 0.05R
+caveats:
+  - 本類只含週線偏多者；週線不偏多者歸 E05
+  - 同一天的假想單高度相關，有效樣本數遠小於筆數
+  - 40 個訊號日約兩個月，只涵蓋一種行情；supported 不代表長期有效，須與 7 年重播的結論一併權衡
+multiple_testing: 與 E01～E06 同屬一個 family（size = 6）
+guardrails:
+  - 觀察期間正式訊號維持停發
+  - supported 也只代表可以提案；須人工審查並經使用者同意後才恢復
+  - 不得在看到 OOS 結果後修改關卡；要改必須另立新編號

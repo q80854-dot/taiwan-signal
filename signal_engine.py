@@ -11,8 +11,17 @@ from config import (
     COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION,
     MAX_RISK_PER_TRADE, ENABLE_SHORT_SIGNALS, SHORT_EXECUTABLE,
     SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, SHORT_REQUIRE_WEEKLY_BEARISH,
+    LONG_SIGNAL_THRESH, LONG_REQUIRE_WEEKLY_BULLISH,
     EVENT_MATERIAL_NEWS_PENALTY, EVENT_EXDIV_BLOCK_DAYS,
 )
+
+
+def min_score_for(direction) -> float:
+    """某方向『發正式訊號』所需的最低最終分數。做多＝max(觀察下限, LONG_SIGNAL_THRESH)；
+    其餘沿用觀察下限（放空另有自己的 SHORT_SIGNAL_THRESH 關卡）。分數在排序階段被調整後，
+    須以本函式重新過濾，才不會出現「發訊時 76 分、調整後 73 分卻仍發出」的情形。"""
+    base = THRESH["min_score"]
+    return max(base, LONG_SIGNAL_THRESH["min_score"]) if direction == "buy" else base
 
 logger = logging.getLogger(__name__)
 
@@ -430,9 +439,17 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         #            且 ADX 的 +DI/-DI 方向也要確認是空方主導（不能只看
         #            ADX 強度，ADX 高可能是強漲也可能是強跌，見下方 adx_bias）。
         #   Layer 3  訊號強度：分數/ADX強度/量能門檻本身比做多更高。
+        # ★ 2026-11-12：放空停發正式訊號（依 7 年重播的樣本外證據，見 config.ENABLE_SHORT_SIGNALS）。
+        # 但不在這裡直接擋——讓它走完與開放時完全相同的全部關卡，通過者才在最後以 short_off 記成
+        # 假想單。這樣影子裡的「short_off」精確等於「若開放放空，真的會發出的訊號」，可持續驗證。
+        _short_off = (direction=="sell" and not ENABLE_SHORT_SIGNALS)
+        # ★ 2026-11-12：做多須週線偏多（硬性條件）。原本週線逆勢只扣 2 分；重播顯示週線不偏多的
+        # 做多在兩個期間皆顯著為負（−0.167R／−0.223R）。與放空相同：不在這裡直接擋，而是走完其餘
+        # 全部關卡，通過者才在最後以 gate_weekly_long 記成假想單（＝若取消此條件，真的會發出的訊號）。
+        _long_block = None
+        if direction=="buy" and LONG_REQUIRE_WEEKLY_BULLISH and "bullish" not in str(mtf.get("weekly_bias","neutral")):
+            _long_block = "gate_weekly_long"
         if direction=="sell":
-            if not ENABLE_SHORT_SIGNALS:
-                _rej("short_off"); return None
             # --- Layer 1: Market Regime Gate -------------------------------
             regime = market_overview.get("regime", {})
             if not regime.get("available"):
@@ -570,6 +587,11 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                     _rej("material_news"); return None
         except Exception as e:
             logger.warning(f"[{ticker}] 事件濾網失敗（不影響本次訊號，維持原始分數）: {e}")
+        # ★ 2026-11-12：做多的正式發訊門檻（最終分數，含法人／總經／事件調整後）。65～74 分的做多
+        # 在兩個期間皆顯著為負（−0.133R／−0.212R）；不發正式訊號，走完其餘關卡後以 long_score 記成
+        # 假想單續追（同時週線不偏多者歸 gate_weekly_long，一筆只記一個原因）。
+        if direction=="buy" and _long_block is None and score < LONG_SIGNAL_THRESH["min_score"]:
+            _long_block = "long_score"
         atr_info=daily_ind.get("atr",{}); atr=atr_info.get("value",price*0.02) or price*0.02
         # ★ 新增：2026-10-05——追高防線。實查 9/30~10/1 六檔訊號：進場價就是訊號當日
         # 收盤價，其中 南茂 +9.6%（接近漲停）、艾笛森 +4.0%、台泥 +4.0%，全部是「已經
@@ -632,6 +654,10 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             logger.info(f"[{ticker}] 建議部位因流動性上限（當日成交量10%）被下修至 {pos['shares']} 股")
         if _market_stop:
             _rej("market_stop", sl); return None      # 通過全部放空關卡，但重挫日不發正式訊號（E03 影子驗證中）
+        if _short_off:
+            _rej("short_off", sl); return None        # 通過全部放空關卡，但放空已停發正式訊號（影子續追）
+        if _long_block:
+            _rej(_long_block, sl); return None        # 通過其餘全部做多關卡，但屬已停發的類別（影子續追）
         ema_ind=daily_ind.get("ema",{})
         ema5_val=ema_ind.get("e_fast") if ema_ind.get("valid") else None
         # ★ 修正：2026-09-16——稽核發現這裡原本不分方向，buy/sell 都套同一組公式

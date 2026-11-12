@@ -63,8 +63,32 @@ BLOCKED_REGISTRY: List[Dict] = [
                    "Champion 淨 R 的期望值為正，值得開放。",
      "filter": "kind = rejected AND features.reject = 'market_stop' AND direction = sell",
      "threshold_source": "放空關卡與平日完全相同，不新增或調整任何門檻；只評估『重挫日不發』這條規則本身",
-     "min_oos_days": 8, "min_oos_trades": 30,
+     "min_oos_days": 8, "min_oos_trades": 30, "day_label": "重挫日", "unit_label": "假想放空單",
+     "review_note": "仍須人工審查券源、軋空與尾端風險後才可提案，不自動開放。",
      "doc": "docs/experiments/E03_crash_day_short.yaml"},
+    # ── 2026-11-12 Champion 變更後停發的三類訊號：「恢復觀察」。停發依據是 2020–2026 重播（兩個期間皆
+    #    顯著為負）；這裡預先寫好「什麼情況下值得重新提案恢復」，之後只看 11-13 起新產生的假想單。──
+    {"id": "E04", "name": "恢復放空正式訊號", "direction": "sell", "reject_reason": "short_off",
+     "hypothesis": "放空已停發；其中通過全部放空關卡的假想放空單，Champion 淨 R 的期望值轉為正，值得恢復。",
+     "filter": "kind = rejected AND features.reject = 'short_off' AND direction = sell",
+     "threshold_source": "放空關卡與停發前完全相同，不新增或調整任何門檻",
+     "min_oos_days": 40, "min_oos_trades": 200, "day_label": "訊號日", "unit_label": "假想放空單",
+     "review_note": "仍須人工審查券源、軋空與尾端風險，並經使用者同意後才可恢復，不自動開放。",
+     "doc": "docs/experiments/E04_restore_short.yaml"},
+    {"id": "E05", "name": "恢復週線不偏多的做多", "direction": "buy", "reject_reason": "gate_weekly_long",
+     "hypothesis": "週線不是偏多的做多已停發；其中通過其餘全部做多關卡的假想單，Champion 淨 R 的期望值轉為正，值得恢復。",
+     "filter": "kind = rejected AND features.reject = 'gate_weekly_long' AND direction = buy",
+     "threshold_source": "其餘做多關卡與停發前完全相同，不新增或調整任何門檻",
+     "min_oos_days": 40, "min_oos_trades": 200, "day_label": "訊號日", "unit_label": "假想做多單",
+     "review_note": "仍須人工審查回撤與尾端風險，並經使用者同意後才可恢復，不自動開放。",
+     "doc": "docs/experiments/E05_restore_long_weekly.yaml"},
+    {"id": "E06", "name": "恢復 65～74 分的做多", "direction": "buy", "reject_reason": "long_score",
+     "hypothesis": "最終分數 65～74（週線偏多）的做多已停發；其中通過其餘全部做多關卡的假想單，Champion 淨 R 的期望值轉為正，值得恢復。",
+     "filter": "kind = rejected AND features.reject = 'long_score' AND direction = buy",
+     "threshold_source": "其餘做多關卡與停發前完全相同，不新增或調整任何門檻",
+     "min_oos_days": 40, "min_oos_trades": 200, "day_label": "訊號日", "unit_label": "假想做多單",
+     "review_note": "仍須人工審查回撤與尾端風險，並經使用者同意後才可恢復，不自動開放。",
+     "doc": "docs/experiments/E06_restore_long_score.yaml"},
 ]
 
 
@@ -104,14 +128,17 @@ def _blocked_window(exp: Dict, rows: List[Dict], oos: bool) -> Dict:
         out["verdict_note"] = "探索期：不得作為採用依據。"
     elif len(by_day) < exp["min_oos_days"] or len(vals) < exp["min_oos_trades"] or lo is None:
         out["verdict"] = "insufficient"
-        out["verdict_note"] = (f"樣本外資料不足：需 ≥ {exp['min_oos_days']} 個重挫日且 ≥ {exp['min_oos_trades']} 筆已定案"
-                               f"（目前 {len(by_day)} 日、{len(vals)} 筆）。重挫日本來就少，累積會很慢；不下結論。")
+        _dl = exp.get("day_label", "訊號日")
+        out["verdict_note"] = (f"樣本外資料不足：需 ≥ {exp['min_oos_days']} 個{_dl}且 ≥ {exp['min_oos_trades']} 筆已定案"
+                               f"（目前 {len(by_day)} 日、{len(vals)} 筆）。"
+                               + ("重挫日本來就少，累積會很慢；" if _dl == "重挫日" else "") + "不下結論。")
     elif lo > MIN_EFFECT_R:
         out["verdict"] = "supported"
-        out["verdict_note"] = "被擋下的假想放空單平均淨 R 的 95% 區間下界超過最低經濟重要差異。仍須人工審查券源、軋空與尾端風險後才可提案，不自動開放。"
+        out["verdict_note"] = (f"被擋下的{exp.get('unit_label', '假想單')}平均淨 R 的 95% 區間下界超過最低經濟重要差異。"
+                               + exp.get("review_note", "仍須人工審查後才可提案，不自動開放。"))
     elif hi < MIN_EFFECT_R:
         out["verdict"] = "not_supported"
-        out["verdict_note"] = "平均淨 R 的 95% 區間上界低於最低經濟重要差異：開放重挫日放空未顯示實用價值。"
+        out["verdict_note"] = f"平均淨 R 的 95% 區間上界低於最低經濟重要差異：「{exp['name']}」未顯示實用價值，維持現狀。"
     else:
         out["verdict"] = "inconclusive"
         out["verdict_note"] = "95% 區間跨越最低經濟重要差異：尚無法判定，繼續累積。"
