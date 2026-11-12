@@ -113,6 +113,28 @@ def test_unresolved_rows_are_not_reselected_and_redirtied(monkeypatch):
     monkeypatch.setattr(shadow, "ensure_table", lambda: None)
     monkeypatch.setattr(shadow, "cleanup_absurd_metrics", lambda *a, **k: None)
     shadow.resolve_pending()
-    sel = [q for q in seen if q.startswith("SELECT * FROM shadow_signals WHERE status='pending'")]
+    sel = [q for q in seen if q.startswith("SELECT") and "FROM shadow_signals WHERE status='pending'" in q]
     assert sel and "(status='closed' AND r20 IS NULL AND bar_date>=?)" in sel[0]   # 補到 r20（S-P1-04）；仍不含 unresolved
     assert "unresolved" not in sel[0]
+
+
+def test_resolve_prioritises_open_rows_so_newest_are_never_starved(monkeypatch):
+    """到期 60 天後待處理列變多：撈滿上限時，未結案列優先（不讓最新的未結案列一直輪不到）。"""
+    seen = []
+
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, q, p=()):
+            seen.append((" ".join(q.split()), p))
+            return self
+        def fetchall(self): return []
+        def fetchone(self): return None
+    from state_store import store
+    monkeypatch.setattr(store, "_conn", lambda: _Conn())
+    monkeypatch.setattr(shadow, "ensure_table", lambda: None)
+    monkeypatch.setattr(shadow, "cleanup_absurd_metrics", lambda *a, **k: None)
+    shadow.resolve_pending()
+    q, p = next(x for x in seen if x[0].startswith("SELECT") and "FROM shadow_signals WHERE status='pending'" in x[0])
+    assert "features" not in q.split("FROM")[0]                       # 不撈大欄位
+    assert "ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, bar_date" in q and p[-1] == 30000
