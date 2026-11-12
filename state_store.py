@@ -183,6 +183,7 @@ class StateStore:
                     ticker TEXT, tf_key TEXT, bar_date TEXT,
                     open REAL, high REAL, low REAL, close REAL, volume BIGINT,
                     updated_at TEXT,
+                    is_final INTEGER, session TEXT, source TEXT, source_time TEXT,
                     PRIMARY KEY (ticker, tf_key, bar_date)
                 );
                 CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_tf ON ohlcv_bars(ticker, tf_key, bar_date);
@@ -245,6 +246,7 @@ class StateStore:
                     ticker TEXT, tf_key TEXT, bar_date TEXT,
                     open REAL, high REAL, low REAL, close REAL, volume INTEGER,
                     updated_at TEXT,
+                    is_final INTEGER, session TEXT, source TEXT, source_time TEXT,
                     PRIMARY KEY (ticker, tf_key, bar_date)
                 );
                 CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_tf ON ohlcv_bars(ticker, tf_key, bar_date);
@@ -359,6 +361,14 @@ class StateStore:
         self._migrate_add_column("scan_history", "run_id", "TEXT")
         # ★ 2026-11-12 掃描錯誤逐類別明細（LIVE14 缺口補齊）：JSON（timeout/exception/by_exc/by_market/tickers）
         self._migrate_add_column("scan_history", "errors_detail", "TEXT")
+        # ★ 2026-11-12 逐棒資料契約階段 1（LIVE10 缺口，使用者核准「按上面方案進行」）：
+        # ohlcv_bars 每根 K 棒記 is_final（1=定案收盤、0=暫定/未收盤、NULL=舊列無紀錄不回填）、
+        # session（regular/intraday）、source（yfinance/官方/finmind，語意＝最後寫入來源）、
+        # source_time（該來源取得時點，台北 ISO）。
+        self._migrate_add_column("ohlcv_bars", "is_final", "INTEGER")
+        self._migrate_add_column("ohlcv_bars", "session", "TEXT")
+        self._migrate_add_column("ohlcv_bars", "source", "TEXT")
+        self._migrate_add_column("ohlcv_bars", "source_time", "TEXT")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_revenue", "REAL")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_gross_profit", "REAL")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_operating_income", "REAL")
@@ -875,26 +885,34 @@ class StateStore:
             return {}
 
     def upsert_ohlcv_bars(self, ticker: str, tf_key: str, bars: List[Dict]):
-        """bars: [{date,open,high,low,close,volume}, ...]。用 UPSERT，同一天
-        重複寫入（例如盤中抓到的當日殘缺K棒，收盤後再抓一次拿到定案數字）
-        會直接覆蓋掉舊值，不會產生重複列。"""
+        """bars: [{date,open,high,low,close,volume[,is_final,session,source,source_time]}, ...]。
+        用 UPSERT，同一天重複寫入（例如盤中抓到的當日殘缺K棒，收盤後再抓一次拿到定案數字）
+        會直接覆蓋掉舊值，不會產生重複列。
+        ★ 2026-11-12 逐棒資料契約階段 1：選帶 is_final/session/source/source_time 四欄；
+        未帶＝NULL（誠實「無紀錄」）。覆蓋語意＝整列以最後寫入者為準（官方棒覆蓋 Yahoo
+        同日棒時血緣欄位一併更新），設計取捨已記於 DECISION_LOG。"""
         if not bars:
             return
         try:
             now = datetime.now(timezone.utc).isoformat()
             if USE_PG:
-                sql = ("INSERT INTO ohlcv_bars(ticker,tf_key,bar_date,open,high,low,close,volume,updated_at) "
-                       "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT (ticker,tf_key,bar_date) DO UPDATE SET "
+                sql = ("INSERT INTO ohlcv_bars(ticker,tf_key,bar_date,open,high,low,close,volume,updated_at,"
+                       "is_final,session,source,source_time) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (ticker,tf_key,bar_date) DO UPDATE SET "
                        "open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,close=EXCLUDED.close,"
-                       "volume=EXCLUDED.volume,updated_at=EXCLUDED.updated_at")
+                       "volume=EXCLUDED.volume,updated_at=EXCLUDED.updated_at,is_final=EXCLUDED.is_final,"
+                       "session=EXCLUDED.session,source=EXCLUDED.source,source_time=EXCLUDED.source_time")
             else:
                 sql = ("INSERT OR REPLACE INTO ohlcv_bars"
-                       "(ticker,tf_key,bar_date,open,high,low,close,volume,updated_at) "
-                       "VALUES(?,?,?,?,?,?,?,?,?)")
+                       "(ticker,tf_key,bar_date,open,high,low,close,volume,updated_at,"
+                       "is_final,session,source,source_time) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
             with self._conn() as conn:
                 for b in bars:
                     conn.execute(sql, (ticker, tf_key, b["date"], b["open"], b["high"],
-                                        b["low"], b["close"], b["volume"], now))
+                                        b["low"], b["close"], b["volume"], now,
+                                        b.get("is_final"), b.get("session"),
+                                        b.get("source"), b.get("source_time")))
         except Exception as e:
             logger.warning(f"upsert_ohlcv_bars {ticker}/{tf_key}: {e}")
 

@@ -958,6 +958,31 @@ def _effective_ohlcv_ttl() -> int:
 # 連資料庫都不用查。
 _OHLCV_MAX_GAP_DAYS = {"daily": 30, "weekly": 90, "hourly": 10}
 
+def _bar_is_final(tf_key: str, date_str: str, now=None):
+    """★ 2026-11-12 逐棒資料契約階段 1（LIVE10 缺口，使用者核准）：判定一根 yfinance K 棒
+    在「現在」是否已定案。規則（台北時間，保守近似）：
+      - daily：該日 14:30 後視為定案（13:30 收盤＋定案緩衝；當日盤中抓到＝暫定 0）。
+      - weekly：yfinance 週棒以週一為 bar_date，該週週五 14:30 後定案。
+      - hourly：bar_date 含起始時間，起始 +1 小時後定案。
+    判不出來回 None（存 NULL、不猜）。官方棒/FinMind 棒不走此函式（本就只給定案資料）。"""
+    if now is None:
+        now = (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None)
+    try:
+        if tf_key == "hourly":
+            start = datetime.strptime(date_str[:16], "%Y-%m-%d %H:%M")
+            return 1 if now >= start + timedelta(hours=1) else 0
+        bd = datetime.strptime(date_str[:10], "%Y-%m-%d")
+        if tf_key == "weekly":
+            return 1 if now >= bd + timedelta(days=4, hours=14, minutes=30) else 0
+        return 1 if now >= bd + timedelta(hours=14, minutes=30) else 0
+    except Exception:
+        return None
+
+
+def _now_tpe_iso() -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None).isoformat(timespec="seconds")
+
+
 def _yf_rows_to_bars(h, tf_key: str = "daily") -> List[Dict]:
     # ★ 修正：2026-09-24——hourly 時框如果跟 daily/weekly 一樣只存日期（不含
     # 時間），同一天內好幾根小時K會全部落在同一個 bar_date，寫進
@@ -978,8 +1003,12 @@ def _yf_rows_to_bars(h, tf_key: str = "daily") -> List[Dict]:
         if c <= 0:
             continue
         date_str = d.strftime("%Y-%m-%d %H:%M") if use_time else str(d.date())
+        # ★ 2026-11-12 逐棒資料契約階段 1：每棒帶 is_final/session/source/source_time（血緣）
         rows.append({"date": date_str, "open": round(o,2), "high": round(hi,2),
-                      "low": round(lo,2), "close": round(c,2), "volume": int(v//1000)})
+                      "low": round(lo,2), "close": round(c,2), "volume": int(v//1000),
+                      "is_final": _bar_is_final(tf_key, date_str),
+                      "session": "intraday" if use_time else "regular",
+                      "source": "yfinance", "source_time": _now_tpe_iso()})
     return rows
 
 _obar_stats = {"checked": 0, "replaced": 0, "appended": 0, "mismatch": 0, "by_source": {}, "samples": [], "at": None}
@@ -1005,8 +1034,11 @@ def _apply_official_bar(ticker: str):
         st = _obar_stats
         st["checked"] += 1
         st["at"] = time.time()
+        # ★ 2026-11-12 逐棒資料契約階段 1：官方棒＝定案（is_final=1）、source＝官方來源名
         new = {"date": ob["date"], "open": round(ob["open"], 2), "high": round(ob["high"], 2),
-               "low": round(ob["low"], 2), "close": round(ob["close"], 2), "volume": int(ob["volume"])}
+               "low": round(ob["low"], 2), "close": round(ob["close"], 2), "volume": int(ob["volume"]),
+               "is_final": 1, "session": "regular",
+               "source": str(ob.get("source") or "official"), "source_time": _now_tpe_iso()}
         if last and ld == ob["date"]:
             if last["close"] and abs(last["close"] / new["close"] - 1) > 0.003:
                 st["mismatch"] += 1
@@ -1129,6 +1161,12 @@ def fill_from_finmind(ticker: str) -> int:
         new = finmind.newer_bars(code, last)
         if not new:
             return 0
+        # ★ 2026-11-12 逐棒資料契約階段 1：FinMind 只給已收盤交易日 → 定案
+        for _b in new:
+            _b.setdefault("is_final", 1)
+            _b.setdefault("session", "regular")
+            _b.setdefault("source", "finmind")
+            _b.setdefault("source_time", _now_tpe_iso())
         store.upsert_ohlcv_bars(ticker, "daily", new)
         _cache_clear(f"ohlcv_{ticker}_daily")
         logger.info(f"FinMind 補 K 線 {ticker}: +{len(new)} 根（至 {new[-1]['date']}）")
