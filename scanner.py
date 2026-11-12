@@ -230,8 +230,14 @@ class TWScanEngine:
         try:
             market_overview = self._call_with_timeout(self._MARKET_OVERVIEW_TIMEOUT_SEC, fetch_market_overview)
         except concurrent.futures.TimeoutError:
-            logger.error(f"fetch_market_overview 逾時（{self._MARKET_OVERVIEW_TIMEOUT_SEC}秒），本次改用空資料繼續掃描")
-            market_overview = {}
+            # ★ 2026-11-12 策略檢查（fail-closed）：原本逾時就以空字典繼續——can_trade 預設 True、
+            # 大盤熔斷與外資賣超檢查因缺資料全部視為正常，做多訊號等於在「完全不知道大盤狀況」下
+            # 照常產生（data_fetcher 對「抓到但資料異常」已標 data_error 擋單，唯獨逾時這條路漏掉）。
+            # 改為明確標成 data_error：本次不產生新訊號；既有部位照常結算。
+            logger.error(f"fetch_market_overview 逾時（{self._MARKET_OVERVIEW_TIMEOUT_SEC}秒），"
+                         f"市場狀態未知，本次不產生新訊號（fail-closed）")
+            market_overview = {"can_trade": False, "market_status": "data_error",
+                               "data_error_reason": "fetch_market_overview_timeout"}
         self._check_market_status(market_overview)
 
         # ★ 新增：2026-09-16——risk_manager.check_daily_loss_limit() / check_max_positions()
@@ -605,6 +611,30 @@ class TWScanEngine:
         )
         return stats
 
+    _STALE_PRICE_GRACE_DAYS = 7   # 到期後等待「到期日當天或之後」K 棒的寬限（日曆天）
+
+    @staticmethod
+    def _signal_ref_date(sig: Dict) -> str:
+        """結算用的「訊號日」：此日之後的日 K 才算訊號發出後的行情。
+
+        ★ 2026-11-12 策略檢查：原本直接取 generated_at（UTC）的日期。盤後 16:30 掃描（UTC 08:30，
+        同一天）沒問題；但盤前 08:20 掃描的訊號是用『前一交易日收盤』產生、當天開盤即可進場，
+        其 generated_at 的日期卻是『當天』——結算因此從『隔天』才開始看，把實際進場的那一整天
+        （可能已觸停損或停利）整個跳過，進場價也錯用隔天開盤。
+        改為以臺北時間判定：開盤前（< 09:00）產生的訊號，訊號日＝前一日（當天的 K 棒算訊號後）；
+        09:00 之後產生者，訊號日＝當天（當天的 K 棒在訊號前已發生，不得當成訊號後行情）。"""
+        ga = sig.get("generated_at") or ""
+        try:
+            dt = datetime.fromisoformat(ga.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            tpe = dt.astimezone(timezone(timedelta(hours=8)))
+            if tpe.hour < 9:
+                return (tpe.date() - timedelta(days=1)).isoformat()
+            return tpe.date().isoformat()
+        except Exception:
+            return ga[:10]
+
     def _resolve_pending_signals(self):
         """
         ★ 新增：2026-09-03——稽核程式碼時發現 state_store.update_signal_result()／
@@ -639,7 +669,7 @@ class TWScanEngine:
                 sl, tp1, tp2, tp3 = sig.get("stop_loss"), sig.get("tp1"), sig.get("tp2"), sig.get("tp3")
                 if not ticker or not direction or not sl:
                     continue
-                gen_date = (sig.get("generated_at") or "")[:10]
+                gen_date = self._signal_ref_date(sig)
                 try:
                     data = self._call_with_timeout(self._SCAN_SINGLE_TIMEOUT_SEC, fetch_ohlcv, ticker, "daily")
                 except concurrent.futures.TimeoutError:
@@ -676,10 +706,22 @@ class TWScanEngine:
                     gen_dt = datetime.strptime(gen_date, "%Y-%m-%d")
                 except ValueError:
                     gen_dt = None
-                aged_out = bool(gen_dt) and (datetime.now(timezone.utc).replace(tzinfo=None) - gen_dt).days >= expire_days
+                _age_days = (datetime.now(timezone.utc).replace(tzinfo=None) - gen_dt).days if gen_dt else 0
+                aged_out = bool(gen_dt) and _age_days >= expire_days
                 # 尚有未出場部位且還沒到期：留在 pending，下次掃描有新 K 棒再結算（避免提早以現價結清）
                 if has_open_leg and not aged_out:
                     continue
+                # ★ 2026-11-12 策略檢查（S-P1-02，正式訊號）：已過到期日，但補上的 expired 腿所用 K 棒
+                # 還沒到到期日＝資料在到期前停更（或只是到期日落在假日、下一根尚未入庫）。此時的
+                # 「最後收盤」是過期價，不是到期價——先等新 K 棒；超過寬限仍等不到才以最後可得收盤價
+                # 結算，並在事件與通知明講「資料停更」（部位不能永久佔住名額，但也不假裝是正常到期）。
+                import execution as _ex
+                stale_price = False
+                if _ex.staged_open_at_end(sim, gen_date, expire_days):
+                    if _age_days < expire_days + self._STALE_PRICE_GRACE_DAYS:
+                        logger.info(f"_resolve_pending_signals: {ticker} 已到期但尚無到期日之後的 K 棒，暫不結算（等待新資料）")
+                        continue
+                    stale_price = True
                 result, close_price, pnl, pnl_pct = sim["result"], sim["exit_price"], sim["pnl"], sim["pnl_pct"]
                 store.update_signal_result(sig["id"], result, close_price, pnl, pnl_pct)
                 if pnl < 0:
@@ -687,6 +729,8 @@ class TWScanEngine:
                     record_signal_loss(pnl)
                 resolved += 1
                 _legs_zh = "＋".join({"tp1": "停利一", "tp2": "停利二", "tp3": "停利三", "stop": "停損", "expired": "逾期"}.get(l["stage"], l["stage"]) for l in sim["legs"])
+                if stale_price:
+                    _legs_zh += "（資料停更：以最後可得收盤價結算，非到期日價格）"
                 try:
                     store.add_event("result", f"{sig.get('name','')}（{sig.get('code','')}）{_legs_zh}",
                                     f"均價 {close_price:.2f}｜分批損益合計 {pnl:+,.0f} 元（{pnl_pct:+.1f}%）", ticker)
@@ -955,7 +999,9 @@ class TWScanEngine:
         # 每次掃描先重置回基準值，才不會跨天永久疊加（見上方模組層級註解）
         THRESH["min_score"] = _BASE_MIN_SCORE
         if status == "stop":
-            logger.warning(f"大盤重挫 {twii_chg:.1f}%，本次只掃空單")
+            # ★ 2026-11-12：原訊息寫「本次只掃空單」，但 can_trade=False 實際上多空皆停（放空從未在
+            # 重挫日發出過）。訊息改為與實際行為一致；是否開放重挫日放空屬策略決策，另行評估。
+            logger.warning(f"大盤重挫 {twii_chg:.1f}%，本次暫停所有新訊號（多空皆停），影子追蹤照常記錄")
         elif status == "data_error":
             # ★ 修正：2026-09-26（稽核 finding #2）——大盤指數資料抓不到時的新狀態，
             # 見 data_fetcher.fetch_market_index() 的說明。can_trade 已經在
@@ -1043,6 +1089,13 @@ class TWScanEngine:
             logger.info(f"_filter_and_rank: 基本面過濾後剩 {len(signals)}/{before} 檔")
         except Exception as e:
             logger.warning(f"_filter_and_rank: 基本面過濾失敗（不影響本次掃描，本次跳過基本面過濾）: {e}")
+            # ★ 2026-11-12 策略檢查：整段過濾失敗時原本不留任何痕跡，訊號看起來像「已通過本業檢查」。
+            # 與單檔缺資料同樣明示（fail-open 但不隱瞞）。
+            for sig in signals:
+                if "revenue_check" not in sig:
+                    sig["revenue_check"] = "unavailable"
+                    sig["reason_full"] = sig.get("reason_full", "") + \
+                        "\n⚠️【月營收】本次檢查流程失敗，本檔未經過本業衰退檢查（非「已確認正常」）"
 
         # ★ 新增：2026-09-27——使用者要求把「估值面(本益比/股價淨值比/殖利率) +
         # 融券餘額/當沖比例（籌碼面風險）」接進評分邏輯（見 fundamentals.py
@@ -1327,6 +1380,14 @@ class TWScanEngine:
                     sector_best[key] = sig
             combined = list(sector_best.values())
         combined.sort(key=lambda x: x["score"] - x.get("chase_pen", 0), reverse=True)
+        # ★ 2026-11-12 策略檢查：分數在本函式被籌碼／獲利品質／基本面調整過，評級須依最終分數重算，
+        # 否則推播的評級與分數不一致（見 signal_engine.grade_fields）。
+        try:
+            from signal_engine import grade_fields
+            for _sig in combined:
+                _sig.update(grade_fields(_sig.get("score") or 0))
+        except Exception as e:
+            logger.warning(f"_filter_and_rank: 評級重算失敗（沿用原評級）: {e}")
         logger.info(f"_filter_and_rank: 同產業去重後剩 {len(combined)} 檔")
 
         # ★ 新增：2026-09-16——啟用 CORRELATION_GROUPS 相關性群組曝險上限（見

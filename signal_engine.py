@@ -16,6 +16,17 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+def grade_fields(score):
+    """分數 → 評級／建議文字／圖示的單一來源。
+    ★ 2026-11-12 策略檢查：評級原本只在 generate_signal_tw 算一次；之後 scanner._filter_and_rank
+    還會依籌碼、獲利品質、基本面調整分數，卻沒有重算評級——推播出去的訊號可能分數已掉到 78
+    卻仍標「A 強力訊號」。分數最終定案後須以本函式重算（見 scanner._filter_and_rank 結尾）。"""
+    grade = "A" if score >= 85 else "B" if score >= 75 else "C"
+    return {"grade": grade,
+            "action": {"A":"🔥 強力訊號，建議進場","B":"✅ 良好訊號，可以考慮","C":"👀 待觀察，可小量試探"}[grade],
+            "emoji_grade": {"A":"🟢","B":"🟡","C":"⚪"}[grade]}
+
+
 def calc_trade_cost(price, shares, direction):
     total_value = price * shares
     commission  = max(MIN_COMMISSION, total_value * COMMISSION_RATE)
@@ -277,6 +288,7 @@ def check_multi_timeframe_tw(tf_data, disabled_factors=None):
             bear_score=max(0,bear_score-2); conds_fail.append("⚠️ 週線偏多，逆勢風險")
         else: conds_met.append(f"週線確認({weekly_bias}) ✓")
     direction = "buy" if bull_score>=5 and bull_score>bear_score else "sell" if bear_score>=5 and bear_score>bull_score else "none"
+    resonance = False
     if direction=="none": score=0
     else:
         # ★ 修正：2026-09-16——使用者回報「交易訊號幾乎都錯誤」，追查後發現原本
@@ -306,7 +318,10 @@ def check_multi_timeframe_tw(tf_data, disabled_factors=None):
         resonance="hourly" in results and (("bullish" in results["hourly"].get("ema",{}).get("bias","") and direction=="buy") or ("bearish" in results["hourly"].get("ema",{}).get("bias","") and direction=="sell"))
         if resonance: base+=10
         score=min(100,int(base))
-    return {"direction":direction,"score":score,"resonance":"hourly" in results,
+    # ★ 2026-11-12 策略檢查：resonance 原本回傳的是「有沒有小時線資料」，不是「小時線是否與方向
+    # 共振」（真正決定 +10 分的那個條件）——影子特徵 resonance 因此幾乎恆為同一個值、毫無資訊。
+    # 改回傳真正的共振結果，另以 has_hourly 保留原語意。不影響分數與訊號決策（+10 的判定未變）。
+    return {"direction":direction,"score":score,"resonance":bool(resonance),"has_hourly":"hourly" in results,
             "bull_score":bull_score,"bear_score":bear_score,"weekly_bias":weekly_bias,"daily_bias":ema_bias,
             "rsi_value":rsi_val,"adx_value":adx_val,"adx_bias":adx_bias,"vol_ratio":vol_ratio,
             "conditions_met":conds_met,"conditions_fail":conds_fail,"entry_indicators":daily}
@@ -316,7 +331,17 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         from indicators import calc_all_indicators
         name=stock_info.get("name",ticker); sector=stock_info.get("sector","其他")
         size_cat=stock_info.get("size_cat","中型股"); code=stock_info.get("code",ticker.replace(".TW","").replace(".TWO",""))
-        if not market_overview.get("can_trade",True): return None
+        # ★ 2026-11-12 策略檢查：can_trade=False 有兩種成因，原本一律在這裡直接 return——
+        #   · data_error（大盤資料抓不到）：沒有可信的市場狀態，直接不產生訊號（維持）。
+        #   · stop（大盤重挫）：正式訊號照舊全部暫停（多空皆停，行為不變）；但原本連影子追蹤都
+        #     不記錄，恰好在「最想知道規則有沒有用」的重挫日留下資料空白，也無從驗證掃描日誌寫的
+        #     「只掃空單」是否值得開放。改為照常評分並以 market_stop 記成『被擋下的假想單』，
+        #     正式訊號仍不產生。
+        _market_stop = False
+        if not market_overview.get("can_trade",True):
+            if market_overview.get("market_status") != "stop":
+                return None
+            _market_stop = True
         daily_data=tf_data.get("daily")
         if not daily_data: return None
         daily_ind=calc_all_indicators(daily_data)
@@ -357,6 +382,8 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             if _sh is not None:
                 _sh.note_reject(ticker, stock_info, daily_data, daily_ind, mtf, direction, score, reason,
                                 market_overview, sl_)
+        if _market_stop:
+            _rej("market_stop"); return None
         # ★ 修正：2026-09-28（第二輪）——上一輪重新開放放空後，把 ChatGPT／
         # Perplexity 兩邊的審查意見貼回去複查，兩邊獨立收斂出同一個架構問題：
         # 原本把「大盤環境」「個股方向」「個股訊號強度」全部塞進同一組
@@ -579,9 +606,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             entry_zone_low=round(price*0.995,2)
             entry_zone_high=round(max(price*1.02, ema5_val*1.01) if ema5_val else price*1.02, 2)
         sig_id=f"{ticker}_{direction}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-        grade="A" if score>=85 else "B" if score>=75 else "C"
-        action={"A":"🔥 強力訊號，建議進場","B":"✅ 良好訊號，可以考慮","C":"👀 待觀察，可小量試探"}[grade]
-        emoji_g={"A":"🟢","B":"🟡","C":"⚪"}[grade]
+        _g=grade_fields(score); grade=_g["grade"]; action=_g["action"]; emoji_g=_g["emoji_grade"]
         vol_desc=f"爆量({vol_ratio:.1f}x)" if vol_ratio>=2.0 else f"量增({vol_ratio:.1f}x)" if vol_ratio>=1.5 else f"正常量({vol_ratio:.1f}x)"
         weekly_desc={"bullish":"週線多頭","strong_bullish":"週線強多","bearish":"週線空頭","neutral":"週線橫盤"}.get(mtf.get("weekly_bias","neutral"),"週線中性")
         reason_full=(f"【技術面】{ema_ind.get('alignment','')} / RSI {mtf['rsi_value']:.0f} / "

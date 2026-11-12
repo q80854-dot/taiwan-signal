@@ -61,6 +61,7 @@ REASONS = {
     "adx_low": "ADX 趨勢強度不足",
     "vol_low": "量能不足",
     "macro_stop": "大盤／外資熔斷擋下多單",
+    "market_stop": "大盤重挫日暫停所有新訊號（多空皆停）",
     "score_after_adj": "總經扣分後未達門檻",
     "chase_limit": "當日接近漲跌停（追價風險）",
     "extension": "離 20 日線太遠（延伸過度）",
