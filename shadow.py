@@ -52,7 +52,9 @@ def _risk_ok(entry, stop) -> bool:
 
 # 否決原因代碼 → 中文（learning.py / 網頁共用）
 REASONS = {
-    "short_off": "放空功能關閉",
+    "short_off": "放空已停發（通過全部放空關卡的假想單）",
+    "gate_weekly_long": "做多：週線不是偏多",
+    "long_score": "做多：最終分數未達 75",
     "gate_regime": "放空：大盤不是明確中期空頭",
     "gate_shock": "放空：大盤單日情緒過高",
     "gate_weekly": "放空：週線不是空頭",

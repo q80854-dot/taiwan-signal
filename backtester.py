@@ -325,6 +325,35 @@ def _pit_label(pit):
     return "PIT_UNAVAILABLE（自訂或靜態清單，未做歷史成分檢查）"
 
 
+def _champion_gate(direction, score, mtf, short_research=False):
+    """★ 2026-11-12：與正式訊號相同的方向層級規則（見 config 的 Champion 變更說明）——
+    放空停發；做多須週線偏多、分數 ≥ LONG_SIGNAL_THRESH。回測必須套同一套，否則回測的就不是
+    現行策略。short_research=True 供「放空關卡驗證」類研究工具使用（仍要能看放空的假想結果）。"""
+    from config import ENABLE_SHORT_SIGNALS, LONG_SIGNAL_THRESH, LONG_REQUIRE_WEEKLY_BULLISH
+    if direction == "sell":
+        return bool(ENABLE_SHORT_SIGNALS or short_research)
+    if direction == "buy":
+        if score < LONG_SIGNAL_THRESH["min_score"]:
+            return False
+        if LONG_REQUIRE_WEEKLY_BULLISH and "bullish" not in str((mtf or {}).get("weekly_bias", "neutral")):
+            return False
+    return True
+
+
+def _weekly_asof_slice(weekly, day):
+    """回傳 day 當下「已經走完」的週線切片（當週可能還在進行，整根排除）；資料不足回 None。"""
+    try:
+        wd = (weekly or {}).get("dates") or []
+        if not wd or not day:
+            return None
+        wi = bisect.bisect_right(wd, day) - 1
+        if wi < 20:
+            return None
+        return {k: weekly[k][:wi] for k in ("closes", "highs", "lows", "opens", "volumes")}
+    except Exception:
+        return None
+
+
 def _bt_entry_prices(closes, opens, i):
     """★ 2026-11-12 回測進場時序（與正式流程一致）：第 i 根的訊號只用 [:i]（到前一根為止）的資料，
     計畫價位（進場參考／停損／停利／部位大小）以『訊號日收盤』closes[i-1] 定錨，於第 i 根『開盤』
@@ -383,7 +412,8 @@ def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_
 
 
 def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True,
-                        daily_override=None, weekly_override=None, date_start=None, pit_universe=None) -> Dict:
+                        daily_override=None, weekly_override=None, date_start=None, pit_universe=None,
+                        short_research=False) -> Dict:
     """
     ★ 新增：2026-09-29——daily_override/weekly_override/date_start 三個參數，
     給「涵蓋真實空頭期間」驗證用（見 _fetch_long_history_tw()）：daily_override／
@@ -530,6 +560,8 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
                     macro_adj=_macro_score_adj(day_date, twii_chg_map, margin_chg_map)
                     if macro_adj:
                         score=max(0,score+macro_adj)
+                if not _champion_gate(direction, score, mtf, short_research):
+                    score=-1                      # 不符現行 Champion 的方向層級規則：不進場
                 # 放空且 Layer1/2 閘門已上線時，Layer3 訊號強度門檻比照實盤改用
                 # SHORT_SIGNAL_THRESH（分數75/ADX25/量比1.5，都比做多門檻更嚴）。
                 use_short_thresh = (direction=="sell" and use_short_gates)
@@ -637,6 +669,10 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
     except Exception:
         size_cat="中型股"
     EXPIRE_DAYS=_bt_expire_days()
+    try:
+        weekly_raw=fetch_ohlcv(ticker,"weekly")
+    except Exception:
+        weekly_raw=None
     n=len(closes); windows=[]; start=train_bars
     while start+test_bars<=n: windows.append((start-train_bars,start,start+test_bars)); start+=test_bars
     all_test_trades=[]; window_results=[]
@@ -666,11 +702,15 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             plan_px,fill_px=_bt_entry_prices(closes,opens,i)
             if open_trade and _wf_exit(i): continue
             if open_trade or plan_px is None: continue
-            mtf=check_multi_timeframe_tw({"daily":wd})
+            _tf={"daily":wd}
+            _ws=_weekly_asof_slice(weekly_raw, dates[i-1] if i-1<len(dates) else None)
+            if _ws: _tf["weekly"]=_ws
+            mtf=check_multi_timeframe_tw(_tf)
             direction=mtf.get("direction","none")
             if direction=="none": continue
             score=mtf.get("score",0)
             if score<min_score: continue
+            if not _champion_gate(direction, score, mtf): continue
             if mtf.get("adx_value",0)<THRESH["min_adx"]: continue
             daily_ind=mtf.get("entry_indicators",{})
             atr=daily_ind.get("atr",{}).get("value",0) or plan_px*0.02
@@ -715,13 +755,13 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             "stability":round(sum(1 for w in window_results if w["win_rate"]>=50)/max(len(window_results),1)*100,1),
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
-def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True) -> Dict:
+def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True, short_research=False) -> Dict:
     from stock_universe import get_tw50_components
     targets=tickers or _tw50_targets(); results=[]
     logger.info(f"[BT] 批量回測 {len(targets)} 檔，use_macro_overlay={use_macro_overlay}，use_fundamentals_filter={use_fundamentals_filter}，disabled_factors={disabled_factors}，use_short_gates={use_short_gates}")
     for idx,ticker in enumerate(targets):
         try:
-            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay,use_fundamentals_filter=use_fundamentals_filter,disabled_factors=disabled_factors,use_short_gates=use_short_gates,pit_universe=getattr(targets,"pit",None))
+            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay,use_fundamentals_filter=use_fundamentals_filter,disabled_factors=disabled_factors,use_short_gates=use_short_gates,pit_universe=getattr(targets,"pit",None),short_research=short_research)
             if "error" not in r: results.append(r)
             # ★ 新增：2026-09-19——這個函式現在會被 app.py 包成背景執行緒跑（50檔
             # 全部跑完可能要幾分鐘），加一個可選的進度回呼，讓外層可以把「跑到第
@@ -794,7 +834,11 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             d = fetch_ohlcv(t, "daily")
             if d and len(d.get("closes", [])) > LOOKBACK + 20:
                 info = get_stock_info(t) or {}
-                data[t] = {"d": d, "size_cat": info.get("size_cat", "中型股"),
+                try:
+                    _w = fetch_ohlcv(t, "weekly")
+                except Exception:
+                    _w = None
+                data[t] = {"d": d, "w": _w, "size_cat": info.get("size_cat", "中型股"),
                            "vol_lots": info.get("volume_lots"),
                            "idx": {dt: i for i, dt in enumerate(d["dates"])}}
             if progress_cb:
@@ -863,9 +907,15 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                 if not _pit_ok(_pit, t, dd["dates"][di - 1]):     # 訊號日當天不是成分股：不進場
                     continue
                 window = {k: dd[k][:di] for k in ("closes", "highs", "lows", "opens", "volumes")}
-                mtf = check_multi_timeframe_tw({"daily": window})
+                _tf = {"daily": window}
+                _ws = _weekly_asof_slice(v.get("w"), dd["dates"][di - 1])    # 原本組合回測不看週線
+                if _ws:
+                    _tf["weekly"] = _ws
+                mtf = check_multi_timeframe_tw(_tf)
                 dir_ = mtf.get("direction", "none"); sc = mtf.get("score", 0)
                 if dir_ == "none" or sc < min_score or mtf.get("adx_value", 0) < THRESH["min_adx"]:
+                    continue
+                if not _champion_gate(dir_, sc, mtf):                       # 放空停發；做多須週線偏多、分數≥75
                     continue
                 price = dd["closes"][di - 1]                     # 訊號日收盤＝計畫價位的定錨
                 fill = dd["opens"][di]                           # 隔日開盤成交
@@ -1207,6 +1257,8 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
                 if use_macro_overlay:
                     macro_adj=_macro_score_adj(day_date, twii_chg_map, margin_chg_map)
                     if macro_adj: score=max(0,score+macro_adj)
+                if not _champion_gate(direction, score, mtf):
+                    score=-1                      # 不符現行 Champion 的方向層級規則：不進場
                 if score>=min_score:
                     adx_val=mtf.get("adx_value",0)
                     if adx_val>=THRESH["min_adx"]:
@@ -1322,8 +1374,9 @@ def run_short_gate_validation_tw(tickers=None, min_score=65.0, progress_cb=None)
         if progress_cb: progress_cb(done,total*2,f"[舊邏輯/無分層閘門] {ticker}")
     def _cb_gated(done,total,ticker):
         if progress_cb: progress_cb(total+done,total*2,f"[新閘門/Regime+ADX方向] {ticker}")
-    baseline=run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb_baseline,use_short_gates=False)
-    gated   =run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb_gated,   use_short_gates=True)
+    # short_research=True：放空已停發正式訊號，但這個工具的目的就是比較放空關卡，仍須看放空的假想結果
+    baseline=run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb_baseline,use_short_gates=False,short_research=True)
+    gated   =run_full_backtest_tw(targets,min_score=min_score,progress_cb=_cb_gated,   use_short_gates=True,short_research=True)
     b_sell=baseline.get("by_direction_aggregate",{}).get("sell",{})
     g_sell=gated.get("by_direction_aggregate",{}).get("sell",{})
     b_buy=baseline.get("by_direction_aggregate",{}).get("buy",{})
@@ -1399,10 +1452,10 @@ def run_short_gate_validation_tw_period(tickers=None, min_score=65.0, period_sta
             if len(dates_before_start) < 130:
                 skipped.append({"ticker": ticker, "reason": f"{period_start} 之前可用日K只有 {len(dates_before_start)} 根（需≥130根暖身），略過此檔避免指標失真"})
                 continue
-            r_base = backtest_symbol_tw(ticker, min_score=min_score, use_short_gates=False,
+            r_base = backtest_symbol_tw(ticker, min_score=min_score, use_short_gates=False, short_research=True,
                                          daily_override=daily_trunc, weekly_override=weekly_trunc, date_start=period_start,
                                          pit_universe=getattr(targets,"pit",None))
-            r_gate = backtest_symbol_tw(ticker, min_score=min_score, use_short_gates=True,
+            r_gate = backtest_symbol_tw(ticker, min_score=min_score, use_short_gates=True, short_research=True,
                                          daily_override=daily_trunc, weekly_override=weekly_trunc, date_start=period_start,
                                          pit_universe=getattr(targets,"pit",None))
             if "error" not in r_base: baseline_results.append(r_base)

@@ -28,11 +28,14 @@ def _setup(monkeypatch, data, direction="buy", shares=3000):
 
     def _mtf(tf, **k):
         if len(tf["daily"]["closes"]) == 150:          # 訊號日＝index 149，隔日 index 150 進場
-            return {"direction": direction, "score": 90, "adx_value": 30, "vol_ratio": 2.0,
+            return {"direction": direction, "score": 90, "adx_value": 30, "vol_ratio": 2.0, "weekly_bias": "bullish",
                     "entry_indicators": {"atr": {"value": 2.0}}}
         return {"direction": "none", "score": 0}
     monkeypatch.setattr(signal_engine, "check_multi_timeframe_tw", _mtf)
     sgn = 1 if direction == "buy" else -1
+    if direction == "sell":      # 放空已停發正式訊號；這裡測的是回測的放空機制（借券費、到期），故暫時開啟
+        import config
+        monkeypatch.setattr(config, "ENABLE_SHORT_SIGNALS", True)
     monkeypatch.setattr(signal_engine, "calc_stop_loss_tw", lambda d, p, a, ind, sc, lo, hi: round(p * (1 - 0.05 * sgn), 2))
     monkeypatch.setattr(signal_engine, "calc_take_profits_tw",
                         lambda d, p, sl, sc: {"tp1": round(p * (1 + 0.05 * sgn), 2), "tp2": round(p * (1 + 0.10 * sgn), 2),

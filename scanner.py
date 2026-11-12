@@ -1049,6 +1049,9 @@ class TWScanEngine:
 
     def _filter_and_rank(self, signals: List[Dict], market_overview: Dict, active_tickers: Optional[set] = None,
                           active_positions: Optional[List[Dict]] = None) -> List[Dict]:
+        # 分數在本函式會再被籌碼／獲利品質／基本面調整；重新過濾時做多須用正式發訊門檻（75），
+        # 不是影子觀察下限（65）——見 signal_engine.min_score_for。
+        from signal_engine import min_score_for as _min_score_for
         # ★ 新增：2026-09-18——使用者反映訊號連續好幾天是0個，稽核 09-17 的
         # log 發現「發現：193 → 篩選後：0」，但這個函式原本除了「相關性群組
         # 排除」跟「重複標的排除」各自的log，沒有印出每個階段各自的存活數量，
@@ -1203,7 +1206,7 @@ class TWScanEngine:
                     sig["reason_full"] = sig.get("reason_full", "") + "\n" + "\n".join(chip_display_lines)
                     sig["chip_risk_note"] = "；".join(chip_notes) if chip_notes else ""
             before = len(signals)
-            signals = [s for s in signals if s["score"] >= THRESH["min_score"]]
+            signals = [s for s in signals if s["score"] >= _min_score_for(s.get("direction"))]
             if len(signals) != before:
                 logger.info(f"_filter_and_rank: 籌碼面評分調整後，{before - len(signals)} 檔跌破門檻被排除，剩 {len(signals)} 檔")
         except Exception as e:
@@ -1337,7 +1340,7 @@ class TWScanEngine:
                 if display_lines:
                     sig["reason_full"] = sig.get("reason_full", "") + "\n" + "\n".join(display_lines)
             before = len(signals)
-            signals = [s for s in signals if s["score"] >= THRESH["min_score"]]
+            signals = [s for s in signals if s["score"] >= _min_score_for(s.get("direction"))]
             if len(signals) != before:
                 logger.info(f"_filter_and_rank: 獲利品質/重大訊息評分調整後，{before - len(signals)} 檔跌破門檻被排除，剩 {len(signals)} 檔")
         except Exception as e:
@@ -1370,7 +1373,7 @@ class TWScanEngine:
                         + (f"｜評分{adj:+d}" if adj else ""))
                 else:
                     sig["reason_full"] = sig.get("reason_full", "") + "\n【基本面】資料不足，本檔未納入基本面評分"
-            signals = [s for s in signals if s["score"] >= THRESH["min_score"]]
+            signals = [s for s in signals if s["score"] >= _min_score_for(s.get("direction"))]
             if len(signals) != before:
                 logger.info(f"_filter_and_rank: 基本面評分調整後，{before - len(signals)} 檔跌破門檻被排除，剩 {len(signals)} 檔")
         except Exception as e:

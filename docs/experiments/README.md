@@ -16,5 +16,12 @@
 | E01 | 市場情緒偏弱時做多期望值較差 | `sentiment >= 50` 才保留做多候選 | `E01_regime_gate.yaml` |
 | E02 | 追高風險為「高」的做多候選期望值較差 | 排除 `chase_level == high` | `E02_chase_filter.yaml` |
 | E03 | 大盤重挫日通過全部放空關卡的假想放空單期望值為正 | 評估被 `market_stop` 擋下的放空假想單（不是濾網） | `E03_crash_day_short.yaml` |
+| E04 | 停發後，通過全部放空關卡的假想放空單期望值轉為正 | 評估被 `short_off` 擋下的放空假想單 | `E04_restore_short.yaml` |
+| E05 | 停發後，週線不偏多的做多假想單期望值轉為正 | 評估被 `gate_weekly_long` 擋下的做多假想單 | `E05_restore_long_weekly.yaml` |
+| E06 | 停發後，65～74 分的做多假想單期望值轉為正 | 評估被 `long_score` 擋下的做多假想單 | `E06_restore_long_score.yaml` |
+
+E04～E06 是 2026-11-12 Champion 變更（放空停發、做多須週線偏多、做多門檻 75）的「恢復觀察」：停發依據是
+2020–2026 重播的樣本外證據，這三個實驗預先寫好「什麼情況下值得重新提案恢復」。同日起 E01／E02 的基準
+（做多候選）也隨之只含週線偏多且 ≥ 75 分者——OOS 起算日（11-13）與新規則生效日相同，基準前後一致。
 
 查看結果：站主登入後 `GET /api/learning/experiments`。

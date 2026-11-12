@@ -1805,6 +1805,8 @@ def api_signal_check(key):
 def api_settings():
     """唯讀：目前生效的策略與風控參數，附白話說明。調整需改程式碼並部署，避免無帳號機制下被任意竄改。"""
     from config import THRESH, SHORT_SIGNAL_THRESH, SHORT_MAX_SENTIMENT, CIRCUIT_BREAKER, MAX_RISK_PER_TRADE, MAX_DAILY_RISK, MAX_PORTFOLIO_RISK, MAX_SIMULTANEOUS_POSITIONS, ACCOUNT_BALANCE_TWD, SWING_PARAMS
+    from config import (LONG_SIGNAL_THRESH as _LONG_T, LONG_REQUIRE_WEEKLY_BULLISH as _LONG_WEEKLY,
+                        ENABLE_SHORT_SIGNALS as _SHORT_ON)
     try:
         from fund_score import fund_adjustment  # noqa
     except Exception:
@@ -1814,11 +1816,14 @@ def api_settings():
     g = lambda k, v, note: {"key": k, "value": v, "note": note}
     return jsonify({"groups": [
         {"title": "進場門檻", "items": [
-            g("做多最低分數", THRESH.get("min_score"), "高於此分才發訊號；大盤偏弱或財報季時系統會自動再提高"),
+            g("做多最低分數（正式訊號）", _LONG_T.get("min_score"), "最終分數達此分才發正式訊號（2026-11-12 由 65 提高；依 2020–2026 重播的樣本外證據）"),
+            g("做多週線條件", "須偏多" if _LONG_WEEKLY else "不限", "週線不是偏多的做多不發正式訊號（原本只扣 2 分）"),
+            g("影子觀察下限", THRESH.get("min_score"), "達此分但未達正式門檻的做多，只記成假想單追蹤結果，不發訊號"),
             g("做多最低 ADX", THRESH.get("min_adx"), "趨勢強度，低於此值視為盤整不進場"),
             g("做多最低量比", THRESH.get("min_vol_ratio"), "今日量／均量"),
             g("最低風報比 (TP1)", THRESH.get("min_rr"), "到第一目標的獲利／停損風險"),
-            g("做空最低分數", SHORT_SIGNAL_THRESH.get("min_score"), "做空歷史回測表現明顯較差，門檻更高且週線必須偏空"),
+            g("放空正式訊號", "開放" if _SHORT_ON else "停發", "2026-11-12 起停發：重播 1,305 筆放空在兩個期間皆顯著虧損。通過全部放空關卡者仍記成假想單追蹤"),
+            g("做空最低分數", SHORT_SIGNAL_THRESH.get("min_score"), "放空關卡保留（供假想單判定「若開放會不會發」）：門檻更高且週線必須偏空"),
             g("做空允許的大盤情緒上限", SHORT_MAX_SENTIMENT, "大盤情緒分數低於此值才允許做空")]},
         {"title": "掃描池", "items": [
             g("最低收盤價", 5, "元；低於此價不掃"),
