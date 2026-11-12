@@ -55,14 +55,86 @@ REGISTRY: List[Dict] = [
 ]
 
 
+# 「被規則擋下的假想單」型實驗：不是在候選裡加濾網，而是評估「若拿掉某條擋單規則，被擋下的那批
+# 表現如何」。資料來自影子追蹤的 rejected 列（features.reject＝擋單原因）。
+BLOCKED_REGISTRY: List[Dict] = [
+    {"id": "E03", "name": "開放大盤重挫日放空", "direction": "sell", "reject_reason": "market_stop",
+     "hypothesis": "大盤重挫日（加權指數單日跌幅達熔斷門檻）目前多空皆停；其中通過全部放空關卡的假想放空單，"
+                   "Champion 淨 R 的期望值為正，值得開放。",
+     "filter": "kind = rejected AND features.reject = 'market_stop' AND direction = sell",
+     "threshold_source": "放空關卡與平日完全相同，不新增或調整任何門檻；只評估『重挫日不發』這條規則本身",
+     "min_oos_days": 8, "min_oos_trades": 30,
+     "doc": "docs/experiments/E03_crash_day_short.yaml"},
+]
+
+
+def _boot_mean_ci(by_day: Dict[str, list], n_boot=N_BOOT, seed=BOOT_SEED):
+    days = sorted(by_day)
+    if len(days) < 5:
+        return None, None
+    rng = random.Random(seed); means = []
+    for _ in range(n_boot):
+        pool = []
+        for _ in range(len(days)):
+            pool.extend(by_day[days[rng.randrange(len(days))]])
+        if pool:
+            means.append(sum(pool) / len(pool))
+    if len(means) < 100:
+        return None, None
+    means.sort()
+    return round(means[int(0.025 * len(means))], 3), round(means[min(len(means) - 1, int(0.975 * len(means)))], 3)
+
+
+def _blocked_window(exp: Dict, rows: List[Dict], oos: bool) -> Dict:
+    in_win = [r for r in rows if r.get("kind") == "rejected" and r.get("direction") == exp["direction"]
+              and r["f"].get("reject") == exp["reject_reason"]
+              and ((r.get("bar_date") or "") >= OOS_START) == oos]
+    final = [r for r in in_win if r.get("champion_status") == "final" and r.get("champion_r") is not None]
+    by_day = {}
+    for r in final:
+        by_day.setdefault(r["bar_date"], []).append(r["champion_r"])
+    vals = [v for vs in by_day.values() for v in vs]
+    lo, hi = _boot_mean_ci(by_day) if vals else (None, None)
+    out = {"window": "oos" if oos else "exploratory", "n_blocked": len(in_win), "n_final": len(final),
+           "not_final_share": round(1 - len(final) / len(in_win), 3) if in_win else None,
+           "n_days": len(by_day), "avg_r": round(_mean(vals), 3) if vals else None, "avg_r_ci95": [lo, hi],
+           "net_positive_rate": round(sum(1 for v in vals if v > 0) / len(vals) * 100, 1) if vals else None}
+    if not oos:
+        out["verdict"] = "exploratory_only"
+        out["verdict_note"] = "探索期：不得作為採用依據。"
+    elif len(by_day) < exp["min_oos_days"] or len(vals) < exp["min_oos_trades"] or lo is None:
+        out["verdict"] = "insufficient"
+        out["verdict_note"] = (f"樣本外資料不足：需 ≥ {exp['min_oos_days']} 個重挫日且 ≥ {exp['min_oos_trades']} 筆已定案"
+                               f"（目前 {len(by_day)} 日、{len(vals)} 筆）。重挫日本來就少，累積會很慢；不下結論。")
+    elif lo > MIN_EFFECT_R:
+        out["verdict"] = "supported"
+        out["verdict_note"] = "被擋下的假想放空單平均淨 R 的 95% 區間下界超過最低經濟重要差異。仍須人工審查券源、軋空與尾端風險後才可提案，不自動開放。"
+    elif hi < MIN_EFFECT_R:
+        out["verdict"] = "not_supported"
+        out["verdict_note"] = "平均淨 R 的 95% 區間上界低於最低經濟重要差異：開放重挫日放空未顯示實用價值。"
+    else:
+        out["verdict"] = "inconclusive"
+        out["verdict_note"] = "95% 區間跨越最低經濟重要差異：尚無法判定，繼續累積。"
+    return out
+
+
+def evaluate_blocked(exp_id: str, rows: Optional[List[Dict]] = None) -> Dict:
+    exp = next((e for e in BLOCKED_REGISTRY if e["id"] == exp_id), None)
+    if exp is None:
+        return {"ok": False, "reason": "unknown_experiment", "id": exp_id}
+    rows = _load_rows() if rows is None else rows
+    return {"ok": True, "type": "blocked_rule", **exp,
+            "exploratory": _blocked_window(exp, rows, oos=False), "oos": _blocked_window(exp, rows, oos=True)}
+
+
 def _load_rows() -> List[Dict]:
     from state_store import store
     import shadow
     shadow.ensure_table()
     with store._conn() as conn:
         rs = [dict(r) for r in conn.execute(
-            "SELECT bar_date, direction, status, champion_r, champion_status, features "
-            "FROM shadow_signals WHERE kind='candidate' ORDER BY bar_date").fetchall()]
+            "SELECT bar_date, kind, direction, status, champion_r, champion_status, features "
+            "FROM shadow_signals WHERE kind IN ('candidate','rejected') ORDER BY bar_date").fetchall()]
     for r in rs:
         try:
             f = json.loads(r.get("features") or "{}")
@@ -98,6 +170,7 @@ def _boot_diff_ci(kept: Dict[str, list], base: Dict[str, list], n_boot=N_BOOT, s
 
 def _window(exp: Dict, rows: List[Dict], oos: bool) -> Dict:
     in_win = [r for r in rows if r.get("direction") == exp["direction"]
+              and r.get("kind", "candidate") == "candidate"
               and ((r.get("bar_date") or "") >= OOS_START) == oos]
     final = [r for r in in_win if r.get("champion_status") == "final" and r.get("champion_r") is not None]
     kept, base, n_missing, n_dropped = {}, {}, 0, 0
@@ -161,8 +234,9 @@ def report() -> Dict:
                               "min_effect_r": MIN_EFFECT_R,
                               "supported": "OOS 差異 CI 下界 > min_effect_r",
                               "not_supported": "OOS 差異 CI 上界 < min_effect_r",
-                              "family_size": len(REGISTRY)},
-            "experiments": [evaluate(e["id"], rows) for e in REGISTRY],
+                              "family_size": len(REGISTRY) + len(BLOCKED_REGISTRY)},
+            "experiments": [evaluate(e["id"], rows) for e in REGISTRY]
+                           + [evaluate_blocked(e["id"], rows) for e in BLOCKED_REGISTRY],
             "note": "純影子評估：不改正式訊號、不寫設定、不自動升級。supported 也只代表『可以提案』，"
                     "仍須人工審查回撤、尾端風險與可成交性，並經使用者同意。同時評估多個實驗有多重比較問題，"
                     "新增實驗須另立編號並更新 family_size。"}

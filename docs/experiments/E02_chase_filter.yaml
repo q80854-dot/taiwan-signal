@@ -23,7 +23,7 @@ success_rule: OOS 差異的 95% CI 下界 > 0.05R
 failure_rule: OOS 差異的 95% CI 上界 < 0.05R
 secondary: [交易保留率, 未定案比例, 留下組與基準的訊號日數]
 costs: 與影子追蹤同口徑（滑價、手續費、證交稅；放空另計借券費）
-multiple_testing: 與 E01 同屬一個 family（size = 2）；新增實驗須更新 family_size
+multiple_testing: 與 E01／E02／E03 同屬一個 family（size = 3）；新增實驗須更新 family_size
 guardrails:
   - 不得以探索期資料作為採用依據
   - 不得在看到 OOS 結果後修改門檻；要改必須另立新編號

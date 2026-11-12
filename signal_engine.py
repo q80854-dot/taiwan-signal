@@ -382,7 +382,11 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             if _sh is not None:
                 _sh.note_reject(ticker, stock_info, daily_data, daily_ind, mtf, direction, score, reason,
                                 market_overview, sl_)
-        if _market_stop:
+        # 重挫日：做多一律在此擋下（記 market_stop 假想單）。放空則繼續走完與平日完全相同的全部
+        # 關卡（大盤環境／週線／ADX 方向／分數／量能／事件／追價／停損距離／盈虧比／部位），
+        # 通過者才在最後以 market_stop 記成假想單——這樣影子裡的「market_stop＋放空」就精確等於
+        # 「若開放重挫日放空，當天真的會發出的訊號」（實驗 E03）。正式訊號仍不產生。
+        if _market_stop and direction != "sell":
             _rej("market_stop"); return None
         # ★ 修正：2026-09-28（第二輪）——上一輪重新開放放空後，把 ChatGPT／
         # Perplexity 兩邊的審查意見貼回去複查，兩邊獨立收斂出同一個架構問題：
@@ -591,6 +595,8 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
             _rej("size_zero", sl); return None
         if pos.get("liquidity_capped"):
             logger.info(f"[{ticker}] 建議部位因流動性上限（當日成交量10%）被下修至 {pos['shares']} 股")
+        if _market_stop:
+            _rej("market_stop", sl); return None      # 通過全部放空關卡，但重挫日不發正式訊號（E03 影子驗證中）
         ema_ind=daily_ind.get("ema",{})
         ema5_val=ema_ind.get("e_fast") if ema_ind.get("valid") else None
         # ★ 修正：2026-09-16——稽核發現這裡原本不分方向，buy/sell 都套同一組公式

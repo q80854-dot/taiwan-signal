@@ -15,5 +15,6 @@
 |---|---|---|---|
 | E01 | 市場情緒偏弱時做多期望值較差 | `sentiment >= 50` 才保留做多候選 | `E01_regime_gate.yaml` |
 | E02 | 追高風險為「高」的做多候選期望值較差 | 排除 `chase_level == high` | `E02_chase_filter.yaml` |
+| E03 | 大盤重挫日通過全部放空關卡的假想放空單期望值為正 | 評估被 `market_stop` 擋下的放空假想單（不是濾網） | `E03_crash_day_short.yaml` |
 
 查看結果：站主登入後 `GET /api/learning/experiments`。

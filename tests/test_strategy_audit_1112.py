@@ -50,7 +50,8 @@ def test_filter_and_rank_regrades_after_score_adjustments():
 # ── 6) resonance 是共振結果，不是「有小時線資料」 ──
 def _tf(trend="up", n=260):
     step = 0.4 if trend == "up" else -0.4
-    closes = [100 + i * step for i in range(n)]
+    base = 100 if trend == "up" else 300          # 下跌序列從 300 起算，避免跌成負價
+    closes = [base + i * step for i in range(n)]
     return {"closes": closes, "highs": [c + 1 for c in closes], "lows": [c - 1 for c in closes],
             "opens": [c - step / 2 for c in closes], "volumes": [1000 + (i % 5) * 50 for i in range(n)],
             "current_price": closes[-1]}
@@ -113,3 +114,58 @@ def test_real_signal_settlement_waits_for_fresh_bar_then_flags_stale():
     assert "staged_open_at_end(sim, gen_date, expire_days)" in body
     assert "_STALE_PRICE_GRACE_DAYS" in body and "資料停更" in body
     assert TWScanEngine._STALE_PRICE_GRACE_DAYS == 7
+
+
+# ── E03：重挫日放空先做影子驗證（使用者 2026-11-12 表示要開放；正式訊號維持不發） ──
+def _short_env(monkeypatch, weekly="bearish"):
+    import shadow, event_filter
+    calls = []
+    monkeypatch.setattr(shadow, "note_reject", lambda *a, **k: calls.append((a[7], a[9] if len(a) > 9 else k.get("sl"))))
+    monkeypatch.setattr(shadow, "observe", lambda *a, **k: None)
+    monkeypatch.setattr(shadow, "control_from_engine", lambda *a, **k: None)
+    monkeypatch.setattr(event_filter, "check", lambda code, within_days=None: {})
+    monkeypatch.setattr(se, "check_multi_timeframe_tw",
+                        lambda tf, disabled_factors=None: {"direction": "sell", "score": 90, "adx_value": 35,
+                                                           "adx_bias": "bearish", "vol_ratio": 2.5,
+                                                           "weekly_bias": weekly, "rsi_value": 35,
+                                                           "conditions_met": [], "conditions_fail": []})
+    mo = {"can_trade": False, "market_status": "stop", "sentiment_score": 20,
+          "regime": {"available": True, "trend": "bearish"}}
+    return calls, mo
+
+
+def test_crash_day_short_passing_all_gates_is_recorded_as_market_stop_hypothetical(monkeypatch):
+    """通過全部放空關卡者，最後才以 market_stop 記成假想單（帶實際停損價）；正式訊號仍不產生。"""
+    calls, mo = _short_env(monkeypatch)
+    assert se.generate_signal_tw("9999.TW", _stock(), {"daily": _tf("down")}, mo) is None
+    assert [c[0] for c in calls] == ["market_stop"]
+    assert calls[0][1] is not None                       # 走到了停損／部位計算之後才擋下
+
+
+def test_crash_day_short_failing_a_gate_keeps_its_own_reason(monkeypatch):
+    """沒通過放空關卡者照原本的原因記錄，不混進 market_stop——E03 的樣本才精確等於「真的會發出的單」。"""
+    calls, mo = _short_env(monkeypatch, weekly="bullish")
+    assert se.generate_signal_tw("9999.TW", _stock(), {"daily": _tf("down")}, mo) is None
+    assert [c[0] for c in calls] == ["gate_weekly"]
+
+
+def test_e03_blocked_rule_experiment_is_preregistered_and_shadow_only():
+    import experiments as ex
+    e = ex.BLOCKED_REGISTRY[0]
+    doc = open(e["doc"], encoding="utf-8").read()
+    assert e["id"] == "E03" and "id: E03" in doc and "正式訊號維持" in doc
+    assert f"min_oos_days: {e['min_oos_days']}" in doc and f"min_oos_trades: {e['min_oos_trades']}" in doc
+
+    def row(day, r, reason="market_stop", direction="sell", kind="rejected", status="final"):
+        return {"bar_date": day, "kind": kind, "direction": direction, "status": "closed", "champion_r": r,
+                "champion_status": status, "f": {"reject": reason}}
+    few = [row("2026-12-01", 1.0), row("2026-12-01", 0.5)]
+    assert ex.evaluate_blocked("E03", few)["oos"]["verdict"] == "insufficient"      # 重挫日太少：不下結論
+    good = [row(f"2027-{1 + i // 28:02d}-{i % 28 + 1:02d}", 0.8 + (0.1 if j % 2 else -0.1))
+            for i in range(10) for j in range(4)]
+    noise = [row("2027-01-01", -9.0, reason="adx_low"), row("2027-01-01", -9.0, direction="buy"),
+             row("2027-01-01", -9.0, kind="candidate"), row("2027-01-01", -9.0, status="provisional")]
+    o = ex.evaluate_blocked("E03", good + noise)["oos"]
+    assert o["n_final"] == 40 and o["n_days"] == 10 and o["avg_r"] == 0.8           # 只算 market_stop＋放空＋已定案
+    assert o["verdict"] == "supported" and "不自動開放" in o["verdict_note"]
+    assert ex.evaluate_blocked("E03", [row("2026-10-20", 5.0)] * 50)["exploratory"]["verdict"] == "exploratory_only"
