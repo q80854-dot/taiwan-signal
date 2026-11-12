@@ -938,6 +938,7 @@ def _champion_fields(track):
 def _load_bars(tickers, since):
     """一條連線、分批 IN 查詢，撈回所有需要的日K（取代「一檔一條連線」）。"""
     from state_store import store
+    import execution
     out = {}
     with store._conn() as conn:
         for i in range(0, len(tickers), 250):
@@ -947,7 +948,10 @@ def _load_bars(tickers, since):
                 f"SELECT ticker,bar_date,open,high,low,close FROM ohlcv_bars WHERE tf_key='daily' "
                 f"AND ticker IN ({ph}) AND bar_date>=? ORDER BY ticker,bar_date", tuple(chunk) + (since,)).fetchall()
             for x in rs:
-                out.setdefault(x["ticker"], []).append(dict(x))
+                b = dict(x)
+                # 無效（NaN／缺值／非正數）K 棒不進模擬：否則出場條件永不成立、哨兵值會寫進資料庫
+                if execution.bar_ok(b) and b.get("open") == b.get("open"):
+                    out.setdefault(x["ticker"], []).append(b)
     return out
 
 

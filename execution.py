@@ -21,6 +21,22 @@ SIM_VERSION = "exit-v3-2026-11-12"            # v3：漲跌停鎖死日無法出
 STAGED_SIM_VERSION = "staged-v3-2026-11-12"   # v3：同上；v2：加 expire_days 到期窗截斷（Phase B）
 _TPE = timezone(timedelta(hours=8))
 
+def bar_ok(b) -> bool:
+    """這根 K 棒的最高、最低、收盤是否為有效正數（非 None、非 NaN）。
+    ★ 2026-11-12（由線上清洗日誌揭露）：資料源偶有整根為 NaN 的日 K（停牌日或抓取異常）。
+    NaN 與任何數比較皆為 False——出場條件永不成立、MFE/MAE 停在初始哨兵值 ±9e9 而寫進資料庫
+    （線上實例：3714.TW 2026-11-04 的假想單 mae_r=9e9），分批模擬則會以 NaN 收盤結算出 NaN 損益。
+    無效 K 棒一律跳過（視為當日無資料），不參與任何判定。"""
+    try:
+        for k in ("high", "low", "close"):
+            v = b.get(k)
+            if v is None or v != v or v <= 0:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 LIMIT_LOCK_PCT = 9.5     # 台股漲跌幅限制 10%；因升降單位取整，鎖死價相對前收的實際幅度略小於 10%
 
 
@@ -82,6 +98,8 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
            "mfe": None, "mae": None, "gap": None, "r1": None, "r5": None, "r10": None, "r20": None,
            "mae_bars": None, "mfe_bars": None, "tp1_before_sl": None,
            "entry_fill": entry_fill, "sim_version": SIM_VERSION}
+    bars_after = [b for b in (bars_after or []) if bar_ok(b)]      # 無效（NaN／缺值）K 棒視為當日無資料
+    out["bars_held"] = len(bars_after)
     if not bars_after or not risk:
         return out
     after = bars_after
@@ -146,7 +164,9 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
             res, px = "tp1", tp1
         out.update(result=res, exit_price=px, exit_date=b["bar_date"][:10], bars_held=i + 1)
         break
-    out["mfe"], out["mae"] = round(mfe, 3), round(mae, 3)
+    # 哨兵值不得外洩：沒有任何有效更新就回 None（不寫入 ±9e9）
+    out["mfe"] = round(mfe, 3) if mfe > -1e9 else None
+    out["mae"] = round(mae, 3) if mae < 1e9 else None
     out["mfe_bars"], out["mae_bars"] = mfe_i, mae_i
     if tp1_i is not None:
         # ★ 2026-11-09 Phase B：同一根 K 棒同時觸及 TP1 與 SL（tp1_i == sl_i）時，無法得知盤中
@@ -224,6 +244,8 @@ class StagedPosition:
         """餵入一根 K 棒，回傳這根新成交的腿（可能為空）。部位已出清時不做事。"""
         if self.remaining <= 0:
             return []
+        if not bar_ok(b):
+            return []                  # 無效（NaN／缺值）K 棒：當日視為無資料，不成交、不更新前收
         # v3（Q-P0-07）：一價鎖死在不利方向（多單鎖跌停／空單鎖漲停）＝確定賣不掉／補不回，
         # 這根不產生任何成交，停損與到期都順延到下一根可成交的 K 棒。
         locked = exit_blocked_by_limit(self.direction, b, self.prev_close)
@@ -263,7 +285,7 @@ class StagedPosition:
 
     def force_close(self, b, stage="expired"):
         """以指定 K 棒收盤結算剩餘部位（資料用盡時的暫估／回測期末平倉）。"""
-        if self.remaining <= 0:
+        if self.remaining <= 0 or not bar_ok(b):
             return None
         return self._leg(stage, b["close"], self.remaining, b["bar_date"])
 
@@ -297,7 +319,9 @@ def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_
             break
         pos.on_bar(b)
     if pos.remaining > 0 and bars:
-        pos.force_close(bars[-1])
+        _valid = [b for b in bars if bar_ok(b)]
+        if _valid:
+            pos.force_close(_valid[-1])     # 以最後一根「有效」K 棒收盤暫估，不用 NaN
     legs, exit_date = pos.legs, pos.exit_date
     if not legs:
         return None
