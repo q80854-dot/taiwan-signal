@@ -85,8 +85,7 @@ def test_freshness_cooldown_prevents_hammering(monkeypatch):
     assert len(tries) == 2                               # 冷卻過後才再試
 
 
-# ── 2026-11-12 線上診斷日誌證實：兩端點對 11-09～11-11 都回 stat=OK，但頂層無 data ──
-# 證交所新版把資料放在 tables[*].fields/data；原本 `not j.get("data")` 把有資料的回應當失敗。
+# ── tables[*].fields/data 格式相容（#205 推定；線上日誌後更正：實際根因為 selectType，見下方） ──
 _NEW_FMT = {"stat": "OK", "date": "20261111",
             "tables": [{"title": "外資及陸資投資持股統計",
                         "fields": ["證券代號", "證券名稱", "全體外資及陸資持股比率", "全體外資及陸資投資上限比率"],
@@ -112,10 +111,61 @@ def test_stat_ok_without_any_table_logs_response_shape(monkeypatch, caplog):
                         lambda url, **k: _Resp(200, {"stat": "OK", "date": "20261111", "title": "x", "notes": []}))
     with caplog.at_level("WARNING"):
         assert ci._build_foreign_holding_map() == {}
-    assert "stat=OK 但無資料表" in caplog.text
+    assert "stat=OK 但無資料列" in caplog.text
     assert "'notes'" in caplog.text and "'title'" in caplog.text            # 頂層欄位名稱可見
 
 
 def test_old_top_level_format_still_parsed(monkeypatch):
     monkeypatch.setattr(ci.requests, "get", lambda url, **k: _Resp(200, _OK))
     assert ci._build_foreign_holding_map()["2317"]["ratio"] == 40.50        # 舊格式相容
+
+
+# ── #205 上線後線上日誌（2026-11-12 05:13Z）的真實回應：頂層欄位
+# ['data','date','fields','notes','selectType','stat','title','total']，stat=OK、data 為空，
+# 兩端點、11-09～11-11 皆同 → selectType=ALL 查不到資料，屬查詢參數問題。 ──
+_EMPTY_REAL = {"stat": "OK", "date": "20261111", "title": "115年11月11日 外資及陸資投資持股統計",
+               "fields": _OK["fields"], "data": [], "notes": [], "selectType": "ALL", "total": 0}
+
+
+def test_empty_data_with_all_falls_back_to_other_select_type(monkeypatch):
+    calls = []
+
+    def fake(url, **k):
+        calls.append(url)
+        if "20261112" in url:
+            return _Resp(200, {"stat": "查詢日期大於可查詢最大日期，請重新查詢!"})
+        if "selectType=ALLBUT0999" in url:
+            return _Resp(200, dict(_OK, selectType="ALLBUT0999", total=2))
+        return _Resp(200, _EMPTY_REAL)
+    import datetime as _d
+    class _FixedDT(_d.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _d.datetime(2026, 11, 12, 5, 0, tzinfo=_d.timezone.utc)
+    monkeypatch.setattr(_d, "datetime", _FixedDT)
+    monkeypatch.setattr(ci.requests, "get", fake)
+    m = ci._build_foreign_holding_map()
+    assert m["2330"]["ratio"] == 72.10                       # 換分類代碼後取得真實資料
+    assert any("selectType=ALLBUT0999" in u for u in calls)
+
+
+def test_all_select_types_empty_stops_early_and_logs_total(monkeypatch, caplog):
+    calls = []
+
+    def fake(url, **k):
+        calls.append(url)
+        if "20261112" in url:
+            return _Resp(200, {"stat": "查詢日期大於可查詢最大日期，請重新查詢!"})
+        return _Resp(200, _EMPTY_REAL)
+    import datetime as _d
+    class _FixedDT(_d.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _d.datetime(2026, 11, 12, 5, 0, tzinfo=_d.timezone.utc)
+    monkeypatch.setattr(_d, "datetime", _FixedDT)
+    monkeypatch.setattr(ci.requests, "get", fake)
+    with caplog.at_level("WARNING"):
+        assert ci._build_foreign_holding_map() == {}         # 仍空 → 回空，不以推估值替代
+    # 今日未公布 1 次 + 11-11 現行端點兩種分類各 1 次；不再重打舊端點、不再往前 8 天
+    assert len(calls) == 3
+    assert "total=0" in caplog.text and "外資及陸資投資持股統計" in caplog.text

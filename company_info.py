@@ -151,15 +151,20 @@ def _col_idx(fields, *subs, exclude=()):
 
 # ★ 2026-11-12：證交所多數 API 已遷至 /rwd/zh/ 路徑；先試現行端點，舊路徑保留為備援。
 _QFIIS_URLS = (
-    "https://www.twse.com.tw/rwd/zh/fund/MI_QFIIS?response=json&selectType=ALL&date={ds}",
-    "https://www.twse.com.tw/fund/MI_QFIIS?response=json&selectType=ALL&date={ds}",
+    "https://www.twse.com.tw/rwd/zh/fund/MI_QFIIS?response=json&selectType={st}&date={ds}",
+    "https://www.twse.com.tw/fund/MI_QFIIS?response=json&selectType={st}&date={ds}",
 )
+# ★ 2026-11-12（#205 後線上日誌）：回應其實是舊版頂層 fields/data 結構（頂層欄位
+# ['data','date','fields','notes','selectType','stat','title','total']），但 selectType=ALL
+# 時 data 為空、stat 仍是 OK——兩端點、連續三個交易日皆同，屬查詢參數問題而非當日無資料。
+# 依序試「全部（不含權證、牛熊證）」與「全部」兩種分類代碼；仍空則記下 total／title。
+_QFIIS_SELECT_TYPES = ("ALLBUT0999", "ALL")
 
 
 def _qfiis_tables(j: dict) -> list:
-    """★ 2026-11-12：證交所回應格式有兩種——舊版頂層 fields/data；新版放在 tables[*].fields/data。
-    線上診斷日誌證實：MI_QFIIS 兩個端點對 11-09～11-11 都回 stat=OK，但頂層沒有 data，
-    原本 `not j.get("data")` 便把有資料的回應當成失敗——外資持股比率長期「無」的真正原因。"""
+    """同時支援頂層 fields/data 與 tables[*].fields/data 兩種證交所回應格式。
+    更正（#205 上線後線上日誌）：MI_QFIIS 實際回的是頂層 fields/data，只是 selectType=ALL 時
+    data 為空——tables 格式為推定、並非根因；保留支援僅為相容，根因修正見 _QFIIS_SELECT_TYPES。"""
     out = []
     if j.get("data"):
         out.append((j.get("fields") or [], j.get("data")))
@@ -209,38 +214,53 @@ def _build_foreign_holding_map() -> dict:
     broken, fails = set(), []
     for back in range(0, 8):                       # 今天往前試幾個交易日（假日／尚未公布時往回找）
         ds = (now - _dt.timedelta(days=back)).strftime("%Y%m%d")
+        ok_empty = False                           # 本日端點回 stat=OK 但每種分類皆無資料列
         for tmpl in _QFIIS_URLS:
             if tmpl in broken:
                 continue
             tag = "rwd" if "/rwd/" in tmpl else "legacy"
-            try:
-                r = requests.get(tmpl.format(ds=ds), headers=HEADERS, timeout=(5, 30))
-            except Exception as e:
-                broken.add(tmpl); fails.append(f"{ds}/{tag} 連線錯誤 {type(e).__name__}")
-                continue
-            if not r.ok:
-                broken.add(tmpl); fails.append(f"{ds}/{tag} HTTP {r.status_code}")
-                continue
-            try:
-                j = r.json()
-            except Exception:
-                broken.add(tmpl); fails.append(f"{ds}/{tag} 回應非 JSON")
-                continue
-            if j.get("stat") != "OK":
-                fails.append(f"{ds}/{tag} stat={str(j.get('stat'))[:20]}")
-                continue                              # 端點正常、該日無資料 → 往前一天
-            tables = _qfiis_tables(j)
-            if not tables:
-                # stat=OK 卻找不到資料表：記下頂層欄位名稱，讓回應結構一次可見
-                fails.append(f"{ds}/{tag} stat=OK 但無資料表（頂層欄位：{sorted(j.keys())[:10]}）")
-                continue
-            for _flds, _rows in tables:
-                m = _parse_qfiis(j, ds, _flds, _rows)
-                if m:
-                    return m
-            fails.append(f"{ds}/{tag} 欄位無法解析（欄位：{[str(f)[:12] for f in tables[0][0]][:8]}）")
+            date_unavailable = False
+            for st in _QFIIS_SELECT_TYPES:
+                try:
+                    r = requests.get(tmpl.format(ds=ds, st=st), headers=HEADERS, timeout=(5, 30))
+                except Exception as e:
+                    broken.add(tmpl); fails.append(f"{ds}/{tag} 連線錯誤 {type(e).__name__}")
+                    break
+                if not r.ok:
+                    broken.add(tmpl); fails.append(f"{ds}/{tag} HTTP {r.status_code}")
+                    break
+                try:
+                    j = r.json()
+                except Exception:
+                    broken.add(tmpl); fails.append(f"{ds}/{tag} 回應非 JSON")
+                    break
+                if j.get("stat") != "OK":
+                    fails.append(f"{ds}/{tag} stat={str(j.get('stat'))[:20]}")
+                    date_unavailable = True       # 該日尚未公布／非交易日：與分類無關，換前一天
+                    break
+                tables = _qfiis_tables(j)
+                if not tables:
+                    # stat=OK 卻沒有資料列：記下 total／title 與頂層欄位，讓真實回應一次可見
+                    fails.append(f"{ds}/{tag}/{st} stat=OK 但無資料列（total={j.get('total')!r}，"
+                                 f"title={str(j.get('title'))[:30]!r}，頂層欄位：{sorted(j.keys())[:10]}）")
+                    continue                      # 換下一種分類代碼
+                for _flds, _rows in tables:
+                    m = _parse_qfiis(j, ds, _flds, _rows)
+                    if m:
+                        if st != _QFIIS_SELECT_TYPES[0] or tag != "rwd":
+                            logger.info(f"外資持股比率：以 {tag}/selectType={st} 取得 {ds}（{len(m)} 檔）")
+                        return m
+                fails.append(f"{ds}/{tag}/{st} 欄位無法解析（欄位：{[str(f)[:12] for f in tables[0][0]][:8]}）")
+            else:
+                ok_empty = True
+            if date_unavailable:
+                break                                 # 同一天換端點也一樣未公布，直接往前一天
+            if ok_empty:
+                break                                 # 現行端點已確認此結構；舊端點回應相同，不重打
         if len(broken) == len(_QFIIS_URLS):
             break                                     # 兩個端點都失效，不再往前打
+        if ok_empty:
+            break                                     # 端點正常但每種分類皆空＝參數／結構問題，往前試也一樣
     logger.warning("外資持股比率（證交所 MI_QFIIS）取得失敗：" + "；".join(fails[:8]))
     return {}
 
