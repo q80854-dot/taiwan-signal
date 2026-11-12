@@ -129,6 +129,10 @@ def _short_env(monkeypatch, weekly="bearish"):
                                                            "adx_bias": "bearish", "vol_ratio": 2.5,
                                                            "weekly_bias": weekly, "rsi_value": 35,
                                                            "conditions_met": [], "conditions_fail": []})
+    # 部位固定給 2 張（放空須整張；零股規則另由 test_executability 驗證）
+    monkeypatch.setattr(se, "calc_position_size",
+                        lambda p, sl, **k: {"shares": 2000, "lots": 2.0, "risk_twd": 1000, "risk_pct": 0.2,
+                                            "position_value": 2000 * p, "roundtrip_cost": 100, "breakeven_pct": 0.1})
     mo = {"can_trade": False, "market_status": "stop", "sentiment_score": 20,
           "regime": {"available": True, "trend": "bearish"}}
     return calls, mo

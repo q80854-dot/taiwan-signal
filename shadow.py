@@ -58,6 +58,7 @@ REASONS = {
     "gate_weekly": "放空：週線不是空頭",
     "gate_adxdir": "放空：ADX 方向不是空方主導",
     "short_score": "放空：分數未達放空門檻",
+    "short_odd_lot": "放空：部位不足 1 張（零股不能放空）",
     "adx_low": "ADX 趨勢強度不足",
     "vol_low": "量能不足",
     "macro_stop": "大盤／外資熔斷擋下多單",
@@ -816,8 +817,25 @@ def _simulate(row, bars, expire_days):
     out = execution.simulate_exit(
         planned_entry=planned_entry, entry_fill=entry, stop=stop, direction=row["direction"],
         bars_after=after, bar_date=row["bar_date"], expire_days=expire_days, risk=risk,
-        tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"))
+        tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"),
+        prev_close=_signal_close(row, bars))
     return out
+
+
+def _signal_close(row, bars):
+    """訊號日（含）以前最後一根 K 棒的收盤：判定訊號後第一根是否漲跌停鎖死的基準。無則 None。"""
+    before = [b for b in bars if b["bar_date"][:10] <= row["bar_date"]]
+    return before[-1].get("close") if before else None
+
+
+def _entry_unfillable(row, bars):
+    """★ 2026-11-12（Q-P0-07）：訊號後第一根是否一價鎖死、確定無法進場（做多鎖漲停／放空鎖跌停）。
+    這種假想單在現實中買不到／空不到，不得當成已成交的樣本。"""
+    after = [b for b in bars if b["bar_date"][:10] > row["bar_date"]]
+    if not after:
+        return False
+    import execution
+    return execution.entry_blocked_by_limit(row["direction"], after[0], _signal_close(row, bars))
 
 
 def _shadow_staged_pnl_factory():
@@ -887,7 +905,8 @@ def _champion_track(row, bars, expire_days, today=None):
     sim = execution.simulate_staged_exit(
         after, entry=fill, sl=stop, tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"),
         direction=row["direction"], shares=shares, gen_date=row["bar_date"],
-        pnl_fn=_shadow_staged_pnl_factory(), expire_days=expire_days)
+        pnl_fn=_shadow_staged_pnl_factory(), expire_days=expire_days,
+        prev_close=_signal_close(row, bars))
     if not sim:
         return None
     r = round(sim["pnl"] / (risk * shares), 3)
@@ -1012,6 +1031,7 @@ def resolve_pending(max_rows=8000):
         bad_risk = []       # ★ 2026-11-06：entry≈stop 退化列，R 無意義，標 unresolved/bad_risk 離開統計
         no_new_bars = []    # ★ 2026-11-12：有舊 K 棒但訊號日後無新棒（停牌/下市/停更），逾期後離開佇列
         no_fresh_price = [] # ★ 2026-11-12：K 棒在到期日前就停更，不以舊收盤價當到期價（S-P1-02）
+        unfilled_limit = [] # ★ 2026-11-12：進場當根漲跌停鎖死、確定無法成交（Q-P0-07）
         with store._conn() as conn:
             rows = [dict(x) for x in conn.execute(
                 "SELECT * FROM shadow_signals WHERE status='pending' OR (r10 IS NULL AND bar_date>=?) "
@@ -1046,6 +1066,11 @@ def resolve_pending(max_rows=8000):
             rescaled += scale != 1.0
             if not _risk_ok(r2.get("entry"), r2.get("stop")):
                 bad_risk.append(row["id"])          # 退化風險：不結算、離開佇列、不入統計
+                continue
+            # ★ 2026-11-12（Q-P0-07）：訊號後第一根一價鎖死（做多鎖漲停／放空鎖跌停）＝確定無法進場，
+            # 標 unresolved/unfilled_limit 離開佇列，不當成已成交樣本、不計入勝率與平均 R。
+            if row["status"] == "pending" and _entry_unfillable(r2, bars):
+                unfilled_limit.append(row["id"])
                 continue
             sim = _simulate(r2, bars, expire_days)
             if not sim:
@@ -1131,9 +1156,15 @@ def resolve_pending(max_rows=8000):
                     conn.execute("UPDATE shadow_signals SET status='unresolved', result='no_fresh_price' WHERE id=?", (_id,))
             logger.info(f"shadow: {len(no_fresh_price)} 筆訊號逾期但 K 棒在到期日前就停更，"
                         f"不以舊收盤價結算，標記 unresolved/no_fresh_price")
+        if unfilled_limit:
+            with store._conn() as conn:
+                for _id in unfilled_limit:
+                    conn.execute("UPDATE shadow_signals SET status='unresolved', result='unfilled_limit' WHERE id=?", (_id,))
+            logger.info(f"shadow: {len(unfilled_limit)} 筆訊號進場當根漲跌停鎖死、無法成交，標記 unresolved/unfilled_limit")
         res = {"updated": len(updates), "closed": closed, "rows": len(rows),
                "rescaled": int(rescaled), "unresolved": len(unresolved), "bad_risk": len(bad_risk),
-               "no_new_bars": len(no_new_bars), "no_fresh_price": len(no_fresh_price)}
+               "no_new_bars": len(no_new_bars), "no_fresh_price": len(no_fresh_price),
+               "unfilled_limit": len(unfilled_limit)}
         logger.info(f"shadow: 結算完成，檢查 {len(rows)} 筆、更新 {len(updates)} 筆、新結案 {closed} 筆"
                     f"（除權息還原調整 {int(rescaled)} 筆），耗時 {time.time() - t0:.1f}s")
         if r is not None:

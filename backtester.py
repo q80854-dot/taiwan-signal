@@ -295,12 +295,28 @@ def _bt_entry_prices(closes, opens, i):
     return plan, fill
 
 
-def _bt_fill_valid(direction, fill, sl, tp1):
-    """開盤價已穿越停損（風險無定義）或已越過 TP1（沒有報酬空間）＝計畫失效，不進場。"""
+def _bt_fill_valid(direction, fill, sl, tp1, bar=None, prev_close=None):
+    """開盤價已穿越停損（風險無定義）或已越過 TP1（沒有報酬空間）＝計畫失效，不進場。
+    給了 bar／prev_close 時另擋「進場當根一價鎖死」（做多鎖漲停買不到／放空鎖跌停空不到，Q-P0-07）。"""
     try:
+        if bar is not None:
+            import execution
+            if execution.entry_blocked_by_limit(direction, bar, prev_close):
+                return False
         return (sl < fill < tp1) if direction == "buy" else (tp1 < fill < sl)
     except Exception:
         return False
+
+
+def _bt_bar(dates, opens, highs, lows, closes, i):
+    return {"bar_date": dates[i] if i < len(dates) else "", "open": opens[i] if i < len(opens) else None,
+            "high": highs[i], "low": lows[i], "close": closes[i]}
+
+
+def _bt_exit_locked(direction, dates, opens, highs, lows, closes, i):
+    """出場當根一價鎖死在不利方向（多單鎖跌停／空單鎖漲停）＝賣不掉／補不回，出場順延。"""
+    import execution
+    return i >= 1 and execution.exit_blocked_by_limit(direction, _bt_bar(dates, opens, highs, lows, closes, i), closes[i - 1])
 
 
 def _bt_expire_days():
@@ -309,14 +325,16 @@ def _bt_expire_days():
     return CB.get("signal_expire_days", 15)
 
 
-def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, expire_days=None):
+def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, expire_days=None,
+                         prev_close=None):
     """★ 2026-11-08 Phase 1：分批出場判定統一由 execution.simulate_staged_exit 執行，與
     （未來的）其他回測路徑共用同一實作，避免漂移。成本仍走本模組的 calc_tw_pnl（以 pnl_fn
     依賴注入傳入），數字完全不變。保守規則與原本一致：TP1/TP2/TP3 各出 1/3、TP1→保本、
     TP2→移至 TP1、同 K 先停損、跳空以開盤成交、末段逾期以收盤結算。回傳結構與原本相同。"""
     import execution
     return execution.simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares,
-                                          gen_date, pnl_fn=calc_tw_pnl, expire_days=expire_days)
+                                          gen_date, pnl_fn=calc_tw_pnl, expire_days=expire_days,
+                                          prev_close=prev_close)
 
 
 def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True,
@@ -414,6 +432,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
         """單次出場判定（停損優先；TP2 優先於 TP1）＋到期窗。回傳是否已出場。進場當日也會呼叫。"""
         nonlocal open_trade, balance
         d=open_trade["direction"]; sl=open_trade["sl"]; tp1=open_trade["tp1"]; tp2=open_trade["tp2"]
+        if _bt_exit_locked(d,dates,opens,highs,lows,closes,i): return False
         hit_sl=(d=="buy" and lows[i]<=sl) or (d=="sell" and highs[i]>=sl)
         hit_tp2=(d=="buy" and highs[i]>=tp2) or (d=="sell" and lows[i]<=tp2)
         hit_tp1=(d=="buy" and highs[i]>=tp1) or (d=="sell" and lows[i]<=tp1)
@@ -493,7 +512,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
                                 if tp_info["rr1"]>=THRESH["min_rr"] and sl_dist_pct<=12:
                                     pos=calc_position_size(plan_px,sl,balance=balance,size_cat=size_cat,
                                                             avg_volume_lots=(info.get("volume_lots") if info else None))
-                                    if pos["shares"]>0 and _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"]):
+                                    if pos["shares"]>0 and _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"],_bt_bar(dates,opens,highs,lows,closes,i),plan_px):
                                         open_trade={"direction":direction,"fill_price":fill_px,"sl":sl,"tp1":tp_info["tp1"],"tp2":tp_info["tp2"],
                                                     "score":score,"shares":pos["shares"],"bar":i,"sig_bar":i-1}
                                         _exit_check(i)          # 進場當日即納入出場判定
@@ -580,6 +599,7 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             """停損優先的單次出場（TP1）＋到期窗；進場當日也會呼叫。回傳是否已出場。"""
             nonlocal open_trade, balance
             d=open_trade["direction"]; sl=open_trade["sl"]; tp1=open_trade["tp1"]
+            if _bt_exit_locked(d,dates,opens,highs,lows,closes,i): return False
             hit_sl=(d=="buy" and lows[i]<=sl) or (d=="sell" and highs[i]>=sl)
             hit_tp1=(d=="buy" and highs[i]>=tp1) or (d=="sell" and lows[i]<=tp1)
             if hit_sl:
@@ -622,7 +642,7 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             pos=calc_position_size(plan_px,sl,balance=balance,size_cat=size_cat,
                                     avg_volume_lots=(info.get("volume_lots") if info else None))
             if pos["shares"]<=0: continue
-            if not _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"]): continue
+            if not _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"],_bt_bar(dates,opens,highs,lows,closes,i),plan_px): continue
             open_trade={"direction":direction,"fill_price":fill_px,"sl":sl,"tp1":tp_info["tp1"],"score":score,"shares":pos["shares"],"bar":i,"sig_bar":i-1}
             _wf_exit(i)                 # 進場當日即納入出場判定
         # ★ 修正：2026-11-04（F-12）——視窗末端仍未平倉的部位，原本直接被丟棄（不結算、
@@ -743,6 +763,7 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
     open_pos = {}
     trades, equity, axis, concur = [], [], [], []
     import execution
+    n_unfilled_limit = 0
 
     def _hold(day, p):
         try:
@@ -823,6 +844,9 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                 value = sh * fill; risk = sh * abs(fill - sl)
                 if risk <= 0:                              # 開盤已穿越停損：不進場（無有效風險定義）
                     continue
+                if execution.entry_blocked_by_limit(dir_, _bar(data[t]["d"], data[t]["idx"][day]), price):
+                    n_unfilled_limit += 1                  # 進場當根漲跌停鎖死：確定無法成交，不進場
+                    continue
                 if invested + value > balance:            # 買力不足
                     continue
                 if risk_open + risk > balance * port_risk:  # 組合風險硬上限
@@ -832,7 +856,8 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                 open_pos[t] = {"direction": dir_, "fill_price": fill, "shares": sh, "risk": risk,
                                "bar_date": sig_day, "score": sc, "realized": 0.0,
                                "pos": execution.StagedPosition(fill, sl, tp["tp1"], tp.get("tp2"), tp.get("tp3"),
-                                                               dir_, sh, sig_day, calc_tw_pnl, EXPIRE_DAYS)}
+                                                               dir_, sh, sig_day, calc_tw_pnl, EXPIRE_DAYS,
+                                                               prev_close=price)}
                 invested += value; risk_open += risk
         # 2b) 出場：所有持倉（含今日新進場者）以當日 K 棒逐腿判定
         for t in list(open_pos.keys()):
@@ -880,11 +905,12 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             "equity_curve": equity, "dates": axis, "trades": trades[-50:],
             "exit_model": "staged", "sim_version": execution.STAGED_SIM_VERSION,
             "entry_model": "訊號日收盤定錨計畫價位、隔日開盤成交",
-            "universe_pit": "PIT_UNAVAILABLE",
+            "universe_pit": "PIT_UNAVAILABLE", "n_unfilled_limit": n_unfilled_limit,
             "limitations": [
                 "標的池與規模分類取自『現在』的成分股與基本資料，非歷史當時（倖存者／時點偏差），"
                 "績效可能高估；不得當成正式有效的歷史績效。",
-                "未模擬零股／整股單位、漲跌停鎖死、停牌、成交量上限與放空券源，實際可成交性未驗證。",
+                "已模擬：一價鎖死的漲跌停（進場不成交、出場順延）與停牌（當日無 K 棒即不交易）。"
+                "未模擬：盤中曾打開的漲跌停排隊、成交量上限、放空券源與整股限制。",
                 "放空借券費以固定年率估算，未反映個股實際費率與券源有無。"],
             "note": "單一共享帳戶、跨檔逐日模擬，受同時持倉上限／買力／組合風險硬上限約束；"
                     "出場為 TP1/TP2/TP3 各 1/3 的分批出場（與正式推播同一狀態機）；"
@@ -1146,7 +1172,7 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
                                     pos=calc_position_size(plan_px,sl,balance=balance,size_cat=size_cat,
                                                             avg_volume_lots=(info.get("volume_lots") if info else None))
                                     shares_total=pos["shares"]
-                                    if shares_total>0 and _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"]):
+                                    if shares_total>0 and _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"],_bar(i),plan_px):
                                         # 與正式推播、組合回測同一個分批狀態機（TP1/TP2/TP3 各 1/3、移動停損、
                                         # 跳空以開盤成交、到期窗）；部位太小無法分三段時自然退化為 TP3 單段。
                                         open_trade={"direction":direction,"fill_price":fill_px,"score":score,
@@ -1154,7 +1180,8 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
                                                     "pos":execution.StagedPosition(
                                                         fill_px,sl,tp_info["tp1"],tp_info["tp2"],tp_info["tp3"],
                                                         direction,shares_total,
-                                                        dates[i-1] if i-1<len(dates) else "",calc_tw_pnl,EXPIRE_DAYS)}
+                                                        dates[i-1] if i-1<len(dates) else "",calc_tw_pnl,EXPIRE_DAYS,
+                                                        prev_close=plan_px)}
                                         _step(i)              # 進場當日即納入出場判定
         if open_trade:
             unreal=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade["pos"].remaining,days_held=_held_days(dates,open_trade["sig_bar"],i))

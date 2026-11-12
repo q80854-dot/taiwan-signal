@@ -108,6 +108,30 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
     }
 
 
+def resize_position(pos, price, stop_loss, shares, balance=None):
+    """把部位改成指定股數並重算風險／金額／成本欄位（供放空整張化等調整使用）。"""
+    balance = balance or ACCOUNT_BALANCE_TWD
+    rps = abs(price - stop_loss)
+    pv = shares * price
+    rt = calc_trade_cost(price, shares, "buy")["total_cost"] + calc_trade_cost(price, shares, "sell")["total_cost"]
+    out = dict(pos)
+    out.update({"shares": shares, "lots": round(shares / SHARES_PER_LOT, 3),
+                "risk_twd": round(shares * rps, 0), "risk_pct": round(shares * rps / balance * 100, 2),
+                "position_value": round(pv, 0), "margin_pct": round(pv / balance * 100, 1),
+                "roundtrip_cost": round(rt, 0), "breakeven_pct": round(rt / pv * 100, 3) if pv else 0})
+    return out
+
+
+def short_whole_lots(shares):
+    """★ 2026-11-12（Q-P0-07）：放空只能以整張（1,000 股）為單位——零股交易不得融券、不得借券賣出。
+    回傳可放空的整張股數（不足 1 張回 0）。原本放空訊號沿用做多的零股部位算法，可能建議
+    「放空 200 股」這種現實中無法下單的部位。"""
+    try:
+        return (int(shares) // SHARES_PER_LOT) * SHARES_PER_LOT
+    except Exception:
+        return 0
+
+
 def fit_to_cash(sig, cash, risk_left=None):
     """把訊號的建議股數壓到「剩餘現金」以內（以進場價計），並可同時壓到「組合剩餘風險額度」以內
     （risk_left＝帳戶資金 × MAX_DAILY_RISK − 既有部位風險）。回傳調整後的 sig；放不下 1 股回傳 None。
@@ -120,9 +144,12 @@ def fit_to_cash(sig, cash, risk_left=None):
     lim = math.floor(max(0.0, cash) / price)
     if risk_left is not None and rps > 0:
         lim = min(lim, math.floor(max(0.0, risk_left) / rps))
-    if shares <= lim:
+    is_short = sig.get("direction") == "sell"
+    if shares <= lim and not (is_short and shares % SHARES_PER_LOT):
         return sig
-    new = lim
+    new = min(shares, lim)
+    if is_short:
+        new = short_whole_lots(new)          # 放空須整張：縮股數後仍須是整張，不足 1 張即不發
     if new < 1:
         return None
     bal = ACCOUNT_BALANCE_TWD
@@ -593,6 +620,14 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         pos=calc_position_size(price,sl,size_cat=size_cat,avg_volume_lots=stock_info.get("volume_lots"))
         if pos["shares"]<=0:
             _rej("size_zero", sl); return None
+        if direction=="sell":
+            # ★ 2026-11-12（Q-P0-07）：放空須以整張為單位（零股不得融券／借券賣出）。不足 1 張＝無法執行。
+            _lot_sh=short_whole_lots(pos["shares"])
+            if _lot_sh<SHARES_PER_LOT:
+                logger.info(f"[{ticker}] 放空建議部位 {pos['shares']} 股不足 1 張，零股不能放空，略過")
+                _rej("short_odd_lot", sl); return None
+            if _lot_sh!=pos["shares"]:
+                pos=resize_position(pos, price, sl, _lot_sh)
         if pos.get("liquidity_capped"):
             logger.info(f"[{ticker}] 建議部位因流動性上限（當日成交量10%）被下修至 {pos['shares']} 股")
         if _market_stop:

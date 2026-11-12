@@ -682,9 +682,11 @@ class TWScanEngine:
                 # 2026-10-07：訊號收盤後才產生，最早只能隔天開盤進場，進場價用「訊號日後第一根開盤」。
                 # 2026-10-09：結算改為忠實模擬推播的操作計畫（TP1/TP2/TP3 各出 1/3、TP1 後停損移至成本），
                 # 不再「碰到第一個目標就全部出場」，讓績效代表使用者實際照做的策略（見 backtester.simulate_staged_exit）。
-                bars = []
+                bars = []; _sig_close = None
                 for i, d in enumerate(dates):
                     if not d or d <= gen_date:
+                        if d and i < len(closes) and closes[i]:
+                            _sig_close = closes[i]      # 訊號日（含）以前最後一根收盤：判定漲跌停鎖死的基準
                         continue
                     bars.append({"bar_date": d, "open": opens[i] if i < len(opens) else None,
                                  "high": highs[i], "low": lows[i],
@@ -697,8 +699,9 @@ class TWScanEngine:
                 expire_days = CB.get("signal_expire_days", 15)
                 # ★ 2026-11-09 Phase B：把到期窗傳入模擬器，到期日之後才觸及的停利/停損不再計入
                 # （look-ahead 修正）；仍由下方 aged_out 閘門決定「尚未到期、未出場」者留 pending。
+                # prev_close：鎖跌停賣不掉／鎖漲停補不回的日子不成交、出場順延（Q-P0-07，execution v3）
                 sim = simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date,
-                                           expire_days=expire_days)
+                                           expire_days=expire_days, prev_close=_sig_close)
                 if not sim:
                     continue
                 has_open_leg = any(l["stage"] == "expired" for l in sim["legs"])   # 仍有未出場的 1/3
@@ -1026,6 +1029,24 @@ class TWScanEngine:
         if bump:
             THRESH["min_score"] = min(75, _BASE_MIN_SCORE + bump)
 
+    @staticmethod
+    def _short_availability(sig: Dict, margin_short_map: Dict) -> str:
+        """放空券源判定（Q-P0-07）：回傳 ok／not_marginable／no_quota／unknown。
+        只在「該市場的融券資料這次有成功取得」時才判定；沒取到回 unknown，不因缺資料誤擋。"""
+        sources = {v.get("source") for v in (margin_short_map or {}).values()}
+        src = "tpex_openapi" if str(sig.get("ticker", "")).upper().endswith(".TWO") else "twse_openapi"
+        if src not in sources:
+            return "unknown"
+        ms = margin_short_map.get(sig.get("code", ""))
+        if ms is None:
+            return "not_marginable"
+        try:
+            if float(ms.get("short_utilization_pct") or 0) >= 100:
+                return "no_quota"
+        except Exception:
+            pass
+        return "ok"
+
     def _filter_and_rank(self, signals: List[Dict], market_overview: Dict, active_tickers: Optional[set] = None,
                           active_positions: Optional[List[Dict]] = None) -> List[Dict]:
         # ★ 新增：2026-09-18——使用者反映訊號連續好幾天是0個，稽核 09-17 的
@@ -1117,6 +1138,24 @@ class TWScanEngine:
             margin_short_map = fetch_margin_short_map()
             valuation_map = fetch_valuation_map()
             daytrading_overlay = fetch_market_daytrading_overlay()
+            # ★ 2026-11-12（Q-P0-07 放空可執行性）：融券資料有成功取得的市場，才據以判定——
+            #   · 該股不在信用交易名單內＝不能融券放空 → 不發放空訊號；
+            #   · 融券使用率已達 100%（無剩餘額度）→ 不發放空訊號。
+            # 資料沒取到的市場不判定（不因缺資料誤擋），並在訊號上明示「券源未確認」。
+            _short_blocked = []
+            for sig in signals:
+                if sig.get("direction") != "sell":
+                    continue
+                sig["short_availability"] = self._short_availability(sig, margin_short_map)
+                if sig["short_availability"] == "unknown":
+                    sig["reason_full"] = sig.get("reason_full", "") + "\n⚠️【券源】融券資料本次無法取得，是否有券可空未確認"
+                elif sig["short_availability"] == "not_marginable":
+                    _short_blocked.append(f"{sig.get('ticker')}（非信用交易標的）")
+                elif sig["short_availability"] == "no_quota":
+                    _short_blocked.append(f"{sig.get('ticker')}（融券額度用盡）")
+            if _short_blocked:
+                logger.info(f"_filter_and_rank: 放空不可執行，排除 {len(_short_blocked)} 檔：{_short_blocked}")
+                signals = [s for s in signals if s.get("short_availability") not in ("not_marginable", "no_quota")]
             for sig in signals:
                 code = sig.get("code", "")
                 chip_adj = 0

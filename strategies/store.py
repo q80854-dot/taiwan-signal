@@ -107,10 +107,16 @@ def resolve_pending(max_rows=5000) -> dict:
             continue
         risk = abs(r["entry"] - r["stop"])
         fill = after[0].get("open") or r["entry"]
+        _pc = shadow._signal_close(r, bars)
+        # ★ 2026-11-12（Q-P0-07）：進場當根漲跌停鎖死＝確定無法成交，不當成已成交樣本。
+        if execution.entry_blocked_by_limit(r["direction"], after[0], _pc):
+            updates.append(("UPDATE strategy_signals SET status='unresolved', result='unfilled_limit' WHERE id=?",
+                            (r["id"],)))
+            continue
         sim = execution.simulate_staged_exit(
             after, entry=fill, sl=r["stop"], tp1=r.get("tp1"), tp2=r.get("tp2"), tp3=r.get("tp3"),
             direction=r["direction"], shares=3000, gen_date=r["bar_date"], pnl_fn=pnl_fn,
-            expire_days=expire_days)
+            expire_days=expire_days, prev_close=_pc)
         if not sim:
             continue
         has_open = any(l["stage"] == "expired" for l in sim["legs"])
