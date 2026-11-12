@@ -80,7 +80,26 @@ REASONS = {
 FEATURE_SCHEMA_VERSION = "fs-v1-2026-11-08"
 
 _COLS = ("bar_date,ticker,code,name,kind,direction,score,entry,stop,tp1,tp2,tp3,size_cat,sector,"
-         "sent,features,status,created_at,model_prob,feat_schema_ver,config_ver")
+         "sent,features,status,created_at,model_prob,feat_schema_ver,config_ver,expire_days")
+
+
+def _current_expire_days():
+    from config import CIRCUIT_BREAKER, LEGACY_SIGNAL_EXPIRE_DAYS
+    try:
+        return int(CIRCUIT_BREAKER.get("signal_expire_days") or LEGACY_SIGNAL_EXPIRE_DAYS)
+    except Exception:
+        return LEGACY_SIGNAL_EXPIRE_DAYS
+
+
+def _row_expire_days(row) -> int:
+    """這一列適用的到期天數：寫入當下記錄的 expire_days；沒有紀錄者＝2026-11-12 以前的列，適用當時的 15 天。
+    規則改為 60 天後，進行中的舊假想單不會在半途被換定義。"""
+    from config import LEGACY_SIGNAL_EXPIRE_DAYS
+    try:
+        v = int((row or {}).get("expire_days") or 0)
+    except Exception:
+        v = 0
+    return v if v > 0 else LEGACY_SIGNAL_EXPIRE_DAYS
 
 
 def _config_ver():
@@ -206,6 +225,11 @@ def ensure_table():
             store._migrate_add_column("shadow_signals", "alt_exits", "TEXT")
         except Exception as e:
             logger.debug(f"shadow migrate alt_exits: {e}")
+        # 2026-11-12（到期 15→60 天）：expire_days＝這一列寫入當下適用的到期天數。NULL＝此前的列，適用 15 天。
+        try:
+            store._migrate_add_column("shadow_signals", "expire_days", "INTEGER")
+        except Exception as e:
+            logger.debug(f"shadow migrate expire_days: {e}")
         _ready = True
 
 
@@ -499,17 +523,18 @@ def _insert(rows):
     _add_sector_rel(rows)
     from state_store import store
     _cfg_ver = _config_ver()
+    _exp_days = _current_expire_days()
     with store._conn() as conn:
         before = (conn.execute("SELECT COUNT(*) AS n FROM shadow_signals").fetchone() or {"n": 0})["n"]
         for r in rows:
             try:
                 conn.execute(
-                    f"INSERT INTO shadow_signals ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    f"INSERT INTO shadow_signals ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT (bar_date, ticker) DO NOTHING",
                     (r["bar_date"], r["ticker"], r["code"], r["name"], r["kind"], r["direction"], r["score"],
                      r["entry"], r["stop"], r["tp1"], r["tp2"], r["tp3"], r["size_cat"], r["sector"],
                      0, json.dumps(r["features"], ensure_ascii=False), "pending", r["created_at"],
-                     r.get("model_prob"), FEATURE_SCHEMA_VERSION, _cfg_ver))
+                     r.get("model_prob"), FEATURE_SCHEMA_VERSION, _cfg_ver, _exp_days))
             except Exception as e:
                 logger.warning(f"shadow insert {r.get('ticker')}: {e}")
                 _err(f"insert {r.get('ticker')}: {e}")
@@ -679,11 +704,17 @@ def flush_rejects():
         keep = []
         # ★ 2026-10-09：改為「每個原因隨機抽樣」取代原本「依分數取最高分前 N」。原作法讓被擋下的樣本
         # 系統性偏向最高分的單，與候選基準的分數分布不一致，會放大「這條規則擋掉了賺錢單」的結論偏誤。
-        for lst in by.values():
+        # ★ 2026-11-12：被停發類別（與重挫日）的假想單全數保留、不受上限限制——它們就是「若沒停發會發出的
+        # 訊號」，停發前本來是不設上限的候選；實驗 E03～E06 與特徵 prior_blocked 都需要完整紀錄。
+        always = []
+        for reason, lst in by.items():
+            if reason in STOPPED_CLASS_REASONS or reason == "market_stop":
+                always += lst
+                continue
             random.shuffle(lst)
             keep += lst[:REJ_PER_REASON]
         random.shuffle(keep)
-        keep = keep[:REJ_TOTAL]
+        keep = always + keep[:REJ_TOTAL]
         for x in keep:
             x["features"].update(_fund_features(x["code"], r["fund"]))
         n = _insert(keep)
@@ -1102,7 +1133,6 @@ def resolve_pending(max_rows=8000):
         from state_store import store
         from config import CIRCUIT_BREAKER, COMMISSION_RATE, TAX_RATE_SELL, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL
         cleanup_absurd_metrics()      # 每次結算都檢查非物理值列（2026-11-12 起不再只跑一次）
-        expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
         cutoff = (datetime.now(TPE) - timedelta(days=30)).strftime("%Y-%m-%d")
         # 退市／長期無資料的訊號若一直留在 pending，壞結果（下市、停牌）會從統計中消失（存活者偏誤）。
         # 超過 expire_days + 寬限天數仍抓不到任何 K 棒，標記為 unresolved（不計入勝率與平均 R），
@@ -1125,10 +1155,14 @@ def resolve_pending(max_rows=8000):
         if not rows:
             logger.info("shadow: 結算完成，沒有需要處理的紀錄")
             return {"updated": 0, "closed": 0, "rows": 0}
+        if len(rows) >= max_rows:
+            # 到期延長為 60 天後，未觸價的假想單會在佇列裡留更久；撈滿上限代表較新的列這次沒輪到（下次再結算）。
+            logger.warning(f"shadow: 待結算列數達單次上限 {max_rows}，較新的列順延到下次結算")
         since = (datetime.strptime(min(x["bar_date"] for x in rows), "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")
         bars_by = _load_bars(sorted({x["ticker"] for x in rows}), since)
         updates, closed, rescaled = [], 0, 0
         for row in rows:
+            expire_days = _row_expire_days(row)      # 逐列：舊列 15 天、2026-11-12 之後寫入者依當時設定
             try:
                 age = (_today - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days
             except Exception:
@@ -1275,8 +1309,6 @@ def backfill_champion_r(max_rows=20000) -> dict:
     冪等：只填 champion_r IS NULL 的列，可重複執行。"""
     ensure_table()
     from state_store import store
-    from config import CIRCUIT_BREAKER
-    expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
     with store._conn() as conn:
         rows = [dict(x) for x in conn.execute(
             "SELECT * FROM shadow_signals WHERE status='closed' AND kind='candidate' "
@@ -1295,7 +1327,7 @@ def backfill_champion_r(max_rows=20000) -> dict:
             continue
         r2, _scale = _rescale(row, bars)          # 與 resolve_pending 相同的除權息還原口徑
         try:
-            track = _champion_track(r2, bars, expire_days)
+            track = _champion_track(r2, bars, _row_expire_days(row))
         except Exception as e:
             logger.debug(f"backfill champion_r id={row['id']}: {e}")
             track = None
@@ -1345,7 +1377,10 @@ def _alt_exit_tracks(row, bars, today=None):
     except Exception:
         age = 0
     out = {}
+    own_expire = _row_expire_days(row)
     for name, spec in execution.EXIT_CHALLENGERS.items():
+        if spec.get("ladder", True) and not spec.get("trail_atr") and spec.get("expire") == own_expire:
+            continue                    # 與這一列自己的 Champion 出場完全相同：不重複計算（結果就是 champion_r）
         if spec.get("trail_atr") and not atr:
             out[name] = {"status": "no_atr", "r": None}
             continue
@@ -1424,10 +1459,8 @@ def finalize_champion_tracks(max_rows=5000, today=None) -> dict:
     回傳含新舊差異統計，供稽核（不是只宣稱已修）。"""
     ensure_table()
     from state_store import store
-    from config import CIRCUIT_BREAKER
-    expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
     ref = today or datetime.now(TPE).replace(tzinfo=None)
-    cutoff = (ref - timedelta(days=120)).strftime("%Y-%m-%d")
+    cutoff = (ref - timedelta(days=150)).strftime("%Y-%m-%d")     # 到期最長 60 天＋寬限，留足回看
     with store._conn() as conn:
         rows = [dict(x) for x in conn.execute(
             "SELECT * FROM shadow_signals WHERE status='closed' AND r_multiple IS NOT NULL AND ("
@@ -1450,7 +1483,7 @@ def finalize_champion_tracks(max_rows=5000, today=None) -> dict:
         if bars:
             try:
                 r2, _scale = _rescale(row, bars)
-                track = _champion_track(r2, bars, expire_days, today=ref)
+                track = _champion_track(r2, bars, _row_expire_days(row), today=ref)
             except Exception as e:
                 logger.debug(f"finalize champion id={row['id']}: {e}")
         if legacy:

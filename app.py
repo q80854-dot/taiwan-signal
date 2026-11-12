@@ -1839,7 +1839,7 @@ def api_settings():
             g("組合硬上限", f"{MAX_PORTFOLIO_RISK*100:.0f}%", "所有進行中部位『最壞同時停損』總和的硬上限，超過即暫停新單、不動既有部位"),
             g("同時持倉上限", MAX_SIMULTANEOUS_POSITIONS, "達上限即暫停發新訊號"),
             g("單日最多訊號", CIRCUIT_BREAKER.get("max_daily_signals"), "避免一天塞太多單"),
-            g("訊號有效天數", CIRCUIT_BREAKER.get("signal_expire_days"), "超過仍未觸及停損停利即結案")]},
+            g("訊號有效天數", CIRCUIT_BREAKER.get("signal_expire_days"), "日曆天；超過仍有未出場部位即以收盤結案。2026-11-12 由 15 天延長為 60 天（停損與分批停利不變）；在此之前發出的訊號維持 15 天")]},
         {"title": "停損停利（依市值規模）", "items": [
             g(k, f"停損 {v['sl_atr_mult']} ATR；TP1 {v['tp1_rr']}R／TP2 {v['tp2_rr']}R／TP3 {v['tp3_rr']}R", "") for k, v in SWING_PARAMS.items()]},
         {"title": "基本面加減分（做多）", "items": [

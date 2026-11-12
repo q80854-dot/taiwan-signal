@@ -80,8 +80,10 @@ def resolve_pending(max_rows=5000) -> dict:
     import shadow
     import execution
     from state_store import store
-    from config import CIRCUIT_BREAKER
-    expire_days = CIRCUIT_BREAKER.get("signal_expire_days", 15)
+    # ★ 2026-11-12：獨立策略的假想訊號維持自己的 15 天到期，不隨 Champion 的到期天數（改為 60 天）變動。
+    # 這張表沒有逐列的到期紀錄，若跟著改，進行中的假想訊號會在半途被換定義。要改須另案、連同逐列紀錄一起做。
+    from config import LEGACY_SIGNAL_EXPIRE_DAYS
+    expire_days = LEGACY_SIGNAL_EXPIRE_DAYS
     with store._conn() as conn:
         rows = [dict(x) for x in conn.execute(
             "SELECT * FROM strategy_signals WHERE status='pending' ORDER BY bar_date LIMIT ?",

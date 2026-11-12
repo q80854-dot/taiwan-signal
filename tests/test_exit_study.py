@@ -26,7 +26,9 @@ def test_variants_are_predeclared_and_baseline_is_current_exit():
     assert [v["id"] for v in es.VARIANTS] == [f"V{i}" for i in range(8)]
     assert _v("V0") == {"id": "V0", "name": _v("V0")["name"], "expire": 15, "ladder": True}
     import config
-    assert _v("V0")["expire"] == config.CIRCUIT_BREAKER["signal_expire_days"]
+    # V0 是「研究當時」的正式出場（15 天）；研究後正式到期改為 60 天（＝V3），研究的基準定義不跟著變
+    assert _v("V0")["expire"] == config.LEGACY_SIGNAL_EXPIRE_DAYS == 15
+    assert _v("V3")["expire"] == config.CIRCUIT_BREAKER["signal_expire_days"] == 60
 
 
 def test_baseline_matches_the_production_staged_exit():
