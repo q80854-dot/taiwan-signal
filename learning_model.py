@@ -366,11 +366,23 @@ def _walkforward_eval_dated(parsed, y, scores, rmult, bar_dates, end_dates, end_
     sel_m = val & (oof > 0.5)
     oos_sel_n = int(sel_m.sum())
     oos_sel_net_r = round(float(rmult[sel_m].mean()), 3) if oos_sel_n >= 1 else None
+    # ★ 2026-11-12 M01 口徑切換（使用者核准）：dated 成為主口徑，補齊與 legacy 同格式的十分位
+    deciles = []
+    vidx = np.where(val)[0]
+    if len(vidx) >= 10:
+        order = vidx[np.argsort(oof[vidx], kind="mergesort")]
+        m = len(order)
+        for g in range(10):
+            gi = order[g * m // 10:(g + 1) * m // 10]
+            if len(gi):
+                deciles.append({"decile": g + 1, "n": int(len(gi)),
+                                "win_rate": round(float(y[gi].mean()) * 100, 1),
+                                "avg_r": round(float(rmult[gi].mean()), 3)})
     return {"ok": True, "n_eval": int(val.sum()),
             "model_auc": round(model_auc, 4) if model_auc is not None else None,
             "base_auc": round(base_auc, 4) if base_auc is not None else None,
             "brier": brier, "oos_sel_net_r": oos_sel_net_r, "oos_sel_n": oos_sel_n,
-            "protocol": protocol}
+            "deciles": deciles, "protocol": protocol}
 
 
 def factor_ablation(direction: str = "buy", k: int = 5, l2: float = 1.0) -> dict:
@@ -422,28 +434,45 @@ def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
     cols, w = ev["cols"], ev["w"]
     coef = sorted([{"feature": cols[i], "weight": round(float(w[i]), 4)} for i in range(len(cols))],
                   key=lambda z: -abs(z["weight"]))
-    ma, ba = ev["model_auc"], ev["base_auc"]
-    out = {"ok": True, "n": n, "direction": ds.get("direction", "buy"),
-           "n_eval": ev["n_eval"], "eval_method": "time_series_walkforward",
-           "win_base_rate": round(float(y.mean()) * 100, 1),
-           "model_auc": round(ma, 4) if ma is not None else None,
-           "baseline_auc_rule_score": round(ba, 4) if ba is not None else None,
-           "auc_lift": round(ma - ba, 4) if (ma is not None and ba is not None) else None,
-           "brier": ev["brier"], "deciles": ev["deciles"], "top_features": coef[:15],
-           "n_features": len(cols), "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")}
-    # ★ 2026-11-11 M01/M02 第一刀：日期感知 purged 驗證「並列對照」——同一批資料跑按決策日切分
-    # ＋標籤成熟 purge＋缺實現日隔離，與上面按筆數版本的數字同時呈現（protocol 含逐折刪除數）。
-    # 不改變持久化模型與既有欄位；把 dated 設為正式口徑需使用者核准後另行切換。
+    # ★ 2026-11-12 M01/M02 口徑切換（使用者核准「一和二可以做」）：主口徑＝日期感知 purged
+    # walk-forward（_walkforward_eval_dated：按決策日切分、標籤成熟 purge、缺實現日隔離）。
+    # 按筆數切分版（審查 M01 指出的洩漏口徑）降為 legacy_count_based 對照、不再是主數字。
+    # dated 不可用（資料缺 bar_date／交易日太少）時誠實退回 legacy 並明標，不假裝已切換。
+    # 持久化模型不變：最終權重本就是全資料擬合（與切折方式無關），僅評估數字換口徑。
     try:
         evd = _walkforward_eval_dated(parsed, y, scores, rmult,
                                       ds.get("bar_dates") or [], ds.get("end_dates") or [],
                                       ds.get("end_known"), k=k, l2=l2, mode="all")
-        out["dated"] = evd
-        out["dated_note"] = ("dated＝按決策日切分＋purge（訓練標籤實現日須早於驗證首日−embargo）"
-                             "＋缺實現日隔離的對照數字；主欄位仍為既有按筆數切分，兩者差距大代表"
-                             "原評估可能受標籤成熟洩漏影響。")
     except Exception as _e:
-        out["dated"] = {"ok": False, "error": str(_e)}
+        evd = {"ok": False, "error": str(_e)}
+    dated_ok = bool(isinstance(evd, dict) and evd.get("ok"))
+    pri = evd if dated_ok else ev
+    ma, ba = pri["model_auc"], pri["base_auc"]
+    out = {"ok": True, "n": n, "direction": ds.get("direction", "buy"),
+           "n_eval": pri["n_eval"],
+           "eval_method": "dated_purged_walkforward" if dated_ok else "time_series_walkforward",
+           "win_base_rate": round(float(y.mean()) * 100, 1),
+           "model_auc": round(ma, 4) if ma is not None else None,
+           "baseline_auc_rule_score": round(ba, 4) if ba is not None else None,
+           "auc_lift": round(ma - ba, 4) if (ma is not None and ba is not None) else None,
+           "brier": pri["brier"], "deciles": pri["deciles"], "top_features": coef[:15],
+           "n_features": len(cols), "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    out["dated"] = evd
+    if dated_ok:
+        lma, lba = ev["model_auc"], ev["base_auc"]
+        out["legacy_count_based"] = {
+            "n_eval": ev["n_eval"],
+            "model_auc": round(lma, 4) if lma is not None else None,
+            "base_auc": round(lba, 4) if lba is not None else None,
+            "brier": ev["brier"],
+            "note": "按筆數 n//(k+1) 切分、無 purge（審查 M01 指出的洩漏口徑）——僅供對照，"
+                    "與主數字差距大代表原評估受標籤成熟洩漏影響。"}
+        out["dated_note"] = ("主口徑＝dated（按決策日切分＋purge：訓練標籤實現日須早於驗證首日"
+                             "−embargo＋缺實現日隔離；2026-11-12 使用者核准切換）；"
+                             "legacy_count_based 為舊按筆數口徑對照。")
+    else:
+        out["dated_note"] = ("dated 口徑不可用（" + str(evd.get("reason") or evd.get("error") or "原因不明")
+                             + "），本次主數字退回按筆數 walk-forward（誠實標示，非已切換）。")
     if persist:
         try:
             from state_store import store
