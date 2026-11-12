@@ -7889,12 +7889,32 @@ async function lmModels(){
 async function lmChallengers(){
   const d=await lmCall('/api/learning/challengers');if(!d)return;const el=document.getElementById('lm-out');
   if(!d.ok){el.innerHTML='<div class="empty">資料不足（'+lmFmt(d.n)+' 筆，需 '+lmFmt(d.min_samples)+' 筆）</div>';return;}
-  const champ=d.champion?('現任 champion：'+safe(d.champion.label||'')+'（holdout AUC '+lmFmt(d.champion.holdout_auc)+'）'):'目前尚無 champion';
-  let html='<div style="margin-bottom:6px">半自動挑戰者（Purged+Embargo ＋ 獨立 holdout；樣本 '+d.n+'，holdout '+d.n_holdout+' 筆／'+d.holdout_days+' 交易日，規則基準 holdout AUC '+lmFmt(d.baseline_holdout_auc)+'）</div>'
-    +'<div style="color:var(--t3);margin-bottom:6px">'+champ+'</div>'
-    +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>#</th><th>模型</th><th>holdout AUC</th><th>dev AUC</th><th>Brier</th><th>特徵</th></tr></thead><tbody>'
-    +d.entries.map(e=>'<tr><td>'+e.rank+'</td><td>'+safe(e.label||'')+'</td><td><b>'+lmFmt(e.holdout_auc)+'</b></td><td>'+lmFmt(e.dev_auc)+'</td><td>'+lmFmt(e.holdout_brier)+'</td><td>'+lmFmt(e.n_features)+'</td></tr>').join('')
-    +'</tbody></table></div>';
+  const m=d.m03||{};
+  const champ=d.champion?('現任 champion：'+safe(d.champion.label||'')+'（封存段 AUC '+lmFmt(d.champion.holdout_auc)+'）'):'目前尚無 champion';
+  let html='';
+  if(d.protocol_default==='m03_inner_dev_sealed_once'&&m.ok){
+    // ★ 2026-11-12 M03 協定切換（使用者核准）：內層 dev 折選模、封存段只評一次
+    const sl=m.sealed_once||{};
+    const srow=(nm,s)=>s?('<tr><td>'+nm+'</td><td><b>'+lmFmt(s.auc)+'</b></td><td>'+lmFmt(s.brier)+'</td><td>'+lmFmt(s.sel_net_r)+'（n='+lmFmt(s.sel_n)+'）</td><td>'+lmFmt(s.n_train)+'</td></tr>')
+      :('<tr><td>'+nm+'</td><td colspan="4" style="color:var(--t3)">無（誠實缺值，不以舊期間數字冒充）</td></tr>');
+    html='<div style="margin-bottom:6px">挑戰者評估——M03 協定（內層 dev 折選模、封存段只評一次；樣本 '+d.n+'，dev '+lmFmt(d.dev_n)+' 筆／封存 '+lmFmt(d.n_holdout)+' 筆・'+lmFmt(d.holdout_days)+' 交易日）</div>'
+      +'<div style="color:var(--t3);margin-bottom:6px">'+champ+'</div>'
+      +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>#</th><th>模型（dev 段選模）</th><th>dev AUC</th><th>dev Brier</th><th>評估數</th></tr></thead><tbody>'
+      +d.entries.map(e=>'<tr><td>'+e.rank+'</td><td>'+safe(e.label||'')+(e.id===m.selected_id?' <b>（選中）</b>':'')+'</td><td><b>'+lmFmt(e.dev_auc)+'</b></td><td>'+lmFmt(e.dev_brier)+'</td><td>'+lmFmt(e.dev_n_eval)+'</td></tr>').join('')
+      +'</tbody></table></div>'
+      +'<div style="margin:8px 0 4px">封存段一次性評估（只評選中者＋規則基準＋現任 champion 同批重評）</div>'
+      +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th></th><th>AUC</th><th>Brier</th><th>選中淨R</th><th>訓練數</th></tr></thead><tbody>'
+      +srow('選中者',sl.selected)+srow('規則基準',sl.baseline_rule)+srow('現任 champion（同批）',sl.champion_same_batch)
+      +'</tbody></table></div>'
+      +'<div style="color:var(--t3);margin-top:6px">'+safe(m.holdout_note||'')+'（本封存段查看次數 '+lmFmt(m.attempts)+'）</div>'
+      +(d.legacy_holdout_ranked&&d.legacy_holdout_ranked.entries&&d.legacy_holdout_ranked.entries.length?'<div style="color:var(--t3);margin-top:4px">舊口徑對照（holdout 排名＝選模與評估同批，審查 M03 指出的缺陷）：第一名 '+safe((d.legacy_holdout_ranked.entries[0]||{}).label||'')+'・holdout AUC '+lmFmt((d.legacy_holdout_ranked.entries[0]||{}).holdout_auc)+'</div>':'');
+  }else{
+    html='<div style="margin-bottom:6px">半自動挑戰者（M03 協定不可用'+(m.reason||m.error?('：'+safe(m.reason||m.error)):'')+'，誠實退回舊 holdout 排名口徑；樣本 '+d.n+'，holdout '+lmFmt(d.n_holdout)+' 筆／'+lmFmt(d.holdout_days)+' 交易日，規則基準 holdout AUC '+lmFmt(d.baseline_holdout_auc)+'）</div>'
+      +'<div style="color:var(--t3);margin-bottom:6px">'+champ+'</div>'
+      +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>#</th><th>模型</th><th>holdout AUC</th><th>dev AUC</th><th>Brier</th><th>特徵</th></tr></thead><tbody>'
+      +d.entries.map(e=>'<tr><td>'+e.rank+'</td><td>'+safe(e.label||'')+'</td><td><b>'+lmFmt(e.holdout_auc)+'</b></td><td>'+lmFmt(e.dev_auc)+'</td><td>'+lmFmt(e.holdout_brier)+'</td><td>'+lmFmt(e.n_features)+'</td></tr>').join('')
+      +'</tbody></table></div>';
+  }
   const rec=d.recommendation||{};
   if(!d.gates_ok){html+='<div class="empty" style="margin-top:8px">⚠️ '+safe(rec.reason||'資料不足')+'</div>';}
   else if(rec.promote){const e=d.entries.find(x=>x.id===rec.promote)||{};html+='<div style="margin-top:8px">建議：'+safe(rec.reason||'')+'</div><button class="btn" style="margin-top:6px" onclick="lmPromote(\''+rec.promote+'\')">採用「'+safe(e.label||'')+'」為 champion</button>';}
@@ -7909,7 +7929,7 @@ async function lmPromote(cid){
     if(r.status===401){adAuthed=false;adGate('login','登入已逾時，請重新登入。');return;}
     const d=await r.json();
     if(!d.ok){el.innerHTML='<div class="empty">採用未成功：'+esc2(d.reason||d.error||'')+'</div>';return;}
-    el.innerHTML='<div style="color:var(--up)">✅ 已採用：'+safe(d.champion.label||'')+'（holdout AUC '+lmFmt(d.champion.holdout_auc)+'）。此模型僅供 shadow 平行記錄與解釋，不影響即時訊號。</div>';
+    el.innerHTML='<div style="color:var(--up)">✅ 已採用：'+safe(d.champion.label||'')+'（封存段一次評 AUC '+lmFmt(d.champion.holdout_auc)+(d.champion.metric_note?'・'+safe(d.champion.metric_note):'')+'）。此模型僅供 shadow 平行記錄與解釋，不影響即時訊號。</div>';
   }catch(e){el.innerHTML='<div class="empty">採用失敗：'+esc2(e.message)+'</div>';}
 }
 async function lmExplain(){

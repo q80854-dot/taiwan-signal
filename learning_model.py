@@ -905,8 +905,10 @@ def get_champion() -> Optional[dict]:
 
 
 def run_challengers(k: int = 5, embargo_days: int = EMBARGO_DAYS) -> dict:
-    """半自動挑戰者評估：對多種設定做 Purged+Embargo walk-forward＋獨立 holdout，依 holdout AUC
-    排名，並判斷是否「建議」晉升（通過資料關卡、勝過現任 champion 與規則基準）。不自動晉升。"""
+    """半自動挑戰者評估。主口徑（2026-11-12 使用者核准切換）＝M03 協定：內層 dev 折選模（日期感知
+    purged OOF、不碰封存段）、封存段只評一次（選中者＋規則基準＋現任 champion 同批重評）。
+    舊 holdout 排名口徑（選模與評估同批＝審查 M03 指出的缺陷）降為 legacy_holdout_ranked 對照；
+    m03 不可用時誠實退回舊口徑並明標。仍為人工核准、不自動晉升。"""
     ds = build_dataset()
     if not ds.get("ok"):
         return {"ok": False, "reason": ds.get("reason", "insufficient"), "n": ds.get("n", 0),
@@ -943,8 +945,10 @@ def run_challengers(k: int = 5, embargo_days: int = EMBARGO_DAYS) -> dict:
             rec = {"promote": None, "reason": "未明顯優於現任 champion 或規則基準，維持不變"}
     else:
         rec = {"promote": None, "reason": "holdout 無法評估"}
-    # ★ M03 第一刀（並列對照）：內層 dev 選模＋封存段只評一次；現行 entries/recommendation
-    #   不變（仍以 holdout 排名＝審查 M03 指出的缺陷），切換預設口徑需使用者核准後另行處理。
+    # ★ 2026-11-12 M03 協定切換（使用者核准「一和二可以做」）：m03 成為主口徑——
+    #   內層 dev 折選模（不碰封存段）、封存段只評一次（選中者＋規則基準＋現任 champion 同批重評）。
+    #   舊「所有設定算 holdout_auc 後排序」口徑（審查 M03 指出的缺陷：選模與評估同批）降為
+    #   legacy_holdout_ranked 對照；m03 不可用（交易日太少等）時誠實退回 legacy 並明標。
     try:
         m03 = _challengers_m03(ds, k, embargo_days, champ)
     except Exception as e:
@@ -959,15 +963,37 @@ def run_challengers(k: int = 5, embargo_days: int = EMBARGO_DAYS) -> dict:
         m03["attempts"] = cnt_att
     except Exception as e:
         logger.warning(f"run_challengers m03 attempts: {e}")
-    return {"ok": True, "n": n, "direction": ds.get("direction", "buy"),
+    legacy = {"dev_n": dev_n, "n_holdout": n_holdout, "holdout_days": hold_days,
+              "gates_ok": gates_ok,
+              "baseline_holdout_auc": round(base_auc, 4) if base_auc is not None else None,
+              "entries": entries, "recommendation": rec,
+              "note": "舊口徑：所有設定算 holdout_auc 後排序＝選模與評估同一批封存樣本"
+                      "（審查 M03 指出的缺陷）；2026-11-12 起僅供對照、不再是主口徑。"}
+    out = {"ok": True, "n": n, "direction": ds.get("direction", "buy"),
+           "embargo_days": embargo_days, "champion": champ, "m03": m03,
+           "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if m03.get("ok"):
+        p = m03.get("protocol") or {}
+        out.update({
+            "protocol_default": "m03_inner_dev_sealed_once",
+            "gates_ok": m03.get("gates_ok"),
+            "recommendation": m03.get("recommendation"),
+            "entries": [{**e, "rank": e.get("dev_rank")} for e in (m03.get("inner_dev_rank") or [])],
+            "dev_n": p.get("n_dev"), "n_holdout": p.get("n_holdout"),
+            "holdout_days": p.get("holdout_days"),
+            "baseline_holdout_auc": ((m03.get("sealed_once") or {}).get("baseline_rule") or {}).get("auc"),
+            "legacy_holdout_ranked": legacy,
+            "m03_note": "主口徑＝M03 協定（內層 dev 折選模、封存段只評一次、champion 同批重評；"
+                        "2026-11-12 使用者核准切換）；legacy_holdout_ranked 為舊缺陷口徑對照。"})
+    else:
+        out.update({
+            "protocol_default": "legacy_holdout_ranked",
+            "gates_ok": gates_ok, "recommendation": rec, "entries": entries,
             "dev_n": dev_n, "n_holdout": n_holdout, "holdout_days": hold_days,
-            "gates_ok": gates_ok, "embargo_days": embargo_days,
             "baseline_holdout_auc": round(base_auc, 4) if base_auc is not None else None,
-            "champion": champ, "entries": entries, "recommendation": rec,
-            "m03": m03, "m03_note": "m03＝審查 M03 協定（內層 dev 折選模、封存段只評一次、"
-            "champion 同批重評）之並列對照；現行 entries 仍以 holdout 排名（M03 指出的缺陷）、"
-            "切換預設口徑需使用者核准",
-            "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+            "m03_note": "M03 協定不可用（" + str(m03.get("reason") or m03.get("error") or "原因不明")
+                        + "），本次誠實退回舊 holdout 排名口徑（非已切換主口徑的數字）。"})
+    return out
 
 
 def promote_champion(config_id: str) -> dict:
@@ -986,15 +1012,25 @@ def promote_champion(config_id: str) -> dict:
         return {"ok": False, "reason": "insufficient"}
     ev = _walkforward_eval(ds["parsed"], ds["y"], ds["score"], ds["rmult"], k=5, l2=cfg["l2"], mode=cfg["mode"])
     entry = next((e for e in res["entries"] if e["id"] == config_id), {})
+    # ★ 2026-11-12 M03 切換：champion 中繼資料改用 m03 口徑的誠實數字——封存段一次性評估只對
+    # 「被選中者」做過，晉升者若非選中者則無封存數字（存 None，不冒用 dev 數字假裝）。
+    m03r = res.get("m03") or {}
+    sealed_sel = ((m03r.get("sealed_once") or {}).get("selected")
+                  if config_id == m03r.get("selected_id") else None)
+    holdout_auc = (sealed_sel or {}).get("auc") if m03r.get("ok") else entry.get("holdout_auc")
     try:
         from state_store import store
         trained_at = time.strftime("%Y-%m-%d %H:%M:%S")
         store.set_meta(META_KEY, {"keys": ev["cols"], "mean": ev["mean"].tolist(), "std": ev["std"].tolist(),
                                   "w": ev["w"].tolist(), "b": float(ev["b"]), "trained_at": trained_at,
-                                  "n": ds["n"], "model_auc": entry.get("holdout_auc"),
+                                  "n": ds["n"], "model_auc": holdout_auc,
                                   "baseline_auc": res.get("baseline_holdout_auc")})
         champ = {"config_id": config_id, "label": cfg["label"], "mode": cfg["mode"], "l2": cfg["l2"],
-                 "holdout_auc": entry.get("holdout_auc"), "baseline_holdout_auc": res.get("baseline_holdout_auc"),
+                 "holdout_auc": holdout_auc, "baseline_holdout_auc": res.get("baseline_holdout_auc"),
+                 "dev_auc": entry.get("dev_auc"), "sealed_brier": (sealed_sel or {}).get("brier"),
+                 "sealed_sel_net_r": (sealed_sel or {}).get("sel_net_r"),
+                 "metric_note": ("m03 封存段一次性評估（2026-11-12 切換）" if m03r.get("ok")
+                                 else "legacy holdout 排名口徑（m03 不可用時退回）"),
                  "n": ds["n"], "n_holdout": res["n_holdout"], "promoted_at": trained_at}
         store.set_meta(CHAMPION_KEY, champ)
         return {"ok": True, "champion": champ}
