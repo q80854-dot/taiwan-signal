@@ -157,3 +157,52 @@ def test_prior_blocked_lookup_failure_leaves_feature_missing(monkeypatch):
     rows = [{"bar_date": "2031-03-15", "ticker": "PB9.TW", "features": {}}]
     shadow._add_prior_blocked(rows)
     assert "prior_blocked" not in rows[0]["features"]            # 查不到＝缺漏，不寫 "none" 假裝沒有
+
+
+def test_finalize_alt_exit_tracks_writes_once_and_is_idempotent():
+    """資料庫層：只處理 Champion 已定案的候選；全部方案定案後不再重算；尚未出場者下次再算。"""
+    from datetime import datetime
+    from state_store import store
+    shadow.ensure_table()
+    tks = ("ALT1.TW", "ALT2.TW", "ALT3.TW")
+    def _clean():
+        with store._conn() as conn:
+            for t in tks:
+                conn.execute("DELETE FROM shadow_signals WHERE ticker=?", (t,))
+                conn.execute("DELETE FROM ohlcv_bars WHERE ticker=?", (t,))
+    _clean()
+    try:
+        with store._conn() as conn:
+            for t, champ in (("ALT1.TW", "final"), ("ALT2.TW", "final"), ("ALT3.TW", "provisional")):
+                conn.execute(
+                    "INSERT INTO shadow_signals (bar_date,ticker,code,name,kind,direction,score,entry,stop,tp1,tp2,tp3,"
+                    "status,result,r_multiple,champion_r,champion_status,features,created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    ("2031-03-03", t, "9999", "測試", "candidate", "buy", 80, 100.0, 95.0, 107.5, 112.5, 120.0,
+                     "closed", "sl", -1.0, -1.1 if champ == "final" else None, champ,
+                     json.dumps({"sl_atr": 2.0}), "2031-03-03"))
+            stop = [("2031-03-03", 100, 100, 100, 100), ("2031-03-04", 100, 101, 99, 100), ("2031-03-05", 100, 100, 94, 94.5)]
+            flat = [("2031-03-03", 100, 100, 100, 100)] + [(f"2031-03-{d:02d}", 100, 101, 99, 100) for d in range(4, 12)]
+            for t, seq in (("ALT1.TW", stop), ("ALT2.TW", flat), ("ALT3.TW", stop)):
+                for d, o, h, l, c in seq:
+                    conn.execute("INSERT OR REPLACE INTO ohlcv_bars (ticker,tf_key,bar_date,open,high,low,close,volume,updated_at) "
+                                 "VALUES (?,?,?,?,?,?,?,?,?)", (t, "daily", d, o, h, l, c, 1000, d))
+        today = datetime(2031, 3, 12)
+        out = shadow.finalize_alt_exit_tracks(today=today)
+        assert out["updated"] >= 2
+
+        def alt(t):
+            with store._conn() as conn:
+                v = conn.execute("SELECT alt_exits FROM shadow_signals WHERE ticker=?", (t,)).fetchone()["alt_exits"]
+            return json.loads(v) if v else None
+        a1, a2 = alt("ALT1.TW"), alt("ALT2.TW")
+        assert a1["hold60"]["status"] == "final" and a1["trail3"]["status"] == "final" and a1["sim"] == execution.ALT_EXIT_SIM_VERSION
+        assert a2["hold60"] == {"status": "provisional", "r": None}          # 還沒出場：不存數字
+        assert alt("ALT3.TW") is None                                        # Champion 尚未定案：不處理
+        again = shadow.finalize_alt_exit_tracks(today=today)
+        with store._conn() as conn:
+            n1 = conn.execute("SELECT COUNT(*) AS n FROM shadow_signals WHERE ticker='ALT1.TW' AND alt_exits LIKE ?",
+                              ('%"provisional"%',)).fetchone()["n"]
+        assert n1 == 0 and again["updated"] == 0                             # 已定案者不再重選；未變者不重寫
+    finally:
+        _clean()
