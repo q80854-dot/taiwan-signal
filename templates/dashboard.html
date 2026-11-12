@@ -7865,7 +7865,9 @@ async function lmTrain(){
   if(!d.ok){el.innerHTML='<div class="empty">資料不足（'+lmFmt(d.n)+' 筆，需 '+lmFmt(d.min_samples)+' 筆）</div>';return;}
   el.innerHTML='<div>樣本 '+d.n+'（評估 '+lmFmt(d.n_eval)+'）・基準勝率 '+lmFmt(d.win_base_rate,'%')+'</div>'
     +'<div>模型 AUC <b>'+lmFmt(d.model_auc)+'</b>／規則基準 '+lmFmt(d.baseline_auc_rule_score)+'（提升 '+lmFmt(d.auc_lift)+'）・Brier '+lmFmt(d.brier)+'</div>'
-    +'<div style="color:var(--t3);margin-top:4px">評估方式：時間序列 walk-forward（不偷看未來）</div>'
+    +'<div style="color:var(--t3);margin-top:4px">評估方式：'+(d.eval_method==='dated_purged_walkforward'?'日期感知 purged walk-forward（按決策日切分＋標籤成熟 purge，主口徑，2026-11-12 切換）':'時間序列 walk-forward（按筆數；dated 口徑不可用時的誠實退回）')+'</div>'
+    +(d.legacy_count_based?'<div style="color:var(--t3)">舊按筆數口徑對照：AUC '+lmFmt(d.legacy_count_based.model_auc)+'・Brier '+lmFmt(d.legacy_count_based.brier)+'（審查 M01 指出的洩漏口徑，僅供對照）</div>':'')
+    +(d.dated_note&&d.eval_method!=='dated_purged_walkforward'?'<div style="color:var(--t3)">'+safe(d.dated_note)+'</div>':'')
     +'<div style="margin-top:6px">重要特徵：'+(d.top_features||[]).slice(0,8).map(f=>safe(f.feature)+'('+f.weight+')').join('、')+'</div>';
 }
 async function lmCompete(){
