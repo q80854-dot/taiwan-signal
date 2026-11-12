@@ -57,10 +57,11 @@ def test_backtester_short_borrow_days():
 
 
 def test_no_backtest_pnl_call_omits_days_held():
-    """所有回測路徑呼叫 calc_tw_pnl 都必須傳持有天數（原本 9 處全漏，放空借券費恆為 0）。"""
+    """所有回測路徑呼叫 calc_tw_pnl 都必須傳持有天數（原本 9 處全漏，放空借券費恆為 0）。
+    分批回測改用 StagedPosition 後直接呼叫處減少（狀態機內部一律帶 days_held）。"""
     src = open(bt.__file__, encoding="utf-8").read()
     calls = [m.group(0) for m in re.finditer(r"(?<!def )calc_tw_pnl\((?:[^()]|\([^()]*\))*\)", src)]
-    assert len(calls) >= 9
+    assert len(calls) >= 6
     assert all("days_held" in c for c in calls), [c for c in calls if "days_held" not in c]
 
 
