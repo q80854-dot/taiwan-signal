@@ -3146,6 +3146,10 @@ def api_instrument(ticker: str):
                     if isinstance(ohlcv.get(k), list):
                         ohlcv[k] = ohlcv[k] + [v]
                 ohlcv["appended_mis_bar"] = _q["date"]
+                # ★ 2026-11-12 逐棒階段 2：MIS 盤後定案補棒＝末棒血緣同步（收盤後、定案）
+                ohlcv.update({"last_bar_final": 1, "last_bar_session": "regular",
+                              "last_bar_source": str(_q.get("source") or "mis"),
+                              "last_bar_source_time": None})
         except Exception as _e:
             logger.warning(f"append MIS bar {t}: {_e}")
         out["ohlcv"] = ohlcv

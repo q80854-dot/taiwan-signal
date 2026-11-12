@@ -2,7 +2,9 @@
 
 盤中（info.live）時：研究摘要不得標「{日期} 收盤」而須標「盤中（暫定，未收盤）」；
 關鍵價位註記含今日暫定K棒；估值（收盤後資料）與盤中價格非同一時點須逐欄說明。
-完整 bar.is_final/session/source_time 資料契約（逐棒/逐欄）需後端 schema，列為缺口。
+★ 2026-11-12 缺口已補：bar.is_final/session/source_time 逐棒 schema 完成（階段 1+2，
+見 test_bar_schema_stage1/2）——摘要優先吃逐棒 is_final 真實欄位，info.live 推斷降為
+舊棒無紀錄時的誠實備援。
 """
 import os
 
@@ -15,8 +17,8 @@ def _dash():
 def test_summary_marks_provisional_when_live():
     s = _dash()
     assert "盤中（暫定，未收盤" in s
-    # 收盤標示仍存在（非盤中時）
-    assert "：'收盤'}" in s or ":'收盤'}" in s
+    # 收盤標示仍存在（非盤中時；2026-11-12 起優先吃逐棒 is_final，info.live 為備援）
+    assert ":'收盤'" in s and "last_bar_final===1" in s
 
 
 def test_key_levels_note_provisional_bar():

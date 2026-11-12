@@ -6115,7 +6115,14 @@ function v5TabOv(){
   const sr=(d.indicators||{}).support_resistance||{};
   const act=sg?`已有${sg.direction==='buy'?'多':'空'}方訊號（評分 ${v5E(sg.score)}）：進場 ${v5F(sg.entry_zone_low)}–${v5F(sg.entry_zone_high)}、停損 ${v5F(sg.stop_loss)}、目標 ${v5F(sg.tp1)}。`:`尚未觸發訊號。${sr.nearest_resistance?`最近壓力 <b>${v5F(sr.nearest_resistance)}</b>、支撐 <b>${v5F(sr.nearest_support)}</b>，`:''}收盤後掃描符合條件時會產生訊號。`;
   const ul=(a,ic,c)=>a.length?a.map(s=>`<div style="display:flex;gap:8px;font-size:13px;line-height:20px"><span style="flex:none;color:${c}">${ic}</span><span>${v5E(s)}</span></div>`).join(''):'<div class="o-lbl">—</div>';
-  const summ=`<section class="o-card o-c12"><div class="o-ch"><div><h2>研究摘要</h2><span class="o-mt">依技術、籌碼、財報規則自動整理 · ${v5E((info.quote_date||'').slice(5).replace('-','/'))} ${info.live?'盤中（暫定，未收盤——今日K棒未完成，收盤後數字可能不同）':'收盤'}</span></div><span class="o-tag r-dk">結論：${sc.lab}</span></div>
+  // ★ 2026-11-12 逐棒資料契約階段 2（LIVE10 缺口補齊）：「盤中（暫定）／收盤」優先吃後端逐棒
+  // is_final 真實欄位（末棒日期與報價日同日才可比）；舊棒無紀錄（NULL）或日期不同才退回原本
+  // 以報價狀態（info.live）的推斷——備援，不假裝有逐棒紀錄。
+  const _ohl=d.ohlcv||{},_lbD=((_ohl.dates||[]).slice(-1)[0]||'').slice(0,10);
+  const _lbSame=_lbD&&_lbD===(info.quote_date||'');
+  const _prov='盤中（暫定，未收盤——今日K棒未完成，收盤後數字可能不同）';
+  const sessTxt=(_lbSame&&_ohl.last_bar_final===1)?'收盤（K棒已定案）':(_lbSame&&_ohl.last_bar_final===0)?_prov:(info.live?_prov:'收盤');
+  const summ=`<section class="o-card o-c12"><div class="o-ch"><div><h2>研究摘要</h2><span class="o-mt">依技術、籌碼、財報規則自動整理 · ${v5E((info.quote_date||'').slice(5).replace('-','/'))} ${sessTxt}</span></div><span class="o-tag r-dk">結論：${sc.lab}</span></div>
     <div class="o-cb r-3"><div style="display:flex;flex-direction:column;gap:8px"><div class="o-lbl">多方理由</div>${ul(bull,'▲','var(--o-up)')}</div><div style="display:flex;flex-direction:column;gap:8px"><div class="o-lbl">留意事項</div>${ul(risk,'◆','var(--warn)')}</div>
     <div class="o-inset" style="display:flex;flex-direction:column;gap:10px;background:var(--acc-soft)"><div class="o-lbl" style="color:var(--acc)">操作建議</div><div style="font:500 14px/22px var(--sans)">${act}</div><div class="o-row" style="gap:8px;flex-wrap:wrap">${_me&&_me.user?`<button class="btn primary sm" onclick="mwAlertOpen('${v5E(info.code)}','${escA(info.name||'')}',${info.close??"''"})">設價格提醒</button>`:''}<span>${wlStar(d.ticker)}</span></div></div></div></section>`;
   // 基本面體檢

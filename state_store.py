@@ -921,8 +921,8 @@ class StateStore:
         try:
             with self._conn() as conn:
                 rows = conn.execute(
-                    "SELECT bar_date,open,high,low,close,volume FROM ohlcv_bars "
-                    "WHERE ticker=? AND tf_key=? ORDER BY bar_date DESC LIMIT ?",
+                    "SELECT bar_date,open,high,low,close,volume,is_final,session,source,source_time "
+                    "FROM ohlcv_bars WHERE ticker=? AND tf_key=? ORDER BY bar_date DESC LIMIT ?",
                     (ticker, tf_key, limit)
                 ).fetchall()
             rows = [dict(r) for r in rows]
