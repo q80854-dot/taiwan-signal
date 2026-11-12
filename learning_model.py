@@ -4,6 +4,10 @@
 shadow_signals（每筆訊號的特徵 JSON ＋ 實算淨 R）訓練一個「勝率」模型：
 
 - 標籤 y = 1 若 r_multiple > 0（勝），否則 0。用系統已算好的淨 R，不另定義、不編造。
+  ★ 2026-11-12（S-P0-06）正名：這是「Research 單次出場淨 R 為正」的模型（target="research"），
+  不是正式分批出場的獲利模型。另提供 target="champion"：標籤＝Champion 分批淨 R>0，且只用
+  已定案（champion_status='final'）的樣本、以 Champion 軌出場日為標籤實現日；尚未定案的暫估值
+  一律不入訓練。champion 目標僅供評估對照，不覆寫已存的 shadow 模型。
 - 特徵 = 訊號產生當下擷取的 features（純數值、覆蓋率≥門檻者）＋ 規則分數 score
   （把現有規則當成其中一個特徵＝暖啟動/先驗，不是從 0 學起）。
 - 模型 = numpy 邏輯回歸（可解釋、輕量，不引入 sklearn 等重依賴，守住 Render 記憶體）。
@@ -35,7 +39,13 @@ MIN_COVERAGE = 0.6         # 特徵在樣本中出現比例低於此者不納入
 _EXCLUDE_KEYS = {"reject", "sector", "code", "ticker", "name", "direction", "kind", "month"}
 
 
-def _rows(direction="buy"):
+TARGETS = {
+    "research": "Research 單次出場淨 R > 0（r_multiple；第一次觸價即出場，非正式分批出場）",
+    "champion": "Champion 分批出場淨 R > 0（champion_r；僅已定案 final 樣本，與正式推播同一出場規則）",
+}
+
+
+def _rows(direction="buy", target="research"):
     """讀已結算、有淨 R 的 shadow 列：score / r_multiple / kind / features。
     ★ F-06：依 bar_date（訊號決策日）＋ created_at 由舊到新排序，提供時間序列評估所需的
     時間順序；排序在 SQL 完成，build_dataset 僅保留此順序。
@@ -47,13 +57,21 @@ def _rows(direction="buy"):
     import shadow
     shadow.ensure_table()
     where = "WHERE status='closed' AND r_multiple IS NOT NULL AND kind='candidate'"
+    cols = "bar_date, exit_date, score, r_multiple, kind, direction, features"
+    if target == "champion":
+        # ★ S-P0-06：標籤改用 Champion 分批淨 R，且只取已定案樣本；標籤實現日＝Champion 軌
+        # 最後一腿出場日（不是 Research 的 exit_date，否則 purge 會低估標籤成熟時間）。
+        where = ("WHERE status='closed' AND kind='candidate' AND champion_status='final' "
+                 "AND champion_r IS NOT NULL")
+        cols = ("bar_date, champion_exit_date AS exit_date, score, champion_r AS r_multiple, "
+                "kind, direction, features")
     params = []
     if direction:
         where += " AND direction=?"
         params.append(direction)
     with store._conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT bar_date, exit_date, score, r_multiple, kind, direction, features FROM shadow_signals "
+            "SELECT " + cols + " FROM shadow_signals "
             + where + " ORDER BY bar_date ASC, created_at ASC", tuple(params)).fetchall()]
 
 
@@ -67,14 +85,16 @@ def _num(v):
         return None
 
 
-def build_dataset(direction="buy"):
+def build_dataset(direction="buy", target="research"):
     """回傳 {ok, parsed, y, score, rmult, n, direction} 或 {ok:False,...}（資料不足）。
     parsed：依時間由舊到新的 [(特徵字典, 規則分數), ...]（未填補、未標準化——前處理延後到
     各 fold 的訓練段才 fit，避免洩漏）；y：勝(1)/負(0)；score：規則分數；rmult：淨 R。
     ★ 2026-11-08：只用單一方向的候選（預設 buy），多空不混。"""
-    rows = _rows(direction)
+    if target not in TARGETS:
+        return {"ok": False, "reason": "unknown_target", "n": 0, "direction": direction, "target": target}
+    rows = _rows(direction) if target == "research" else _rows(direction, target)
     if len(rows) < MIN_SAMPLES:
-        return {"ok": False, "reason": "insufficient", "n": len(rows), "direction": direction}
+        return {"ok": False, "reason": "insufficient", "n": len(rows), "direction": direction, "target": target}
     parsed, ys, scores, rmults, bar_dates, end_dates, end_known = [], [], [], [], [], [], []
     for r in rows:
         rm = _num(r.get("r_multiple"))
@@ -106,8 +126,8 @@ def build_dataset(direction="buy"):
         end_known.append(bool(r.get("exit_date")))
     n = len(parsed)
     if n < MIN_SAMPLES:
-        return {"ok": False, "reason": "insufficient", "n": n, "direction": direction}
-    return {"ok": True, "parsed": parsed, "y": np.array(ys, dtype=float),
+        return {"ok": False, "reason": "insufficient", "n": n, "direction": direction, "target": target}
+    return {"ok": True, "target": target, "parsed": parsed, "y": np.array(ys, dtype=float),
             "score": np.array(scores, dtype=float), "rmult": np.array(rmults, dtype=float),
             "bar_dates": bar_dates, "end_dates": end_dates, "end_known": end_known,
             "n": n, "direction": direction}
@@ -421,13 +441,18 @@ def factor_ablation(direction: str = "buy", k: int = 5, l2: float = 1.0) -> dict
                           "噪音大，delta 僅供觀察、非保證；多空分開、不接正式訊號。"}
 
 
-def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
+def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True, target: str = "research") -> dict:
     """訓練＋時間序列 walk-forward 交叉驗證＋和規則分數基準比較；可選擇把最終模型存進 meta。
-    最終落地模型用全部資料擬合（供日後 shadow 評分）；persist 時另把本次版本追加進版本歷史。"""
-    ds = build_dataset()
+    最終落地模型用全部資料擬合（供日後 shadow 評分）；persist 時另把本次版本追加進版本歷史。
+    ★ 2026-11-12（S-P0-06）：target="research"（預設，行為不變）＝Research 單次出場標籤；
+    target="champion"＝Champion 分批淨 R 標籤、僅已定案樣本，只評估、不落地（persist 強制關閉），
+    不覆寫現有 shadow 模型。research 結果另附 champion_target 對照摘要。"""
+    if target != "research":
+        persist = False
+    ds = build_dataset(target=target)
     if not ds.get("ok"):
         return {"ok": False, "reason": ds.get("reason", "insufficient"), "n": ds.get("n", 0),
-                "min_samples": MIN_SAMPLES}
+                "min_samples": MIN_SAMPLES, "target": target, "label_definition": TARGETS.get(target)}
     parsed = ds["parsed"]; y = ds["y"]; scores = ds["score"]; rmult = ds["rmult"]
     n = len(parsed)
     ev = _walkforward_eval(parsed, y, scores, rmult, k=k, l2=l2, mode="all")
@@ -457,7 +482,18 @@ def train_and_eval(k: int = 5, l2: float = 1.0, persist: bool = True) -> dict:
            "auc_lift": round(ma - ba, 4) if (ma is not None and ba is not None) else None,
            "brier": pri["brier"], "deciles": pri["deciles"], "top_features": coef[:15],
            "n_features": len(cols), "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    out["target"] = target
+    out["label_definition"] = TARGETS[target]
     out["dated"] = evd
+    if target == "research":
+        # Champion 目標對照：同一套評估協定、換成正式出場規則的標籤。樣本不足就誠實回 insufficient。
+        try:
+            c = train_and_eval(k=k, l2=l2, persist=False, target="champion")
+            out["champion_target"] = {kk: c.get(kk) for kk in (
+                "ok", "reason", "n", "min_samples", "n_eval", "eval_method", "win_base_rate", "model_auc",
+                "baseline_auc_rule_score", "auc_lift", "brier", "label_definition")}
+        except Exception as _e:
+            out["champion_target"] = {"ok": False, "reason": "error", "error": str(_e)}
     if dated_ok:
         lma, lba = ev["model_auc"], ev["base_auc"]
         out["legacy_count_based"] = {

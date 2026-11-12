@@ -164,8 +164,9 @@ def ensure_table():
         # champion_status：final＝已定案／provisional＝仍有未出場部位（暫估值另存 champion_r_prov，
         # 不進任何統計）／no_fresh_price＝到期前資料就停更，不以舊收盤價代替／legacy_unverified＝
         # 舊值無法以真實 K 棒重驗。champion_r_legacy＝重算前的舊值（保留供稽核比對，不覆寫、不刪）。
+        # champion_exit_date＝Champion 軌最後一腿的出場日（標籤實現日；與 Research 的 exit_date 不同）。
         for col, typ in (("champion_status", "TEXT"), ("champion_r_prov", "REAL"),
-                         ("champion_r_legacy", "REAL")):
+                         ("champion_r_legacy", "REAL"), ("champion_exit_date", "TEXT")):
             try:
                 store._migrate_add_column("shadow_signals", col, typ)
             except Exception as e:
@@ -890,7 +891,7 @@ def _champion_track(row, bars, expire_days, today=None):
         return None
     r = round(sim["pnl"] / (risk * shares), 3)
     if not execution.staged_open_at_end(sim, row["bar_date"], expire_days):
-        return {"r": r, "status": "final"}
+        return {"r": r, "status": "final", "exit_date": sim.get("exit_date")}
     try:
         ref = today or datetime.now(TPE).replace(tzinfo=None)
         age = (ref - datetime.strptime(row["bar_date"][:10], "%Y-%m-%d")).days
@@ -907,7 +908,8 @@ def _champion_fields(track):
         return [], []
     st = track["status"]
     if st == "final":
-        return ["champion_r=?", "champion_r_prov=NULL", "champion_status='final'"], [track["r"]]
+        return (["champion_r=?", "champion_r_prov=NULL", "champion_status='final'", "champion_exit_date=?"],
+                [track["r"], track.get("exit_date")])
     if st == "provisional":
         return ["champion_r=NULL", "champion_r_prov=?", "champion_status='provisional'"], [track["r"]]
     return ["champion_r=NULL", "champion_r_prov=NULL", "champion_status='no_fresh_price'"], []
@@ -1182,11 +1184,12 @@ def backfill_champion_r(max_rows=20000) -> dict:
         if track is None or track["status"] != "final":   # 缺真實 K 棒/退化/尚未定案 → 留 NULL，不猜
             skipped += 1
             continue
-        updates.append((track["r"], row["id"]))
+        updates.append((track["r"], track.get("exit_date"), row["id"]))
     if updates:
         with store._conn() as conn:
-            for champ, _id in updates:
-                conn.execute("UPDATE shadow_signals SET champion_r=?, champion_status='final' WHERE id=?", (champ, _id))
+            for champ, _xd, _id in updates:
+                conn.execute("UPDATE shadow_signals SET champion_r=?, champion_status='final', "
+                             "champion_exit_date=? WHERE id=?", (champ, _xd, _id))
     logger.info(f"champion_r 回填：掃 {len(rows)} 筆、填 {len(updates)} 筆、缺真實資料略過 {skipped} 筆")
     return {"scanned": len(rows), "filled": len(updates), "skipped_nodata": skipped}
 
@@ -1460,7 +1463,7 @@ def export_csv(kind=None, status=None):
             keys[k] = keys.get(k, 0) + 1
     fkeys = [k for k, _ in sorted(keys.items(), key=lambda z: -z[1])][:500]   # 2026-10-16：上限 150→500，幾乎匯出全部特徵
     base = ["id", "bar_date", "ticker", "code", "name", "kind", "direction", "score", "entry", "stop", "tp1", "tp2",
-            "tp3", "size_cat", "sector", "sent", "status", "result", "exit_price", "exit_date", "r_multiple", "champion_r", "champion_status", "champion_r_prov", "champion_r_legacy",
+            "tp3", "size_cat", "sector", "sent", "status", "result", "exit_price", "exit_date", "r_multiple", "champion_r", "champion_status", "champion_exit_date", "champion_r_prov", "champion_r_legacy",
             "mfe_r", "mae_r", "bars_held", "gap_pct", "r1", "r5", "r10", "r20", "mae_bars", "mfe_bars", "tp1_before_sl", "created_at"]
     # 2026-10-16：加上離線分析常用的衍生欄位，省得每次自己算
     WIN = ("tp1", "tp2", "tp3")

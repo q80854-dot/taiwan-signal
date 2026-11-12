@@ -266,6 +266,20 @@ def calc_tw_pnl(entry, close, direction, shares, days_held=0):
     borrow   = sell_leg * shares * SHORT_BORROW_ANNUAL * max(days_held, 0) / 365 if direction == "sell" else 0
     return round(gross - buy_fee - sell_fee - sell_tax - borrow, 0)
 
+def _held_days(dates, bar_in, bar_now):
+    """★ 2026-11-12（Q-P0-02）持有『日曆天』數，供放空借券費計算。原本各回測呼叫 calc_tw_pnl
+    都沒傳 days_held（預設 0），放空的借券費恆為 0、淨損益被高估。有日期就用日期差；
+    沒有日期序列時以交易日數 ×7/5 近似。"""
+    try:
+        return max(0, (datetime.strptime(str(dates[bar_now])[:10], "%Y-%m-%d")
+                       - datetime.strptime(str(dates[bar_in])[:10], "%Y-%m-%d")).days)
+    except Exception:
+        try:
+            return max(0, int(round((bar_now - bar_in) * 7 / 5)))
+        except Exception:
+            return 0
+
+
 def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, expire_days=None):
     """★ 2026-11-08 Phase 1：分批出場判定統一由 execution.simulate_staged_exit 執行，與
     （未來的）其他回測路徑共用同一實作，避免漂移。成本仍走本模組的 calc_tw_pnl（以 pnl_fn
@@ -381,7 +395,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
                 elif hit_tp2: res,cp="tp2",tp2
                 else: res,cp="tp1",tp1
                 shares=open_trade.get("shares",1)
-                pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares)
+                pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares,days_held=_held_days(dates,open_trade["bar"],i))
                 entry_balance=balance
                 balance+=pnl
                 trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],"close":cp,
@@ -445,7 +459,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
                                         open_trade={"direction":direction,"fill_price":price,"sl":sl,"tp1":tp_info["tp1"],"tp2":tp_info["tp2"],
                                                     "score":score,"shares":pos["shares"],"bar":i}
         if open_trade:
-            unreal_pnl=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade.get("shares",1))
+            unreal_pnl=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade.get("shares",1),days_held=_held_days(dates,open_trade["bar"],i))
             equity.append(balance+unreal_pnl)
         else:
             equity.append(balance)
@@ -455,7 +469,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
         # append 進 equity_curve 了，這裡只是把它「實現」成真正的 balance/trades 紀錄，數值一致，
         # 不需要重複記錄，否則 equity_curve 最後會多一個重複點。
         d=open_trade["direction"]; cp=closes[-1]; shares=open_trade.get("shares",1)
-        pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares)
+        pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares,days_held=_held_days(dates,open_trade["bar"],n-1))
         balance+=pnl
         trades.append({"ticker":ticker,"direction":d,"entry":open_trade["fill_price"],"close":cp,
                         "result":"forced_close","pnl_twd":pnl,"shares":shares,"pnl_pct":round(pnl/balance*100,2),
@@ -504,6 +518,7 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
     if not data or len(data.get("closes",[]))<train_bars+test_bars:
         return {"error":"數據不足以進行 Walk-Forward"}
     closes=data["closes"]; highs=data["highs"]; lows=data["lows"]; opens=data["opens"]; volumes=data["volumes"]
+    dates=data.get("dates",[])
     try:
         from stock_universe import get_stock_info
         info=get_stock_info(ticker); size_cat=info.get("size_cat","中型股") if info else "中型股"
@@ -527,7 +542,7 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
                     # 原本同一根 K 棒同時觸及停損與停利時取 tp1（樂觀，會高估勝率）。日K 無法得知盤中
                     # 先到哪一個，保守假設先觸停損（最壞情況），與主回測 backtest_symbol_tw 的處理一致。
                     res,cp = ("sl",sl) if hit_sl else ("tp1",tp1)
-                    pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,open_trade.get("shares",1))
+                    pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,open_trade.get("shares",1),days_held=_held_days(dates,open_trade["bar"],i))
                     balance+=pnl; t={"result":res,"pnl_twd":pnl,"score":open_trade["score"]}
                     test_trades.append(t); all_test_trades.append(t); open_trade=None; continue
             if open_trade: continue
@@ -562,7 +577,7 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
         # 結果標記為 "eow"（end-of-window）。
         if open_trade:
             cp=closes[te_end-1]
-            pnl=calc_tw_pnl(open_trade["fill_price"],cp,open_trade["direction"],open_trade.get("shares",1))
+            pnl=calc_tw_pnl(open_trade["fill_price"],cp,open_trade["direction"],open_trade.get("shares",1),days_held=_held_days(dates,open_trade["bar"],te_end-1))
             balance+=pnl; t={"result":"eow","pnl_twd":pnl,"score":open_trade["score"]}
             test_trades.append(t); all_test_trades.append(t); open_trade=None
         # 勝率改以「淨損益>0」計（對既有 tp1/sl 等價：tp1→正、sl→負；另可正確涵蓋 eow 強制平倉）
@@ -672,44 +687,46 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
     invested = 0.0
     open_pos = {}
     trades, equity, axis, concur = [], [], [], []
+    import execution
 
-    def _close(t, cp, res, day):
-        nonlocal balance, invested
-        p = open_pos.pop(t)
-        pnl = calc_tw_pnl(p["fill_price"], cp, p["direction"], p["shares"])
-        balance += pnl; invested -= p["value"]
+    def _hold(day, p):
         try:
-            hold = (datetime.strptime(day[:10], "%Y-%m-%d") - datetime.strptime(p["bar_date"][:10], "%Y-%m-%d")).days
+            return (datetime.strptime(day[:10], "%Y-%m-%d") - datetime.strptime(p["bar_date"][:10], "%Y-%m-%d")).days
         except Exception:
-            hold = 0
-        trades.append({"ticker": t, "direction": p["direction"], "entry": p["fill_price"], "close": round(cp, 2),
-                       "result": res, "pnl_twd": round(pnl, 0), "shares": p["shares"], "score": p["score"],
-                       "bar_in": p["bar_date"], "bar_out": day, "hold_days": hold})
+            return 0
 
+    def _book(t, legs, day, res_override=None):
+        """把這根新成交的腿入帳；部位出清時記一筆完整交易。"""
+        nonlocal balance, invested
+        p = open_pos[t]
+        for leg in legs:
+            balance += leg["pnl"]; invested -= leg["shares"] * p["fill_price"]
+            p["realized"] += leg["pnl"]
+        if p["pos"].remaining > 0:
+            return
+        open_pos.pop(t)
+        sh = sum(l["shares"] for l in p["pos"].legs) or 1
+        trades.append({"ticker": t, "direction": p["direction"], "entry": p["fill_price"],
+                       "close": round(sum(l["price"] * l["shares"] for l in p["pos"].legs) / sh, 2),
+                       "result": res_override or p["pos"].result(), "pnl_twd": round(p["realized"], 0),
+                       "shares": p["shares"], "score": p["score"], "bar_in": p["bar_date"], "bar_out": day,
+                       "hold_days": _hold(day, p),
+                       "legs": [{"stage": l["stage"], "price": l["price"], "shares": l["shares"],
+                                 "pnl": round(l["pnl"], 0)} for l in p["pos"].legs]})
+
+    def _bar(dd, di):
+        return {"bar_date": dd["dates"][di], "open": dd["opens"][di], "high": dd["highs"][di],
+                "low": dd["lows"][di], "close": dd["closes"][di]}
+
+    # ★ 2026-11-12（Q-P0-01／02／03）與正式流程對齊：
+    #   時序：盤後掃描用「前一交易日（含）以前」的日 K 產生訊號，計畫價位（進場參考／停損／三段
+    #         停利）以訊號日收盤定錨；隔日『開盤』成交。原本用隔日『收盤』進場並以該收盤重算
+    #         停損停利，比正式流程晚了一個交易時段、價位基準也不同。
+    #   出場：改用 execution.StagedPosition（TP1/TP2/TP3 各 1/3、移動停損、到期窗），與正式推播、
+    #         影子 Champion 軌同一個狀態機；原本只在 TP1 一次全出。進場當日即納入出場判定。
+    #   成本：每一腿以實際持有天數計借券費（原本 calc_tw_pnl 未傳 days_held，放空借券費恆為 0）。
     for day in all_dates:
-        # 2a) 出場（保守：同根同時觸停損停利取停損）
-        for t in list(open_pos.keys()):
-            di = data[t]["idx"].get(day)
-            if di is None:
-                continue
-            dd = data[t]["d"]; p = open_pos[t]; d_ = p["direction"]
-            hi, lo = dd["highs"][di], dd["lows"][di]
-            hit_sl = (d_ == "buy" and lo <= p["sl"]) or (d_ == "sell" and hi >= p["sl"])
-            hit_tp = (d_ == "buy" and hi >= p["tp1"]) or (d_ == "sell" and lo <= p["tp1"])
-            if hit_sl or hit_tp:
-                res, cp = ("sl", p["sl"]) if hit_sl else ("tp1", p["tp1"])
-                _close(t, cp, res, day)
-                continue
-            # ★ 2026-11-09 Phase B：到期窗。實盤訊號持有達 signal_expire_days（日曆天）仍未出場即
-            # 強制平倉；回測沿用同一規則，避免「無限持有到最終 TP1」而高估勝率（look-ahead）。
-            try:
-                _held = (datetime.strptime(day[:10], "%Y-%m-%d")
-                         - datetime.strptime(p["bar_date"][:10], "%Y-%m-%d")).days
-            except Exception:
-                _held = 0
-            if _held >= EXPIRE_DAYS:
-                _close(t, dd["closes"][di], "expired", day)
-        # 2b) 進場：找當日候選、依分數排序，在三個限制下開倉
+        # 2a) 進場（開盤）：以前一交易日（含）以前的資料產生訊號，在三個限制下開倉
         if len(open_pos) < max_pos:
             cands = []
             for t, v in data.items():
@@ -724,9 +741,10 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                 dir_ = mtf.get("direction", "none"); sc = mtf.get("score", 0)
                 if dir_ == "none" or sc < min_score or mtf.get("adx_value", 0) < THRESH["min_adx"]:
                     continue
-                price = dd["closes"][di]
+                price = dd["closes"][di - 1]                     # 訊號日收盤＝計畫價位的定錨
+                fill = dd["opens"][di]                           # 隔日開盤成交
                 dind = mtf.get("entry_indicators", {}); atr = dind.get("atr", {}).get("value", 0) or price * 0.02
-                if not atr or price <= 0:
+                if not atr or price <= 0 or not fill or fill <= 0:
                     continue
                 lo5 = min(dd["lows"][max(0, di - 5):di]) if di >= 5 else None
                 hi5 = max(dd["highs"][max(0, di - 5):di]) if di >= 5 else None
@@ -736,10 +754,10 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                 tp = calc_take_profits_tw(dir_, price, sl, v["size_cat"])
                 if tp["rr1"] < THRESH["min_rr"]:
                     continue
-                cands.append((sc, t, dir_, price, sl, tp["tp1"]))
+                cands.append((sc, t, dir_, price, fill, sl, tp))
             cands.sort(key=lambda z: -z[0])
-            risk_open = sum(p["risk"] for p in open_pos.values())
-            for sc, t, dir_, price, sl, tp1 in cands:
+            risk_open = sum(p["risk"] * p["pos"].remaining / p["shares"] for p in open_pos.values())
+            for sc, t, dir_, price, fill, sl, tp in cands:
                 if len(open_pos) >= max_pos:
                     break
                 pos = calc_position_size(price, sl, balance=balance, size_cat=data[t]["size_cat"],
@@ -747,25 +765,42 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                 sh = pos["shares"]
                 if sh <= 0:
                     continue
-                value = sh * price; risk = sh * abs(price - sl)
+                value = sh * fill; risk = sh * abs(fill - sl)
+                if risk <= 0:                              # 開盤已穿越停損：不進場（無有效風險定義）
+                    continue
                 if invested + value > balance:            # 買力不足
                     continue
                 if risk_open + risk > balance * port_risk:  # 組合風險硬上限
                     continue
-                open_pos[t] = {"direction": dir_, "fill_price": price, "sl": sl, "tp1": tp1, "shares": sh,
-                               "risk": risk, "value": value, "bar_date": day, "score": sc}
+                di = data[t]["idx"][day]
+                sig_day = data[t]["d"]["dates"][di - 1]
+                open_pos[t] = {"direction": dir_, "fill_price": fill, "shares": sh, "risk": risk,
+                               "bar_date": sig_day, "score": sc, "realized": 0.0,
+                               "pos": execution.StagedPosition(fill, sl, tp["tp1"], tp.get("tp2"), tp.get("tp3"),
+                                                               dir_, sh, sig_day, calc_tw_pnl, EXPIRE_DAYS)}
                 invested += value; risk_open += risk
-        # 2c) 逐日 mark-to-market
+        # 2b) 出場：所有持倉（含今日新進場者）以當日 K 棒逐腿判定
+        for t in list(open_pos.keys()):
+            di = data[t]["idx"].get(day)
+            if di is None:
+                continue
+            legs = open_pos[t]["pos"].on_bar(_bar(data[t]["d"], di))
+            if legs:
+                _book(t, legs, day)
+        # 2c) 逐日 mark-to-market（僅未出場的剩餘股數；已出場各腿損益已入 balance）
         unreal = 0.0
         for t, p in open_pos.items():
             di = data[t]["idx"].get(day)
             cl = data[t]["d"]["closes"][di] if di is not None else p["fill_price"]
-            unreal += calc_tw_pnl(p["fill_price"], cl, p["direction"], p["shares"])
+            unreal += calc_tw_pnl(p["fill_price"], cl, p["direction"], p["pos"].remaining,
+                                  days_held=_hold(day, p))
         equity.append(round(balance + unreal, 0)); axis.append(day); concur.append(len(open_pos))
     # 3) 期末強制平倉剩餘部位（以各檔最後一根收盤）
     for t in list(open_pos.keys()):
         dd = data[t]["d"]
-        _close(t, dd["closes"][-1], "eow", dd["dates"][-1])
+        leg = open_pos[t]["pos"].force_close(_bar(dd, len(dd["dates"]) - 1), stage="eow")
+        _book(t, [leg] if leg else [], dd["dates"][-1],
+              res_override=None if any(l["stage"] != "eow" for l in open_pos[t]["pos"].legs) else "eow")
     # 4) 指標
     metrics = calc_performance_metrics(equity, trades)
     wins = len([x for x in trades if x["pnl_twd"] > 0]); losses = len([x for x in trades if x["pnl_twd"] <= 0])
@@ -788,8 +823,17 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             "max_positions": max_pos, "max_portfolio_risk_pct": round(port_risk * 100, 1),
             "min_score_used": min_score, "by_direction": {"buy": _dir("buy"), "sell": _dir("sell")},
             "equity_curve": equity, "dates": axis, "trades": trades[-50:],
+            "exit_model": "staged", "sim_version": execution.STAGED_SIM_VERSION,
+            "entry_model": "訊號日收盤定錨計畫價位、隔日開盤成交",
+            "universe_pit": "PIT_UNAVAILABLE",
+            "limitations": [
+                "標的池與規模分類取自『現在』的成分股與基本資料，非歷史當時（倖存者／時點偏差），"
+                "績效可能高估；不得當成正式有效的歷史績效。",
+                "未模擬零股／整股單位、漲跌停鎖死、停牌、成交量上限與放空券源，實際可成交性未驗證。",
+                "放空借券費以固定年率估算，未反映個股實際費率與券源有無。"],
             "note": "單一共享帳戶、跨檔逐日模擬，受同時持倉上限／買力／組合風險硬上限約束；"
-                    "成本含手續費、證交稅、滑價（calc_tw_pnl）。只用當日(含)以前資料，無未來函數。",
+                    "出場為 TP1/TP2/TP3 各 1/3 的分批出場（與正式推播同一狀態機）；"
+                    "成本含手續費、證交稅、滑價、放空借券費（calc_tw_pnl）。訊號只用前一交易日(含)以前資料。",
             "completed_at": datetime.now(timezone.utc).isoformat()}
 
 
@@ -999,7 +1043,7 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
             hit_stop=(d=="buy" and lows[i]<=cur_sl) or (d=="sell" and highs[i]>=cur_sl)
             if hit_stop and open_trade["shares_remaining"]>0:
                 shares=open_trade["shares_remaining"]
-                pnl=calc_tw_pnl(open_trade["fill_price"],cur_sl,d,shares)
+                pnl=calc_tw_pnl(open_trade["fill_price"],cur_sl,d,shares,days_held=_held_days(dates,open_trade["bar"],i))
                 balance+=pnl; realized_pnl_today+=pnl
                 open_trade["legs"].append({"stage":"stop","price":cur_sl,"shares":shares,"pnl_twd":pnl})
                 open_trade["shares_remaining"]=0
@@ -1012,7 +1056,7 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
                     tgt=open_trade[target_key]
                     hit=(d=="buy" and highs[i]>=tgt) or (d=="sell" and lows[i]<=tgt)
                     if not hit: break  # 未碰到較近的目標，後面更遠的目標當天不可能碰到
-                    pnl=calc_tw_pnl(open_trade["fill_price"],tgt,d,leg_shares)
+                    pnl=calc_tw_pnl(open_trade["fill_price"],tgt,d,leg_shares,days_held=_held_days(dates,open_trade["bar"],i))
                     balance+=pnl; realized_pnl_today+=pnl
                     open_trade["legs"].append({"stage":stage,"price":tgt,"shares":leg_shares,"pnl_twd":pnl})
                     open_trade["leg_done"][stage]=True
@@ -1077,13 +1121,13 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
                                                     "leg_done":{"tp1":False,"tp2":False,"tp3":False},
                                                     "legs":[],"bar":i}
         if open_trade and open_trade["shares_remaining"]>0:
-            unreal=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade["shares_remaining"])
+            unreal=calc_tw_pnl(open_trade["fill_price"],price,open_trade["direction"],open_trade["shares_remaining"],days_held=_held_days(dates,open_trade["bar"],i))
             equity.append(balance+unreal)
         else:
             equity.append(balance)
     if open_trade and open_trade["shares_remaining"]>0:
         d=open_trade["direction"]; cp=closes[-1]; shares=open_trade["shares_remaining"]
-        pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares)
+        pnl=calc_tw_pnl(open_trade["fill_price"],cp,d,shares,days_held=_held_days(dates,open_trade["bar"],n-1))
         balance+=pnl
         legs=open_trade["legs"]+[{"stage":"forced_close","price":cp,"shares":shares,"pnl_twd":pnl}]
         total_pnl=sum(l["pnl_twd"] for l in legs)
