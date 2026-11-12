@@ -122,6 +122,24 @@ def simulate_exit(planned_entry, entry_fill, stop, direction, bars_after, bar_da
     return out
 
 
+def staged_open_at_end(sim, gen_date, expire_days) -> bool:
+    """★ 2026-11-12（S-P0-01／S-P1-02）：分批模擬結束時是否「其實還有部位在場」。
+    simulate_staged_exit 對沒出完的部位，一律以最後一根 K 棒收盤補一腿 expired。那一腿只有在
+    該 K 棒的日曆天齡已達 expire_days 時才是真正的到期結算；否則只是「以最新收盤暫估」，
+    呼叫端不得把它當定案值。未設 expire_days 時無到期概念，補的那一腿一律視為暫估。"""
+    legs = (sim or {}).get("legs") or []
+    if not legs or legs[-1].get("stage") != "expired":
+        return False
+    if not expire_days:
+        return True
+    try:
+        age = (datetime.strptime(str(sim.get("exit_date"))[:10], "%Y-%m-%d")
+               - datetime.strptime(str(gen_date)[:10], "%Y-%m-%d")).days
+    except Exception:
+        return True
+    return age < expire_days
+
+
 def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date, pnl_fn,
                          expire_days=None):
     """分批出場模擬器（2026-11-08，Phase 1：backtester 與此共用同一實作）。

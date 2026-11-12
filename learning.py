@@ -59,10 +59,16 @@ def _stats(rows):
     n = len(rows)
     if not n:
         return {"n": 0}
-    w = sum(1 for r in rows if r["result"] in WIN)
-    l = sum(1 for r in rows if r["result"] == "sl")
-    e = n - w - l
+    # ★ 2026-11-12（S-P0-03）分母對齊：原本「勝率」以全部列為分母、「平均 R」只以有 R 的列為分母，
+    # 無有效 R 的列（如缺停損的歷史對照組）被算進前者、排除於後者，兩個數字其實不是同一批樣本。
+    # 現在事件比率與 R 統計一律以「有有效淨 R 的列」為母體，無效列另計 n_invalid 揭露、不混入。
+    valid = [r for r in rows if r.get("r_multiple") is not None]
+    nv = len(valid)
+    w = sum(1 for r in valid if r["result"] in WIN)
+    l = sum(1 for r in valid if r["result"] == "sl")
+    e = nv - w - l
     rs = _rl(rows)
+    pos = sum(1 for x in rs if x > 0)
     m, sd = _mean_sd(rs)
     r10 = [r["r10"] for r in rows if r.get("r10") is not None]
     mf = [r["mfe_r"] for r in rows if r.get("mfe_r") is not None]
@@ -93,15 +99,22 @@ def _stats(rows):
         cur = cur + 1 if loss_flag else 0
         mcl = max(mcl, cur)
     tbs = [r["tp1_before_sl"] for r in rows if r.get("tp1_before_sl") is not None]
-    return {"n": n, "win": w, "loss": l, "expired": e,
-            "win_rate": round(w / n * 100, 1), "stop_rate": round(l / n * 100, 1),
+    return {"n": n, "n_valid_r": nv, "n_invalid": n - nv, "win": w, "loss": l, "expired": e,
+            # win_rate＝「觸及停利率」（事件標籤 tp1/2/3 的比例），不等於「淨 R 為正的比例」：
+            # 觸及 TP1 後扣成本仍可能 ≤0，到期出場也可能為正。兩者分開回報，不得混稱勝率。
+            "win_rate": round(w / nv * 100, 1) if nv else None,
+            "stop_rate": round(l / nv * 100, 1) if nv else None,
+            "target_touch_rate": round(w / nv * 100, 1) if nv else None,
+            "net_positive_rate": round(pos / nv * 100, 1) if nv else None,
             "avg_r": round(m, 3) if rs else None, "t_vs0": t,
             "avg_r10": round(sum(r10) / len(r10), 3) if r10 else None, "n_r10": len(r10),
             "mfe": round(sum(mf) / len(mf), 2) if mf else None,
             "mae": round(sum(ma) / len(ma), 2) if ma else None,
             "avg_bars_held": round(sum(bh) / len(bh), 1) if bh else None,
             "exits": exits,
+            # sharpe＝每筆 R 的平均÷標準差（穩定度），不是日頻／年化的帳戶 Sharpe（S-P1-06）。
             "profit_factor": profit_factor, "payoff": payoff, "sharpe": sharpe,
+            "per_trade_r_stability": sharpe,
             "avg_win_r": round(avg_win, 2) if avg_win is not None else None,
             "avg_loss_r": round(avg_loss, 2) if avg_loss is not None else None,
             "best_r": round(max(rs), 2) if rs else None, "worst_r": round(min(rs), 2) if rs else None,

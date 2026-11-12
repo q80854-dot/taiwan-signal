@@ -120,6 +120,18 @@ def resolve_pending(max_rows=5000) -> dict:
             aged_out = True
         if has_open and not aged_out:
             continue                       # 尚有未出場部位、未到期：留著下次結算
+        # ★ 2026-11-12（S-P1-02）：已過到期日，但補上的 expired 腿所用 K 棒尚未到到期日＝K 棒在
+        # 到期前就停更。那一腿是「過期價暫估」而非真正的到期結算：先留 pending 等新棒；超過寬限
+        # 仍等不到 → unresolved/no_fresh_price，不以舊收盤價當到期價、不計入統計。
+        if execution.staged_open_at_end(sim, r["bar_date"], expire_days):
+            try:
+                _age = (today - datetime.strptime(r["bar_date"], "%Y-%m-%d")).days
+            except Exception:
+                _age = 0
+            if _age >= expire_days + shadow.CHAMPION_GRACE_DAYS:
+                updates.append(("UPDATE strategy_signals SET status='unresolved', result='no_fresh_price' WHERE id=?",
+                                (r["id"],)))
+            continue
         champ = round(sim["pnl"] / (risk * 3000), 3) if risk else None
         # 逐筆 MAE/MFE（有號極值，R 計）：持有窗（首根之後到出場日）內最不利/最有利價格偏移。
         # 基準＝實際 fill（首根開盤）、分母＝|entry−stop|；價格路徑極值、不含費稅（與 champion_r

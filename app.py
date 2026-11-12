@@ -664,6 +664,12 @@ def job_shadow_resolve(reason: str = "排程"):
         r = shadow.resolve_pending()
         logger.info(f"⏰ 影子結算（{reason}）完成：{r}")
         try:
+            # ★ 2026-11-12（S-P0-01）：Champion 軌定案——最後一腿真的出場或到期才寫 champion_r；
+            # 並以真實 K 棒重驗舊值（舊值保留於 champion_r_legacy）。只讀資料庫、冪等。
+            logger.info(f"⏰ Champion 軌定案（{reason}）完成：{shadow.finalize_champion_tracks()}")
+        except Exception as e:
+            logger.warning(f"job_shadow_resolve finalize_champion_tracks: {e}")
+        try:
             from strategies import store as _ss
             logger.info(f"⏰ 策略假想訊號結算（{reason}）完成：{_ss.resolve_pending()}")
         except Exception as e:
