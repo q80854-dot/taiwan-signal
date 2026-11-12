@@ -354,6 +354,49 @@ def _weekly_asof_slice(weekly, day):
         return None
 
 
+def _bt_group_key(sector, ticker=""):
+    """相關性群組鍵——與 scanner._correlation_group_key 相同的規則（由測試鎖定兩者一致）：
+    屬於 CORRELATION_GROUPS 某一組者共用該組；產業不明（空字串／「其他」）者每檔自成一組，
+    不因「不知道」而互相擠占名額。"""
+    from config import CORRELATION_GROUPS
+    for grp in CORRELATION_GROUPS:
+        if sector in grp:
+            return "|".join(grp)
+    if not sector or sector == "其他":
+        return f"__unknown_sector__:{ticker}" if ticker else "其他"
+    return sector
+
+
+def _bt_apply_group_limits(cands, open_positions, sector_of):
+    """★ 2026-11-12（Q-P1-08）把正式掃描的兩道分散規則套進組合回測（原本回測沒有，會高估可同時持有的
+    同族群檔數）：(1) 同一天同產業只留分數最高的一檔；(2) 同一相關性群組（含既有持倉）最多
+    MAX_PER_CORRELATION_GROUP 檔。cands 須已依分數由高到低排序、每筆第 2 欄為代碼。
+    回傳 (保留的候選, 同產業去重排除數, 群組上限排除數)。"""
+    from config import MAX_PER_CORRELATION_GROUP
+    best, deduped, n_sector = set(), [], 0
+    for c in cands:
+        sec = sector_of(c[1])
+        key = sec if sec and sec != "其他" else f"__unknown_sector__:{c[1]}"
+        if key in best:
+            n_sector += 1
+            continue
+        best.add(key)
+        deduped.append(c)
+    counts = {}
+    for t in open_positions:
+        k = _bt_group_key(sector_of(t), t)
+        counts[k] = counts.get(k, 0) + 1
+    kept, n_group = [], 0
+    for c in deduped:
+        k = _bt_group_key(sector_of(c[1]), c[1])
+        if counts.get(k, 0) >= MAX_PER_CORRELATION_GROUP:
+            n_group += 1
+            continue
+        counts[k] = counts.get(k, 0) + 1
+        kept.append(c)
+    return kept, n_sector, n_group
+
+
 def _bt_entry_prices(closes, opens, i):
     """★ 2026-11-12 回測進場時序（與正式流程一致）：第 i 根的訊號只用 [:i]（到前一根為止）的資料，
     計畫價位（進場參考／停損／停利／部位大小）以『訊號日收盤』closes[i-1] 定錨，於第 i 根『開盤』
@@ -839,6 +882,7 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                 except Exception:
                     _w = None
                 data[t] = {"d": d, "w": _w, "size_cat": info.get("size_cat", "中型股"),
+                           "sector": info.get("sector") or "",
                            "vol_lots": info.get("volume_lots"),
                            "idx": {dt: i for i, dt in enumerate(d["dates"])}}
             if progress_cb:
@@ -856,6 +900,7 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
     trades, equity, axis, concur = [], [], [], []
     import execution
     n_unfilled_limit = 0
+    n_skip_sector = n_skip_group = 0
 
     def _hold(day, p):
         try:
@@ -932,6 +977,11 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                     continue
                 cands.append((sc, t, dir_, price, fill, sl, tp))
             cands.sort(key=lambda z: -z[0])
+            # 與正式掃描相同的分散規則：同產業只留最高分一檔、同相關性群組（含既有持倉）有上限。
+            # 群組計數取當天開盤時的持倉；當天稍後才因名額／資金進不了場的候選仍占計數，
+            # 與線上「先排名過濾、再檢查名額」的順序一致。
+            cands, _ns, _ng = _bt_apply_group_limits(cands, open_pos, lambda _t: data[_t].get("sector", ""))
+            n_skip_sector += _ns; n_skip_group += _ng
             risk_open = sum(p["risk"] * p["pos"].remaining / p["shares"] for p in open_pos.values())
             for sc, t, dir_, price, fill, sl, tp in cands:
                 if len(open_pos) >= max_pos:
@@ -1006,6 +1056,7 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             "exit_model": "staged", "sim_version": execution.STAGED_SIM_VERSION,
             "entry_model": "訊號日收盤定錨計畫價位、隔日開盤成交",
             "universe_pit": _pit_label(_pit), "n_unfilled_limit": n_unfilled_limit,
+            "n_skipped_same_sector": n_skip_sector, "n_skipped_group_limit": n_skip_group,
             "universe_requested": len(targets), "universe_no_data": sorted(set(targets) - set(data)),
             "limitations": [
                 ("標的池為臺灣 50 的歷史成分股（訊號日當天確為成分才進場）；但已下市或抓不到股價的"
