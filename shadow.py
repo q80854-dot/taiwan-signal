@@ -22,6 +22,10 @@ TPE = timezone(timedelta(hours=8))
 CONTROL_RATE = 1.0         # 沒有訊號的股票抽樣比例。2026-10-06：原 3% 實測每次只抽到 1～7 檔（約 96% 的股票日線分數都≥55，
                            # 真正『沒有訊號』的只有少數），改成水庫抽樣：所有『沒有訊號』的股票等機率抽出 CONTROL_CAP 檔
 CONTROL_CAP = 40
+# ★ 2026-11-12（S-P1-04）配對對照組：每檔做多候選配 MATCH_K 檔「同日、同產業、同規模、成交金額最接近」的
+# 非訊號股。7 年重播（docs/research/MATCHED_AND_BOOTSTRAP_2020_2026.md）顯示：拿全體非訊號股（現行隨機對照）
+# 當基準，會把訊號的 20 日超額報酬高估約 0.44 個百分點——一部分「優勢」只是產業與規模組成不同。
+MATCH_K = 3
 REJ_PER_REASON = 50        # 每個否決原因每次掃描最多存幾筆（依分數高到低）
 REJ_TOTAL = 220            # 每次掃描被否決樣本總上限
 _lock = threading.Lock()
@@ -120,6 +124,7 @@ def begin_run(note=""):
     global _run
     with _run_guard:
         _run = {"t0": time.time(), "note": note, "feats": {}, "rejects": [], "controls": [], "lock": threading.Lock(),
+                "pool": {}, "matched": {},
                 "fund": {}, "stats": {"rej_seen": 0, "cand_found": 0, "cand_saved": 0, "rej_saved": 0,
                                       "ctrl_made": 0, "ctrl_saved": 0, "res_updated": 0, "res_closed": 0,
                                       "secs_capture": 0.0, "secs_resolve": 0.0}, "errors": [], "bar_date": None}
@@ -634,6 +639,14 @@ def capture_candidates(signals, market_overview):
                          "tp2": s.get("tp2"), "tp3": s.get("tp3"), "size_cat": s.get("size_cat"),
                          "sector": s.get("sector"), "created_at": now, "features": feats, "model_prob": mp})
         _add_prior_blocked(rows)
+        if r is not None:
+            try:      # S-P1-04：挑配對對照（實際寫入在 flush_controls，與隨機對照一起）
+                _tv = {x["ticker"]: (x.get("current_price") or x.get("entry_price") or 0) * (x.get("volume_lots") or 0)
+                       for x in (signals or []) if x.get("ticker")}
+                _c = [dict(x, turnover=_tv.get(x["ticker"]) or None) for x in rows]
+                r["matched"] = _select_matched(_c, r["pool"])
+            except Exception as e:
+                _err(f"select_matched: {e}")
         n = _insert(rows)
         logger.info(f"shadow: 候選已記錄 {n}/{len(rows)} 筆（其餘為當日已記錄過）")
         if r is not None:
@@ -730,6 +743,63 @@ def flush_rejects():
         r["stats"]["secs_capture"] += time.time() - t0
 
 
+def _pool_add(ticker, stock_info, daily, atr, ind=None):
+    """把一檔『沒有訊號』的股票記進本次掃描的配對池（精簡欄位，不存整段 K 線）。失敗就略過，不影響掃描。"""
+    r = _run
+    if r is None:
+        return
+    try:
+        from signal_engine import calc_stop_loss_tw, calc_take_profits_tw
+        closes, lows = daily.get("closes") or [], daily.get("lows") or []
+        px = closes[-1] if closes else 0
+        lots = (stock_info or {}).get("volume_lots")
+        bd = ((daily.get("dates") or [""])[-1] or "")[:10]
+        if px <= 0 or not atr or not lots or lots <= 0 or not bd:
+            return
+        size = (stock_info or {}).get("size_cat") or "中型股"
+        sl = _as_float(calc_stop_loss_tw("buy", px, atr, ind or {}, size, min(lows[-5:]) if len(lows) >= 5 else None, None))
+        if sl is None or sl <= 0 or sl >= px:
+            return
+        tp = calc_take_profits_tw("buy", px, sl, size)
+        code = (stock_info or {}).get("code") or ticker.split(".")[0]
+        row = {"bar_date": bd, "ticker": ticker, "code": code, "name": (stock_info or {}).get("name"),
+               "kind": "matched", "direction": "buy", "score": None, "entry": px, "stop": round(sl, 2),
+               "tp1": tp["tp1"], "tp2": tp["tp2"], "tp3": tp["tp3"], "size_cat": size,
+               "sector": (stock_info or {}).get("sector") or "", "turnover": px * lots,
+               "created_at": datetime.now(timezone.utc).isoformat()}
+        with r["lock"]:
+            r["pool"][ticker] = row
+    except Exception as e:
+        logger.debug(f"shadow pool {ticker}: {e}")
+
+
+def _select_matched(cands, pool, k=MATCH_K):
+    """為每檔做多候選挑 k 檔配對對照：先找同產業且同規模者，依成交金額（對數）最接近排序；
+    同產業同規模一檔都沒有時，退到同規模。產業不明（空白／「其他」）視為無產業，直接用同規模。
+    回傳 {對照代號: {"row": 池中列, "match_for": [候選代號…], "level": "sector_size"|"size"}}。"""
+    import math
+    out = {}
+    cand_tk = {c["ticker"] for c in cands}
+    avail = [p for t, p in pool.items() if t not in cand_tk and p.get("turnover")]
+    for c in cands:
+        if c.get("direction") != "buy" or not c.get("turnover"):
+            continue
+        sec, size = (c.get("sector") or ""), c.get("size_cat")
+        known = sec and sec != "其他"
+        lvl = "sector_size"
+        pick = [p for p in avail if known and p["sector"] == sec and p["size_cat"] == size]
+        if not pick:
+            lvl = "size"
+            pick = [p for p in avail if p["size_cat"] == size]
+        lt = math.log(c["turnover"])
+        for p in sorted(pick, key=lambda p: (abs(math.log(p["turnover"]) - lt), p["ticker"]))[:k]:
+            e = out.setdefault(p["ticker"], {"row": p, "match_for": [], "level": lvl})
+            e["match_for"].append(c["ticker"])
+            if lvl == "sector_size":
+                e["level"] = "sector_size"
+    return out
+
+
 def maybe_control(ticker, stock_info, daily, pre, market_overview, sink, lock):
     """被預判跳過的股票，建立「假設做多」的對照單（同一套停損停利機制）。
     ★ 2026-10-09：改用水庫抽樣（與 control_from_engine 一致），取代原本『先到先收前 N 檔』——
@@ -738,6 +808,13 @@ def maybe_control(ticker, stock_info, daily, pre, market_overview, sink, lock):
         r = _run
         if r is None:
             return
+        try:
+            from indicators import calc_atr as _ca
+            _a = _ca(daily["highs"], daily["lows"], daily["closes"])
+            if _a.get("valid"):
+                _pool_add(ticker, stock_info, daily, _a["value"])
+        except Exception:
+            pass
         with lock:
             r["ctrl_pre_seen"] = r.get("ctrl_pre_seen", 0) + 1
             seen = r["ctrl_pre_seen"]
@@ -781,6 +858,7 @@ def control_from_engine(ticker, stock_info, daily, ind, mtf, mkt):
     r = _run
     if r is None:
         return
+    _pool_add(ticker, stock_info, daily, ((ind or {}).get("atr") or {}).get("value"), ind)
     # 水庫抽樣（Reservoir sampling）：掃描順序固定，若「先到先收」會偏向代號小的股票；
     # 這樣每一檔沒訊號的股票被選進對照組的機率完全相同。
     with r["lock"]:
@@ -835,10 +913,22 @@ def flush_controls(rows):
         if r is not None:
             seen = {x["ticker"] for x in rows}
             rows += [x for x in r["controls"] if x["ticker"] not in seen]
+        # ★ S-P1-04：配對對照。已在隨機對照裡的股票只加標記（同一檔同一天只能一筆），其餘以 kind='matched' 新增。
+        matched = (r or {}).get("matched") or {}
+        n_tag = 0
+        by_tk = {x["ticker"]: x for x in rows}
+        for tk, m in matched.items():
+            tag = {"match_for": sorted(set(m["match_for"])), "match_level": m["level"]}
+            if tk in by_tk:
+                by_tk[tk]["features"].update(tag); n_tag += 1
+            else:
+                row = {k: v for k, v in m["row"].items() if k != "turnover"}
+                row["features"] = dict(tag, turnover_m=round(m["row"]["turnover"] / 1e3, 1))
+                rows.append(row)
         for x in rows:
             x["features"].update(_fund_features(x["code"], cache))
         n = _insert(rows)
-        logger.info(f"shadow: 對照組已記錄 {n}/{len(rows)} 筆")
+        logger.info(f"shadow: 對照組已記錄 {n}/{len(rows)} 筆（含配對對照 {len(matched)} 檔，其中 {n_tag} 檔與隨機對照重疊、只加標記）")
         if r is not None:
             r["stats"]["ctrl_made"] += len(rows)
             r["stats"]["ctrl_saved"] += n
@@ -1133,7 +1223,7 @@ def resolve_pending(max_rows=8000):
         from state_store import store
         from config import CIRCUIT_BREAKER, COMMISSION_RATE, TAX_RATE_SELL, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL
         cleanup_absurd_metrics()      # 每次結算都檢查非物理值列（2026-11-12 起不再只跑一次）
-        cutoff = (datetime.now(TPE) - timedelta(days=30)).strftime("%Y-%m-%d")
+        cutoff = (datetime.now(TPE) - timedelta(days=45)).strftime("%Y-%m-%d")
         # 退市／長期無資料的訊號若一直留在 pending，壞結果（下市、停牌）會從統計中消失（存活者偏誤）。
         # 超過 expire_days + 寬限天數仍抓不到任何 K 棒，標記為 unresolved（不計入勝率與平均 R），
         # 離開 pending 佇列並在報告揭露數量，讓「有多少訊號無法驗證」被看見而非被無聲略過。
@@ -1149,8 +1239,10 @@ def resolve_pending(max_rows=8000):
                 # ★ 2026-11-12：補 r5/r10 只針對「已結案」的列。原本條件是 (r10 IS NULL AND 近期)，
                 # 連已標 unresolved 的列也會每次被撈回來重新模擬、重寫 MFE/MAE——被清洗掉的髒值因此
                 # 再生（線上日誌：每次結算都重複出現 bad_risk 2 筆、更新 3 筆），也白做工。
+                # ★ 2026-11-12（S-P1-04）：改為補到 r20 為止（原本只補到 r10）。先停損出場的列原本永遠拿不到
+                # 20 日報酬，配對比較只剩沒停損的列 → 系統性偏樂觀。回看由 30 天放寬為 45 天（20 根 K 棒約 28 天）。
                 "SELECT * FROM shadow_signals WHERE status='pending' "
-                "OR (status='closed' AND r10 IS NULL AND bar_date>=?) "
+                "OR (status='closed' AND r20 IS NULL AND bar_date>=?) "
                 "ORDER BY bar_date LIMIT ?", (cutoff, max_rows)).fetchall()]
         if not rows:
             logger.info("shadow: 結算完成，沒有需要處理的紀錄")
@@ -1556,6 +1648,66 @@ def data_quality_counts() -> dict:
     return out
 
 
+def _pct_ret(row, key="r20"):
+    """把以 R 為單位的前瞻報酬換成百分比：r × 規劃風險 ÷ 實際進場價（隔日開盤＝entry×(1+gap%)）。"""
+    try:
+        rv = row.get(key)
+        if rv is None:
+            return None
+        entry, stop = float(row["entry"]), float(row["stop"])
+        fill = entry * (1 + float(row.get("gap_pct") or 0) / 100)
+        return float(rv) * abs(entry - stop) / fill * 100 if fill > 0 else None
+    except Exception:
+        return None
+
+
+def matched_control_report(rows=None, horizon="r20") -> dict:
+    """★ 2026-11-12（S-P1-04）選股優勢：做多候選的前瞻報酬 − 其配對對照（同日同產業同規模、成交金額最接近）
+    的平均，與「− 同日隨機對照平均」並列。訊號日 × 股票二維拔靴 95% 區間（S-P1-05）。只用影子資料、只評估。
+    只有樣本外（2026-11-13 起）才產生配對對照，之前的列沒有，不回填。"""
+    if rows is None:
+        ensure_table()
+        from state_store import store
+        with store._conn() as conn:
+            rows = [dict(x) for x in conn.execute(
+                "SELECT bar_date, ticker, kind, direction, entry, stop, gap_pct, r10, r20, features FROM shadow_signals "
+                "WHERE kind IN ('candidate','control','matched') AND bar_date>=?", ("2026-11-13",)).fetchall()]
+    import experiments as _ex
+    cands, ctrl_by_day, match_of = [], {}, {}
+    for r in rows:
+        try:
+            f = r.get("features")
+            f = json.loads(f) if isinstance(f, str) else (f or {})
+        except Exception:
+            f = {}
+        pr = _pct_ret(r, horizon)
+        if pr is None:
+            continue
+        if r.get("kind") == "candidate" and r.get("direction") == "buy":
+            cands.append((r["bar_date"], r["ticker"], pr))
+        if r.get("kind") == "control":
+            ctrl_by_day.setdefault(r["bar_date"], []).append(pr)
+        for c in f.get("match_for") or []:
+            match_of.setdefault((r["bar_date"], c), []).append(pr)
+    vm, vr = [], []
+    for d, t, pr in cands:
+        m = match_of.get((d, t))
+        if m:
+            vm.append((d, t, pr - sum(m) / len(m)))
+        if ctrl_by_day.get(d):
+            vr.append((d, t, pr - sum(ctrl_by_day[d]) / len(ctrl_by_day[d])))
+    def _summ(obs):
+        if not obs:
+            return {"n": 0, "n_days": 0, "mean_pct": None, "ci95_twoway": [None, None]}
+        lo, hi = _ex._twoway_ci(obs)
+        return {"n": len(obs), "n_days": len({o[0] for o in obs}),
+                "mean_pct": round(sum(o[2] for o in obs) / len(obs), 3), "ci95_twoway": [lo, hi]}
+    return {"horizon": horizon, "vs_matched": _summ(vm), "vs_random_controls": _summ(vr),
+            "note": ("做多候選隔日開盤進場後的報酬（%）減去對照組。配對對照＝同日同產業同規模、成交金額最接近的 3 檔"
+                     "非訊號股；隨機對照＝同日隨機抽樣的非訊號股。7 年重播中隨機對照會把超額報酬高估約 0.44 個百分點，"
+                     "以配對對照為準。只用模擬資料，不是實際成交。")}
+
+
 def cohort_report() -> dict:
     """★ 2026-11-12（S-P1-03／S-P1-08）候選漏斗與成熟度，多空分開。
 
@@ -1610,6 +1762,10 @@ def cohort_report() -> dict:
                          "all_closed_avg_r": avg([r["r_multiple"] for r in closed]),
                          "mature_days_avg_r": avg([r["r_multiple"] for r in mature]),
                          "n_mature": len(mature)}}
+    try:
+        out["selection_edge"] = matched_control_report()
+    except Exception as e:
+        out["selection_edge"] = {"error": str(e)[:200]}
     out["note"] = ("candidate≠sent≠delivered≠實際成交（無券商回報，filled 留空）。"
                    "all_closed_avg_r 含未成熟訊號日（先停損者先結案，偏悲觀或偏樂觀皆可能）；"
                    "mature_days_avg_r 只計候選已全部離開 pending 的訊號日。")

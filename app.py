@@ -1727,7 +1727,7 @@ def api_admin_export():
         from flask import Response
         kind = request.args.get("kind") or None
         status = request.args.get("status") or None
-        if kind not in (None, "candidate", "rejected", "control") or status not in (None, "pending", "closed"):
+        if kind not in (None, "candidate", "rejected", "control", "matched") or status not in (None, "pending", "closed"):
             return jsonify({"error": "參數錯誤"}), 400
         body, n = shadow.export_csv(kind, status)
         fn = f"shadow_{kind or 'all'}_{status or 'all'}_{datetime.now().strftime('%Y%m%d')}.csv"

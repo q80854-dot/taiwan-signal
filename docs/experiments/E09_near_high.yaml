@@ -21,6 +21,7 @@ min_oos_trades_kept: 200
 min_effect_r: 0.05
 success_rule: OOS 差異的 95% CI 下界 > 0.05R
 failure_rule: OOS 差異的 95% CI 上界 < 0.05R
+robustness_rule: supported 另須二維拔靴（訊號日 × 股票）95% 區間下界 > 0；只有日分群成立者判 fragile（不穩健），不提案、繼續累積（2026-11-12 加入，早於任何樣本外資料；依據 docs/research/MATCHED_AND_BOOTSTRAP_2020_2026.md）
 multiple_testing: 與 E01～E10 同屬一個 family（size = 10）
 guardrails:
   - 只記錄與評估，不改正式訊號；程式不自動採用

@@ -31,6 +31,7 @@ min_oos_trades: 200
 min_effect_r: 0.05
 success_rule: OOS 成對差的 95% CI 下界 > 0.05R，且縮尾後成對差的 95% CI 下界 > 0
 failure_rule: OOS 成對差的 95% CI 上界 < 0.05R（代表延長到期沒有實用改善，應提出是否改回）
+robustness_rule: supported 另須二維拔靴（訊號日 × 股票）95% 區間下界 > 0；只有日分群成立者判 fragile（不穩健），不提案、繼續累積（2026-11-12 加入，早於任何樣本外資料；依據 docs/research/MATCHED_AND_BOOTSTRAP_2020_2026.md）
 caveats:
   - 60 天的結果最慢要兩個月才定案；累積到判定門檻可能需要四個月以上
   - 持有期變長會占用同時持倉名額，本實驗量的是每筆期望值，不是帳戶淨值
