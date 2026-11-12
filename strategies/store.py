@@ -23,7 +23,7 @@ def _ddl():
         id {pk}, bar_date TEXT, ticker TEXT, code TEXT, name TEXT, strategy_name TEXT,
         direction TEXT, entry REAL, stop REAL, tp1 REAL, tp2 REAL, tp3 REAL, score REAL, reason TEXT,
         status TEXT DEFAULT 'pending', result TEXT, exit_price REAL, exit_date TEXT,
-        champion_r REAL, created_at TEXT,
+        champion_r REAL, mae_r REAL, mfe_r REAL, created_at TEXT,
         UNIQUE (bar_date, ticker, strategy_name)
     );
     CREATE INDEX IF NOT EXISTS idx_strat_status ON strategy_signals(status);
@@ -38,6 +38,9 @@ def ensure_table():
     from state_store import store
     with store._conn() as conn:
         conn.executescript(_ddl())
+    # 既有部署補欄（冪等）：逐筆 MAE/MFE（2026-11-12 起記錄；舊列 NULL＝誠實「無紀錄」，不回填）
+    store._migrate_add_column("strategy_signals", "mae_r", "REAL")
+    store._migrate_add_column("strategy_signals", "mfe_r", "REAL")
     _ready = True
 
 
@@ -118,9 +121,27 @@ def resolve_pending(max_rows=5000) -> dict:
         if has_open and not aged_out:
             continue                       # 尚有未出場部位、未到期：留著下次結算
         champ = round(sim["pnl"] / (risk * 3000), 3) if risk else None
+        # 逐筆 MAE/MFE（有號極值，R 計）：持有窗（首根之後到出場日）內最不利/最有利價格偏移。
+        # 基準＝實際 fill（首根開盤）、分母＝|entry−stop|；價格路徑極值、不含費稅（與 champion_r
+        # 的費後口徑不同，展示端須分開標示）。算不出來存 NULL，不猜值。
+        mae = mfe = None
+        try:
+            _xd = sim.get("exit_date")
+            win = [b for b in after if not _xd or b["bar_date"][:10] <= _xd]
+            his = [b["high"] for b in win if b.get("high") is not None]
+            los = [b["low"] for b in win if b.get("low") is not None]
+            if his and los and risk:
+                if r["direction"] == "buy":
+                    mae = round((min(los) - fill) / risk, 3)
+                    mfe = round((max(his) - fill) / risk, 3)
+                else:
+                    mae = round((fill - max(his)) / risk, 3)
+                    mfe = round((fill - min(los)) / risk, 3)
+        except Exception:
+            mae = mfe = None
         updates.append((
-            "UPDATE strategy_signals SET status='closed', result=?, exit_price=?, exit_date=?, champion_r=? WHERE id=?",
-            (sim["result"], sim["exit_price"], sim["exit_date"], champ, r["id"])))
+            "UPDATE strategy_signals SET status='closed', result=?, exit_price=?, exit_date=?, champion_r=?, mae_r=?, mfe_r=? WHERE id=?",
+            (sim["result"], sim["exit_price"], sim["exit_date"], champ, mae, mfe, r["id"])))
         closed += 1
     if updates:
         with store._conn() as conn:
@@ -145,6 +166,9 @@ def overview() -> dict:
             "SUM(CASE WHEN status='closed' AND champion_r > 0 THEN 1 ELSE 0 END) AS wins, "
             "SUM(CASE WHEN status='closed' AND champion_r <= 0 THEN 1 ELSE 0 END) AS losses, "
             "AVG(CASE WHEN status='closed' THEN champion_r ELSE NULL END) AS avg_champion_r, "
+            "AVG(CASE WHEN status='closed' THEN mae_r ELSE NULL END) AS avg_mae_r, "
+            "AVG(CASE WHEN status='closed' THEN mfe_r ELSE NULL END) AS avg_mfe_r, "
+            "SUM(CASE WHEN status='closed' AND mae_r IS NOT NULL THEN 1 ELSE 0 END) AS mae_mfe_n, "
             "MIN(bar_date) AS first_date, MAX(bar_date) AS last_date "
             "FROM strategy_signals GROUP BY strategy_name ORDER BY strategy_name").fetchall()]
     by_name = {r["strategy_name"]: r for r in rows}
@@ -167,6 +191,13 @@ def overview() -> dict:
             return {"state": "tentative_pos", "label": "樣本達門檻、平均淨 R 為正（仍需顯著性檢定，非最終結論）"}
         return {"state": "tentative_neg", "label": "樣本達門檻、平均淨 R 未為正（未達標）"}
 
+    def _mm(r):
+        """逐筆 MAE/MFE 摘要（2026-11-12 起記錄）：只對有紀錄的已結算列平均；無紀錄＝None 不猜值。"""
+        n = int(r.get("mae_mfe_n") or 0)
+        f = lambda v: round(v, 3) if v is not None else None
+        return {"avg_mae_r": f(r.get("avg_mae_r")) if n else None,
+                "avg_mfe_r": f(r.get("avg_mfe_r")) if n else None, "mae_mfe_n": n}
+
     out = []
     seen = set()
     for s in strat_list:
@@ -179,6 +210,7 @@ def overview() -> dict:
         avg = r.get("avg_champion_r")
         avg = round(avg, 3) if avg is not None else None
         out.append({
+            **_mm(r),
             "strategy_name": nm, "label": getattr(s, "label", nm), "direction": getattr(s, "direction", "both"),
             "total": int(r.get("total") or 0), "closed": closed,
             "open": int(r.get("total") or 0) - closed,
@@ -195,6 +227,7 @@ def overview() -> dict:
         avg = r.get("avg_champion_r")
         avg = round(avg, 3) if avg is not None else None
         out.append({
+            **_mm(r),
             "strategy_name": nm, "label": nm, "direction": "unknown",
             "total": int(r.get("total") or 0), "closed": closed,
             "open": int(r.get("total") or 0) - closed,
@@ -203,7 +236,10 @@ def overview() -> dict:
             "hypothesis": None, "status": _status(closed, avg),
         })
     return {"strategies": out, "min_eval_samples": MIN_EVAL_SAMPLES,
-            "gaps": ["回撤／換手／風險事件逐筆資料尚未逐欄記錄（需後端 schema，列為資料契約缺口）"],
+            "gaps": ["回撤／換手／風險事件逐筆資料尚未逐欄記錄（需後端 schema，列為資料契約缺口）",
+                     "逐筆 MAE/MFE 自 2026-11-12 起記錄；之前結算的舊列為 NULL（無紀錄，不回填）"],
             "note": "純 shadow 研究、未接線上、不授權切換正式策略；champion_r＝把各策略選股用 Champion "
                     "同一套分批出場規則結算的淨 R（費後：估列滑價/手續費/證交稅、放空含借券費）——"
-                    "是『共同量尺』、非各策略自有出場邏輯的績效。"}
+                    "是『共同量尺』、非各策略自有出場邏輯的績效。mae_r/mfe_r＝持有窗內最不利／最有利"
+                    "價格偏移（有號、R 計、以首根開盤為基準）——價格路徑極值、不含費稅，與 champion_r "
+                    "口徑不同、不可相加比較。"}
