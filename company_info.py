@@ -149,44 +149,77 @@ def _col_idx(fields, *subs, exclude=()):
     return None
 
 
-def _build_foreign_holding_map() -> dict:
-    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(hours=8)
-    for back in range(0, 8):                       # 今天往前試幾個交易日（假日／尚未公布時往回找）
-        d = now - __import__("datetime").timedelta(days=back)
-        ds = d.strftime("%Y%m%d")
-        url = f"https://www.twse.com.tw/fund/MI_QFIIS?response=json&selectType=ALL&date={ds}"
+# ★ 2026-11-12：證交所多數 API 已遷至 /rwd/zh/ 路徑；先試現行端點，舊路徑保留為備援。
+_QFIIS_URLS = (
+    "https://www.twse.com.tw/rwd/zh/fund/MI_QFIIS?response=json&selectType=ALL&date={ds}",
+    "https://www.twse.com.tw/fund/MI_QFIIS?response=json&selectType=ALL&date={ds}",
+)
+
+
+def _parse_qfiis(j: dict, ds: str) -> dict:
+    fields = j.get("fields") or []
+    ci = _col_idx(fields, "證券代號", "代號", "Code")
+    ri = _col_idx(fields, "持股比率", "Percentage of shares", exclude=("可投資", "尚可", "available"))
+    cei = _col_idx(fields, "上限", "available investment")
+    hi = _col_idx(fields, "持有股數", "number of shares", exclude=("可投資", "尚可", "available"))
+    if ri is None:
+        return {}
+    if ci is None:
+        ci = 0                          # 退而求其次：代號多半在第 0 欄
+    m = {}
+    for row in j.get("data") or []:
         try:
-            r = requests.get(url, headers=HEADERS, timeout=(5, 30))
+            code = str(row[ci]).strip()
+            if not code or not code.isdigit():
+                continue
+            m[code] = {"ratio": _num(row[ri]),
+                       "ceiling": _num(row[cei]) if cei is not None and cei < len(row) else None,
+                       "held_shares": _num(row[hi]) if hi is not None and hi < len(row) else None,
+                       "date": j.get("date") or ds}
+        except Exception:
+            continue
+    return m
+
+
+def _build_foreign_holding_map() -> dict:
+    """★ 2026-11-12 修正：原本所有失敗（HTTP 非 200、stat 非 OK、無資料）都直接 continue、不留紀錄，
+    線上「外資持股比率 無」原因完全無從查起；且一次最多打 8 個請求。改為：
+    - 記下每次失敗的實際原因（HTTP 狀態／stat／例外類型），彙整成一行警告；
+    - 某端點回連線錯誤／HTTP 錯誤／非 JSON → 本輪視為失效不再用它往前試；
+    - 兩個端點都失效即停止往前試（2 個請求而非 8+）；stat 非 OK＝端點正常但該日無資料，才往前一天。
+    取不到就回空 map（上游顯示「無」），不以任何推估值替代。"""
+    _dt = __import__("datetime")
+    now = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=8)
+    broken, fails = set(), []
+    for back in range(0, 8):                       # 今天往前試幾個交易日（假日／尚未公布時往回找）
+        ds = (now - _dt.timedelta(days=back)).strftime("%Y%m%d")
+        for tmpl in _QFIIS_URLS:
+            if tmpl in broken:
+                continue
+            tag = "rwd" if "/rwd/" in tmpl else "legacy"
+            try:
+                r = requests.get(tmpl.format(ds=ds), headers=HEADERS, timeout=(5, 30))
+            except Exception as e:
+                broken.add(tmpl); fails.append(f"{ds}/{tag} 連線錯誤 {type(e).__name__}")
+                continue
             if not r.ok:
+                broken.add(tmpl); fails.append(f"{ds}/{tag} HTTP {r.status_code}")
                 continue
-            j = r.json()
+            try:
+                j = r.json()
+            except Exception:
+                broken.add(tmpl); fails.append(f"{ds}/{tag} 回應非 JSON")
+                continue
             if j.get("stat") != "OK" or not j.get("data"):
-                continue
-            fields = j.get("fields") or []
-            ci = _col_idx(fields, "證券代號", "代號", "Code")
-            ri = _col_idx(fields, "持股比率", "Percentage of shares", exclude=("可投資", "尚可", "available"))
-            cei = _col_idx(fields, "上限", "available investment")
-            hi = _col_idx(fields, "持有股數", "number of shares", exclude=("可投資", "尚可", "available"))
-            if ci is None or ri is None:
-                ci = 0 if ci is None else ci   # 退而求其次：代號多半在第 0 欄
-                if ri is None:
-                    continue
-            m = {}
-            for row in j["data"]:
-                try:
-                    code = str(row[ci]).strip()
-                    if not code or not code.isdigit():
-                        continue
-                    m[code] = {"ratio": _num(row[ri]),
-                               "ceiling": _num(row[cei]) if cei is not None and cei < len(row) else None,
-                               "held_shares": _num(row[hi]) if hi is not None and hi < len(row) else None,
-                               "date": j.get("date") or ds}
-                except Exception:
-                    continue
+                fails.append(f"{ds}/{tag} stat={str(j.get('stat'))[:20]}")
+                continue                              # 端點正常、該日無資料 → 往前一天
+            m = _parse_qfiis(j, ds)
             if m:
                 return m
-        except Exception as e:
-            logger.warning(f"foreign_holding {ds}: {e}")
+            fails.append(f"{ds}/{tag} 欄位無法解析")
+        if len(broken) == len(_QFIIS_URLS):
+            break                                     # 兩個端點都失效，不再往前打
+    logger.warning("外資持股比率（證交所 MI_QFIIS）取得失敗：" + "；".join(fails[:8]))
     return {}
 
 
