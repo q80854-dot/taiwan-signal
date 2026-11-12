@@ -226,7 +226,8 @@ class StateStore:
                 CREATE TABLE IF NOT EXISTS scan_history (
                     id            SERIAL PRIMARY KEY,
                     scan_date     TEXT, scanned INTEGER, signals_found INTEGER,
-                    signals_sent  INTEGER, duration_min REAL, errors INTEGER, created_at TEXT
+                    signals_sent  INTEGER, duration_min REAL, errors INTEGER, created_at TEXT,
+                    run_id        TEXT
                 );
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY, value TEXT, updated_at TEXT
@@ -287,7 +288,8 @@ class StateStore:
                 CREATE TABLE IF NOT EXISTS scan_history (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
                     scan_date     TEXT, scanned INTEGER, signals_found INTEGER,
-                    signals_sent  INTEGER, duration_min REAL, errors INTEGER, created_at TEXT
+                    signals_sent  INTEGER, duration_min REAL, errors INTEGER, created_at TEXT,
+                    run_id        TEXT
                 );
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY, value TEXT, updated_at TEXT
@@ -351,6 +353,10 @@ class StateStore:
         # 上一季累計」反推出真正的單季數字，同年度內quarter==1不用減（本身
         # 就是單季）。這裡用 ALTER TABLE ADD COLUMN 遷移，理由跟上面
         # actual_entry_price 一樣——正式環境已經在跑，不能 DROP TABLE 重建。
+        # ★ 2026-11-12 scan_run_id 綁定（LIVE07 完整版，資料契約缺口補齊）：
+        # scan_history 記每次掃描的 run_id；signals 的 scan_run_id 走 raw_json（save_signal 全量
+        # 序列化）免遷移、讀取時由 get_recent_signals 提取。舊列 run_id 為 NULL＝誠實的「無紀錄」。
+        self._migrate_add_column("scan_history", "run_id", "TEXT")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_revenue", "REAL")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_gross_profit", "REAL")
         self._migrate_add_column("quarterly_margin_snapshot", "cum_operating_income", "REAL")
@@ -424,7 +430,15 @@ class StateStore:
                     "SELECT * FROM signals WHERE generated_at>=? ORDER BY generated_at DESC LIMIT ?",
                     (cutoff,limit)
                 ).fetchall()
-            return [with_share_units(normalize_legacy_inst_signal(dict(r))) for r in rows]
+            out = [with_share_units(normalize_legacy_inst_signal(dict(r))) for r in rows]
+            # ★ 2026-11-12 scan_run_id 血緣：落盤走 raw_json（save_signal 全量序列化），讀取時輕量
+            # 提取這一個鍵供前端批次綁定；舊訊號 raw_json 無此鍵＝None（誠實的「無紀錄」，不補）。
+            for r in out:
+                try:
+                    r["scan_run_id"] = (json.loads(r.get("raw_json") or "{}") or {}).get("scan_run_id")
+                except Exception:
+                    r["scan_run_id"] = None
+            return out
         except Exception as e:
             logger.error(f"get_recent_signals: {e}"); return []
 
@@ -681,12 +695,12 @@ class StateStore:
             with self._conn() as conn:
                 conn.execute("""
                     INSERT INTO scan_history
-                    (scan_date,scanned,signals_found,signals_sent,duration_min,errors,created_at)
-                    VALUES (?,?,?,?,?,?,?)
+                    (scan_date,scanned,signals_found,signals_sent,duration_min,errors,created_at,run_id)
+                    VALUES (?,?,?,?,?,?,?,?)
                 """, (datetime.now().strftime("%Y-%m-%d"),stats.get("scanned",0),
                       stats.get("signals_found",0),stats.get("signals_sent",0),
                       stats.get("duration_min",0),stats.get("errors",0),
-                      datetime.now(timezone.utc).isoformat()))
+                      datetime.now(timezone.utc).isoformat(),stats.get("run_id")))
         except Exception as e: logger.error(f"save_scan_history: {e}")
 
     # ── Meta ──
@@ -1380,7 +1394,7 @@ except NameError:
 def _scan_hist(self, n: int = 5):
     try:
         with self._conn() as conn:
-            rows = conn.execute("SELECT scan_date,scanned,signals_found,signals_sent,duration_min,errors FROM scan_history ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+            rows = conn.execute("SELECT scan_date,scanned,signals_found,signals_sent,duration_min,errors,run_id FROM scan_history ORDER BY id DESC LIMIT ?", (n,)).fetchall()
         return [dict(r) for r in rows]
     except Exception as e:
         logger.warning(f"get_scan_history: {e}")

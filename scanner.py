@@ -154,7 +154,13 @@ class TWScanEngine:
 
     def _run_daily_scan_impl(self) -> Dict:
         start_time = time.time()
-        logger.info("═══ 開始每日全市場掃描 ═══")
+        # ★ 2026-11-12 scan_run_id（LIVE07 完整版）：每次掃描產生唯一 run_id，寫入本批每筆訊號
+        # （raw_json 與記憶體 dict）、scan_history 與 last_scan_audit——漏斗/訊號卡可按 run_id
+        # 確定性綁定同一批，不再靠日期推測。純血緣 metadata，不參與任何決策。
+        import uuid as _uuid
+        run_id = (f"{'pre' if self._mode == 'premarket' else 'scan'}-"
+                  f"{datetime.now(timezone(timedelta(hours=8))).strftime('%Y%m%d-%H%M%S')}-{_uuid.uuid4().hex[:6]}")
+        logger.info(f"═══ 開始每日全市場掃描 ═══（run_id={run_id}）")
 
         from stock_universe import get_scan_batches, get_stock_info
         from data_fetcher   import fetch_all_timeframes, fetch_market_overview, fetch_stock_institutional, _cache_clear_all
@@ -443,6 +449,8 @@ class TWScanEngine:
             shadow.mark_sent([x.get("ticker") for x in final_signals])
         except Exception as e:
             logger.warning(f"shadow.mark_sent: {e}")
+        for _s in final_signals:                      # run_id 血緣：記憶體 dict＋save_signal raw_json 同步帶
+            _s["scan_run_id"] = run_id
         self.signals_today = final_signals
         self.scan_count   += 1
         _now_iso = datetime.now(timezone.utc).isoformat()
@@ -482,12 +490,14 @@ class TWScanEngine:
             "signals_sent":  len(final_signals),
             "duration_min":  round((time.time() - start_time) / 60, 1),
             "duration_sec":  round(time.time() - start_time, 1),
+            "run_id":        run_id,
         }
         store.save_scan_history(stats)
         try:
             pre = dict(self._pre)
             tot = pre["skipped"] + pre["passed"]
             store.set_meta("last_scan_audit", {
+                "run_id": run_id,
                 "date": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M"),
                 "universe": total_tickers, "examined": tot, "skipped": pre["skipped"], "passed": pre["passed"],
                 "skip_rate": round(pre["skipped"] / tot * 100, 1) if tot else None,

@@ -5133,17 +5133,23 @@ function s8Draw(){
     <div class="r7-dts">${days.map(d=>`<button class="r7-dt${d===_x8.sd?' on':''}" onclick="s8Pick('${d}',0)" style="position:relative">${+d.slice(8)}<small>週${x7Wk(d)}</small><span class="s8-c">${(byD[d]||[]).length}</span></button>`).join('')}</div>`;
   // 篩選漏斗
   // ★ 2026-11-11 LIVE07：批次綁定誠實化——漏斗前三階段來自 scan_audit(a)、後兩階段來自
-  // scan_history 最新一筆(h)、訊號卡來自選定批次(_x8.sd)，三者可能不同批（例：盤前掃描 0 候選
-  // vs 昨日批次卡片）。不同批時逐一明示，不得讓讀者誤以為同一次掃描；完整 scan_run_id 綁定
-  // 需後端 schema（signals/audit 記 run_id），列為資料契約缺口。
-  const hMatch=(!a.date||!h.scan_date)||String(h.scan_date)===String(a.date);
+  // scan_history 最新一筆(h)、訊號卡來自選定批次(_x8.sd)，三者可能不同批。
+  // ★ 2026-11-12 scan_run_id 完整版（缺口補齊）：三源都有 run_id 時按 run_id 確定性綁定；
+  // 任一缺（舊資料）才退回日期啟發式。訊號卡 run_id 取自本批訊號的 scan_run_id（新掃描起記錄）。
+  const aRid=a.run_id||null,hRid=h.run_id||null;
+  const sigRid=(dayList.find(x=>x.scan_run_id)||{}).scan_run_id||null;
+  const hMatch=(aRid&&hRid)?aRid===hRid:((!a.date||!h.scan_date)||String(h.scan_date)===String(a.date));
+  const cardMatch=(aRid&&sigRid)?aRid===sigRid:null;   // null＝無法確定（任一側無 run_id）
   const fn=[['全市場',a.universe,'上市櫃股票清單'],['進入檢查',a.examined,'有足夠日線可計算'],['通過預篩',a.passed,'流動性與基本條件'],['候選訊號',h.signals_found,'技術、籌碼條件成立'],['最終訊號',h.signals_sent,'評分與風控通過']];
   const mx=Math.max(1,...fn.map(f=>f[1]||0)),nb=dayList.filter(x=>x.direction==='buy').length,last20=Object.keys(byD).filter(d=>d>=x7Add(t,-28)),avg=last20.length?last20.reduce((s2,d)=>s2+byD[d].length,0)/Math.max(1,last20.length):null;
   const batchNotes=[
-    (a.date&&String(a.date)!==String(_x8.sd))?`漏斗為最近一次掃描（${v5E(a.date)}）；下方訊號卡為 ${v5E(_x8.sd)} 批次，兩者非同一批`:'',
-    !hMatch?`「候選/最終」來自 ${v5E(h.scan_date)} 掃描，與前三階段（${v5E(a.date)}）非同一批，僅供參考`:''
+    // 卡片 vs 漏斗：run_id 可判定時以 run_id 為準（同批不再因日期字串格式誤報）；無 run_id 退回日期
+    cardMatch===false?`漏斗為掃描批次 ${v5E(aRid)}；下方訊號卡屬另一批次 ${v5E(sigRid)}，兩者非同一批`
+      :(cardMatch===null&&a.date&&String(a.date)!==String(_x8.sd))?`漏斗為最近一次掃描（${v5E(a.date)}）；下方訊號卡為 ${v5E(_x8.sd)} 批次，兩者非同一批（舊資料無 run_id，依日期判斷）`:'',
+    !hMatch?(aRid&&hRid?`「候選/最終」屬批次 ${v5E(hRid)}，與前三階段（${v5E(aRid)}）非同一批，僅供參考`
+      :`「候選/最終」來自 ${v5E(h.scan_date)} 掃描，與前三階段（${v5E(a.date)}）非同一批，僅供參考`):''
   ].filter(Boolean);
-  const fnC=v5Card('o-c12','篩選漏斗',a.date?`${v5E(a.date)} 掃描 · 全市場依序通過各道條件`:'最近一次盤後掃描',fn.every(f=>f[1]!=null)?`<div class="s8-fn">${fn.map((f,i)=>`<div class="s8-fs${i===4?' last':''}"><div class="bx" style="height:${Math.max(40,Math.round(Math.sqrt(f[1]/mx)*140))}px;--w:${Math.max(14,Math.sqrt(f[1]/mx)*100).toFixed(0)}%">${v5F(f[1],0)}</div><span><b>${f[0]}</b><br><small>${f[2]}</small></span></div>`).join('')}</div>`:v5Empty('還沒有掃描紀錄','每個交易日 16:30 收盤後掃描，完成後顯示各階段檔數。'),
+  const fnC=v5Card('o-c12','篩選漏斗',a.date?`${v5E(a.date)} 掃描${aRid?' · run '+v5E(aRid):''} · 全市場依序通過各道條件`:'最近一次盤後掃描',fn.every(f=>f[1]!=null)?`<div class="s8-fn">${fn.map((f,i)=>`<div class="s8-fs${i===4?' last':''}"><div class="bx" style="height:${Math.max(40,Math.round(Math.sqrt(f[1]/mx)*140))}px;--w:${Math.max(14,Math.sqrt(f[1]/mx)*100).toFixed(0)}%">${v5F(f[1],0)}</div><span><b>${f[0]}</b><br><small>${f[2]}</small></span></div>`).join('')}</div>`:v5Empty('還沒有掃描紀錄','每個交易日 16:30 收盤後掃描，完成後顯示各階段檔數。'),
     `<div class="o-row" style="gap:8px;flex-wrap:wrap"><span class="o-tag up">多 ${nb}</span><span class="o-tag">空 ${dayList.length-nb}</span>${avg!=null?`<span class="o-tag">近期平均 ${v5F(avg,1)} 檔／日</span>`:''}</div>${batchNotes.length?`<div style="font-size:11px;color:var(--warn);margin-top:6px">${batchNotes.map(n=>'⚠ '+n).join('<br>')}</div>`:''}`);
   // 主訊號卡
   const s=dayList[Math.min(_x8.si,dayList.length-1)];
@@ -5219,7 +5225,7 @@ function h8Draw(){
   const tbl=v5Card('o-c8','持倉明細','進度條：停損 ← 進場 │ 現價 ● → 目標 1',`<div style="overflow-x:auto"><table class="r-t h8-t"><thead><tr><th>股票</th><th>股數</th><th>進場</th><th>現價</th><th>損益</th><th>停損 → 目標</th><th>持有</th><th>狀態</th></tr></thead><tbody>${rows.map((p,i)=>{const pl=((p.last||p.entry)-p.entry)*dir(p)*sh(p),[s,c]=stt(p);return `<tr onclick="goToInstrument('${v5E(p.code)}')" style="cursor:pointer"><td><span style="display:inline-flex;align-items:center;gap:8px">${v4oAv(p.name,i)}<span style="font-weight:500;color:var(--ink)">${v5E(p.name)}<small style="display:block;font:400 11px var(--mono);color:var(--t3)">${v5E(p.code)} · ${p.direction==='buy'?'多':'空'}</small></span></span></td><td>${v5F(x8Sh(p),0)}</td><td>${v5F(p.entry)}</td><td>${v5F(p.last)}</td><td><span class="${v5C(pl)}" style="display:block;font-weight:500">${v5S(pl)}</span><span class="${v5C(p.pnl_now_pct)}" style="font-size:11px">${v5S(p.pnl_now_pct,2)}% · ${v5S(p.r_now,2)}R</span></td><td style="min-width:150px"><div class="h8-prg"><b style="left:${((p.entry_mark||0)*100).toFixed(0)}%"></b><i style="left:${((p.progress||0)*100).toFixed(0)}%"></i></div><div style="display:flex;justify-content:space-between;margin-top:6px;font:400 10px/12px var(--mono)"><span class="down">${v5F(p.stop)}</span><span class="up">${v5F(p.tp1)}</span></div></td><td>${p.days_held??'—'} 天</td><td><span class="o-tag ${c}">${s}</span></td></tr>`;}).join('')}</tbody></table></div>`,
     `<div class="o-tabs">${[['all','全部 '+op.length],['win','獲利 '+op.filter(p=>(p.r_now||0)>0).length],['loss','虧損 '+op.filter(p=>(p.r_now||0)<0).length]].map(([k,n])=>`<button class="tab${k===f?' on':''}" onclick="_x8.hf='${k}';h8Draw()">${n}</button>`).join('')}</div>`);
   const rp=bal?curRisk/bal*100:null,al=[];op.forEach(p=>{if(p.breached)al.push(['⚠','#ff7a74',`${p.name} 現價 ${v5F(p.last)} 已觸/穿越停損 ${v5F(p.stop)}（穿越 ${v5F(p.breach_pct,1)}%），待盤後結算確認`]);else if(p.cushion_pct!=null&&p.cushion_pct<3)al.push(['✕','#ff7a74',`${p.name} 距停損 ${v5F(p.stop)} 僅 ${v5F(p.cushion_pct,1)}%`]);if(p.stop_suggest)al.push(['◆','#e8c35a',`${p.name}：${p.stop_suggest_why}（${v5F(p.stop_suggest)}）`]);});
-  const rkC=v5Card('o-c4 o-dark','風險監控','以停損價計算的潛在虧損',`<div style="display:flex;flex-direction:column;gap:16px"><div><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:500 30px/34px var(--sans);letter-spacing:-.03em">${rp!=null?v5F(rp,2)+'%':'—'}</span><span style="font-size:12px;color:#a1a1a8">組合風險 · 上限 ${v5F(cap*100,0)}%</span></div><div class="o-bar" style="height:8px;margin-top:10px;background:#2a2a2e"><i style="flex:${Math.min(rp||0,cap*100)};background:${(rp||0)>=cap*100?'#ff7a74':'#fff'}"></i><i style="flex:${Math.max(0,cap*100-(rp||0))}"></i></div><div style="font-size:12px;color:#a1a1a8;margin-top:8px">若全部從現價觸及停損，估計虧損 <b style="color:#fff">${v5F(curRisk,0)} 元</b><br><span style="font-size:11px">基準：現價→停損價×股數，未含手續費/稅；跳空或流動性不足時實際損失可能超過，非實損上限</span><br><span style="font-size:11px">參數版本 ${rk.config_version?'champion-'+v5E(rk.config_version):'未取得'}${rk.effective_at?'（凍結日 '+v5E(rk.effective_at)+'）':''} · run_id：後端未記錄（缺口）</span></div></div>
+  const rkC=v5Card('o-c4 o-dark','風險監控','以停損價計算的潛在虧損',`<div style="display:flex;flex-direction:column;gap:16px"><div><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:500 30px/34px var(--sans);letter-spacing:-.03em">${rp!=null?v5F(rp,2)+'%':'—'}</span><span style="font-size:12px;color:#a1a1a8">組合風險 · 上限 ${v5F(cap*100,0)}%</span></div><div class="o-bar" style="height:8px;margin-top:10px;background:#2a2a2e"><i style="flex:${Math.min(rp||0,cap*100)};background:${(rp||0)>=cap*100?'#ff7a74':'#fff'}"></i><i style="flex:${Math.max(0,cap*100-(rp||0))}"></i></div><div style="font-size:12px;color:#a1a1a8;margin-top:8px">若全部從現價觸及停損，估計虧損 <b style="color:#fff">${v5F(curRisk,0)} 元</b><br><span style="font-size:11px">基準：現價→停損價×股數，未含手續費/稅；跳空或流動性不足時實際損失可能超過，非實損上限</span><br><span style="font-size:11px">參數版本 ${rk.config_version?'champion-'+v5E(rk.config_version):'未取得'}${rk.effective_at?'（凍結日 '+v5E(rk.effective_at)+'）':''} · run_id 逐筆見訊號紀錄（2026-11-12 起記錄）</span></div></div>
     <div><div class="o-lbl" style="margin-bottom:8px">各部位風險占比</div>${op.map(p=>{const r=Math.max(0,((p.last||p.entry)-p.stop)*dir(p))*sh(p),w=curRisk?r/curRisk*100:0;return `<div class="h8-rk"><span>${v5E(p.name)}</span><div class="o-bar" style="height:6px;background:#2a2a2e"><i style="flex:${w};background:#fff"></i><i style="flex:${100-w}"></i></div><span class="o-mono">${v5F(w,0)}%</span></div>`;}).join('')}</div>
     <div><div class="o-lbl" style="margin-bottom:8px">提醒</div>${al.length?al.slice(0,4).map(([i,c,t2])=>`<div class="h8-al"><span style="color:${c}">${i}</span><span>${v5E(t2)}</span></div>`).join(''):'<div class="h8-al"><span>✓</span><span>目前沒有需要處理的部位</span></div>'}</div></div>`);
   // 權益曲線：系統追蹤資金 vs 加權指數（同期間，起點＝100）
@@ -9138,9 +9144,11 @@ async function tsCtx(){
   catch(e){window._tsCtx={cfg:null,eff:null};}
   return window._tsCtx;
 }
-function tsCtxLine(extra){
+function tsCtxLine(extra,rid){
+  // ★ 2026-11-12：scan_run_id 已落盤（LIVE07 完整版）——有 rid 顯示本批 run_id；
+  //   無 rid（跨批頁面或舊資料）改指向逐筆紀錄，不再標「後端未記錄」。
   const c=window._tsCtx||{};
-  return `研究脈絡：策略版本 ${c.cfg?('champion-'+c.cfg):'未取得'}${c.eff?'（參數凍結日 '+esc2(String(c.eff))+'）':''}${extra||''} · run_id：後端未記錄（資料契約缺口）`;
+  return `研究脈絡：策略版本 ${c.cfg?('champion-'+c.cfg):'未取得'}${c.eff?'（參數凍結日 '+esc2(String(c.eff))+'）':''}${extra||''} · run_id：${rid?esc2(String(rid)):'逐筆見訊號紀錄（2026-11-12 起記錄，舊訊號無）'}`;
 }
 // P2-B B03：移除單一篩選或重置全部（只動 select 值與重繪，不保存、不動資料）
 function sigClearFilter(k){
@@ -9166,9 +9174,10 @@ function renderSignals(){
   renderSigFreshness();
   const _sd=(_state&&_state.last_scan_time)?new Date(_state.last_scan_time):null;
   const scanDateStr=(_sd&&!isNaN(_sd))?_sd.toLocaleDateString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric'}):'—';
-  // P2-C B04：研究脈絡行（策略版本/凍結日/批次 as_of；run_id 列缺口）
+  // P2-C B04：研究脈絡行（策略版本/凍結日/批次 as_of；2026-11-12 起附本批 run_id）
   {const cx=document.getElementById('sig-ctx');
-   if(cx){if(window._tsCtx)cx.textContent=tsCtxLine(` · 批次 ${scanDateStr}${_sd?' '+_sd.toLocaleTimeString('zh-TW',{hour12:false,timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}):''}`);
+   if(cx){const _rid=((_signals||[]).find(s=>s&&s.scan_run_id)||{}).scan_run_id||null;
+     if(window._tsCtx)cx.textContent=tsCtxLine(` · 批次 ${scanDateStr}${_sd?' '+_sd.toLocaleTimeString('zh-TW',{hour12:false,timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}):''}`,_rid);
      else tsCtx().then(()=>{try{if(window._curPage==='signals')renderSignals();}catch(e){}});}}
   if(!sigs.length){container.innerHTML='<div class="empty"><div class="empty-label">訊號</div>無符合條件訊號</div>';return;}
   container.innerHTML=sigs.map(s=>{
