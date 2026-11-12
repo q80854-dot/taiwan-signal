@@ -934,9 +934,9 @@ _LIVE_MAX_AGE = 600          # 快照超過 10 分鐘就不採用（寧可顯示
 def snap_is_final(snap, now_ts) -> bool:
     """收盤後（台北時間 13:33 起）拍下、且與現在同一天的快照＝當日最終資料，收盤後仍可採用，不受 10 分鐘限制。"""
     try:
-        from datetime import datetime, timedelta
-        t = datetime.utcfromtimestamp(snap["at"]) + timedelta(hours=8)
-        n = datetime.utcfromtimestamp(now_ts) + timedelta(hours=8)
+        from datetime import datetime, timedelta, timezone
+        t = datetime.fromtimestamp(snap["at"], timezone.utc).replace(tzinfo=None) + timedelta(hours=8)
+        n = datetime.fromtimestamp(now_ts, timezone.utc).replace(tzinfo=None) + timedelta(hours=8)
         return t.date() == n.date() and t.hour * 60 + t.minute >= 13 * 60 + 33
     except Exception:
         return False

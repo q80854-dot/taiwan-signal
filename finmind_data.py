@@ -111,7 +111,11 @@ def _persist_save(key: tuple, rows: list, ts: float):
 
 
 def _load_block_once():
-    """重啟後沿用上次的『暫停到何時』，避免剛重啟就又去撞已經用完的額度。"""
+    """重啟後沿用上次的『暫停到何時』，避免剛重啟就又去撞已經用完的額度。
+    ★ 2026-11-12：一併載回最近一小時的請求時間戳。原本 _calls 只在記憶體，每次重啟（部署）
+    歸零，budget_left() 永遠顯示額度全滿、90% 保護線形同虛設——線上今日 4 次「已達額度上限，
+    熔斷 15 分鐘」皆發生在部署後的開機預熱。熔斷期間所有 FinMind 資料都拿不到，比提早自我節流
+    （改用快取）更糟。"""
     global _boot_loaded, _blocked_until
     if _boot_loaded:
         return
@@ -122,6 +126,32 @@ def _load_block_once():
             _blocked_until = max(_blocked_until, v)
     except Exception:
         pass
+    try:
+        raw = _pget("fm:calls_1h")
+        ts = json.loads(raw) if isinstance(raw, str) else (raw or [])
+        now = time.time()
+        with _lock:
+            known = set(_calls)
+            for t in sorted(float(x) for x in ts):
+                if now - t <= 3600 and t not in known:
+                    _calls.append(t)
+            # 保持時間遞增，budget_left() 依序淘汰一小時前的紀錄
+            ordered = sorted(_calls)
+            _calls.clear()
+            _calls.extend(ordered)
+    except Exception as e:
+        logger.debug("finmind calls restore: %s", e)
+
+
+def _calls_persist():
+    """把最近一小時的請求時間戳寫回資料庫，讓重啟後的額度保護線延續。失敗不影響請求本身。"""
+    try:
+        now = time.time()
+        with _lock:
+            snap = [round(t, 1) for t in _calls if now - t <= 3600]
+        _pset("fm:calls_1h", json.dumps(snap))
+    except Exception as e:
+        logger.debug("finmind calls persist: %s", e)
 
 
 def tpe_now() -> datetime:
@@ -215,6 +245,7 @@ def fm_get(dataset: str, data_id: Optional[str] = None, start: Optional[str] = N
         try:
             with _lock:
                 _calls.append(time.time())
+            _calls_persist()
             _stats["calls"] += 1
             r = requests.get(BASE, params=prm, headers=headers, timeout=20)
             try:

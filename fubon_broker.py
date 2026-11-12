@@ -24,7 +24,7 @@ def _last_bar_is_fresh(h, max_age_days: int = 7) -> bool:
             last_dt = last_ts.tz_convert("UTC").to_pydatetime().replace(tzinfo=None)
         else:
             last_dt = last_ts.to_pydatetime()
-        age = datetime.utcnow() - last_dt
+        age = datetime.now(timezone.utc).replace(tzinfo=None) - last_dt
         return age.total_seconds() <= max_age_days * 86400
     except Exception:
         return True

@@ -33,7 +33,16 @@ _session: Optional[requests.Session] = None
 _session_at = 0.0
 _cache: Dict[str, tuple] = {}          # code -> (ts, quote)
 _CACHE_TTL = 10
-_stats = {"mis_ok": 0, "mis_fail": 0, "fugle_ok": 0, "last_error": None, "last_ok_at": None}
+_stats = {"mis_ok": 0, "mis_fail": 0, "fugle_ok": 0, "last_error": None, "last_ok_at": None,
+          "mis_consec_fail": 0, "mis_breaker_until": None, "mis_skipped": 0}
+
+# ★ 2026-11-12 MIS 斷路器（系統檢查以線上日誌確認）：今日盤中 MIS 每分鐘都「第 1、2 次」皆
+# RemoteDisconnected（第 2 次已是重建的新連線，非連線池問題），價格全靠富果備援撐著；而每次失敗
+# 都會重建 session、多打一次 MIS 首頁取 cookie——失敗越多打越兇，恐使證交所持續封鎖本機 IP。
+# 連續失敗達門檻即暫停 MIS 一段時間、直接走既有富果備援（fresh_prices 逐檔改用 Fugle，兩者皆無
+# 則 fail closed 不判斷——行為與現況相同，只是不再白打注定失敗的請求）；冷卻後放一次試探。
+_MIS_TRIP_AFTER = 2          # 連續失敗幾批就跳閘
+_MIS_COOLDOWN_SEC = 300      # 跳閘後暫停 MIS 的秒數
 
 
 def now_tpe() -> datetime:
@@ -119,9 +128,17 @@ def parse_mis_row(r: Dict) -> Optional[Dict]:
     return q
 
 
+def _mis_breaker_open() -> bool:
+    u = _stats.get("mis_breaker_until")
+    return bool(u) and time.time() < u
+
+
 def _fetch_batch(part: List[str]) -> Dict[str, Dict]:
     global _session
     out: Dict[str, Dict] = {}
+    if _mis_breaker_open():
+        _stats["mis_skipped"] += 1               # 斷路中：直接回空，由呼叫端走富果備援
+        return out
     for attempt in (1, 2):
         try:
             r = _get_session().get(MIS_URL, params={"ex_ch": "|".join(part), "json": "1", "delay": "0",
@@ -134,6 +151,8 @@ def _fetch_batch(part: List[str]) -> Dict[str, Dict]:
                     out[q["code"]] = q
             _stats["mis_ok"] += 1
             _stats["last_ok_at"] = time.time()
+            _stats["mis_consec_fail"] = 0             # 成功即復原
+            _stats["mis_breaker_until"] = None
             return out
         except Exception as e:
             _stats["mis_fail"] += 1
@@ -141,6 +160,11 @@ def _fetch_batch(part: List[str]) -> Dict[str, Dict]:
             logger.warning(f"realtime.fetch_mis 批次失敗（第 {attempt} 次）: {e}")
             _session = None                          # 下次重建 session（可能是 cookie 失效）
             time.sleep(0.5)
+    _stats["mis_consec_fail"] += 1                   # 本批兩次都失敗
+    if _stats["mis_consec_fail"] >= _MIS_TRIP_AFTER:
+        _stats["mis_breaker_until"] = time.time() + _MIS_COOLDOWN_SEC
+        logger.warning(f"realtime: MIS 連續 {_stats['mis_consec_fail']} 批失敗，暫停 MIS {_MIS_COOLDOWN_SEC // 60} 分鐘，"
+                       f"期間現價改用富果備援（皆無則不判斷，不以舊價替代）")
     return out
 
 
@@ -251,7 +275,7 @@ def fetch_indices() -> Dict[str, Dict]:
     out = {}
     for key, ex, nm in (("TAIEX", "tse_t00.tw", "加權指數"), ("OTC", "otc_o00.tw", "櫃買指數")):
         q = None
-        for attempt in range(2):                      # MIS 偶發逾時 → 重試一次
+        for attempt in range(0 if _mis_breaker_open() else 2):   # 斷路中直接走下方官方日線備援
             try:
                 r = _get_session().get(MIS_URL, params={"ex_ch": ex, "json": "1", "delay": "0",
                                                         "_": int(time.time() * 1000)}, timeout=(8, 10))

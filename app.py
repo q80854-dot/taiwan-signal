@@ -4354,10 +4354,10 @@ _ov_bf_tried = {}
 def _backfill_official_volume(code, is_otc, months=4):
     """證交所 STOCK_DAY／櫃買 st43 逐月抓個股官方成交量（張）寫入 official_volume。失敗只記 log。"""
     import time as _t, requests as _rq
-    from datetime import datetime as _dt, timedelta as _td
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     from state_store import store as _st
     rows = []
-    now = _dt.utcnow() + _td(hours=8)
+    now = _dt.now(_tz.utc).replace(tzinfo=None) + _td(hours=8)
     y, m = now.year, now.month
     hdr = {"User-Agent": "Mozilla/5.0"}
     for _ in range(months):
@@ -4376,6 +4376,14 @@ def _backfill_official_volume(code, is_otc, months=4):
                 for x in (r.json().get("aaData") or []):
                     yy, mm, dd = x[0].split("/")
                     rows.append((code, f"{int(yy)+1911}-{mm}-{dd}", int(float(x[1].replace(",", "")))))
+        except _rq.exceptions.JSONDecodeError:
+            # ★ 2026-11-12：回應非 JSON＝端點失效或被擋（線上 5013 每個月份都「Expecting value」）。
+            # 剩餘月份打同一端點只會一樣失敗，直接停止並記下實際狀態，避免對官方來源重複請求。
+            # 只攔 JSON 解碼錯誤：單筆資料數字格式異常（ValueError）仍沿用下方「記錄後試下個月」。
+            logger.warning(f"official volume backfill {code} {y}-{m}: 回應非 JSON（HTTP {r.status_code}，"
+                           f"{r.headers.get('Content-Type', '?')}），{'櫃買 st43' if is_otc else '證交所 STOCK_DAY'}"
+                           f" 端點疑似失效或被擋，停止本次回補")
+            break
         except Exception as e:
             logger.warning(f"official volume backfill {code} {y}-{m}: {e}")
         m -= 1
