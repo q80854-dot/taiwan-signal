@@ -1,5 +1,5 @@
 {
-  "config_hash": "d4eb06e13ef275f5b8c10ce194d0eba33e5c459843968314f50d3611c7300679",
+  "config_hash": "02595bc0c1283d98ba2400bc94096d75852c55c1b6ae1f726f39c56d6668af52",
   "constants": {
     "CIRCUIT_BREAKER": {
       "foreign_sell_caution": -50000000000.0,
@@ -162,9 +162,10 @@
         "label": "週線",
         "period": "5y"
       }
-    }
+    },
+    "YIELD_ANOMALY_PCT": 15.0
   },
-  "frozen_at": "2026-11-08",
+  "frozen_at": "2026-11-12",
   "note": "此為 Champion 正式策略/風控常數的凍結快照。要更新，須有意識地改 config 常數並經使用者核准後重新產生本檔（python scripts/freeze_champion.py）。",
-  "strategy_version": "champion-d4eb06e13ef2"
+  "strategy_version": "champion-02595bc0c128"
 }

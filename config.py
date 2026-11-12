@@ -34,6 +34,13 @@ MAX_PORTFOLIO_RISK         = float(os.getenv("MAX_PORTFOLIO_RISK", "0.15"))
 EVENT_MATERIAL_NEWS_PENALTY = float(os.getenv("EVENT_MATERIAL_NEWS_PENALTY", "20"))
 EVENT_EXDIV_BLOCK_DAYS      = int(os.getenv("EVENT_EXDIV_BLOCK_DAYS", "2"))
 
+# ★ 2026-11-12 LIVE13 計分面（使用者核准「一和二可以做」）：現金殖利率異常上限。台股正常現金
+# 殖利率罕見 >15%，超過多為資料問題（除權息基準／面額變更／拆分／幣別／單位錯置）。
+# 未通過核對的異常值不得拿來加分：fund_score._valuation 視同無殖利率（不加分、不入滿分），
+# 顯示層（雷達榜）沿用同一門檻標「⚠待核對」。此常數影響正式訊號評分（fund_adjustment），
+# 已列入 strategy_version._TRACKED（Champion 變更控管、快照同步重產）。
+YIELD_ANOMALY_PCT = float(os.getenv("YIELD_ANOMALY_PCT", "15"))
+
 COMMISSION_RATE  = 0.001425
 TAX_RATE_SELL    = 0.003
 SHARES_PER_LOT   = 1000

@@ -2,7 +2,8 @@
 
 台股現金殖利率 >15% 多為資料問題（除權息基準/面額/拆分/幣別/單位）。顯示層隔離：
 標 yield_anomaly、不當高殖利率、不進「高殖利率」篩選、不排到榜首。
-計分面（_valuation→fund_adjustment）屬 risk:champion，本輪不改。
+計分面（_valuation→fund_adjustment）屬 risk:champion，於 2026-11-12 經使用者核准後
+另行隔離（見 test_live13_scoring），門檻常數統一為 config.YIELD_ANOMALY_PCT。
 """
 import app
 

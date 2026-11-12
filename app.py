@@ -1858,11 +1858,10 @@ def api_fundamentals(code: str):
         logger.error(f"api_fundamentals: {e}"); return jsonify({"error": str(e)}), 500
 
 # ★ 2026-11-11 LIVE13：現金殖利率異常上限。台股正常現金殖利率罕見 >15%，超過多為資料問題
-# （除權息基準／面額變更／拆分／幣別／單位錯置）。此處僅作「顯示層」隔離：標示待核對、不當高殖利率、
-# 不進「高殖利率」篩選；未核對的異常值不得拿來加分或標高殖利率。
-# 註：計分面（fund_score._valuation 的殖利率加分 → 正式訊號 fund_adjustment）屬 risk:champion，
-# 需使用者核准＋OOS 後另行處理，本處不改計分。
-YIELD_ANOMALY_PCT = 15.0
+# （除權息基準／面額變更／拆分／幣別／單位錯置）。顯示層隔離：標示待核對、不當高殖利率、
+# 不進「高殖利率」篩選。2026-11-12 使用者核准後計分面同步隔離（fund_score._valuation），
+# 門檻常數移到 config.YIELD_ANOMALY_PCT（入 Champion 變更控管），此處引用同一來源。
+from config import YIELD_ANOMALY_PCT
 
 
 @app.route("/api/fundamentals_radar")

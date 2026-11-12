@@ -135,14 +135,22 @@ def _valuation(v: Optional[Dict]):
         if pe > 60: tags.append("本益比偏高")
     else:
         tags.append("本益比無（近四季虧損）")
-    if y is not None:
+    # ★ 2026-11-12 LIVE13 計分面（使用者核准）：殖利率 > YIELD_ANOMALY_PCT 多為資料問題
+    # （除權息基準/面額變更/拆分/幣別/單位），未通過核對不得加分——計分視同無殖利率
+    # （不加分、不入滿分），原值保留於回傳與標籤（血緣、不掩蓋）。
+    from config import YIELD_ANOMALY_PCT
+    y_anom = (y is not None and y > YIELD_ANOMALY_PCT)
+    if y_anom:
+        tags.append(f"殖利率 {y:.1f}% 異常待核對（不計分）")
+    elif y is not None:
         mx += 5
         got += 5 if y >= 5 else 4 if y >= 3.5 else 2 if y >= 2 else 0
         if y >= 4: tags.append(f"殖利率 {y:.1f}%")
     if pb is not None and pb > 0:
         mx += 3
         got += 3 if pb <= 1.5 else 2 if pb <= 3 else 1 if pb <= 5 else 0
-    return {"got": got, "max": mx, "tags": tags, "pe": pe, "pb": pb, "yield": y}
+    return {"got": got, "max": mx, "tags": tags, "pe": pe, "pb": pb, "yield": y,
+            "yield_anomaly": y_anom}
 
 
 def build_fundamental_profile(code: str, deep: bool = False) -> Dict:
