@@ -23,7 +23,7 @@ def _flat(n=175):
 
 def _setup(monkeypatch, data, direction="buy", shares=3000):
     import stock_universe, data_fetcher, signal_engine
-    monkeypatch.setattr(stock_universe, "get_tw50_components", lambda: ["A.TW"])
+    monkeypatch.setattr(bt, "_tw50_targets", lambda *a, **k: ["A.TW"])     # 自訂清單（不帶 PIT 標記）
     monkeypatch.setattr(stock_universe, "get_stock_info", lambda t: {"size_cat": "中型股", "volume_lots": 999999})
     monkeypatch.setattr(data_fetcher, "fetch_ohlcv", lambda t, tf="daily": data)
 
@@ -124,5 +124,5 @@ def test_portfolio_discloses_universe_is_not_point_in_time(monkeypatch):
     """Q-P0-04：標的池取自現在的成分股（無歷史 PIT 資料），必須明示，不得當成正式有效歷史績效。"""
     _setup(monkeypatch, _flat())
     out = bt.portfolio_backtest_tw(min_score=65, max_positions=1)
-    assert out["universe_pit"] == "PIT_UNAVAILABLE"
+    assert out["universe_pit"].startswith("PIT_UNAVAILABLE")       # 自訂清單：未做歷史成分檢查
     assert any("倖存者" in x for x in out["limitations"])

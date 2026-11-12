@@ -4,6 +4,7 @@ backtester.py — 台股波段版 v1.0
 移除：外匯 pip/lot 計算、外匯黑名單
 """
 import logging, time, math, bisect
+from datetime import timedelta
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from config import ACCOUNT_BALANCE_TWD, SIGNAL_THRESHOLDS as THRESH, COMMISSION_RATE, TAX_RATE_SELL, SHARES_PER_LOT, MIN_COMMISSION, CIRCUIT_BREAKER as CB, SHORT_SIGNAL_THRESH, SHORT_REQUIRE_WEEKLY_BEARISH
@@ -280,6 +281,50 @@ def _held_days(dates, bar_in, bar_now):
             return 0
 
 
+class _PitTargets(list):
+    """帶有 point-in-time 標的池標記的清單：包一層 wrapper 再往下傳時（run_comparison 等把 targets
+    轉交 run_full_backtest_tw），標記不會遺失。"""
+    pit = None
+
+
+def _tw50_targets(start=None, end=None):
+    """★ 2026-11-12（Q-P0-04）回測預設標的池：臺灣 50 的『歷史』成分股。
+    回傳期間內曾是成分股的全部代號（含後來被剔除者），並標記 pit="tw50"——各回測據此只在
+    「訊號日當天確實是成分股」時才允許進場。原本用的是 stock_universe 裡一份寫死的 50 檔清單，
+    與真實成分差了 18 檔，也不隨時間變動（倖存者偏差）。
+    成分股歷史載入失敗時退回舊清單、不標記 pit（結果會誠實標 PIT_UNAVAILABLE）。"""
+    try:
+        import tw50_history as _h
+        _end = end or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _start = start or (datetime.now(timezone.utc) - timedelta(days=420)).strftime("%Y-%m-%d")
+        out = _PitTargets(_h.tickers(_h.members_between(_start, _end)))
+        if not out:
+            raise ValueError("empty universe")
+        out.pit = "tw50"
+        return out
+    except Exception as e:
+        logger.warning(f"[BT] 臺灣 50 歷史成分股載入失敗，退回靜態清單（結果標 PIT_UNAVAILABLE）：{e}")
+        from stock_universe import get_tw50_components
+        return _PitTargets(get_tw50_components())
+
+
+def _pit_ok(pit, ticker, day):
+    """pit="tw50" 時：訊號日當天須為臺灣 50 正式成分股才可進場；無法確認（缺日期、早於資料起點）一律不進場。"""
+    if pit != "tw50":
+        return True
+    try:
+        import tw50_history as _h
+        return bool(day) and _h.is_member(ticker, day) is True
+    except Exception:
+        return False
+
+
+def _pit_label(pit):
+    if pit == "tw50":
+        return "TW50_PIT（依實際生效日的歷史成分股；2019-12-31 起；資料為研究彙整、未經官方每日成分檔核驗）"
+    return "PIT_UNAVAILABLE（自訂或靜態清單，未做歷史成分檢查）"
+
+
 def _bt_entry_prices(closes, opens, i):
     """★ 2026-11-12 回測進場時序（與正式流程一致）：第 i 根的訊號只用 [:i]（到前一根為止）的資料，
     計畫價位（進場參考／停損／停利／部位大小）以『訊號日收盤』closes[i-1] 定錨，於第 i 根『開盤』
@@ -338,7 +383,7 @@ def simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_
 
 
 def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True,
-                        daily_override=None, weekly_override=None, date_start=None) -> Dict:
+                        daily_override=None, weekly_override=None, date_start=None, pit_universe=None) -> Dict:
     """
     ★ 新增：2026-09-29——daily_override/weekly_override/date_start 三個參數，
     給「涵蓋真實空頭期間」驗證用（見 _fetch_long_history_tw()）：daily_override／
@@ -460,7 +505,9 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
         price=closes[i]
         plan_px,fill_px=_bt_entry_prices(closes,opens,i)
         just_exited=_exit_check(i) if open_trade else False
-        if open_trade is None and not just_exited and plan_px is not None and not (date_start and day_date and day_date<date_start):
+        if (open_trade is None and not just_exited and plan_px is not None
+                and _pit_ok(pit_universe,ticker,dates[i-1] if i-1<len(dates) else None)
+                and not (date_start and day_date and day_date<date_start)):
             tf_data_bt={"daily":wd}
             w_slice=_weekly_asof(day_date)
             if w_slice: tf_data_bt["weekly"]=w_slice
@@ -571,7 +618,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
             "use_short_gates":use_short_gates,
             "entry_model":"訊號日收盤定錨計畫價位、隔日開盤成交","expire_days":EXPIRE_DAYS,
             "exit_model":"single（停損／TP2／TP1 擇一全出；非正式的分批出場，分批版見 backtest_symbol_tw_partial）",
-            "universe_pit":"PIT_UNAVAILABLE",
+            "universe_pit":_pit_label(pit_universe),
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
 def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=None) -> Dict:
@@ -670,11 +717,11 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
 
 def run_full_backtest_tw(tickers=None, min_score=65.0, progress_cb=None, use_macro_overlay=False, use_fundamentals_filter=False, disabled_factors=None, use_short_gates=True) -> Dict:
     from stock_universe import get_tw50_components
-    targets=tickers or get_tw50_components(); results=[]
+    targets=tickers or _tw50_targets(); results=[]
     logger.info(f"[BT] 批量回測 {len(targets)} 檔，use_macro_overlay={use_macro_overlay}，use_fundamentals_filter={use_fundamentals_filter}，disabled_factors={disabled_factors}，use_short_gates={use_short_gates}")
     for idx,ticker in enumerate(targets):
         try:
-            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay,use_fundamentals_filter=use_fundamentals_filter,disabled_factors=disabled_factors,use_short_gates=use_short_gates)
+            r=backtest_symbol_tw(ticker,min_score=min_score,use_macro_overlay=use_macro_overlay,use_fundamentals_filter=use_fundamentals_filter,disabled_factors=disabled_factors,use_short_gates=use_short_gates,pit_universe=getattr(targets,"pit",None))
             if "error" not in r: results.append(r)
             # ★ 新增：2026-09-19——這個函式現在會被 app.py 包成背景執行緒跑（50檔
             # 全部跑完可能要幾分鐘），加一個可選的進度回呼，讓外層可以把「跑到第
@@ -738,7 +785,8 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
     min_score = min_score if min_score is not None else THRESH["min_score"]
     max_pos   = int(max_positions or MAX_SIMULTANEOUS_POSITIONS)
     port_risk = float(max_portfolio_risk if max_portfolio_risk is not None else MAX_PORTFOLIO_RISK)
-    targets = tickers or get_tw50_components()
+    targets = tickers or _tw50_targets()
+    _pit = getattr(targets, "pit", None)
     # 1) 載入各檔日線＋基本資料；建日期→索引對照
     data = {}
     for idx, t in enumerate(targets):
@@ -812,6 +860,8 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                 if di is None or di < LOOKBACK:
                     continue
                 dd = v["d"]
+                if not _pit_ok(_pit, t, dd["dates"][di - 1]):     # 訊號日當天不是成分股：不進場
+                    continue
                 window = {k: dd[k][:di] for k in ("closes", "highs", "lows", "opens", "volumes")}
                 mtf = check_multi_timeframe_tw({"daily": window})
                 dir_ = mtf.get("direction", "none"); sc = mtf.get("score", 0)
@@ -905,10 +955,14 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             "equity_curve": equity, "dates": axis, "trades": trades[-50:],
             "exit_model": "staged", "sim_version": execution.STAGED_SIM_VERSION,
             "entry_model": "訊號日收盤定錨計畫價位、隔日開盤成交",
-            "universe_pit": "PIT_UNAVAILABLE", "n_unfilled_limit": n_unfilled_limit,
+            "universe_pit": _pit_label(_pit), "n_unfilled_limit": n_unfilled_limit,
+            "universe_requested": len(targets), "universe_no_data": sorted(set(targets) - set(data)),
             "limitations": [
-                "標的池與規模分類取自『現在』的成分股與基本資料，非歷史當時（倖存者／時點偏差），"
-                "績效可能高估；不得當成正式有效的歷史績效。",
+                ("標的池為臺灣 50 的歷史成分股（訊號日當天確為成分才進場）；但已下市或抓不到股價的"
+                 "歷史成分無法回測（見 universe_no_data），倖存者偏差只消除了一部分。"
+                 if _pit == "tw50" else
+                 "標的池為自訂／靜態清單，非歷史當時的成分（倖存者／時點偏差），績效可能高估。"),
+                "規模分類與均量取自『現在』的基本資料，非歷史當時。",
                 "已模擬：一價鎖死的漲跌停（進場不成交、出場順延）與停牌（當日無 K 棒即不交易）。"
                 "未模擬：盤中曾打開的漲跌停排隊、成交量上限、放空券源與整股限制。",
                 "放空借券費以固定年率估算，未反映個股實際費率與券源有無。"],
@@ -926,7 +980,7 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
 # 當作「新策略」），回傳兩邊的整體統計＋差異。
 def run_comparison_backtest_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
     from stock_universe import get_tw50_components
-    targets=tickers or get_tw50_components()
+    targets=tickers or _tw50_targets()
     def _cb_baseline(done,total,ticker):
         if progress_cb: progress_cb(done,total*2,f"[基準/舊策略] {ticker}")
     def _cb_overlay(done,total,ticker):
@@ -1000,7 +1054,7 @@ def run_comparison_backtest_tw(tickers=None, min_score=65.0, progress_cb=None) -
 def run_factor_ablation_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
     from stock_universe import get_tw50_components
     from signal_engine import FACTOR_KEYS
-    targets=tickers or get_tw50_components()
+    targets=tickers or _tw50_targets()
     n_stages=len(FACTOR_KEYS)+1
     def _cb(stage_idx, stage_label):
         def _inner(done,total,ticker):
@@ -1066,7 +1120,7 @@ def run_factor_ablation_tw(tickers=None, min_score=65.0, progress_cb=None) -> Di
 # calc_position_size，只有出場模擬邏輯不同，避免出現「回測用另一套進場
 # 判斷」的老問題。
 def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
-                                use_macro_overlay=False, use_fundamentals_filter=False) -> Dict:
+                                use_macro_overlay=False, use_fundamentals_filter=False, pit_universe=None) -> Dict:
     from data_fetcher   import fetch_ohlcv
     from signal_engine  import check_multi_timeframe_tw, calc_stop_loss_tw, calc_take_profits_tw, calc_position_size
     from scoring_engine import calc_performance_metrics
@@ -1137,7 +1191,8 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
         price=closes[i]
         plan_px,fill_px=_bt_entry_prices(closes,opens,i)
         just_exited=_step(i) if open_trade else False
-        if open_trade is None and not just_exited and plan_px is not None:
+        if (open_trade is None and not just_exited and plan_px is not None
+                and _pit_ok(pit_universe,ticker,dates[i-1] if i-1<len(dates) else None)):
             tf_data_bt={"daily":wd}
             w_slice=_weekly_asof(day_date)
             if w_slice: tf_data_bt["weekly"]=w_slice
@@ -1212,15 +1267,15 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
             "grade":metrics.get("sharpe_grade","—"),"dd_grade":metrics.get("dd_grade","—"),
             "method":"partial_exit_thirds_breakeven_trail",
             "entry_model":"訊號日收盤定錨計畫價位、隔日開盤成交","expire_days":EXPIRE_DAYS,
-            "exit_model":"staged","sim_version":execution.STAGED_SIM_VERSION,"universe_pit":"PIT_UNAVAILABLE",
+            "exit_model":"staged","sim_version":execution.STAGED_SIM_VERSION,"universe_pit":_pit_label(pit_universe),
             "completed_at":datetime.now(timezone.utc).isoformat()}
 
 def run_full_backtest_tw_partial(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
     from stock_universe import get_tw50_components
-    targets=tickers or get_tw50_components(); results=[]
+    targets=tickers or _tw50_targets(); results=[]
     for idx,ticker in enumerate(targets):
         try:
-            r=backtest_symbol_tw_partial(ticker,min_score=min_score)
+            r=backtest_symbol_tw_partial(ticker,min_score=min_score,pit_universe=getattr(targets,"pit",None))
             if "error" not in r: results.append(r)
             if progress_cb:
                 try: progress_cb(idx+1,len(targets),ticker)
@@ -1262,7 +1317,7 @@ def run_full_backtest_tw_partial(tickers=None, min_score=65.0, progress_cb=None)
 # 歷史資料檢驗，不是「調參數去擬合看過的資料」那種樣本內過擬合。
 def run_short_gate_validation_tw(tickers=None, min_score=65.0, progress_cb=None) -> Dict:
     from stock_universe import get_tw50_components
-    targets=tickers or get_tw50_components()
+    targets=tickers or _tw50_targets()
     def _cb_baseline(done,total,ticker):
         if progress_cb: progress_cb(done,total*2,f"[舊邏輯/無分層閘門] {ticker}")
     def _cb_gated(done,total,ticker):
@@ -1323,7 +1378,7 @@ def run_short_gate_validation_tw_period(tickers=None, min_score=65.0, period_sta
                                          period_end="2022-12-31", history_period="max",
                                          progress_cb=None) -> Dict:
     from stock_universe import get_tw50_components
-    targets = tickers or get_tw50_components()
+    targets = tickers or _tw50_targets(start=period_start, end=period_end)
     baseline_results = []
     gated_results = []
     skipped = []
@@ -1345,9 +1400,11 @@ def run_short_gate_validation_tw_period(tickers=None, min_score=65.0, period_sta
                 skipped.append({"ticker": ticker, "reason": f"{period_start} 之前可用日K只有 {len(dates_before_start)} 根（需≥130根暖身），略過此檔避免指標失真"})
                 continue
             r_base = backtest_symbol_tw(ticker, min_score=min_score, use_short_gates=False,
-                                         daily_override=daily_trunc, weekly_override=weekly_trunc, date_start=period_start)
+                                         daily_override=daily_trunc, weekly_override=weekly_trunc, date_start=period_start,
+                                         pit_universe=getattr(targets,"pit",None))
             r_gate = backtest_symbol_tw(ticker, min_score=min_score, use_short_gates=True,
-                                         daily_override=daily_trunc, weekly_override=weekly_trunc, date_start=period_start)
+                                         daily_override=daily_trunc, weekly_override=weekly_trunc, date_start=period_start,
+                                         pit_universe=getattr(targets,"pit",None))
             if "error" not in r_base: baseline_results.append(r_base)
             if "error" not in r_gate: gated_results.append(r_gate)
         except Exception as e:
