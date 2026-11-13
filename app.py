@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 # 只過濾「yfinance 模組發出、訊息為 inplace 棄用」這一類，我們自己程式碼的警告照常顯示。
 warnings.filterwarnings("ignore", message=r"The inplace keyword in DataFrame\.\w+ is deprecated",
                         module=r"yfinance")
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from config import SYSTEM, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_FREE_CHANNEL, TELEGRAM_PAID_CHANNEL
 
 logging.basicConfig(
@@ -529,6 +529,28 @@ def job_market_extras():
         logger.error(f"job_market_extras: {e}", exc_info=True)
 
 
+def job_research_snapshot(reason="排程"):
+    """2026-11-13：研究用官方資料每日快照（停牌、處置、注意股、全額交割、產業別、股權分散）。
+    公開 API 只給當天／當週；每天原樣存一份，從今天起累積歷史。純研究、不影響訊號（見 research_archive）。"""
+    try:
+        import research_archive
+        r = research_archive.snapshot()
+        logger.info(f"⏰ 研究資料快照（{reason}）：新存 {r['saved']}、未變 {r['unchanged']}、失敗 {r['errors']}｜{r['sources']}")
+    except Exception as e:
+        logger.error(f"job_research_snapshot: {e}", exc_info=True)
+
+
+def job_research_snapshot_boot():
+    """重啟後補做：平日 18:40 之後、今天尚未快照才執行（不在盤中或掃描時段補）。"""
+    try:
+        import research_archive
+        now = datetime.now(TZ_TAIPEI)
+        if now.weekday() < 5 and (now.hour, now.minute) >= (18, 40) and not research_archive.done_today(now):
+            job_research_snapshot("啟動補做")
+    except Exception as e:
+        logger.error(f"job_research_snapshot_boot: {e}", exc_info=True)
+
+
 def job_refresh_universe_if_stale():
     """官方日行情的日期若落後（例如 16:00 抓到時證交所還沒更新），收盤後每小時補抓。"""
     try:
@@ -954,6 +976,9 @@ def setup_scheduler():
     scheduler.add_job(job_final_bars, CronTrigger(hour=14, minute=10, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="final_bars_1410", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_market_extras, CronTrigger(hour="8,17,21", minute=45, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="market_extras", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(job_finmind_warm, CronTrigger(hour="8,14,15,16,17,18,20,22", minute=50, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="finmind_warm", replace_existing=True, max_instances=1, coalesce=True)
+    # 2026-11-13：研究用官方資料每日快照（盤後 18:40，避開 16:10～17:30 掃描時段）
+    scheduler.add_job(job_research_snapshot, CronTrigger(hour=18, minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="research_snapshot", replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3 * 3600)
+    scheduler.add_job(job_research_snapshot_boot, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=300), id="research_snapshot_boot", replace_existing=True)
     scheduler.add_job(job_finmind_warm, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=90), id="finmind_warm_boot", replace_existing=True)
     scheduler.add_job(job_market_extras, "date", run_date=datetime.now(TZ_TAIPEI) + __import__("datetime").timedelta(seconds=45), id="market_extras_boot", replace_existing=True)
     # 全球市場看板：全球/美股在台灣晚上到清晨才交易，所以不分平日假日、全天每 10 分鐘預熱一次；開機後 75 秒先暖一次。
@@ -2805,6 +2830,35 @@ def api_public_summary():
     except Exception:
         out["risk"] = {}
     return jsonify(out)
+
+
+@app.route("/api/public/research-snapshots")
+def api_public_research_snapshots():
+    """2026-11-13：研究用官方資料快照清單（只列中繼資料）。內容全為證交所／櫃買中心／集保的公開資料
+    （政府資料開放授權），不含任何使用者或訊號資訊。"""
+    try:
+        import research_archive
+        lim = max(1, min(int(request.args.get("limit", 500)), 2000))
+        return jsonify({"ok": True, "license": "政府資料開放授權條款；來源：臺灣證券交易所、證券櫃檯買賣中心、臺灣集中保管結算所",
+                        "snapshots": research_archive.index(lim)})
+    except Exception as e:
+        logger.error(f"api_public_research_snapshots: {e}")
+        return jsonify({"ok": False}), 500
+
+
+@app.route("/api/public/research-snapshots/<int:snap_id>")
+def api_public_research_snapshot(snap_id):
+    """單一快照的原始內容（與來源抓到的位元組完全相同）。"""
+    try:
+        import research_archive
+        body, src = research_archive.content(snap_id)
+        if body is None:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        mt = "text/csv; charset=utf-8" if src.startswith("tdcc") else "application/json; charset=utf-8"
+        return Response(body, mimetype=mt.split(";")[0], headers={"Content-Type": mt})
+    except Exception as e:
+        logger.error(f"api_public_research_snapshot: {e}")
+        return jsonify({"ok": False}), 500
 
 
 @app.route("/api/public/pulse")
