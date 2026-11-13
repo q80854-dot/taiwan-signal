@@ -287,3 +287,60 @@ def test_lineage_summary_groups_recent_rows_by_version():
     finally:
         with store._conn() as conn:
             conn.execute("DELETE FROM shadow_signals WHERE ticker IN ('LS1.TW','LS2.TW')")
+
+
+def test_slo_flags_a_trading_day_with_no_shadow_rows(monkeypatch):
+    """2026-11-11 那種「盤後掃描被部署中斷、整天沒有紀錄」要被抓到；週末與尚未掃描的今天不算。"""
+    from datetime import datetime
+    import freshness
+    import shadow
+    from state_store import store
+    shadow.ensure_table()
+    monkeypatch.setattr(shadow, "LINEAGE_SINCE", "2031-08-01")
+    monkeypatch.setattr(freshness, "_is_holiday", lambda d: False)
+    days = ["2031-08-04", "2031-08-05", "2031-08-07"]          # 週一、週二、週四；週三 08-06 缺
+    with store._conn() as conn:
+        conn.execute("DELETE FROM shadow_signals WHERE ticker LIKE 'MISS%'")
+    try:
+        for i, d in enumerate(days):
+            _ins_shadow(f"MISS{i}.TW", d)
+        out = shadow.slo_report(today=datetime(2031, 8, 8, 10, 0))   # 週五盤中：今天的掃描還沒跑，不算缺
+        assert out["missing_days"] == ["2031-08-01", "2031-08-06"] and out["counts"]["missing_trading_days"] == 2
+        out = shadow.slo_report(today=datetime(2031, 8, 9, 10, 0))   # 週六：週五的掃描應已完成 → 也算缺
+        assert "2031-08-08" in out["missing_days"] and "2031-08-02" not in out["missing_days"]   # 08-02 是週六
+    finally:
+        with store._conn() as conn:
+            conn.execute("DELETE FROM shadow_signals WHERE ticker LIKE 'MISS%'")
+
+
+# ── 審查回饋修正 ──
+def test_asof_size_keeps_etf_parameters():
+    """ETF 在掃描池一律用 ETF 參數；回測不得因價量把它改成大／中／小型股。"""
+    size, vol = bt._asof_size([150.0] * 40, [20000] * 40, 30, "ETF")
+    assert size == "ETF" and vol == 20000
+    assert bt._asof_size([150.0] * 40, [20000] * 40, 30, "中型股")[0] == "大型股"
+    assert bt._asof_size([150.0] * 5, [20000] * 5, 3, "ETF") == ("ETF", None)
+
+
+def test_day_after_typhoon_closure_is_not_expected_as_a_trading_day(monkeypatch):
+    """颱風休市隔天盤前，「應有的最新日 K」必須跳過休市日，否則行情過期防護會把全部標的誤判為過期。"""
+    from datetime import datetime
+    import data_fetcher as df
+    import freshness
+    from state_store import store
+    monkeypatch.setattr(df, "_is_national_holiday", lambda now: False)
+    monkeypatch.setitem(df._typhoon_past, "loaded", True)
+    monkeypatch.setitem(df._typhoon_past, "dates", set())
+    saved = store.get_meta("typhoon_closure_dates")
+    try:
+        df._remember_typhoon_closure("2031-09-10")                 # 週三颱風休市
+        assert "2031-09-10" in store.get_meta("typhoon_closure_dates")
+        assert df._is_tw_market_holiday(datetime(2031, 9, 10, 9, 0)) is True
+        assert freshness.expected_date("13:35", datetime(2031, 9, 11, 8, 20)) == "2031-09-09"   # 週四盤前→週二
+        assert freshness.expected_date("13:35", datetime(2031, 9, 11, 16, 30)) == "2031-09-11"
+        # 重啟後（記憶體清空）從資料庫載回
+        monkeypatch.setitem(df._typhoon_past, "loaded", False)
+        monkeypatch.setitem(df._typhoon_past, "dates", set())
+        assert df._is_tw_market_holiday(datetime(2031, 9, 10, 9, 0)) is True
+    finally:
+        store.set_meta("typhoon_closure_dates", saved)

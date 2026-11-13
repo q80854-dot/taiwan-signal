@@ -376,6 +376,8 @@ def _asof_size(closes, volumes, i, fallback="中型股"):
         if not px or px <= 0 or len(vols) < 10:
             return fallback, None
         vol = sum(vols) / len(vols)
+        if fallback == "ETF":                  # 與掃描池相同：ETF 一律用 ETF 參數，不依價量分大中小型
+            return "ETF", vol
         from stock_universe import _classify_size
         return _classify_size(px, vol), vol
     except Exception:

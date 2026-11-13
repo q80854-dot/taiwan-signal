@@ -1787,8 +1787,37 @@ _TYPHOON_PROBE_AFTER_MIN = 11 * 60     # 11:00 台北：盤已開一段時間才
 _TYPHOON_REPROBE_SEC     = 15 * 60     # 未判定前，最多每 15 分鐘探測一次
 _typhoon_state = {"date": None, "reason": None, "resolved": False, "last_probe": 0.0}
 
+# ★ 2026-11-13：過去的颱風休市日也要記得。原本只記「今天」，隔天盤前（13:35 前）計算「應有的最新日 K 日期」時，
+# 會把前一天（休市日）當成交易日，行情過期防護因此把所有標的判為過期、整批略過並誤報。
+_typhoon_past = {"loaded": False, "dates": set()}
+_TYPHOON_PAST_KEEP = 60
+
+def _load_typhoon_past():
+    if _typhoon_past["loaded"]:
+        return
+    _typhoon_past["loaded"] = True
+    try:
+        from state_store import store
+        ds = set(store.get_meta("typhoon_closure_dates") or [])
+        last = store.get_meta("typhoon_closure")
+        if last and last.get("reason") == "typhoon" and last.get("date"):
+            ds.add(last["date"])
+        _typhoon_past["dates"] = ds
+    except Exception as e:
+        logger.debug(f"_load_typhoon_past: {e}")
+
+def _remember_typhoon_closure(date_str):
+    _load_typhoon_past()
+    _typhoon_past["dates"].add(date_str)
+    try:
+        from state_store import store
+        store.set_meta("typhoon_closure_dates", sorted(_typhoon_past["dates"])[-_TYPHOON_PAST_KEEP:])
+    except Exception as e:
+        logger.warning(f"記錄颱風休市日失敗（不影響判定）: {e}")
+
 def _reset_typhoon_state():
     _typhoon_state.update({"date": None, "reason": None, "resolved": False, "last_probe": 0.0})
+    _typhoon_past.update({"loaded": False, "dates": set()})    # 換日時從資料庫重新載入過去的休市日
 
 def _market_probe_today(now) -> Optional[bool]:
     """問官方即時行情：今天市場有沒有實際成交？以台積電 2330 的 MIS 成交日期為準。
@@ -1843,6 +1872,7 @@ def refresh_typhoon_state(now=None) -> Optional[str]:
             store.set_meta("typhoon_closure", {"date": date_str, "reason": "typhoon", "at": now.isoformat()})
         except Exception:
             pass
+        _remember_typhoon_closure(date_str)
         logger.warning(f"🌀 偵測到今日（{date_str}）市場未實際交易（官方即時行情停在前一交易日）"
                        f"→ 判定臨時休市（颱風／天災）：今日排程掃描自動跳過、資料新鮮度不再要求今日、"
                        f"相關『抓取失敗』假警報一併抑制；手動『立即掃描』仍可強制執行。")
@@ -1907,6 +1937,10 @@ def _closure_reason(now) -> Optional[str]:
     if (now.weekday() < 5 and _typhoon_state.get("date") == now.strftime("%Y-%m-%d")
             and _typhoon_state.get("reason") == "typhoon"):
         return "typhoon"
+    if now.weekday() < 5:                     # 過去已判定的颱風休市日（例如昨天）
+        _load_typhoon_past()
+        if now.strftime("%Y-%m-%d") in _typhoon_past["dates"]:
+            return "typhoon"
     return None
 
 def _is_tw_market_holiday(now) -> bool:
