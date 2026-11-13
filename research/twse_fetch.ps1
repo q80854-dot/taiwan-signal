@@ -1,8 +1,8 @@
 ﻿# 證交所（上市）官方歷史資料下載（在台灣的個人電腦執行；Windows 內建 PowerShell，不需安裝任何東西）
 # 內容：停牌、減資（每年）、除權息、處置、注意股（每月），預設 2020-01 至今；加 -From 2008 可從 2008 年起補抓（已抓過的會跳過）。
-# 加參數 -OddLot 另抓盤中零股（每日，約 2 小時）。官網沒有的年份會記為失敗，不算成功。
+# 加參數 -OddLot 另抓盤中零股（每日，約 2 小時）。加 -Taifex 另抓期交所三大法人期貨（台指、小台）與選擇權買賣權分計，2008～2017 每月一份（約 20 分鐘）。官網沒有的年份會記為失敗，不算成功。
 # 每筆原樣保存並記錄網址、時間、SHA-256；被擋或不是 JSON 的記為失敗，不算成功。可中斷後重跑接續。
-param([switch]$OddLot, [int]$From = 2020)
+param([switch]$OddLot, [int]$From = 2020, [switch]$Taifex)
 $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Raw = Join-Path $Here "twse_raw"
@@ -65,6 +65,38 @@ if ($OddLot) {
             Get-One "oddlot_$D" @("${Base}afterTrading/TWTC7U?date=$D&response=json")
         }
         $d = $d.AddDays(1)
+    }
+}
+if ($Taifex) {
+    $TF = "https://www.taifex.com.tw/cht/3/"
+    $m = Get-Date -Year 2008 -Month 1 -Day 1
+    $stop = Get-Date -Year 2017 -Month 12 -Day 31
+    while ($m -le $stop) {
+        $e = $m.AddMonths(1).AddDays(-1)
+        $k = $m.ToString("yyyyMM")
+        foreach ($job in @(@("taifex_fut_TXF_$k", "futContractsDateDown", "TXF"), @("taifex_fut_MXF_$k", "futContractsDateDown", "MXF"), @("taifex_opt_TXO_$k", "callsAndPutsDateDown", "TXO"))) {
+            $out = Join-Path $Raw "$($job[0]).csv"
+            if (Test-Path $out) { continue }
+            $rec = [ordered]@{ name = $job[0]; fetched_utc = (Get-Date).ToUniversalTime().ToString("o"); source = "TAIFEX official"; ok = $false; url = "$TF$($job[1])" }
+            $body = @{ queryStartDate = $m.ToString("yyyy/MM/dd"); queryEndDate = $e.ToString("yyyy/MM/dd"); commodityId = $job[2] }
+            for ($i = 0; $i -lt 3; $i++) {
+                try {
+                    $r = Invoke-WebRequest -Uri "$TF$($job[1])" -Method Post -Body $body -UseBasicParsing -TimeoutSec 60
+                    $bytes = $r.RawContentStream.ToArray()
+                    $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace("-", "").ToLower()
+                    $rec.sha256 = $sha; $rec.bytes = $bytes.Length
+                    if ($bytes.Length -gt 50 -and $bytes[0] -ne 60) { $rec.ok = $true; [System.IO.File]::WriteAllBytes($out, $bytes) } else { $rec.error = "not CSV (HTML or empty)" }
+                    break
+                } catch {
+                    $rec.error = "$($_.Exception.Message)".Substring(0, [Math]::Min(200, "$($_.Exception.Message)".Length))
+                    Start-Sleep -Seconds ($Pace * 3)
+                }
+            }
+            ($rec | ConvertTo-Json -Compress) | Out-File -FilePath $Man -Append -Encoding utf8
+            if ($rec.ok) { Write-Host "OK   $($job[0])" } else { Write-Host "失敗 $($job[0])" }
+            Start-Sleep -Seconds $Pace
+        }
+        $m = $m.AddMonths(1)
     }
 }
 $zip = Join-Path $Here "twse_raw.zip"
