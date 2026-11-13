@@ -1656,6 +1656,47 @@ def data_quality_counts() -> dict:
     return out
 
 
+LINEAGE_SINCE = "2026-11-13"      # 逐列血緣欄位（config_ver、expire_days）自此日起必須齊全
+OVERDUE_GRACE_DAYS = 14           # 過了到期日再加這麼多天仍是 pending＝結算流程有問題
+
+
+def slo_report(today=None) -> dict:
+    """★ 2026-11-13（外部審查「資料品質需要 SLO，而不只是 logging」）影子資料的硬性門檻，全部應為 0：
+      lineage_missing        2026-11-13 起的列缺 config_ver 或 expire_days（無法分辨是哪一版規則產生的）
+      overdue_pending        已過到期日＋寬限仍未結案（結算卡住，壞結果會從統計中消失）
+      closed_without_status  2026-11-13 起已結案的候選沒有 Champion 狀態
+      closed_without_r／closed_missing_stop／absurd_mfe_mae／absurd_r  同 data_quality_counts
+    回傳 {"ok": 是否全數為 0, "breaches": {項目: 筆數}, "counts": {…}}。只讀。"""
+    ensure_table()
+    from state_store import store
+    ref = today or datetime.now(TPE).replace(tzinfo=None)
+    counts = {}
+    dq = data_quality_counts()
+    for k in ("closed_without_r", "closed_missing_stop", "absurd_mfe_mae", "absurd_r"):
+        counts[k] = dq.get(k, 0)
+    oldest = (ref - timedelta(days=15 + OVERDUE_GRACE_DAYS)).strftime("%Y-%m-%d")
+    with store._conn() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM shadow_signals WHERE bar_date>=? AND "
+                           "(config_ver IS NULL OR expire_days IS NULL)", (LINEAGE_SINCE,)).fetchone()
+        counts["lineage_missing"] = int((dict(row) if row else {}).get("n") or 0)
+        row = conn.execute("SELECT COUNT(*) AS n FROM shadow_signals WHERE bar_date>=? AND kind='candidate' "
+                           "AND status='closed' AND champion_status IS NULL", (LINEAGE_SINCE,)).fetchone()
+        counts["closed_without_status"] = int((dict(row) if row else {}).get("n") or 0)
+        pend = [dict(x) for x in conn.execute(
+            "SELECT bar_date, expire_days FROM shadow_signals WHERE status='pending' AND bar_date<=?",
+            (oldest,)).fetchall()]
+    overdue = 0
+    for r in pend:
+        try:
+            age = (ref - datetime.strptime(r["bar_date"][:10], "%Y-%m-%d")).days
+        except Exception:
+            continue
+        overdue += age > _row_expire_days(r) + OVERDUE_GRACE_DAYS
+    counts["overdue_pending"] = overdue
+    breaches = {k: v for k, v in counts.items() if v}
+    return {"ok": not breaches, "breaches": breaches, "counts": counts}
+
+
 def _pct_ret(row, key="r20"):
     """把以 R 為單位的前瞻報酬換成百分比：r × 規劃風險 ÷ 實際進場價（隔日開盤＝entry×(1+gap%)）。"""
     try:

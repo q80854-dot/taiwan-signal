@@ -677,6 +677,25 @@ def job_shadow_resolve(reason: str = "排程"):
             logger.info(f"⏰ 影子資料品質（{reason}）：{shadow.data_quality_counts()}")
         except Exception as e:
             logger.warning(f"job_shadow_resolve data_quality_counts: {e}")
+        # ★ 2026-11-13：影子資料品質門檻（全部應為 0）。未達標寫 ERROR、留事件，並每天最多推播一次。
+        try:
+            _slo = shadow.slo_report()
+            if _slo["ok"]:
+                logger.info(f"⏰ 影子資料品質門檻（{reason}）：全數達標 {_slo['counts']}")
+            else:
+                logger.error(f"⏰ 影子資料品質門檻（{reason}）未達標：{_slo['breaches']}")
+                from state_store import store as _st
+                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if _st.get_meta("shadow_slo_alert_date", "") != _today:
+                    _st.set_meta("shadow_slo_alert_date", _today)
+                    _st.add_event("risk", "影子追蹤資料品質未達標", f"未達標項目與筆數：{_slo['breaches']}")
+                    try:
+                        from telegram_bot import send_alert
+                        send_alert(f"⚠️ 影子追蹤資料品質未達標\n{_slo['breaches']}", "warning")
+                    except Exception as e:
+                        logger.warning(f"影子資料品質通知推播失敗: {e}")
+        except Exception as e:
+            logger.warning(f"job_shadow_resolve slo_report: {e}")
         try:
             from strategies import store as _ss
             logger.info(f"⏰ 策略假想訊號結算（{reason}）完成：{_ss.resolve_pending()}")
