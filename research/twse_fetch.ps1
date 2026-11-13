@@ -1,7 +1,8 @@
-# 證交所（上市）官方歷史資料下載（在台灣的個人電腦執行；Windows 內建 PowerShell，不需安裝任何東西）
-# 內容：停牌、減資（每年）、除權息、處置、注意股（每月），2020-01 至今。加參數 -OddLot 另抓盤中零股（每日，約 2 小時）。
+﻿# 證交所（上市）官方歷史資料下載（在台灣的個人電腦執行；Windows 內建 PowerShell，不需安裝任何東西）
+# 內容：停牌、減資（每年）、除權息、處置、注意股（每月），預設 2020-01 至今；加 -From 2008 可從 2008 年起補抓（已抓過的會跳過）。
+# 加參數 -OddLot 另抓盤中零股（每日，約 2 小時）。官網沒有的年份會記為失敗，不算成功。
 # 每筆原樣保存並記錄網址、時間、SHA-256；被擋或不是 JSON 的記為失敗，不算成功。可中斷後重跑接續。
-param([switch]$OddLot)
+param([switch]$OddLot, [int]$From = 2020)
 $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Raw = Join-Path $Here "twse_raw"
@@ -41,13 +42,13 @@ function Get-One($name, $urls) {
     if ($rec.ok) { Write-Host "OK   $name" } else { Write-Host "失敗 $name" }
 }
 
-for ($y = 2020; $y -le $Today.Year; $y++) {
+for ($y = $From; $y -le $Today.Year; $y++) {
     $a = "{0}0101" -f $y
     $b = if ($y -lt $Today.Year) { "{0}1231" -f $y } else { $Today.ToString("yyyyMMdd") }
     Get-One "halt_$y" @("${Base}afterTrading/TWTAWU?startDate=$a&endDate=$b&querytype=3&response=json", "${Base}afterTrading/TWTAWU?startDate=$a&endDate=$b&response=json")
     Get-One "reduction_$y" @("${Base}reducation/TWTAUU?startDate=$a&endDate=$b&response=json")
 }
-$m = Get-Date -Year 2020 -Month 1 -Day 1
+$m = Get-Date -Year $From -Month 1 -Day 1
 while ($m -le $Today) {
     $e = $m.AddMonths(1).AddDays(-1); if ($e -gt $Today) { $e = $Today }
     $A = $m.ToString("yyyyMMdd"); $B = $e.ToString("yyyyMMdd"); $k = $m.ToString("yyyyMM")
