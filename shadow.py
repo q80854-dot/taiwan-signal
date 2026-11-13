@@ -1660,6 +1660,20 @@ LINEAGE_SINCE = "2026-11-13"      # 逐列血緣欄位（config_ver、expire_day
 OVERDUE_GRACE_DAYS = 14           # 過了到期日再加這麼多天仍是 pending＝結算流程有問題
 
 
+def lineage_summary(since=None) -> list:
+    """近期影子列依（日期, 策略版本, 到期天數, 類型）計數——寫進結算日誌，作為「線上真的照哪一版規則在記錄」的
+    可稽核證據（正式資料庫不對外開放，日誌是唯一可外部查證的來源）。預設看最近 5 天。"""
+    ensure_table()
+    from state_store import store
+    since = since or (datetime.now(TPE) - timedelta(days=5)).strftime("%Y-%m-%d")
+    with store._conn() as conn:
+        rs = [dict(x) for x in conn.execute(
+            "SELECT bar_date, config_ver, expire_days, kind, COUNT(*) AS n FROM shadow_signals WHERE bar_date>=? "
+            "GROUP BY bar_date, config_ver, expire_days, kind ORDER BY bar_date, kind", (since,)).fetchall()]
+    return [{"bar_date": r["bar_date"], "config_ver": r["config_ver"], "expire_days": r["expire_days"],
+             "kind": r["kind"], "n": int(r["n"] or 0)} for r in rs]
+
+
 def slo_report(today=None) -> dict:
     """★ 2026-11-13（外部審查「資料品質需要 SLO，而不只是 logging」）影子資料的硬性門檻，全部應為 0：
       lineage_missing        2026-11-13 起的列缺 config_ver 或 expire_days（無法分辨是哪一版規則產生的）

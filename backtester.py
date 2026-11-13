@@ -354,6 +354,14 @@ def _weekly_asof_slice(weekly, day):
         return None
 
 
+def _bt_config_version():
+    try:
+        import strategy_version as _sv
+        return _sv.config_hash()[:12]
+    except Exception:
+        return None
+
+
 def _asof_size(closes, volumes, i, fallback="中型股"):
     """★ 2026-11-13（外部審查 P0：歷史屬性洩漏）回測第 i 根進場時，股票的規模分類與均量一律以「訊號日
     （第 i−1 根）當時」的收盤與近 20 日均量（張）計算，公式與掃描池相同（stock_universe._classify_size）。
@@ -1099,6 +1107,7 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             "universe_pit": _pit_label(_pit), "n_unfilled_limit": n_unfilled_limit,
             "n_skipped_same_sector": n_skip_sector, "n_skipped_group_limit": n_skip_group,
             "n_skipped_no_budget": n_skip_budget, "n_shrunk_to_budget": n_shrunk,
+            "config_version": _bt_config_version(),      # 這次回測所用的策略版本：須與線上 /healthz 的 config_version 相同才可比
             "risk_policy": "risk_manager.open_risk_cap（與正式發訊相同：全部未平倉＋新單的停損風險合計上限）",
             "attributes_asof": "規模分類與均量取訊號日當時；產業分類無歷史來源、用現值",
             "universe_requested": len(targets), "universe_no_data": sorted(set(targets) - set(data)),

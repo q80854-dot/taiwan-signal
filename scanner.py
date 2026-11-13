@@ -377,7 +377,10 @@ class TWScanEngine:
         with self._pre_lock:
             self._ctrl = []
             self._pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0,
-                         "recon_checked": 0, "recon_fixed": 0, "recon_samples": []}
+                         "recon_checked": 0, "recon_fixed": 0, "recon_samples": [],
+                         "stale_skipped": 0, "stale_samples": []}
+        self._exp_bar_date = self._expected_bar_date()
+        logger.info(f"本次掃描應有的最新日 K 日期：{self._exp_bar_date or '無法判定'}（最後一根早於此日的標的不產生訊號）")
         for batch_idx, batch in enumerate(batches):
             logger.info(f"批次 {batch_idx+1}/{len(batches)}（{len(batch)} 檔，同時 {_SCAN_CONCURRENCY} 檔）")
             with concurrent.futures.ThreadPoolExecutor(max_workers=_SCAN_CONCURRENCY) as pool:
@@ -584,6 +587,22 @@ class TWScanEngine:
         }
         store.save_scan_history(stats)
         try:
+            _stale = int(self._pre.get("stale_skipped", 0))
+            if _stale:
+                _share = _stale / max(1, total_tickers)
+                _msg = (f"本次掃描有 {_stale}/{total_tickers} 檔的最後一根日 K 早於應有日期 {self._exp_bar_date}，"
+                        f"已略過不產生訊號。樣本：{self._pre.get('stale_samples')}")
+                (logger.error if _share >= 0.2 else logger.warning)(_msg)
+                if _share >= 0.2:
+                    store.add_event("risk", "行情資料過期，多數標的未產生訊號", _msg[:500])
+                    try:
+                        from telegram_bot import send_alert
+                        send_alert(f"⚠️ 行情資料過期：{_stale}/{total_tickers} 檔的日 K 不是 {self._exp_bar_date}，本次已略過這些標的", "warning")
+                    except Exception as e:
+                        logger.warning(f"行情過期通知推播失敗: {e}")
+        except Exception as e:
+            logger.warning(f"行情過期統計失敗（不影響掃描結果）: {e}")
+        try:
             pre = dict(self._pre)
             tot = pre["skipped"] + pre["passed"]
             store.set_meta("last_scan_audit", {
@@ -594,6 +613,9 @@ class TWScanEngine:
                 "audited": pre["audited"], "mismatch": pre["mismatch"],
                 "recon_checked": pre["recon_checked"], "recon_fixed": pre["recon_fixed"],
                 "recon_samples": pre["recon_samples"], "duration_sec": stats["duration_sec"],
+                # ★ 2026-11-13：最後一根日 K 早於應有日期而被略過的標的（stale bar fail-closed）
+                "expected_bar_date": self._exp_bar_date, "stale_skipped": pre.get("stale_skipped", 0),
+                "stale_samples": pre.get("stale_samples", []),
                 # ★ 2026-11-12 逐棒階段 2：本批訊號所用末棒定案統計（unknown＝舊棒無紀錄，誠實列出）
                 "bar_final_summary": _bar_sum,
             })
@@ -905,7 +927,34 @@ class TWScanEngine:
 
     _SCAN_SINGLE_TIMEOUT_SEC = 25
     _pre_lock = threading.Lock()
-    _pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0, "recon_checked": 0, "recon_fixed": 0, "recon_samples": []}
+    _pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0, "recon_checked": 0, "recon_fixed": 0, "recon_samples": [],
+            "stale_skipped": 0, "stale_samples": []}
+    _exp_bar_date = None        # 本次掃描應有的最新日 K 日期（每次掃描開始時設定）；None＝尚未設定（單元測試等直接呼叫的情形）
+    _STALE_UNKNOWN = "__unknown__"   # 無法判定應有日期：一律視為過期（fail-closed）
+
+    @classmethod
+    def _expected_bar_date(cls):
+        """這次掃描「應該已經有」的最新日 K 日期：交易日收盤後＝今天；盤前、假日＝上一個交易日。
+        無法判定時回傳 _STALE_UNKNOWN，使所有標的都被視為過期、不產生訊號（fail-closed）。"""
+        try:
+            import freshness
+            return freshness.expected_date("13:35")
+        except Exception as e:
+            logger.error(f"無法判定應有的最新日 K 日期，本次掃描不產生任何訊號（fail-closed）: {e}", exc_info=True)
+            return cls._STALE_UNKNOWN
+
+    @staticmethod
+    def _bar_is_stale(daily, expected) -> bool:
+        """★ 2026-11-13（外部審查：stale bar 必須 fail-closed）最後一根日 K 是否早於應有日期。
+        行情來源延遲、或官方日 K 沒補上時，最後一根會停在前一個交易日；用它算出來的訊號，進場價與停損
+        都是舊的。expected 為 None（未設定）時不判斷；為 _STALE_UNKNOWN 或資料沒有日期時一律視為過期。"""
+        if expected is None:
+            return False
+        dates = (daily or {}).get("dates") or []
+        last = str(dates[-1])[:10] if dates else ""
+        if expected == TWScanEngine._STALE_UNKNOWN or not last:
+            return True
+        return last < expected
     _ctrl = []
     _PRE_AUDIT_RATE = 0.05   # 被日線預判跳過的股票，隨機抽 5% 仍跑完整流程自我驗證
     _MARKET_OVERVIEW_TIMEOUT_SEC = 45
@@ -981,6 +1030,14 @@ class TWScanEngine:
         import random
         daily = fetch_ohlcv(ticker, "daily")
         if not daily: return None
+        if self._bar_is_stale(daily, self._exp_bar_date):
+            # 最後一根日 K 不是應有的那一天：不產生訊號、也不進影子追蹤（舊價位算出來的假想單同樣不可信）
+            with self._pre_lock:
+                self._pre["stale_skipped"] += 1
+                if len(self._pre["stale_samples"]) < 8:
+                    self._pre["stale_samples"].append({"ticker": ticker, "last_bar": ((daily.get("dates") or [None])[-1]),
+                                                       "expected": self._exp_bar_date})
+            return None
         daily = self._reconcile_last_bar(ticker, stock_info, daily)
         pre = check_multi_timeframe_tw({"daily": daily})
         try:
