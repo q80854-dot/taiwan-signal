@@ -1,4 +1,4 @@
-"""研究驗證工具：Deflated Sharpe Ratio（DSR）與回測過度配適機率（PBO／CSCV）。
+"""研究驗證工具：Deflated Sharpe Ratio（DSR）、回測過度配適機率（PBO／CSCV）、White Reality Check。
 （研究工具；不被 app 匯入、不影響任何線上行為。2026-11-13 外部審查「統計驗證」項目。）
 
 為什麼需要：同一批資料上試過愈多方案，「最好的那個」看起來愈漂亮，即使全部都沒有真本事。
@@ -82,6 +82,35 @@ def pbo_cscv(matrix, n_blocks=10):
         logits.append(math.log(w / (1 - w)))
     return {"pbo": sum(1 for x in logits if x <= 0) / len(logits), "n_splits": len(logits),
             "logits": logits, "best_is_counts": counts}
+
+
+def reality_check(benchmark, variants, n_boot=2000, mean_block=10, seed=20261113):
+    """White (2000) Reality Check，stationary bootstrap（Politis & Romano；平均區塊長度 mean_block 期）。
+    問題：「試了這麼多個方案之後，最好的那個是不是真的比基準好？」
+    benchmark：基準的每期序列；variants：{名稱: 序列}（與基準等長、同一批日期）。
+    回傳 {best, best_mean_diff, p_value, n}。p_value＝在「所有方案其實都不比基準好」的假設下，
+    光靠運氣就能看到這麼大的最佳差異的機率；愈小愈能說最好的方案是真的比較好。"""
+    import random
+    names = list(variants)
+    T = len(benchmark)
+    if not names or T < 20:
+        return {"best": None, "best_mean_diff": None, "p_value": None, "n": T}
+    d = {k: [variants[k][t] - benchmark[t] for t in range(T)] for k in names}
+    means = {k: sum(v) / T for k, v in d.items()}
+    best = max(names, key=lambda k: means[k])
+    stat = math.sqrt(T) * means[best]
+    rng = random.Random(seed)
+    p_new = 1.0 / mean_block
+    count = 0
+    for _ in range(n_boot):
+        idx = []
+        t = rng.randrange(T)
+        for _ in range(T):
+            idx.append(t)
+            t = rng.randrange(T) if rng.random() < p_new else (t + 1) % T
+        m = max(math.sqrt(T) * (sum(d[k][i] for i in idx) / T - means[k]) for k in names)
+        count += m >= stat
+    return {"best": best, "best_mean_diff": means[best], "p_value": count / n_boot, "n": T}
 
 
 def daily_series(rows):

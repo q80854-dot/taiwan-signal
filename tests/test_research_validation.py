@@ -38,3 +38,14 @@ def test_pbo_is_about_half_for_pure_noise_and_low_when_one_strategy_is_truly_bet
 def test_daily_series_averages_same_day_trades():
     days, xs = rv.daily_series([("2026-01-02", 1.0), ("2026-01-01", 3.0), ("2026-01-02", -1.0)])
     assert days == ["2026-01-01", "2026-01-02"] and xs == [3.0, 0.0]
+
+
+def test_reality_check_separates_a_real_improvement_from_the_best_of_many_noise_variants():
+    bench = _noise(1200, 500)
+    noise = {f"v{i}": [b + e for b, e in zip(bench, _noise(1200, 600 + i))] for i in range(8)}
+    r = rv.reality_check(bench, noise, n_boot=500)
+    assert r["p_value"] > 0.05                               # 8 個純雜訊方案裡最好的：不算真的比較好
+    real = dict(noise, good=[b + 0.2 + 0.3 * e for b, e in zip(bench, _noise(1200, 777))])
+    q = rv.reality_check(bench, real, n_boot=500)
+    assert q["best"] == "good" and q["p_value"] < 0.01
+    assert rv.reality_check([0.0] * 5, {"a": [1.0] * 5})["p_value"] is None
