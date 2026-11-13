@@ -106,6 +106,12 @@ def _row_expire_days(row) -> int:
     return v if v > 0 else LEGACY_SIGNAL_EXPIRE_DAYS
 
 
+# ★ 2026-11-13：舊版 config_hash 會被掃描當下的暫時門檻調整帶動（財報密集期把觀察門檻 65→70，
+#   見 config.SIGNAL_THRESHOLDS_BASE）。當時寫入的標記其實是同一套核准規則；原始列不改寫，
+#   只在依版本分組的報表裡歸回正確版本，並保留原標記供查證。
+CONFIG_VER_ALIASES = {"3b6c032b4106": "0c49884d59de"}
+
+
 def _config_ver():
     """寫入當下的策略版本（config_hash 前 12 碼）；取不到回 None，不猜。"""
     try:
@@ -1028,10 +1034,11 @@ def _entry_unfillable(row, bars):
     return execution.entry_blocked_by_limit(row["direction"], after[0], _signal_close(row, bars))
 
 
-def _shadow_staged_pnl_factory():
+def _shadow_staged_pnl_factory(code=None):
     """回傳一個與 shadow 單次出場『同口徑』的 pnl_fn：滑價＋來回手續費＋證交稅＋（放空）借券費，
     唯張數相消、不套用每筆 20 元最低手續費（與既有 r_multiple 相同假設，兩軌才可直接比較）。"""
-    from config import COMMISSION_RATE, TAX_RATE_SELL, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL
+    from config import COMMISSION_RATE, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL, sell_tax_rate
+    TAX_RATE_SELL = sell_tax_rate(code)          # 2026-11-13：ETF 0.1%、股票 0.3%（code 未給＝股票稅率）
 
     def _pnl(entry, exit_price, direction, shares, days_held=0):
         buy = direction == "buy"
@@ -1061,7 +1068,7 @@ def _champion_r(row, bars, expire_days):
     sim = execution.simulate_staged_exit(
         after, entry=fill, sl=stop, tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"),
         direction=row["direction"], shares=shares, gen_date=row["bar_date"],
-        pnl_fn=_shadow_staged_pnl_factory(), expire_days=expire_days)
+        pnl_fn=_shadow_staged_pnl_factory(row.get("ticker")), expire_days=expire_days)
     if not sim:
         return None
     return round(sim["pnl"] / (risk * shares), 3)
@@ -1095,7 +1102,7 @@ def _champion_track(row, bars, expire_days, today=None):
     sim = execution.simulate_staged_exit(
         after, entry=fill, sl=stop, tp1=row.get("tp1"), tp2=row.get("tp2"), tp3=row.get("tp3"),
         direction=row["direction"], shares=shares, gen_date=row["bar_date"],
-        pnl_fn=_shadow_staged_pnl_factory(), expire_days=expire_days,
+        pnl_fn=_shadow_staged_pnl_factory(row.get("ticker")), expire_days=expire_days,
         prev_close=_signal_close(row, bars))
     if not sim:
         return None
@@ -1225,7 +1232,7 @@ def resolve_pending(max_rows=30000):
     try:
         ensure_table()
         from state_store import store
-        from config import CIRCUIT_BREAKER, COMMISSION_RATE, TAX_RATE_SELL, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL
+        from config import CIRCUIT_BREAKER, COMMISSION_RATE, SLIPPAGE_RATE, SHORT_BORROW_ANNUAL, sell_tax_rate
         cleanup_absurd_metrics()      # 每次結算都檢查非物理值列（2026-11-12 起不再只跑一次）
         cutoff = (datetime.now(TPE) - timedelta(days=45)).strftime("%Y-%m-%d")
         # 退市／長期無資料的訊號若一直留在 pending，壞結果（下市、停牌）會從統計中消失（存活者偏誤）。
@@ -1328,7 +1335,7 @@ def resolve_pending(max_rows=30000):
                 eff_exit = exitp * (1 - SLIPPAGE_RATE) if buy else exitp * (1 + SLIPPAGE_RATE)
                 gross_r = (eff_exit - eff_fill) / risk if buy else (eff_fill - eff_exit) / risk
                 sell_leg = eff_exit if buy else eff_fill
-                cost_ps = eff_fill * COMMISSION_RATE + eff_exit * COMMISSION_RATE + sell_leg * TAX_RATE_SELL
+                cost_ps = eff_fill * COMMISSION_RATE + eff_exit * COMMISSION_RATE + sell_leg * sell_tax_rate(row.get("ticker"))
                 try:
                     days_held = max(0, (datetime.strptime(sim["exit_date"], "%Y-%m-%d")
                                         - datetime.strptime(row["bar_date"], "%Y-%m-%d")).days)
@@ -1485,7 +1492,7 @@ def _alt_exit_tracks(row, bars, today=None):
             out[name] = {"status": "no_atr", "r": None}
             continue
         sim = execution.simulate_alt_exit(spec, after, fill, stop, row.get("tp1"), row.get("tp2"), row.get("tp3"),
-                                          row["direction"], shares, row["bar_date"], _shadow_staged_pnl_factory(),
+                                          row["direction"], shares, row["bar_date"], _shadow_staged_pnl_factory(row.get("ticker")),
                                           atr=atr, prev_close=_signal_close(row, bars))
         if sim is None:
             out[name] = {"status": "no_atr" if spec.get("trail_atr") else "provisional", "r": None}
@@ -1813,13 +1820,17 @@ def cohort_report() -> dict:
     # 做多只剩週線偏多且 ≥75 分者），不同版本的平均不可直接合併解讀。NULL＝該列產生時尚未記錄版本。
     by_ver = {}
     for r in rows:
-        v = by_ver.setdefault((r.get("config_ver") or "未記錄", r.get("direction")), {"n": 0, "rs": [], "days": set()})
+        _cv = r.get("config_ver") or "未記錄"
+        v = by_ver.setdefault((CONFIG_VER_ALIASES.get(_cv, _cv), r.get("direction")),
+                              {"n": 0, "rs": [], "days": set(), "raw": set()})
+        v["raw"].add(_cv)
         v["n"] += 1
         v["days"].add(r.get("bar_date"))
         if r.get("champion_status") == "final" and r.get("champion_r") is not None:
             v["rs"].append(r["champion_r"])
     out["by_config_ver"] = [
         {"config_ver": k[0], "direction": k[1], "candidates": v["n"], "signal_days": len(v["days"]),
+         "raw_config_vers": sorted(v["raw"]),
          "first_day": min(v["days"]) if v["days"] else None, "last_day": max(v["days"]) if v["days"] else None,
          "champion_final": len(v["rs"]),
          "champion_avg_r": round(sum(v["rs"]) / len(v["rs"]), 3) if v["rs"] else None}

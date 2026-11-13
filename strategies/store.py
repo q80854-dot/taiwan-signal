@@ -93,7 +93,6 @@ def resolve_pending(max_rows=5000) -> dict:
     since = (datetime.strptime(min(r["bar_date"] for r in rows), "%Y-%m-%d")
              - timedelta(days=10)).strftime("%Y-%m-%d")
     bars_by = shadow._load_bars(sorted({r["ticker"] for r in rows}), since)
-    pnl_fn = shadow._shadow_staged_pnl_factory()
     today = datetime.now(_TPE).replace(tzinfo=None)
     updates, closed = [], 0
     for r in rows:
@@ -117,7 +116,7 @@ def resolve_pending(max_rows=5000) -> dict:
             continue
         sim = execution.simulate_staged_exit(
             after, entry=fill, sl=r["stop"], tp1=r.get("tp1"), tp2=r.get("tp2"), tp3=r.get("tp3"),
-            direction=r["direction"], shares=3000, gen_date=r["bar_date"], pnl_fn=pnl_fn,
+            direction=r["direction"], shares=3000, gen_date=r["bar_date"], pnl_fn=shadow._shadow_staged_pnl_factory(r["ticker"]),
             expire_days=expire_days, prev_close=_pc)
         if not sim:
             continue

@@ -45,7 +45,7 @@ def _setup(monkeypatch, data, direction="buy", shares=3000):
                         lambda d, p, sl, sc: {"tp1": round(p * (1 + 0.05 * sgn), 2), "tp2": round(p * (1 + 0.10 * sgn), 2),
                                               "tp3": round(p * (1 + 0.15 * sgn), 2), "rr1": 2.0})
     monkeypatch.setattr(signal_engine, "calc_position_size",
-                        lambda p, sl, balance=None, size_cat=None, avg_volume_lots=None: {"shares": shares})
+                        lambda p, sl, balance=None, size_cat=None, avg_volume_lots=None, code=None: {"shares": shares})
 
 
 def _bars(data, i0, i1):

@@ -36,16 +36,18 @@ def grade_fields(score):
             "emoji_grade": {"A":"🟢","B":"🟡","C":"⚪"}[grade]}
 
 
-def calc_trade_cost(price, shares, direction):
+def calc_trade_cost(price, shares, direction, code=None):
+    """code：股票代號（決定證交稅率：ETF 0.1%、股票 0.3%）；未給時用股票稅率（保守）。"""
+    from config import sell_tax_rate
     total_value = price * shares
     commission  = max(MIN_COMMISSION, total_value * COMMISSION_RATE)
-    tax         = total_value * TAX_RATE_SELL if direction == "sell" else 0
+    tax         = total_value * sell_tax_rate(code) if direction == "sell" else 0
     total_cost  = commission + tax
     return {"total_value": round(total_value,0), "commission": round(commission,0),
             "tax": round(tax,0), "total_cost": round(total_cost,0),
             "cost_pct": round(total_cost/total_value*100,3) if total_value else 0}
 
-def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="中型股", avg_volume_lots=None):
+def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="中型股", avg_volume_lots=None, code=None):
     # ★ 修正：2026-08-30（第一輪）——投資人回測報告核對數字時發現：舊版「lots = max(1, ...)」不管
     # 風險預算(2%)或單一部位資金上限(30%)換算出來是多少，最少一定強迫買1張。股價較高、或停損距離
     # 較寬的標的（例如當時的 6669.TW），换算下來连0.1張都不到，也照樣被塞進1張，等於這筆交易的實際
@@ -101,8 +103,8 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
         return {"shares":0,"risk_twd":0,"risk_pct":0,"position_value":0,"margin_pct":0,"roundtrip_cost":0,
                 "breakeven_pct":0,"liquidity_capped":liquidity_capped}
     position_value = shares * price
-    buy_cost  = calc_trade_cost(price, shares, "buy")
-    sell_cost = calc_trade_cost(price, shares, "sell")
+    buy_cost  = calc_trade_cost(price, shares, "buy", code)
+    sell_cost = calc_trade_cost(price, shares, "sell", code)
     roundtrip = buy_cost["total_cost"] + sell_cost["total_cost"]
     return {
         "shares":         shares,
@@ -117,12 +119,12 @@ def calc_position_size(price, stop_loss, balance=None, risk_pct=None, size_cat="
     }
 
 
-def resize_position(pos, price, stop_loss, shares, balance=None):
+def resize_position(pos, price, stop_loss, shares, balance=None, code=None):
     """把部位改成指定股數並重算風險／金額／成本欄位（供放空整張化等調整使用）。"""
     balance = balance or ACCOUNT_BALANCE_TWD
     rps = abs(price - stop_loss)
     pv = shares * price
-    rt = calc_trade_cost(price, shares, "buy")["total_cost"] + calc_trade_cost(price, shares, "sell")["total_cost"]
+    rt = calc_trade_cost(price, shares, "buy", code)["total_cost"] + calc_trade_cost(price, shares, "sell", code)["total_cost"]
     out = dict(pos)
     out.update({"shares": shares, "lots": round(shares / SHARES_PER_LOT, 3),
                 "risk_twd": round(shares * rps, 0), "risk_pct": round(shares * rps / balance * 100, 2),
@@ -163,7 +165,8 @@ def fit_to_cash(sig, cash, risk_left=None):
         return None
     bal = ACCOUNT_BALANCE_TWD
     pv = new * price
-    rt = calc_trade_cost(price, new, "buy")["total_cost"] + calc_trade_cost(price, new, "sell")["total_cost"]
+    _code = sig.get("ticker") or sig.get("code")
+    rt = calc_trade_cost(price, new, "buy", _code)["total_cost"] + calc_trade_cost(price, new, "sell", _code)["total_cost"]
     sig.update({"suggested_shares": new, "suggested_lots": round(new / SHARES_PER_LOT, 3),
                 "risk_twd": round(new * rps, 0), "risk_pct": round(new * rps / bal * 100, 2),
                 "position_value": round(pv, 0), "roundtrip_cost": round(rt, 0),
@@ -670,7 +673,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
         tp_info=calc_take_profits_tw(direction,price,sl,size_cat)
         if tp_info["rr1"]<THRESH["min_rr"]:
             _rej("rr_low", sl); return None
-        pos=calc_position_size(price,sl,size_cat=size_cat,avg_volume_lots=stock_info.get("volume_lots"))
+        pos=calc_position_size(price,sl,size_cat=size_cat,avg_volume_lots=stock_info.get("volume_lots"),code=ticker)
         if pos["shares"]<=0:
             _rej("size_zero", sl); return None
         if direction=="sell":
@@ -680,7 +683,7 @@ def generate_signal_tw(ticker, stock_info, tf_data, market_overview, inst_data=N
                 logger.info(f"[{ticker}] 放空建議部位 {pos['shares']} 股不足 1 張，零股不能放空，略過")
                 _rej("short_odd_lot", sl); return None
             if _lot_sh!=pos["shares"]:
-                pos=resize_position(pos, price, sl, _lot_sh)
+                pos=resize_position(pos, price, sl, _lot_sh, code=ticker)
         if pos.get("liquidity_capped"):
             logger.info(f"[{ticker}] 建議部位因流動性上限（當日成交量10%）被下修至 {pos['shares']} 股")
         if _market_stop:

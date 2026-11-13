@@ -92,7 +92,7 @@ def test_portfolio_backtest_only_enters_while_ticker_is_a_member(monkeypatch):
     monkeypatch.setattr(signal_engine, "calc_take_profits_tw",
                         lambda d, p, sl, sc: {"tp1": p * 1.05, "tp2": p * 1.10, "tp3": p * 1.15, "rr1": 2.0})
     monkeypatch.setattr(signal_engine, "calc_position_size",
-                        lambda p, sl, balance=None, size_cat=None, avg_volume_lots=None: {"shares": 3000})
+                        lambda p, sl, balance=None, size_cat=None, avg_volume_lots=None, code=None: {"shares": 3000})
     targets = bt._PitTargets(["6770.TW"]); targets.pit = "tw50"
 
     monkeypatch.setattr(data_fetcher, "fetch_ohlcv", lambda t, tf="daily": in_period)
@@ -122,7 +122,7 @@ def test_single_symbol_backtest_respects_membership(monkeypatch):
     monkeypatch.setattr(signal_engine, "calc_take_profits_tw",
                         lambda d_, p, sl, sc: {"tp1": p * 1.05, "tp2": p * 1.10, "tp3": p * 1.15, "rr1": 2.0})
     monkeypatch.setattr(signal_engine, "calc_position_size",
-                        lambda p, sl, balance=None, size_cat=None, avg_volume_lots=None: {"shares": 3000})
+                        lambda p, sl, balance=None, size_cat=None, avg_volume_lots=None, code=None: {"shares": 3000})
     assert bt.backtest_symbol_tw("6770.TW", use_short_gates=False, pit_universe="tw50")["n_trades"] == 0
     assert bt.backtest_symbol_tw("6770.TW", use_short_gates=False)["n_trades"] == 1
     assert bt.backtest_symbol_tw_partial("6770.TW", pit_universe="tw50")["n_trades"] == 0

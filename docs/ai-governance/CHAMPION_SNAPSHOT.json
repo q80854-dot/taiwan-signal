@@ -1,5 +1,5 @@
 {
-  "config_hash": "0c49884d59deebc02944bd43f6d3dd28219156f411bccdb684ea16815e18ab41",
+  "config_hash": "8d711b1945b7e945a7a0ba9105ab4070c9a8af3bf3270ce10534fabaeade798b",
   "constants": {
     "CIRCUIT_BREAKER": {
       "foreign_sell_caution": -50000000000.0,
@@ -95,7 +95,7 @@
     "MAX_PORTFOLIO_RISK": 0.15,
     "MAX_RISK_PER_TRADE": 0.02,
     "MAX_SIMULTANEOUS_POSITIONS": 5,
-    "MIN_COMMISSION": 20,
+    "MIN_COMMISSION": 1,
     "SHARES_PER_LOT": 1000,
     "SHORT_BORROW_ANNUAL": 0.04,
     "SHORT_EXECUTABLE": true,
@@ -147,6 +147,7 @@
       }
     },
     "TAX_RATE_SELL": 0.003,
+    "TAX_RATE_SELL_ETF": 0.001,
     "TIMEFRAMES": {
       "daily": {
         "bars": 250,
@@ -169,7 +170,7 @@
     },
     "YIELD_ANOMALY_PCT": 15.0
   },
-  "frozen_at": "2026-11-12",
+  "frozen_at": "2026-11-13",
   "note": "此為 Champion 正式策略/風控常數的凍結快照。要更新，須有意識地改 config 常數並經使用者核准後重新產生本檔（python scripts/freeze_champion.py）。",
-  "strategy_version": "champion-0c49884d59de"
+  "strategy_version": "champion-8d711b1945b7"
 }

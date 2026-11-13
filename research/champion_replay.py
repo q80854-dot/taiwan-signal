@@ -126,7 +126,7 @@ def replay_ticker(args):
     info = {"name": code, "code": code, "sector": "", "size_cat": size_cat, "volume_lots": None}
     base_min = config.SIGNAL_THRESHOLDS["min_score"]
     expire = config.CIRCUIT_BREAKER.get("signal_expire_days", 15)
-    pnl_fn = shadow._shadow_staged_pnl_factory()
+    pnl_fn = shadow._shadow_staged_pnl_factory(ticker)
     if pit == "tw50":
         import tw50_history as h
     import stock_universe as su
