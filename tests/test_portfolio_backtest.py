@@ -37,7 +37,7 @@ def test_portfolio_backtest_shared_account_and_cap(monkeypatch):
     monkeypatch.setattr(signal_engine, "calc_stop_loss_tw", lambda d, p, a, ind, sc, lo, hi: round(p * 0.95, 2))
     monkeypatch.setattr(signal_engine, "calc_take_profits_tw", lambda d, p, sl, sc: {"tp1": round(p * 1.10, 2), "tp2": p * 1.15, "tp3": p * 1.25, "rr1": 2.0})
     monkeypatch.setattr(signal_engine, "calc_position_size",
-                        lambda p, sl, balance=None, size_cat=None, avg_volume_lots=None: {"shares": 1000})
+                        lambda p, sl, balance=None, size_cat=None, avg_volume_lots=None, code=None: {"shares": 1000})
 
     out = bt.portfolio_backtest_tw(min_score=65, max_positions=1)
     assert out["method"] == "portfolio" and out["n_tickers"] == 2

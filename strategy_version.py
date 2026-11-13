@@ -21,7 +21,7 @@ _TRACKED = [
     "MAX_RISK_PER_TRADE", "MAX_DAILY_RISK", "MAX_SIMULTANEOUS_POSITIONS", "MAX_PORTFOLIO_RISK",
     "MAX_PER_CORRELATION_GROUP",
     "EVENT_MATERIAL_NEWS_PENALTY", "EVENT_EXDIV_BLOCK_DAYS", "YIELD_ANOMALY_PCT",
-    "COMMISSION_RATE", "TAX_RATE_SELL", "SHARES_PER_LOT", "MIN_COMMISSION",
+    "COMMISSION_RATE", "TAX_RATE_SELL", "TAX_RATE_SELL_ETF", "SHARES_PER_LOT", "MIN_COMMISSION",
     "SLIPPAGE_RATE", "SHORT_BORROW_ANNUAL",
     "INDICATOR_PARAMS", "TIMEFRAMES", "SIGNAL_THRESHOLDS",
     "ENABLE_SHORT_SIGNALS", "SHORT_EXECUTABLE", "SHORT_SIGNAL_THRESH",
@@ -47,7 +47,11 @@ def config_snapshot() -> dict:
     """回傳被追蹤常數的 {名稱: 正規化值}。缺少的常數標 "__MISSING__"（代表 config 結構變了）。"""
     out = {}
     for name in _TRACKED:
-        out[name] = _canon(getattr(_cfg, name, "__MISSING__"))
+        v = getattr(_cfg, name, "__MISSING__")
+        if name == "SIGNAL_THRESHOLDS":
+            # 用核准的基準值，不用掃描當下被暫時調高的 min_score（見 config.SIGNAL_THRESHOLDS_BASE）
+            v = getattr(_cfg, "SIGNAL_THRESHOLDS_BASE", v)
+        out[name] = _canon(v)
     return out
 
 

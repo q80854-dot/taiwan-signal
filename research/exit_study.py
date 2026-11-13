@@ -122,7 +122,7 @@ def _load_signals(path, direction="buy"):
 def run(signals_path, cache_dir, direction="buy"):
     import shadow
     from research.champion_replay import load_history
-    cls, pnl_fn = _position_cls(), shadow._shadow_staged_pnl_factory()
+    cls = _position_cls()
     sigs = _load_signals(signals_path, direction)
     by_ticker = defaultdict(list)
     for s in sigs:
@@ -146,7 +146,7 @@ def run(signals_path, cache_dir, direction="buy"):
                      "close": d["closes"][j]} for j in range(i, min(len(d["closes"]), i + BARS_AFTER))]
             row = {}
             for v in VARIANTS:
-                o = simulate(v, s, bars, pnl_fn, cls)
+                o = simulate(v, s, bars, shadow._shadow_staged_pnl_factory(s["ticker"]), cls)
                 if not o or o.get("open_end"):
                     row = None
                     break

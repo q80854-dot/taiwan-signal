@@ -43,8 +43,20 @@ YIELD_ANOMALY_PCT = float(os.getenv("YIELD_ANOMALY_PCT", "15"))
 
 COMMISSION_RATE  = 0.001425
 TAX_RATE_SELL    = 0.003
+# ★ 2026-11-13（使用者核准，依實際成交明細）：ETF（代號 00 開頭）賣出證交稅為 0.1%，不是股票的 0.3%。
+#   實證：元大台灣50正2 賣出 52,960 元，證交稅 52 元（0.1%）；台泥賣出 8,025 元，證交稅 24 元（0.3%）。
+TAX_RATE_SELL_ETF = 0.001
 SHARES_PER_LOT   = 1000
-MIN_COMMISSION   = 20
+# ★ 2026-11-13（使用者核准，依實際成交明細）：券商手續費＝成交金額×0.1425% 無條件捨去，最低 1 元
+#   （15 筆實際成交逐筆核對：811 元收 1 元、3,196 元收 4 元）。原本 20 元會把小額交易成本高估數倍。
+MIN_COMMISSION   = 1
+
+
+def sell_tax_rate(code=None) -> float:
+    """賣出證交稅率：ETF／ETN／受益憑證（代號 00 開頭）0.1%，其餘 0.3%。code 可帶 .TW／.TWO 後綴；
+    未知（None）時用股票稅率（較保守，不會低估成本）。"""
+    c = str(code or "").split(".")[0]
+    return TAX_RATE_SELL_ETF if c.startswith("00") else TAX_RATE_SELL
 # ★ 2026-10-09：以「真實交易」為目標，把成交現實納入損益模擬。
 # SLIPPAGE_RATE：每一邊的滑價估計（買進成交略高、賣出略低、停損更差）。台股多數流動性股票
 #   一兩個 tick，取 0.1% 為保守估計；可日後依實際成交回報校準。
@@ -98,6 +110,12 @@ SIGNAL_THRESHOLDS = {
     # 的問題——見稽核報告對分批出場49.1%勝率的討論）。
     "min_avg_volume": 200,
 }
+# ★ 2026-11-13：掃描會在大盤偏弱／財報密集期把 SIGNAL_THRESHOLDS["min_score"] 暫時調高（同一個 dict
+#   物件被就地改寫）。策略版本（config_hash）必須代表「核准的基準設定」、不能隨當次的暫時調整變動，
+#   否則同一套規則會被標成不同版本（2026-11-13 財報季把 65→70，影子血緣被記成 3b6c032b4106）。
+#   這份是模組載入當下（任何掃描之前）的凍結副本，只供 strategy_version 計算版本用。
+import copy as _copy
+SIGNAL_THRESHOLDS_BASE = _copy.deepcopy(SIGNAL_THRESHOLDS)
 THRESH = SIGNAL_THRESHOLDS
 
 # ★ 新增：2026-09-19——使用者要求詳細檢測「做空是否可行」，用 backtester.py
