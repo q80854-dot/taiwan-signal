@@ -478,6 +478,20 @@ def portfolio_risk(open_rows: List[Dict], balance: float = None) -> Dict:
     for d in (3, 5, 10):                                      # 大盤下跌情境（多單虧、空單賺；beta=1 簡化）
         pnl = -(long_v * d / 100) + (short_v * d / 100)
         scenarios.append({"drop_pct": d, "pnl_twd": round(pnl, 0), "pnl_pct": pct(pnl)})
+    # ★ 2026-11-13（外部審查：stop-risk 上限不等於尾端風險）連續跌停情境：漲跌停鎖死時停損單賣不掉，
+    # 損失不受停損價保護。假設多單連續 k 天鎖跌停（每天 −10%，複利）、空單連續 k 天鎖漲停（每天 +10%）。
+    # 「全部部位」與「只有最大產業」兩種。純試算，不影響任何發訊或風控判斷。
+    def _lock(vals_long, vals_short, k):
+        return -(vals_long * (1 - 0.9 ** k)) - (vals_short * (1.1 ** k - 1))
+    top_sec = sectors[0]["sector"] if sectors else None
+    sec_long = sum(x["value"] for x in rows if x["sector"] == top_sec and x["direction"] == "buy")
+    sec_short = sum(x["value"] for x in rows if x["sector"] == top_sec and x["direction"] == "sell")
+    gap_scenarios = []
+    for k in (1, 2, 3):
+        a_ = _lock(long_v, short_v, k); s_ = _lock(sec_long, sec_short, k)
+        gap_scenarios.append({"limit_days": k, "all_pnl_twd": round(a_, 0), "all_pnl_pct": pct(a_),
+                              "top_sector": top_sec, "top_sector_pnl_twd": round(s_, 0), "top_sector_pnl_pct": pct(s_),
+                              "vs_stop_loss_x": round(abs(a_) / worst, 2) if worst else None})
     hard_port = bal * MAX_PORTFOLIO_RISK
     single_cap = bal / max(1, MAX_SIMULTANEOUS_POSITIONS)
     flags = []
@@ -500,7 +514,9 @@ def portfolio_risk(open_rows: List[Dict], balance: float = None) -> Dict:
             "sectors": sectors[:8],
             "largest": {"code": largest.get("code"), "name": largest.get("name"),
                         "value": round(largest["value"], 0), "pct": pct(largest["value"])},
-            "scenarios": scenarios, "flags": flags,
+            "scenarios": scenarios, "gap_scenarios": gap_scenarios, "flags": flags,
+            "gap_basis": "連續跌停情境：多單每天 −10%（空單每天 +10%）且無法成交，連續 1／2／3 天；vs_stop_loss_x＝"
+                         "該情境損失是「全部同時停損」的幾倍。停損風險上限管不到這種情況。",
             "loss_basis": "最壞同時停損＝各部位（進場價−停損價）×股數之總和，未含手續費/稅與跳空；"
                           "實際遇開盤跳空或流動性不足時損失可能超過此數，非實損上限。",
             "note": "情境為 beta=1 簡化假設（部位隨大盤等比變動），非精確個股 beta；僅供組合風險概覽，不構成投資建議。"}

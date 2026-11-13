@@ -186,3 +186,104 @@ def test_slo_alert_is_wired_into_the_resolve_job():
     src = open("app.py", encoding="utf-8").read()
     blk = src[src.index("shadow.slo_report()"):src.index("job_shadow_resolve slo_report")]
     assert "logger.error" in blk and "shadow_slo_alert_date" in blk and "send_alert" in blk
+
+
+# ── stale bar：行情過期的標的不產生訊號（fail-closed）──
+def test_bar_is_stale_rules():
+    f = scanner.TWScanEngine._bar_is_stale
+    assert f({"dates": ["2026-11-12", "2026-11-13"]}, "2026-11-13") is False
+    assert f({"dates": ["2026-11-11", "2026-11-12"]}, "2026-11-13") is True          # 最後一根停在前一天
+    assert f({"dates": ["2026-11-13", "2026-11-14"]}, "2026-11-13") is False         # 比應有日期新（盤中暫定棒）不算過期
+    assert f({"dates": []}, "2026-11-13") is True and f({}, "2026-11-13") is True    # 沒有日期：視為過期
+    assert f({"dates": ["2026-11-13"]}, scanner.TWScanEngine._STALE_UNKNOWN) is True # 無法判定應有日期：一律過期
+    assert f({"dates": ["2020-01-01"]}, None) is False                               # 未設定（非掃描流程的直接呼叫）不判斷
+
+
+def test_expected_bar_date_follows_trading_calendar_and_fails_closed(monkeypatch):
+    import freshness
+    from datetime import datetime
+    assert freshness.expected_date("13:35", datetime(2026, 11, 13, 16, 10), holiday=lambda d: False) == "2026-11-13"
+    assert freshness.expected_date("13:35", datetime(2026, 11, 13, 8, 20), holiday=lambda d: False) == "2026-11-12"   # 盤前
+    assert freshness.expected_date("13:35", datetime(2026, 11, 15, 16, 10), holiday=lambda d: False) == "2026-11-13"  # 週日
+    def boom(*a, **k):
+        raise RuntimeError("calendar down")
+    monkeypatch.setattr(freshness, "expected_date", boom)
+    assert scanner.TWScanEngine._expected_bar_date() == scanner.TWScanEngine._STALE_UNKNOWN
+
+
+def _engine(expected):
+    import threading
+    eng = scanner.TWScanEngine.__new__(scanner.TWScanEngine)
+    eng._pre_lock = threading.Lock()
+    eng._pre = {"skipped": 0, "passed": 0, "audited": 0, "mismatch": 0, "recon_checked": 0, "recon_fixed": 0,
+                "recon_samples": [], "stale_skipped": 0, "stale_samples": []}
+    eng._ctrl = []
+    eng._exp_bar_date = expected
+    return eng
+
+
+def test_scan_single_skips_stale_ticker_before_any_signal_or_shadow_work(monkeypatch):
+    """故障注入：行情來源只給到前一天的 K 棒 → 這檔不評分、不產生訊號、不進影子。"""
+    import data_fetcher
+    called = {"mtf": 0, "gen": 0}
+    stale = {"dates": ["2026-11-11", "2026-11-12"], "closes": [100.0, 101.0], "highs": [101, 102], "lows": [99, 100],
+             "opens": [100, 100.5], "volumes": [1000, 1000]}
+    monkeypatch.setattr(data_fetcher, "fetch_ohlcv", lambda t, tf="daily": stale)
+    monkeypatch.setattr(se, "check_multi_timeframe_tw", lambda *a, **k: called.__setitem__("mtf", called["mtf"] + 1) or {})
+    eng = _engine("2026-11-13")
+    out = eng._scan_single("9999.TW", {}, None, None,
+                           lambda *a, **k: called.__setitem__("gen", called["gen"] + 1) or {"ticker": "9999.TW"},
+                           lambda t: {"code": "9999", "name": "測試"})
+    assert out is None and called == {"mtf": 0, "gen": 0}
+    assert eng._pre["stale_skipped"] == 1 and eng._pre["stale_samples"][0]["last_bar"] == "2026-11-12"
+
+
+def test_scan_single_still_evaluates_fresh_tickers(monkeypatch):
+    import data_fetcher
+    called = {"mtf": 0}
+    fresh = {"dates": ["2026-11-12", "2026-11-13"], "closes": [100.0, 101.0], "highs": [101, 102], "lows": [99, 100],
+             "opens": [100, 100.5], "volumes": [1000, 1000]}
+    monkeypatch.setattr(data_fetcher, "fetch_ohlcv", lambda t, tf="daily": fresh)
+    def mtf(*a, **k):
+        called["mtf"] += 1
+        return {"direction": "none", "score": 0}
+    monkeypatch.setattr(se, "check_multi_timeframe_tw", mtf)
+    eng = _engine("2026-11-13")
+    eng._scan_single("9999.TW", {}, None, None, lambda *a, **k: None, lambda t: {"code": "9999", "name": "測試"})
+    assert called["mtf"] == 1 and eng._pre["stale_skipped"] == 0
+
+
+# ── 尾端風險：連續跌停情境 ──
+def test_portfolio_risk_reports_consecutive_limit_down_scenarios():
+    rows = [{"code": "A", "direction": "buy", "sector": "半導體業", "entry_price": 100.0, "stop_loss": 95.0, "suggested_shares": 2000},
+            {"code": "B", "direction": "buy", "sector": "航運業", "entry_price": 50.0, "stop_loss": 47.5, "suggested_shares": 2000}]
+    out = risk_manager.portfolio_risk(rows, balance=1_000_000)
+    g = {x["limit_days"]: x for x in out["gap_scenarios"]}
+    assert g[1]["all_pnl_twd"] == -30000 and g[2]["all_pnl_twd"] == -57000 and g[3]["all_pnl_twd"] == -81300
+    assert g[1]["top_sector"] == "半導體業" and g[1]["top_sector_pnl_twd"] == -20000
+    assert out["worst_case_loss"] == 15000 and g[1]["vs_stop_loss_x"] == 2.0     # 一天跌停就是「全部停損」的兩倍
+    assert "連續跌停" in out["gap_basis"]
+    assert risk_manager.portfolio_risk([], balance=1_000_000)["n"] == 0
+
+
+# ── 回測結果帶策略版本 ──
+def test_backtest_reports_the_strategy_version_it_ran_under():
+    import strategy_version as sv
+    assert bt._bt_config_version() == sv.config_hash()[:12]
+    assert '"config_version": _bt_config_version()' in open("backtester.py", encoding="utf-8").read()
+
+
+def test_lineage_summary_groups_recent_rows_by_version():
+    import shadow
+    from state_store import store
+    shadow.ensure_table()
+    with store._conn() as conn:
+        conn.execute("DELETE FROM shadow_signals WHERE ticker IN ('LS1.TW','LS2.TW')")
+    try:
+        _ins_shadow("LS1.TW", "2031-07-01", config_ver="verA", expire_days=60)
+        _ins_shadow("LS2.TW", "2031-07-01", config_ver="verA", expire_days=60)
+        got = [x for x in shadow.lineage_summary(since="2031-07-01") if x["bar_date"] == "2031-07-01"]
+        assert got == [{"bar_date": "2031-07-01", "config_ver": "verA", "expire_days": 60, "kind": "candidate", "n": 2}]
+    finally:
+        with store._conn() as conn:
+            conn.execute("DELETE FROM shadow_signals WHERE ticker IN ('LS1.TW','LS2.TW')")

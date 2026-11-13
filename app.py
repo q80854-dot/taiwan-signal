@@ -677,6 +677,10 @@ def job_shadow_resolve(reason: str = "排程"):
             logger.info(f"⏰ 影子資料品質（{reason}）：{shadow.data_quality_counts()}")
         except Exception as e:
             logger.warning(f"job_shadow_resolve data_quality_counts: {e}")
+        try:
+            logger.info(f"⏰ 影子血緣（{reason}，近 5 日依版本計數）：{shadow.lineage_summary()}")
+        except Exception as e:
+            logger.warning(f"job_shadow_resolve lineage_summary: {e}")
         # ★ 2026-11-13：影子資料品質門檻（全部應為 0）。未達標寫 ERROR、留事件，並每天最多推播一次。
         try:
             _slo = shadow.slo_report()
