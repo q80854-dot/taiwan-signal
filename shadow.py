@@ -1679,6 +1679,7 @@ def slo_report(today=None) -> dict:
       lineage_missing        2026-11-13 起的列缺 config_ver 或 expire_days（無法分辨是哪一版規則產生的）
       overdue_pending        已過到期日＋寬限仍未結案（結算卡住，壞結果會從統計中消失）
       closed_without_status  2026-11-13 起已結案的候選沒有 Champion 狀態
+      missing_trading_days   近 10 天內盤後掃描應已完成、卻一筆影子紀錄都沒有的交易日（整天被漏掉）
       closed_without_r／closed_missing_stop／absurd_mfe_mae／absurd_r  同 data_quality_counts
     回傳 {"ok": 是否全數為 0, "breaches": {項目: 筆數}, "counts": {…}}。只讀。"""
     ensure_table()
@@ -1707,8 +1708,29 @@ def slo_report(today=None) -> dict:
             continue
         overdue += age > _row_expire_days(r) + OVERDUE_GRACE_DAYS
     counts["overdue_pending"] = overdue
+    # ★ 2026-11-13：缺漏交易日。2026-11-11 盤後連續部署使掃描每次被中斷，整天沒有任何影子紀錄，
+    # 原本的門檻都看不到這種「整天消失」。近 10 天內（自 LINEAGE_SINCE 起）、盤後掃描應已完成的交易日，
+    # 若一筆影子紀錄都沒有，計入 missing_trading_days。
+    missing = []
+    try:
+        import freshness
+        last_day = freshness.expected_date("17:30", now=ref)          # 盤後掃描應已完成的最新交易日
+        start = max(LINEAGE_SINCE, (ref - timedelta(days=10)).strftime("%Y-%m-%d"))
+        with store._conn() as conn:
+            have = {str(dict(x)["bar_date"])[:10] for x in conn.execute(
+                "SELECT DISTINCT bar_date FROM shadow_signals WHERE bar_date>=? AND bar_date<=?",
+                (start, last_day)).fetchall()}
+        d = datetime.strptime(start, "%Y-%m-%d")
+        end = datetime.strptime(last_day, "%Y-%m-%d")
+        while d <= end:
+            if freshness.is_trading_day(d) and d.strftime("%Y-%m-%d") not in have:
+                missing.append(d.strftime("%Y-%m-%d"))
+            d += timedelta(days=1)
+    except Exception as e:
+        logger.debug(f"slo missing_trading_days: {e}")
+    counts["missing_trading_days"] = len(missing)
     breaches = {k: v for k, v in counts.items() if v}
-    return {"ok": not breaches, "breaches": breaches, "counts": counts}
+    return {"ok": not breaches, "breaches": breaches, "counts": counts, "missing_days": missing}
 
 
 def _pct_ret(row, key="r20"):

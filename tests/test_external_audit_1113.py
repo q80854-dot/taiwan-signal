@@ -287,3 +287,27 @@ def test_lineage_summary_groups_recent_rows_by_version():
     finally:
         with store._conn() as conn:
             conn.execute("DELETE FROM shadow_signals WHERE ticker IN ('LS1.TW','LS2.TW')")
+
+
+def test_slo_flags_a_trading_day_with_no_shadow_rows(monkeypatch):
+    """2026-11-11 那種「盤後掃描被部署中斷、整天沒有紀錄」要被抓到；週末與尚未掃描的今天不算。"""
+    from datetime import datetime
+    import freshness
+    import shadow
+    from state_store import store
+    shadow.ensure_table()
+    monkeypatch.setattr(shadow, "LINEAGE_SINCE", "2031-08-01")
+    monkeypatch.setattr(freshness, "_is_holiday", lambda d: False)
+    days = ["2031-08-04", "2031-08-05", "2031-08-07"]          # 週一、週二、週四；週三 08-06 缺
+    with store._conn() as conn:
+        conn.execute("DELETE FROM shadow_signals WHERE ticker LIKE 'MISS%'")
+    try:
+        for i, d in enumerate(days):
+            _ins_shadow(f"MISS{i}.TW", d)
+        out = shadow.slo_report(today=datetime(2031, 8, 8, 10, 0))   # 週五盤中：今天的掃描還沒跑，不算缺
+        assert out["missing_days"] == ["2031-08-01", "2031-08-06"] and out["counts"]["missing_trading_days"] == 2
+        out = shadow.slo_report(today=datetime(2031, 8, 9, 10, 0))   # 週六：週五的掃描應已完成 → 也算缺
+        assert "2031-08-08" in out["missing_days"] and "2031-08-02" not in out["missing_days"]   # 08-02 是週六
+    finally:
+        with store._conn() as conn:
+            conn.execute("DELETE FROM shadow_signals WHERE ticker LIKE 'MISS%'")
