@@ -249,6 +249,7 @@ def test_scan_single_still_evaluates_fresh_tickers(monkeypatch):
         return {"direction": "none", "score": 0}
     monkeypatch.setattr(se, "check_multi_timeframe_tw", mtf)
     eng = _engine("2026-11-13")
+    eng._PRE_AUDIT_RATE = 0.0      # 關掉 5% 隨機全流程抽驗（本測試未提供 fetch_tf；否則約 5% 機率失敗）
     eng._scan_single("9999.TW", {}, None, None, lambda *a, **k: None, lambda t: {"code": "9999", "name": "測試"})
     assert called["mtf"] == 1 and eng._pre["stale_skipped"] == 0
 
