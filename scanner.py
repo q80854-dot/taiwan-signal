@@ -194,6 +194,41 @@ class TWScanEngine:
                    "msgs": ["🔴 風控檢查失敗，風險狀態未知，為安全起見暫停新增訊號（既有部位照常結算）"]}
         return out
 
+    @staticmethod
+    def _cash_risk_fit(final_signals, active_positions):
+        """發訊前的最後一道資金與風險檢查：把每筆新訊號的股數壓到「剩餘現金」與「剩餘風險額度」以內，
+        放不下 1 股（放空為 1 張）者不發。回傳 (通過的訊號, 錯誤訊息或 None)。
+
+        ★ 2026-11-13（外部審查 P0）fail-closed：原本整段包在 try/except 裡，任何例外只記一行
+        「資金上限檢查失敗（不影響其餘流程）」就照常儲存並推播——等於最關鍵的一道防線壞掉時，
+        尚未通過資金限制的訊號照發。現在只要這道檢查丟例外，本次新訊號一律清空並回報原因。
+        風險上限取 risk_manager.open_risk_cap()，與組合回測用同一個定義。"""
+        try:
+            from signal_engine import fit_to_cash
+            from config import ACCOUNT_BALANCE_TWD
+            from risk_manager import open_risk_cap
+            _cash = ACCOUNT_BALANCE_TWD - sum((p.get("entry_price") or 0) * (p.get("suggested_shares") or p.get("suggested_lots") or 0)
+                                              for p in (active_positions or []))
+            # 全部未平倉＋新單的停損風險合計上限：扣掉既有部位的停損風險後才是新單可用的額度
+            _risk_left = ACCOUNT_BALANCE_TWD * open_risk_cap() - sum(float(p.get("risk_twd") or 0)
+                                                                    for p in (active_positions or []))
+            _kept = []
+            for _s in final_signals:
+                _before = _s.get("suggested_shares")
+                _s2 = fit_to_cash(_s, _cash, _risk_left)
+                if _s2 is None:
+                    logger.info(f"[{_s.get('ticker')}] 剩餘現金 {_cash:,.0f}／剩餘風險額度 {_risk_left:,.0f} 不足買進 1 股，本次不發訊號")
+                    continue
+                if _s2.get("suggested_shares") != _before:
+                    logger.info(f"[{_s.get('ticker')}] 建議股數依剩餘現金由 {_before} 下修為 {_s2.get('suggested_shares')}")
+                _cash -= (_s2.get("entry_price") or _s2.get("current_price") or 0) * (_s2.get("suggested_shares") or 0)
+                _risk_left -= float(_s2.get("risk_twd") or 0)
+                _kept.append(_s2)
+            return _kept, None
+        except Exception as e:
+            logger.error(f"資金／風險上限檢查失敗，本次新訊號全部不發（fail-closed）: {e}", exc_info=True)
+            return [], f"{type(e).__name__}: {e}"[:200]
+
     def _run_daily_scan_impl(self) -> Dict:
         start_time = time.time()
         # ★ 2026-11-12 scan_run_id（LIVE07 完整版）：每次掃描產生唯一 run_id，寫入本批每筆訊號
@@ -464,31 +499,19 @@ class TWScanEngine:
             signal_cap = _regime_cap
         final_signals = filtered[:signal_cap]
         # ★ 新增：2026-10-28——資金上限：所有追蹤部位的進場成本合計不得超過帳戶資金。
-        # 先扣掉既有未平倉部位（DB 的 suggested_lots 欄位實際存股數）的進場成本，再依序把新訊號
-        # 壓到剩餘現金以內；放不下 1 股的訊號不發。
-        try:
-            from signal_engine import fit_to_cash
-            from config import ACCOUNT_BALANCE_TWD, MAX_DAILY_RISK
-            _cash = ACCOUNT_BALANCE_TWD - sum((p.get("entry_price") or 0) * (p.get("suggested_shares") or p.get("suggested_lots") or 0)
-                                              for p in (active_positions or []))
-            # 組合風險上限（config.MAX_DAILY_RISK，網站顯示的「組合上限 6%」）：扣掉既有部位的停損風險
-            _risk_left = ACCOUNT_BALANCE_TWD * MAX_DAILY_RISK - sum(float(p.get("risk_twd") or 0)
-                                                                   for p in (active_positions or []))
-            _kept = []
-            for _s in final_signals:
-                _before = _s.get("suggested_shares")
-                _s2 = fit_to_cash(_s, _cash, _risk_left)
-                if _s2 is None:
-                    logger.info(f"[{_s.get('ticker')}] 剩餘現金 {_cash:,.0f}／剩餘風險額度 {_risk_left:,.0f} 不足買進 1 股，本次不發訊號")
-                    continue
-                if _s2.get("suggested_shares") != _before:
-                    logger.info(f"[{_s.get('ticker')}] 建議股數依剩餘現金由 {_before} 下修為 {_s2.get('suggested_shares')}")
-                _cash -= (_s2.get("entry_price") or _s2.get("current_price") or 0) * (_s2.get("suggested_shares") or 0)
-                _risk_left -= float(_s2.get("risk_twd") or 0)
-                _kept.append(_s2)
-            final_signals = _kept
-        except Exception as e:
-            logger.warning(f"資金上限檢查失敗（不影響其餘流程）: {e}")
+        # ★ 2026-11-13（外部審查 P0）fail-closed：見 _cash_risk_fit()。這道檢查出錯時不得照常發訊號。
+        final_signals, _fit_err = self._cash_risk_fit(final_signals, active_positions)
+        if _fit_err:
+            try:
+                store.add_event("risk", "資金／風險上限檢查失敗，本次不發新訊號",
+                                f"原因：{_fit_err}。為安全起見本次掃描的新訊號全部不發（既有部位照常結算、影子追蹤照常記錄）。")
+            except Exception as e:
+                logger.warning(f"寫入風控事件失敗: {e}")
+            try:
+                from telegram_bot import send_alert
+                send_alert("🛑 資金／風險上限檢查失敗，本次不發新訊號\n原因：" + _fit_err, "warning")
+            except Exception as e:
+                logger.warning(f"資金檢查失敗通知推播失敗: {e}")
         if len(filtered) > signal_cap:
             logger.info(
                 f"run_daily_scan: 篩選後 {len(filtered)} 檔候選，但持倉上限只剩 "

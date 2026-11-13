@@ -1353,8 +1353,18 @@ def _security_headers(resp):
 
 @app.route("/healthz")
 def healthz():
-    """輕量健康檢查：不碰資料庫與外部資料源，只代表程序活著。"""
-    return jsonify({"ok": True, "t": int(_time.time())})
+    """輕量健康檢查：不碰資料庫與外部資料源，只代表程序活著。
+    ★ 2026-11-13（外部審查 P0「無法證明程式碼版本＝正式執行版本」）：附上部署中的 commit 與策略版本，
+    任何人都能核對線上跑的是不是 main 的那一版。commit 取自平台注入的環境變數，取不到就回 None，不猜。"""
+    import os as _os
+    _cfg = None
+    try:
+        import strategy_version as _sv
+        _cfg = _sv.config_hash()[:12]
+    except Exception:
+        pass
+    return jsonify({"ok": True, "t": int(_time.time()),
+                    "commit": (_os.environ.get("RENDER_GIT_COMMIT") or "")[:12] or None, "config_version": _cfg})
 
 
 @app.route("/manifest.webmanifest")
