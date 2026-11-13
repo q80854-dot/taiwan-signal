@@ -140,3 +140,49 @@ def test_healthz_reports_commit_and_strategy_version(monkeypatch):
     assert r["ok"] is True and r["commit"] == "0123456789ab" and r["config_version"] == sv.config_hash()[:12]
     monkeypatch.delenv("RENDER_GIT_COMMIT")
     assert app_mod.app.test_client().get("/healthz").get_json()["commit"] is None      # 取不到就不猜
+
+
+# ── 影子資料品質門檻（SLO）──
+def _ins_shadow(ticker, day, status="pending", kind="candidate", config_ver="abc", expire_days=60, champion_status=None,
+                r=None, stop=95.0):
+    from state_store import store
+    with store._conn() as conn:
+        conn.execute("INSERT INTO shadow_signals (bar_date,ticker,code,name,kind,direction,score,entry,stop,status,"
+                     "r_multiple,champion_status,config_ver,expire_days,features,created_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (day, ticker, "9999", "t", kind, "buy", 80, 100.0, stop, status, r, champion_status,
+                      config_ver, expire_days, "{}", day))
+
+
+def test_slo_report_flags_missing_lineage_overdue_and_statusless_rows():
+    from datetime import datetime
+    import shadow
+    from state_store import store
+    shadow.ensure_table()
+    tks = [f"SLO{i}.TW" for i in range(6)]
+    def clean():
+        with store._conn() as conn:
+            for t in tks:
+                conn.execute("DELETE FROM shadow_signals WHERE ticker=?", (t,))
+    clean()
+    try:
+        today = datetime(2031, 6, 1)
+        base = shadow.slo_report(today=today)["counts"]
+        _ins_shadow(tks[0], "2031-05-20")                                        # 正常：未到期
+        _ins_shadow(tks[1], "2031-05-20", config_ver=None)                       # 缺策略版本
+        _ins_shadow(tks[2], "2031-05-20", expire_days=None)                      # 缺到期天數
+        _ins_shadow(tks[3], "2031-03-01")                                        # 60 天到期＋14 天寬限已過仍 pending
+        _ins_shadow(tks[4], "2031-04-20")                                        # 42 天：60 天到期者尚未逾期
+        _ins_shadow(tks[5], "2031-05-01", status="closed", r=0.5)                # 已結案候選卻沒有 Champion 狀態
+        out = shadow.slo_report(today=today)
+        d = {k: out["counts"][k] - base[k] for k in out["counts"]}
+        assert d["lineage_missing"] == 2 and d["overdue_pending"] == 1 and d["closed_without_status"] == 1
+        assert out["ok"] is False and {"lineage_missing", "overdue_pending", "closed_without_status"} <= set(out["breaches"])
+    finally:
+        clean()
+
+
+def test_slo_alert_is_wired_into_the_resolve_job():
+    src = open("app.py", encoding="utf-8").read()
+    blk = src[src.index("shadow.slo_report()"):src.index("job_shadow_resolve slo_report")]
+    assert "logger.error" in blk and "shadow_slo_alert_date" in blk and "send_alert" in blk
