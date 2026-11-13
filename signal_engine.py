@@ -170,6 +170,35 @@ def fit_to_cash(sig, cash, risk_left=None):
                 "breakeven_pct": round(rt / pv * 100, 3) if pv else 0, "cash_capped": True})
     return sig
 
+def tick_size(price) -> float:
+    """臺股股票的升降單位（依股價區間）。ETF 的升降單位更細（<50 元 0.01、≥50 元 0.05），股票的每一級
+    都是它的整數倍，所以用股票的級距對 ETF 也一定是合法價位。"""
+    p = float(price or 0)
+    if p < 10: return 0.01
+    if p < 50: return 0.05
+    if p < 100: return 0.1
+    if p < 500: return 0.5
+    if p < 1000: return 1.0
+    return 5.0
+
+
+def round_to_tick(price, mode="nearest") -> float:
+    """★ 2026-11-13（外部審查 P1）把價位對齊到合法的升降單位。原本停損／停利只四捨五入到小數兩位，
+    會出現像 123.37（100～500 元級距應為 0.5）這種下不了單的價位，使用者得自己調整，回測與影子也是用
+    那個不存在的價位在算。mode：nearest／down／up。"""
+    p = float(price or 0)
+    if p <= 0:
+        return p
+    t = tick_size(p)
+    n = p / t
+    k = math.floor(n + 1e-9) if mode == "down" else math.ceil(n - 1e-9) if mode == "up" else math.floor(n + 0.5 + 1e-9)
+    out = round(k * t, 2)
+    if tick_size(out) != t:                    # 進位後跨到下一個級距（例如 99.95→100）：以新級距再對齊一次
+        t2 = tick_size(out)
+        out = round(round(out / t2) * t2, 2)
+    return out
+
+
 def calc_stop_loss_tw(direction, price, atr, indicators, size_cat="中型股", low_5d=None, high_5d=None):
     params  = SWING_PARAMS.get(size_cat, SWING_PARAMS["中型股"])
     sl_dist = atr * params["sl_atr_mult"]
@@ -205,7 +234,8 @@ def calc_stop_loss_tw(direction, price, atr, indicators, size_cat="中型股", l
     # 真的成立（極高波動股因此會被夾在 8%，由部位大小換算自動縮小張數，維持 2% 帳戶風險）。
     dist = min(max(abs(price - sl), price * 0.015), price * 0.08)
     sl = price - dist if direction == "buy" else price + dist
-    return round(sl, 2)
+    # 對齊合法升降單位。往「較寬」的方向對齊（做多往下、放空往上）：停損距離不會因對齊而小於上面的下限。
+    return round_to_tick(sl, "down" if direction == "buy" else "up")
 
 def calc_take_profits_tw(direction, price, stop_loss, size_cat="中型股"):
     params = SWING_PARAMS.get(size_cat, SWING_PARAMS["中型股"])
@@ -218,7 +248,8 @@ def calc_take_profits_tw(direction, price, stop_loss, size_cat="中型股"):
         tp1 = price - risk * params["tp1_rr"]
         tp2 = price - risk * params["tp2_rr"]
         tp3 = price - risk * params["tp3_rr"]
-    return {"tp1":round(tp1,2),"tp2":round(tp2,2),"tp3":round(tp3,2),
+    _m = "down" if direction == "buy" else "up"     # 停利往進場價方向對齊（保守：不把目標價往外推）
+    return {"tp1":round_to_tick(tp1,_m),"tp2":round_to_tick(tp2,_m),"tp3":round_to_tick(tp3,_m),
             "rr1":params["tp1_rr"],"rr2":params["tp2_rr"],"rr3":params["tp3_rr"],
             "risk":round(risk,2),"risk_pct":round(risk/price*100,2),"exit_plan":"各1/3分批出場"}
 

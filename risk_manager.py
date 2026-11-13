@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 _RISK_EFFECTIVE_AT = "2026-11-12"   # 現行風控/Champion 凍結日（CHAMPION_SNAPSHOT.frozen_at）
 
 
+def open_risk_cap() -> float:
+    """★ 2026-11-13（外部審查 P0）正式發訊流程實際生效的組合風險上限：「全部未平倉部位＋本次新單」的停損
+    風險合計，不得超過帳戶資金的這個比例。scanner 的資金閘門與組合回測都只讀這個函式——原本正式流程用 6%
+    （MAX_DAILY_RISK）、組合回測預設卻用 15%（MAX_PORTFOLIO_RISK），兩邊持倉集合與曝險不同，回測不等於正式策略。
+    15% 的 MAX_PORTFOLIO_RISK 是「最壞同時停損」的硬上限，語意不同、目前未接入發訊流程（見 risk_basis）。"""
+    return MAX_DAILY_RISK
+
+
 def risk_basis(balance: float = None) -> Dict:
     """風控三上限的權威來源，供所有頁面/端點引用（禁止各自硬編）。
       - per_trade_pct        單筆預算：每筆停損時最多虧本金的比例（MAX_RISK_PER_TRADE）

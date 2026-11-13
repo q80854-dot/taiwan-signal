@@ -354,6 +354,41 @@ def _weekly_asof_slice(weekly, day):
         return None
 
 
+def _asof_size(closes, volumes, i, fallback="中型股"):
+    """★ 2026-11-13（外部審查 P0：歷史屬性洩漏）回測第 i 根進場時，股票的規模分類與均量一律以「訊號日
+    （第 i−1 根）當時」的收盤與近 20 日均量（張）計算，公式與掃描池相同（stock_universe._classify_size）。
+    原本各回測都拿 get_stock_info() 的『現在』分類套在整段歷史上——現在是大型股的公司，三年前可能還是
+    小型股，停損倍數、停利盈虧比與流動性上限都會用錯。資料不足 20 根時回 (fallback, None)。
+    產業分類沒有歷史資料來源，仍用現值（已於回測輸出的 limitations 揭露）。"""
+    try:
+        if i < 20:
+            return fallback, None
+        px = closes[i - 1]
+        vols = [v for v in volumes[i - 20:i] if v is not None]
+        if not px or px <= 0 or len(vols) < 10:
+            return fallback, None
+        vol = sum(vols) / len(vols)
+        from stock_universe import _classify_size
+        return _classify_size(px, vol), vol
+    except Exception:
+        return fallback, None
+
+
+def _bt_fit_shares(shares, direction, fill, sl, cash_left, risk_left):
+    """與正式發訊相同的資金閘門（signal_engine.fit_to_cash）：把股數壓到剩餘現金與剩餘風險額度以內，
+    放空須整張；放不下回 0。原本回測是『超過就整筆不做』，正式流程則是『縮小到放得下』，兩邊持倉不同。"""
+    import math
+    from signal_engine import short_whole_lots
+    rps = abs(fill - sl)
+    if fill <= 0 or rps <= 0:
+        return 0
+    lim = min(math.floor(max(0.0, cash_left) / fill), math.floor(max(0.0, risk_left) / rps))
+    new = min(int(shares), lim)
+    if direction == "sell":
+        new = short_whole_lots(new)
+    return max(0, new)
+
+
 def _bt_group_key(sector, ticker=""):
     """相關性群組鍵——與 scanner._correlation_group_key 相同的規則（由測試鎖定兩者一致）：
     屬於 CORRELATION_GROUPS 某一組者共用該組；產業不明（空字串／「其他」）者每檔自成一組，
@@ -621,8 +656,9 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
                             if atr:
                                 low_5d=min(lows[max(0,i-5):i]) if i>=5 else None
                                 high_5d=max(highs[max(0,i-5):i]) if i>=5 else None
-                                sl=calc_stop_loss_tw(direction,plan_px,atr,daily_ind,size_cat,low_5d,high_5d)
-                                tp_info=calc_take_profits_tw(direction,plan_px,sl,size_cat)
+                                _sz,_vl=_asof_size(closes,volumes,i,size_cat)     # 訊號日當時的規模與均量（不用現值）
+                                sl=calc_stop_loss_tw(direction,plan_px,atr,daily_ind,_sz,low_5d,high_5d)
+                                tp_info=calc_take_profits_tw(direction,plan_px,sl,_sz)
                                 # ★ 修正：2026-09-26——稽核發現回測跟實盤在進場過濾條件上有落差：
                                 # signal_engine.generate_signal_tw() 有「停損距離>12%就跳過（追高/
                                 # 已離結構性支撐太遠）」的過濾（見該檔案該函式），回測這裡完全沒有
@@ -632,8 +668,7 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
                                 # 大小可能比實盤實際可成交的量還大。
                                 sl_dist_pct=abs(plan_px-sl)/plan_px*100 if plan_px else 0
                                 if tp_info["rr1"]>=THRESH["min_rr"] and sl_dist_pct<=12:
-                                    pos=calc_position_size(plan_px,sl,balance=balance,size_cat=size_cat,
-                                                            avg_volume_lots=(info.get("volume_lots") if info else None))
+                                    pos=calc_position_size(plan_px,sl,balance=balance,size_cat=_sz,avg_volume_lots=_vl)
                                     if pos["shares"]>0 and _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"],_bt_bar(dates,opens,highs,lows,closes,i),plan_px):
                                         open_trade={"direction":direction,"fill_price":fill_px,"sl":sl,"tp1":tp_info["tp1"],"tp2":tp_info["tp2"],
                                                     "score":score,"shares":pos["shares"],"bar":i,"sig_bar":i-1}
@@ -761,16 +796,16 @@ def walk_forward_backtest_tw(ticker, train_bars=150, test_bars=30, min_score=Non
             local_i=i-tr_start
             low_5d=min(lows[max(tr_start,i-5):i]) if local_i>=5 else None
             high_5d=max(highs[max(tr_start,i-5):i]) if local_i>=5 else None
-            sl=calc_stop_loss_tw(direction,plan_px,atr,daily_ind,size_cat,low_5d,high_5d)
-            tp_info=calc_take_profits_tw(direction,plan_px,sl,size_cat)
+            _sz,_vl=_asof_size(closes,volumes,i,size_cat)     # 訊號日當時的規模與均量（不用現值）
+            sl=calc_stop_loss_tw(direction,plan_px,atr,daily_ind,_sz,low_5d,high_5d)
+            tp_info=calc_take_profits_tw(direction,plan_px,sl,_sz)
             if tp_info["rr1"]<THRESH["min_rr"]: continue
             # ★ 修正：2026-09-26——同 backtest_symbol_tw() 補上的兩項，跟實盤 generate_signal_tw()
             # 對齊：停損距離>12%（追高過濾）就跳過；calc_position_size() 補上 avg_volume_lots
             # 流動性上限。
             sl_dist_pct=abs(plan_px-sl)/plan_px*100 if plan_px else 0
             if sl_dist_pct>12: continue
-            pos=calc_position_size(plan_px,sl,balance=balance,size_cat=size_cat,
-                                    avg_volume_lots=(info.get("volume_lots") if info else None))
+            pos=calc_position_size(plan_px,sl,balance=balance,size_cat=_sz,avg_volume_lots=_vl)
             if pos["shares"]<=0: continue
             if not _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"],_bt_bar(dates,opens,highs,lows,closes,i),plan_px): continue
             open_trade={"direction":direction,"fill_price":fill_px,"sl":sl,"tp1":tp_info["tp1"],"score":score,"shares":pos["shares"],"bar":i,"sig_bar":i-1}
@@ -867,7 +902,10 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
     EXPIRE_DAYS = CIRCUIT_BREAKER.get("signal_expire_days", 15)   # ★ 2026-11-09 Phase B：回測也套用到期窗
     min_score = min_score if min_score is not None else THRESH["min_score"]
     max_pos   = int(max_positions or MAX_SIMULTANEOUS_POSITIONS)
-    port_risk = float(max_portfolio_risk if max_portfolio_risk is not None else MAX_PORTFOLIO_RISK)
+    # ★ 2026-11-13（外部審查 P0）：預設改用正式發訊流程實際生效的上限（risk_manager.open_risk_cap，目前 6%），
+    # 不再是 15% 的硬上限。回測的持倉集合與曝險必須和正式策略同一套定義；要試別的上限請明確傳參數。
+    from risk_manager import open_risk_cap
+    port_risk = float(max_portfolio_risk if max_portfolio_risk is not None else open_risk_cap())
     targets = tickers or _tw50_targets()
     _pit = getattr(targets, "pit", None)
     # 1) 載入各檔日線＋基本資料；建日期→索引對照
@@ -901,6 +939,7 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
     import execution
     n_unfilled_limit = 0
     n_skip_sector = n_skip_group = 0
+    n_skip_budget = n_shrunk = 0
 
     def _hold(day, p):
         try:
@@ -969,13 +1008,14 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
                     continue
                 lo5 = min(dd["lows"][max(0, di - 5):di]) if di >= 5 else None
                 hi5 = max(dd["highs"][max(0, di - 5):di]) if di >= 5 else None
-                sl = calc_stop_loss_tw(dir_, price, atr, dind, v["size_cat"], lo5, hi5)
+                _sz, _vl = _asof_size(dd["closes"], dd["volumes"], di, v["size_cat"])   # 訊號日當時的規模與均量
+                sl = calc_stop_loss_tw(dir_, price, atr, dind, _sz, lo5, hi5)
                 if abs(price - sl) / price * 100 > 12:
                     continue
-                tp = calc_take_profits_tw(dir_, price, sl, v["size_cat"])
+                tp = calc_take_profits_tw(dir_, price, sl, _sz)
                 if tp["rr1"] < THRESH["min_rr"]:
                     continue
-                cands.append((sc, t, dir_, price, fill, sl, tp))
+                cands.append((sc, t, dir_, price, fill, sl, tp, _sz, _vl))
             cands.sort(key=lambda z: -z[0])
             # 與正式掃描相同的分散規則：同產業只留最高分一檔、同相關性群組（含既有持倉）有上限。
             # 群組計數取當天開盤時的持倉；當天稍後才因名額／資金進不了場的候選仍占計數，
@@ -983,24 +1023,25 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             cands, _ns, _ng = _bt_apply_group_limits(cands, open_pos, lambda _t: data[_t].get("sector", ""))
             n_skip_sector += _ns; n_skip_group += _ng
             risk_open = sum(p["risk"] * p["pos"].remaining / p["shares"] for p in open_pos.values())
-            for sc, t, dir_, price, fill, sl, tp in cands:
+            for sc, t, dir_, price, fill, sl, tp, _sz, _vl in cands:
                 if len(open_pos) >= max_pos:
                     break
-                pos = calc_position_size(price, sl, balance=balance, size_cat=data[t]["size_cat"],
-                                         avg_volume_lots=data[t]["vol_lots"])
+                pos = calc_position_size(price, sl, balance=balance, size_cat=_sz, avg_volume_lots=_vl)
                 sh = pos["shares"]
-                if sh <= 0:
-                    continue
-                value = sh * fill; risk = sh * abs(fill - sl)
-                if risk <= 0:                              # 開盤已穿越停損：不進場（無有效風險定義）
+                if sh <= 0 or abs(fill - sl) <= 0:         # 開盤已穿越停損：不進場（無有效風險定義）
                     continue
                 if execution.entry_blocked_by_limit(dir_, _bar(data[t]["d"], data[t]["idx"][day]), price):
                     n_unfilled_limit += 1                  # 進場當根漲跌停鎖死：確定無法成交，不進場
                     continue
-                if invested + value > balance:            # 買力不足
+                # 與正式發訊相同：縮小到剩餘現金與剩餘風險額度放得下的股數；放不下才不做
+                _fit = _bt_fit_shares(sh, dir_, fill, sl, balance - invested, balance * port_risk - risk_open)
+                if _fit <= 0:
+                    n_skip_budget += 1
                     continue
-                if risk_open + risk > balance * port_risk:  # 組合風險硬上限
-                    continue
+                if _fit < sh:
+                    n_shrunk += 1
+                sh = _fit
+                value = sh * fill; risk = sh * abs(fill - sl)
                 di = data[t]["idx"][day]
                 sig_day = data[t]["d"]["dates"][di - 1]
                 open_pos[t] = {"direction": dir_, "fill_price": fill, "shares": sh, "risk": risk,
@@ -1057,6 +1098,9 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
             "entry_model": "訊號日收盤定錨計畫價位、隔日開盤成交",
             "universe_pit": _pit_label(_pit), "n_unfilled_limit": n_unfilled_limit,
             "n_skipped_same_sector": n_skip_sector, "n_skipped_group_limit": n_skip_group,
+            "n_skipped_no_budget": n_skip_budget, "n_shrunk_to_budget": n_shrunk,
+            "risk_policy": "risk_manager.open_risk_cap（與正式發訊相同：全部未平倉＋新單的停損風險合計上限）",
+            "attributes_asof": "規模分類與均量取訊號日當時；產業分類無歷史來源、用現值",
             "universe_requested": len(targets), "universe_no_data": sorted(set(targets) - set(data)),
             "limitations": [
                 ("標的池為臺灣 50 的歷史成分股（訊號日當天確為成分才進場）；但已下市或抓不到股價的"
@@ -1320,15 +1364,15 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
                             if atr:
                                 low_5d=min(lows[max(0,i-5):i]) if i>=5 else None
                                 high_5d=max(highs[max(0,i-5):i]) if i>=5 else None
-                                sl=calc_stop_loss_tw(direction,plan_px,atr,daily_ind,size_cat,low_5d,high_5d)
-                                tp_info=calc_take_profits_tw(direction,plan_px,sl,size_cat)
+                                _sz,_vl=_asof_size(closes,volumes,i,size_cat)     # 訊號日當時的規模與均量（不用現值）
+                                sl=calc_stop_loss_tw(direction,plan_px,atr,daily_ind,_sz,low_5d,high_5d)
+                                tp_info=calc_take_profits_tw(direction,plan_px,sl,_sz)
                                 # ★ 修正：2026-09-26——同 backtest_symbol_tw() 補上的兩項，跟實盤
                                 # generate_signal_tw() 對齊：停損距離>12%（追高過濾）就跳過；
                                 # calc_position_size() 補上 avg_volume_lots 流動性上限。
                                 sl_dist_pct=abs(plan_px-sl)/plan_px*100 if plan_px else 0
                                 if tp_info["rr1"]>=THRESH["min_rr"] and sl_dist_pct<=12:
-                                    pos=calc_position_size(plan_px,sl,balance=balance,size_cat=size_cat,
-                                                            avg_volume_lots=(info.get("volume_lots") if info else None))
+                                    pos=calc_position_size(plan_px,sl,balance=balance,size_cat=_sz,avg_volume_lots=_vl)
                                     shares_total=pos["shares"]
                                     if shares_total>0 and _bt_fill_valid(direction,fill_px,sl,tp_info["tp1"],_bar(i),plan_px):
                                         # 與正式推播、組合回測同一個分批狀態機（TP1/TP2/TP3 各 1/3、移動停損、
