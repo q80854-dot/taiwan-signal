@@ -615,6 +615,7 @@ class TWScanEngine:
                 "recon_samples": pre["recon_samples"], "duration_sec": stats["duration_sec"],
                 # ★ 2026-11-13：最後一根日 K 早於應有日期而被略過的標的（stale bar fail-closed）
                 "expected_bar_date": self._exp_bar_date, "stale_skipped": pre.get("stale_skipped", 0),
+                "unfinal_skipped": pre.get("unfinal_skipped", 0),   # 2026-11-14：盤中未收盤日 K 而略過的標的
                 "stale_samples": pre.get("stale_samples", []),
                 # ★ 2026-11-12 逐棒階段 2：本批訊號所用末棒定案統計（unknown＝舊棒無紀錄，誠實列出）
                 "bar_final_summary": _bar_sum,
@@ -749,6 +750,18 @@ class TWScanEngine:
                     bars.append({"bar_date": d, "open": opens[i] if i < len(opens) else None,
                                  "high": highs[i], "low": lows[i],
                                  "close": closes[i] if i < len(closes) else lows[i]})
+                # ★ 2026-11-14（稽核 BUG-1，使用者同意修正）：fetch_ohlcv 是 Yahoo 還原價（auto_adjust），
+                # 持有期內一遇除權息，訊號日之後、除息日之前的 K 棒會整段被往下調，但存的停損／停利是
+                # 當時的未還原價——直接比會冒出假停損、漏掉停利、損益也錯。比照 shadow._rescale：以
+                # 「訊號日 K 現值 ÷ 當時記錄的收盤」為比例，把 K 棒換回訊號當時的價格單位（與 shadow 同口徑）。
+                _ref_close = sig.get("current_price") or sig.get("entry_price")
+                if _sig_close and _ref_close:
+                    _s = _sig_close / _ref_close
+                    if 0.003 < abs(_s - 1) < 0.4:
+                        bars = [dict(b, **{k: (b[k] / _s if b.get(k) else b.get(k)) for k in ("open", "high", "low", "close")})
+                                for b in bars]
+                        _sig_close = _ref_close
+                        logger.info(f"_resolve_pending_signals: {ticker} 還原價比例 {_s:.4f}（除權息），K 棒已換回訊號當時價格單位")
                 sim_entry = next((b["open"] for b in bars if b.get("open")), None)
                 entry  = sim_entry or sig.get("entry_price") or sig.get("current_price") or 0
                 shares = sig.get("suggested_shares") or sig.get("suggested_lots") or 1  # 明確股數優先；suggested_lots 為歷史遺留欄位（實存股數）
@@ -761,7 +774,8 @@ class TWScanEngine:
                 # （look-ahead 修正）；仍由下方 aged_out 閘門決定「尚未到期、未出場」者留 pending。
                 # prev_close：鎖跌停賣不掉／鎖漲停補不回的日子不成交、出場順延（Q-P0-07，execution v3）
                 sim = simulate_staged_exit(bars, entry, sl, tp1, tp2, tp3, direction, shares, gen_date,
-                                           expire_days=expire_days, prev_close=_sig_close)
+                                           expire_days=expire_days, prev_close=_sig_close,
+                                           code=ticker)   # 2026-11-14 BUG-5：ETF 證交稅 0.1%（原本未傳 code，一律套 0.3%）
                 if not sim:
                     continue
                 has_open_leg = any(l["stage"] == "expired" for l in sim["legs"])   # 仍有未出場的 1/3
@@ -1037,6 +1051,14 @@ class TWScanEngine:
                 if len(self._pre["stale_samples"]) < 8:
                     self._pre["stale_samples"].append({"ticker": ticker, "last_bar": ((daily.get("dates") or [None])[-1]),
                                                        "expected": self._exp_bar_date})
+            return None
+        # ★ 2026-11-14（稽核 BUG-7，使用者同意修正）：盤中（台北 09:00–13:35）手動「立即掃描」時，Yahoo 可能已帶入
+        # 今天尚未收盤的殘缺日 K（日期晚於應有日期）。用它算出的訊號基於未定案價格——一律略過（fail-closed）。
+        _dts = daily.get("dates") or []
+        if (self._exp_bar_date and self._exp_bar_date != self._STALE_UNKNOWN and _dts
+                and str(_dts[-1])[:10] > self._exp_bar_date):
+            with self._pre_lock:
+                self._pre["unfinal_skipped"] = self._pre.get("unfinal_skipped", 0) + 1
             return None
         daily = self._reconcile_last_bar(ticker, stock_info, daily)
         pre = check_multi_timeframe_tw({"daily": daily})
@@ -1665,31 +1687,37 @@ class TWScanEngine:
         # 就是同一次完整掃描找出來的，這次掃描如果整個是「重複」，個別訊號也
         # 沒有必要重推一次），只在 log 留一筆記錄方便日後排查，而不是靜靜吞掉
         # 讓機主一頭霧水查不到原因。
+        # ★ 2026-11-14（稽核 BUG-2，使用者同意修正）：原本「今天已送過報告」就整個 return，連個別訊號也不推；
+        # 但同日第二次掃描（手動立即掃描／重疊）已排除既有持倉，留下的是「新」標的，且已被 save_signal 存成
+        # 正式持倉——不推等於出現使用者不知道的持倉。改為只略過總結報告，新訊號照推（push_signal 本身有去重）。
+        # 日期改用台北時間（原本 UTC，台北 00:00–08:00 的手動掃描會被當成「昨天」）。
+        skip_report = False
         try:
             from state_store import store
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today_str = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
             already_sent_date = store.get_meta("daily_report_sent_date", "")
             if already_sent_date == today_str:
                 logger.warning(f"_push_signals: 今天（{today_str}）已經送過一次盤後集結報告，"
-                                f"本次視為重複觸發（手動立即掃描或排程/重啟重疊），跳過推播避免 Telegram 重複洗版")
-                return
+                                f"本次只略過總結報告；新產生的 {len(signals)} 檔個別訊號照常推播")
+                skip_report = True
         except Exception as e:
             logger.warning(f"_push_signals: 讀取今日是否已推播的旗標失敗（{e}），保守起見繼續照常推播")
             today_str = None
 
-        try:
-            send_daily_report(signals, market_overview, stats)
-            if today_str:
-                try:
-                    store.set_meta("daily_report_sent_date", today_str)
-                except Exception as e:
-                    logger.warning(f"_push_signals: 寫入今日已推播旗標失敗（不影響本次已送出的報告）: {e}")
-        except Exception as e:
-            logger.error(f"_push_signals: 每日總結報告推播失敗: {e}", exc_info=True)
+        if not skip_report:
             try:
-                send_alert(f"⚠️ 每日總結報告推播失敗：{e}", "warning")
-            except Exception as e2:
-                logger.error(f"_push_signals: 總結報告失敗警示也送不出去: {e2}")
+                send_daily_report(signals, market_overview, stats)
+                if today_str:
+                    try:
+                        store.set_meta("daily_report_sent_date", today_str)
+                    except Exception as e:
+                        logger.warning(f"_push_signals: 寫入今日已推播旗標失敗（不影響本次已送出的報告）: {e}")
+            except Exception as e:
+                logger.error(f"_push_signals: 每日總結報告推播失敗: {e}", exc_info=True)
+                try:
+                    send_alert(f"⚠️ 每日總結報告推播失敗：{e}", "warning")
+                except Exception as e2:
+                    logger.error(f"_push_signals: 總結報告失敗警示也送不出去: {e2}")
 
         time.sleep(1)
         push_failures = []
