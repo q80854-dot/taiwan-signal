@@ -1900,6 +1900,11 @@ def _fetch_official_holiday_set() -> Optional[set]:
             date_raw = (row.get("Date") or "").strip()  # 民國年格式，例如 "1150101"
             if len(date_raw) != 7:
                 continue
+            # ★ 2026-11-14（稽核 BUG-4，使用者同意修正；以實際回應核實）：休市表同時列出「國曆新年開始交易日」
+            # 「農曆春節前最後交易日」「農曆春節後開始交易日」——這些是有開盤的交易日，不能當休市。
+            _name = str(row.get("Name") or "")
+            if "開始交易" in _name or "最後交易" in _name:
+                continue
             roc_year, month, day = int(date_raw[:3]), date_raw[3:5], date_raw[5:7]
             result.add(f"{roc_year + 1911}-{month}-{day}")
         if not result:
@@ -1918,7 +1923,8 @@ def _is_national_holiday(now) -> bool:
     date_str = now.strftime("%Y-%m-%d")
     official = _fetch_official_holiday_set()
     if official is not None:
-        return date_str in official
+        # ★ 2026-11-14：官方 API 只回「一個年度」（2026-11 實測回的已是 2027 年），當年剩下的假日要靠靜態清單補
+        return date_str in official or date_str in (TW_MARKET_HOLIDAYS.get(year) or ())
     holidays = TW_MARKET_HOLIDAYS.get(year)
     if holidays is None:
         if year not in _holiday_warned_years:
@@ -1969,8 +1975,6 @@ def get_market_session() -> Dict:
     if m<540:            return {"session":"pre_market","session_zh":"盤前",  "is_open":False,"taipei_time":now.strftime("%H:%M")}
     return               {"session":"after_market","session_zh":"盤後",      "is_open":False,"taipei_time":now.strftime("%H:%M")}
 
-def get_fubon_connection_status() -> Dict:
-    return {"sdk_available":False,"connected":False,"api_key_set":bool(FUBON_API_KEY),"is_trading":_is_trading_session()}
 
 
 # ════════════════════════════════════════════════

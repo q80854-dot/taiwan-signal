@@ -408,3 +408,39 @@ def probe(code: str, market: Optional[str] = None) -> Dict:
         return out
     except Exception as e:
         return {"error": str(e)}
+
+
+# 2026-11-14：自 fubon_broker.py 搬入（該檔其餘行情函式無人呼叫，已刪除）。給 /api/diagnostics 用。
+def fugle_key_diagnostic() -> Dict:
+    """
+    ★ 新增：2026-08-30——專門給 /api/diagnostics 用的富果金鑰檢測。
+    跟 fetch_fugle_market_overview() 分開寫的原因：那個函式測的是 TAIEX/TPEx 這兩個
+    指數代碼，如果富果的 API 剛好不接受這兩個代碼當作 symbol(而不是金鑰本身有問題)，
+    會誤導使用者以為金鑰壞掉。這裡改用「2330」(台積電，最沒有爭議的真實個股代碼)
+    單獨測一次，把金鑰本身有沒有效跟「指數代碼對不對」這兩件事分開檢查，並且把
+    實際的 HTTP 狀態碼、回應內容都回傳出來，不再是黑盒子。
+    """
+    key = os.getenv("FUGLE_API_KEY", "")
+    if not key:
+        return {"ok": False, "detail": "未設定 FUGLE_API_KEY"}
+    try:
+        r = requests.get(
+            f"{FUGLE_BASE}/stock/intraday/quote/2330",
+            headers={"Accept": "application/json", "X-API-KEY": key},
+            timeout=8,
+        )
+        if r.status_code == 200:
+            d = r.json()
+            price = d.get("closePrice") or d.get("lastPrice")
+            if price:
+                return {"ok": True, "detail": f"金鑰有效，測試查詢 2330 拿到價格 {price}"}
+            return {"ok": False, "detail": f"HTTP 200 但回應內容不含價格欄位，可能是 API 回應格式跟預期不同：{r.text[:200]}"}
+        if r.status_code == 401:
+            return {"ok": False, "detail": "HTTP 401 未授權——金鑰本身無效（打錯、過期，或還沒審核通過）"}
+        if r.status_code == 403:
+            return {"ok": False, "detail": "HTTP 403 禁止存取——金鑰有效但沒有這個資源的權限，或額度已用完"}
+        if r.status_code == 429:
+            return {"ok": False, "detail": "HTTP 429 請求過於頻繁——額度限制，稍後再試"}
+        return {"ok": False, "detail": f"HTTP {r.status_code}：{r.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "detail": f"連線本身失敗：{e}"}

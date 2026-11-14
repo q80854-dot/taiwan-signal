@@ -179,7 +179,7 @@ def send_message(chat_id: str, text: str, parse_mode: str = "HTML", _max_retries
                 json={
                     "chat_id":                  str(chat_id),
                     "text":                     text,
-                    "parse_mode":               parse_mode,
+                    **({"parse_mode": parse_mode} if parse_mode else {}),   # 空字串＝純文字（不送 parse_mode）
                     "disable_web_page_preview": True,
                 },
                 timeout=15,
@@ -732,10 +732,15 @@ def send_alert(message: str, level: str = "info"):
     Telegram 失敗也不影響網頁留存，反之亦然，確保站主一定看得到）。"""
     emoji = {"info": "ℹ️", "warning": "⚠️", "error": "🚨"}.get(level, "📢")
     # 1) 優先：Telegram（站主）
+    # ★ 2026-11-14（稽核 BUG-3，使用者同意修正）：訊息常含例外字串（如 "'<' not supported"、
+    # "<urllib3.connection...>"），HTML 模式下 Telegram 會回 400 拒收——故障告警最需要時反而送不到。
+    # 呼叫端都傳純文字（沒有人傳 HTML 標籤），一律跳脫；仍失敗就改純文字再送一次。
+    import html as _html
     try:
         subs = _load_subscribers()
         for admin_id in subs.get("admin", []):
-            send_message(admin_id, f"{emoji} <b>系統通知</b>\n{message}")
+            if not send_message(admin_id, f"{emoji} <b>系統通知</b>\n{_html.escape(str(message), quote=False)}"):
+                send_message(admin_id, f"{emoji} 系統通知\n{message}", parse_mode="")
     except Exception as e:
         logger.warning(f"send_alert Telegram 失敗（仍會寫入網頁通知中心）：{e}")
     # 2) 其次：網頁通知中心（即使 Telegram 沒設定／失敗，站主在網頁也看得到故障紀錄）

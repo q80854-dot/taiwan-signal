@@ -44,7 +44,7 @@ _token_bad_until = 0.0                      # token 被拒時，暫時改用免�
 _blocked_until = 0.0                        # 被 FinMind 回報額度用完／維護時，暫停到這個時間
 _stats = {"calls": 0, "cache_hits": 0, "errors": 0, "last_error": None, "last_ok": None, "last_http": None, "auth": None}
 _POOL = ThreadPoolExecutor(max_workers=5)
-_MAX_CACHE = 800
+_MAX_CACHE = 250   # 2026-11-14 記憶體稽核：存的是原始列（一檔約 1.3MB），800 筆估 60–100MB；DB 另有持久快取可回填
 _FIN_DAYS = 1500                              # 三張財報共用同一個查詢區間（約 16 季），才會命中同一份快取、不多吃額度
 
 # 各資料的快取秒數：盤後資料一天才變一次，不必頻繁問；新聞與當日籌碼短一點。
@@ -168,6 +168,20 @@ def budget_left() -> int:
         while _calls and now - _calls[0] > 3600:
             _calls.popleft()
         return max(0, BUDGET - len(_calls))
+
+
+def reserve_call() -> bool:
+    """2026-11-14（使用者同意第一批清理）：給 finmind.py（財報去累計、經營效率、個股法人、新聞）用的共用額度記帳。
+    原本 finmind.py 自己打 FinMind、沒算進這裡的每小時額度，90% 保護線會被繞過。
+    額度還有 → 記一次並回 True；已到保護線或暫停中 → 回 False（呼叫端改走快取／回空）。"""
+    _load_block_once()
+    if time.time() < _blocked_until or budget_left() <= 0:
+        return False
+    with _lock:
+        _calls.append(time.time())
+    _calls_persist()
+    _stats["calls"] += 1
+    return True
 
 
 def status() -> Dict:

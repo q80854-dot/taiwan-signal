@@ -150,6 +150,17 @@ def job_report_boot_catchup():
     except Exception as e:
         logger.error(f"job_report_boot_catchup: {e}", exc_info=True)
 
+def job_prune_finmind_persist():
+    """每週清理 meta 表裡 finmind_data 持久快取（fm:<雜湊>）中 40 天以上沒更新的鍵。
+    鍵含查詢起日：短 TTL 每天換新鍵、長 TTL 每月換新鍵，舊鍵只佔資料庫空間、永遠不會再被讀。"""
+    try:
+        from state_store import store
+        n = store.prune_meta_prefix("fm:", 40)
+        logger.info(f"job_prune_finmind_persist: 清除 {n} 筆過期的 FinMind 持久快取")
+    except Exception as e:
+        logger.warning(f"job_prune_finmind_persist: {e}")
+
+
 def job_rescale_open_once():
     """2026-10-28 使用者要求：把舊規則（單檔 30%）開出的追蹤部位，依新規則（單檔 ≤ 資金÷持倉上限、
     成本合計 ≤ 資金、組合風險 ≤ 6%）縮小股數。只執行一次（meta 旗標），並留下前後對照紀錄與系統通知。"""
@@ -394,8 +405,29 @@ def job_finmind_warm():
         logger.error(f"job_finmind_warm: {e}", exc_info=True)
 
 
+_OFFHOURS_LAST = {}
+
+
+def _offhours_skip(key: str, min_gap_s: int) -> bool:
+    """2026-11-14（使用者同意第一批清理）：預熱工作在週末與台北 22:00～07:30 仍照白天頻率打外部 API，
+    沒有使用者也在跑。非交易時段改成同一工作至少隔 min_gap_s 秒才跑一次；平日白天照原頻率不變
+    （國定假日平日仍當白天處理，寧可多跑）。回傳 True＝這次略過。"""
+    now = datetime.now(TZ_TAIPEI)
+    off = now.weekday() >= 5 or now.hour >= 22 or (now.hour * 60 + now.minute) < 7 * 60 + 30
+    if not off:
+        return False
+    import time as _tm
+    t = _tm.time()
+    if t - _OFFHOURS_LAST.get(key, 0) < min_gap_s:
+        return True
+    _OFFHOURS_LAST[key] = t
+    return False
+
+
 def job_warm_instrument():
     """預熱個股研究頁會用到的資料（估值、月營收、重大訊息、掃描池），避免部署或重啟後第一位使用者等一兩分鐘。"""
+    if _offhours_skip("warm_instrument", 3600):
+        return
     import time as _t
     t0 = _t.time()
     done = []
@@ -481,6 +513,8 @@ def job_learning_backup(send: bool = True):
 
 def job_econ_warm():
     """預熱首頁美國財經日曆（FMP＋FRED），讓訪客開首頁直接命中快取；未設金鑰時直接略過。"""
+    if _offhours_skip("econ_warm", 7200):
+        return
     try:
         import econ_calendar
         if not (econ_calendar._fmp_key() or econ_calendar._fred_key()):
@@ -496,6 +530,8 @@ def job_market_overview_warm():
     fetch_market_overview() 快取僅 300 秒，冷掉時 /api/state（每頁每 30 秒輪詢）會同步打 4 個外部
     API（指數／外資／regime／融資）數秒，造成每約 5 分鐘一次的頁面卡頓。這裡每 4 分鐘背景刷新
     （略短於 TTL），讓 /api/state 永遠讀到熱快取、不再同步冷抓。純預熱、失敗吞例外。"""
+    if _offhours_skip("market_overview_warm", 1800):
+        return
     try:
         from data_fetcher import fetch_market_overview
         fetch_market_overview()
@@ -1034,6 +1070,9 @@ def setup_scheduler():
     scheduler.add_job(job_daily_scan,       CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="daily_scan",       replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     scheduler.add_job(job_collect_inst, CronTrigger(hour="17,19", minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="collect_inst", replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
+    # 2026-11-14 記憶體／磁碟稽核：每週清一次 FinMind 持久快取中 40 天以上沒更新的鍵（之後不可能再被讀到）
+    scheduler.add_job(job_prune_finmind_persist, CronTrigger(day_of_week="sun", hour=3, minute=23, timezone=TZ_TAIPEI),
+                      id="prune_finmind_persist", replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=6 * 3600)
     scheduler.add_job(lambda: logger.debug("❤️ 心跳"), "interval", hours=1, id="heartbeat")
     # ★ 2026-11-05：全域排程錯誤告警——任何排程工作拋出未捕捉例外都主動 Telegram 通知站主
     # （_on_job_error 內建去重，30 分鐘同類只一則）。補上「只有自己 try/except 的工作才會通知」的缺口。
@@ -3302,6 +3341,11 @@ def _long_history(t):
         d["quality"] = {"bars": len(d["dates"]), "bad_ohlc": bad, "zero_volume": sum(1 for v in d["volumes"] if v == 0),
                         "source": "Yahoo Finance 日線（還原價，已含除權息調整）" + (f"；最新 {n_fm} 根由 FinMind 補上" if n_fm else "")}
         _long_hist_cache[t] = (_t.time(), d)
+        # 2026-11-14 記憶體稽核：每檔約 288KB、原本永不刪除——清掉過期的，最多留 40 檔
+        for _k in [k for k, v in list(_long_hist_cache.items()) if _t.time() - v[0] >= 1800]:
+            _long_hist_cache.pop(_k, None)
+        while len(_long_hist_cache) > 40:
+            _long_hist_cache.pop(min(_long_hist_cache, key=lambda k: _long_hist_cache[k][0]), None)
         return d
     except Exception as e:
         logger.warning(f"_long_history {t}: {e}")
@@ -3472,7 +3516,7 @@ def api_instrument(ticker: str):
         from state_store import store as _st3
         dates = _st3.get_inst_dates(limit=20)
         if dates:
-            rows = [r for r in _st3.get_inst_since(dates[-1]) if r.get("code") == code]
+            rows = [r for r in _st3.get_inst_since(dates[-1], code=code) if r.get("code") == code]
             seq = [{"date": r["trade_date"], "foreign": r["foreign_net"], "trust": r["trust_net"],
                     "dealer": (r["total_net"] or 0) - (r["foreign_net"] or 0) - (r["trust_net"] or 0),
                     "total": r["total_net"]} for r in sorted(rows, key=lambda r: r["trade_date"], reverse=True)]
@@ -3915,9 +3959,23 @@ def _run_compare_backtest_bg(min_score):
     finally:
         _compare_backtest_running.clear()
 
+def _research_bt_offline():
+    """2026-11-14（使用者同意第一批清理）：研究用全量回測（新舊對照、放空關卡驗證、分批出場、
+    因子消融）會在網站 512MB 的程序裡跑 TW50 全量回測，有撐爆記憶體的風險，功能也與離線的
+    research/champion_replay.py 重疊。預設停用、改在研究環境離線跑；已存的結果仍可用 result 端點讀取。
+    確有需要可暫設環境變數 RESEARCH_BACKTEST_ONLINE=1 開啟。"""
+    if os.environ.get("RESEARCH_BACKTEST_ONLINE", "").strip() == "1":
+        return None
+    return jsonify({"status": "disabled",
+                    "note": "研究用全量回測已改為離線執行（research/），避免佔用網站記憶體；已存結果仍可讀取"}), 410
+
+
 @app.route("/api/backtest/compare/run", methods=["POST"])
 @owner_action("backtest_compare_run")
 def api_backtest_compare_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _compare_backtest_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -3964,6 +4022,9 @@ def _run_short_gate_validation_bg(min_score):
 @app.route("/api/backtest/short_gate_validation/run", methods=["POST"])
 @owner_action("backtest_short_gate_validation_run")
 def api_backtest_short_gate_validation_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _short_gate_validation_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -4015,6 +4076,9 @@ def _run_short_gate_validation_bear_bg(min_score, period_start, period_end):
 @app.route("/api/backtest/short_gate_validation_bear/run", methods=["POST"])
 @owner_action("backtest_short_gate_validation_bear_run")
 def api_backtest_short_gate_validation_bear_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _short_gate_validation_bear_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -4119,6 +4183,9 @@ def _run_partial_exit_bt_bg(min_score):
 @app.route("/api/backtest/partial_exit/run", methods=["POST"])
 @owner_action("backtest_partial_exit_run")
 def api_backtest_partial_exit_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _partial_exit_bt_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -4162,6 +4229,9 @@ def _run_ablation_bt_bg(min_score):
 @app.route("/api/backtest/ablation/run", methods=["POST"])
 @owner_action("backtest_ablation_run")
 def api_backtest_ablation_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _ablation_bt_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -4393,7 +4463,7 @@ def diagnostics():
             # ★ 修正：2026-08-30——改用專門的 fugle_key_diagnostic()，用「2330」這個沒有
             #   爭議的真實股票代碼單獨測金鑰本身有沒有效，不再跟 TAIEX/TPEx 這兩個指數
             #   代碼是否被富果接受混在一起判斷，避免誤導。同時把實際 HTTP 狀態碼顯示出來。
-            from fubon_broker import fugle_key_diagnostic
+            from realtime import fugle_key_diagnostic
             _test = fugle_key_diagnostic()
             fugle_status = ("✅ " if _test["ok"] else "❌ ") + _test["detail"]
         except Exception as e:

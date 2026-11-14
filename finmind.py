@@ -26,6 +26,14 @@ FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 _TTL = 24 * 3600
 _FALLBACK_TTL = 3600          # 以 DB 回退的資料只在記憶體快取 1 小時，額度一恢復就會重新抓最新
 _cache: Dict[str, dict] = {}
+_CACHE_MAX = 300   # 2026-11-14 記憶體稽核：原本依代號無上限累積
+
+
+def _put(key, val):
+    _cache[key] = val
+    if len(_cache) > _CACHE_MAX:
+        for k in sorted(_cache, key=lambda x: _cache[x].get("at", 0))[: len(_cache) - _CACHE_MAX + 30]:
+            _cache.pop(k, None)
 _lock = threading.Lock()
 
 # ── 額度熔斷（2026-10-16）──────────────────────────────────────────────
@@ -110,6 +118,9 @@ def _fetch(dataset: str, data_id: str, start: str) -> List[dict]:
     tok = _token()
     for mode in (["header", "param", "anon"] if tok else ["anon"]):      # token 放標頭被拒→放參數→最後才免登入
         try:
+            import finmind_data   # 共用 finmind_data 的每小時額度記帳（每次實際連線都算一次）
+            if not finmind_data.reserve_call():
+                return []
             headers = {"Authorization": f"Bearer {tok}"} if mode == "header" else {}
             prm = {"dataset": dataset, "data_id": data_id, "start_date": start}
             if mode == "param":
@@ -216,14 +227,14 @@ def financial_indicators(code: str) -> Optional[dict]:
     data = _build(inc, bs, cf)
     if data:
         with _lock:
-            _cache[code] = {"at": time.time(), "data": data}
+            _put(code, {"at": time.time(), "data": data})
         _db_put(dbkey, data)            # 持久化最近一次正確結果，供額度滿/連線失敗時回退
         return data
     # live 抓不到（熔斷中或上游失敗）→ 回退資料庫最近一次正確季報（季報非盤中變動，安全且符合「不要錯誤資訊」）
     cached = _db_get(dbkey)
     if cached and cached.get("data"):
         with _lock:
-            _cache[code] = {"at": time.time(), "data": cached["data"], "fallback": True}
+            _put(code, {"at": time.time(), "data": cached["data"], "fallback": True})
         return cached["data"]
     return data
 
@@ -415,13 +426,13 @@ def efficiency_days(code: str) -> Optional[dict]:
             logger.info(f"efficiency_days({code}) 算不出；資產負債表科目={bn}；損益表科目={inms}")
     if data:
         with _lock:
-            _cache[ck] = {"at": time.time(), "data": data}
+            _put(ck, {"at": time.time(), "data": data})
         _db_put(dbkey, data)
         return data
     cached = _db_get(dbkey)                           # 回退最近一次正確季報結果
     if cached and cached.get("data"):
         with _lock:
-            _cache[ck] = {"at": time.time(), "data": cached["data"], "fallback": True}
+            _put(ck, {"at": time.time(), "data": cached["data"], "fallback": True})
         return cached["data"]
     return None
 
@@ -508,11 +519,11 @@ def institutional(code: str, days: int = 30) -> Optional[list]:
         cached = _db_get(dbkey)
         if cached and cached.get("data"):
             with _lock:
-                _cache[ck] = {"at": time.time(), "data": cached["data"], "fallback": True}
+                _put(ck, {"at": time.time(), "data": cached["data"], "fallback": True})
             return cached["data"]
         return None
     with _lock:
-        _cache[ck] = {"at": time.time(), "data": out}
+        _put(ck, {"at": time.time(), "data": out})
     _db_put(dbkey, out)
     return out
 
@@ -557,5 +568,5 @@ def news(code: str, days: int = 14, limit: int = 10) -> Optional[list]:
     out.sort(key=lambda x: x["date"], reverse=True)
     out = out[:limit]
     with _lock:
-        _cache[ck] = {"at": time.time(), "data": out}
+        _put(ck, {"at": time.time(), "data": out})
     return out

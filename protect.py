@@ -38,6 +38,7 @@ RATE_LIMIT = 240          # 每 IP 每分鐘（所有 /api、/auth）
 HEAVY_LIMIT = 40          # 每 IP 每分鐘（重端點）
 HEAVY_CONCURRENCY = 6     # 同時間最多幾個重運算
 CACHE_MAX = 300
+CACHE_MAX_BYTES = 40 * 1024 * 1024   # 2026-11-14 記憶體稽核：每筆最多 600KB×300 筆＝最壞 180MB，加總量上限
 
 _rate, _heavy_rate = {}, {}
 # 2026-10-08：探測防護——同一 IP 5 分鐘內被拒絕（403/404/405/400，不含未登入的 401）超過 BAN_DENIES 次，封鎖 BAN_SECS 秒
@@ -248,10 +249,14 @@ def after(resp):
         key = getattr(g, "_pc_key", None)
         if key and resp.status_code == 200 and not resp.direct_passthrough and len(resp.get_data()) < 600_000:
             with _cache_lock:
-                _cache[key] = (time.time() + g._pc_ttl, resp.content_type, resp.get_data())
+                _now = time.time()
+                _cache[key] = (_now + g._pc_ttl, resp.content_type, resp.get_data())
                 _cache.move_to_end(key)
-                while len(_cache) > CACHE_MAX:
-                    _cache.popitem(last=False)
+                for _k in [k for k, v in _cache.items() if v[0] <= _now]:   # 過期的順手清掉（原本只靠 LRU 擠出）
+                    _cache.pop(_k, None)
+                _bytes = sum(len(v[2]) for v in _cache.values())
+                while _cache and (len(_cache) > CACHE_MAX or _bytes > CACHE_MAX_BYTES):
+                    _bytes -= len(_cache.popitem(last=False)[1][2])
     except Exception as e:
         logger.warning(f"protect.after: {e}")
     return resp

@@ -599,7 +599,8 @@ def _set_cookie(resp, name, value, ttl):
 # ───────── 登入牆（類似 TradingView：登入後才能使用站內功能） ─────────
 _OPEN_PATHS = ("/api/me", "/healthz", "/health", "/auth/", "/api/public/")
 _OWNER_ONLY_GET = ("/api/health", "/api/settings", "/api/audit", "/api/diagnostics", "/api/admin/",
-                   "/api/backtest", "/api/backfill", "/api/learning")
+                   "/api/backtest", "/api/backfill", "/api/learning",
+                   "/api/analysis")   # 2026-11-14：外資門檻研究會在背景跑 5～8 分鐘，只限站主
 DEFAULT_OWNER = "q80854@gmail.com,q80855@gmail.com"   # 2026-10-08：加入帳號擁有者 q80854；Render 若設了 OWNER_EMAILS 以其為準
 
 

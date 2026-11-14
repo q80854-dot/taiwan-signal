@@ -83,7 +83,7 @@ learning.* / regime.*  → 研究統計（因子 IC/分位數、分數校準、r
 |---|---|---|---|
 | `signal_engine.py` | 訊號產生、評分、停損停利、部位（`calc_position_size`/`fit_to_cash`/`calc_stop_loss_tw`/`calc_trade_cost`） | config、indicators、event_filter、risk_manager | 線上 Champion 入口 |
 | `risk_manager.py` | 單筆/當日/組合風險硬限制、fail-closed | config、state_store | 獨立層，AI 不得繞過 |
-| `backtester.py` | 回測、WFO、組合回測、成本（`calc_tw_pnl`） | execution（分批出場）、scoring_engine | 回測核心 |
+| `backtester.py` | 回測、WFO、組合回測、成本（`calc_tw_pnl`） | execution（分批出場） | 回測核心（績效指標 `calc_performance_metrics` 已自舊 scoring_engine 搬入，2026-11-14） |
 | `shadow.py` | candidate/rejected/control 研究樣本追蹤與結算 | execution（單次出場）、state_store | R 標籤口徑 |
 | `execution.py` | 共用出場模擬：`simulate_exit`（單次）、`simulate_staged_exit`（分批，pnl_fn 注入） | 無（純函式） | #114/#119 建立並收斂 |
 | `learning_model.py` | 離線模型訓練/評估、時序 WFO、Purged+Embargo、holdout | numpy、shadow | shadow-only，buy-only（#120） |
