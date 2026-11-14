@@ -1969,8 +1969,6 @@ def get_market_session() -> Dict:
     if m<540:            return {"session":"pre_market","session_zh":"盤前",  "is_open":False,"taipei_time":now.strftime("%H:%M")}
     return               {"session":"after_market","session_zh":"盤後",      "is_open":False,"taipei_time":now.strftime("%H:%M")}
 
-def get_fubon_connection_status() -> Dict:
-    return {"sdk_available":False,"connected":False,"api_key_set":bool(FUBON_API_KEY),"is_trading":_is_trading_session()}
 
 
 # ════════════════════════════════════════════════

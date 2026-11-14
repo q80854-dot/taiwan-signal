@@ -170,6 +170,20 @@ def budget_left() -> int:
         return max(0, BUDGET - len(_calls))
 
 
+def reserve_call() -> bool:
+    """2026-11-14（使用者同意第一批清理）：給 finmind.py（財報去累計、經營效率、個股法人、新聞）用的共用額度記帳。
+    原本 finmind.py 自己打 FinMind、沒算進這裡的每小時額度，90% 保護線會被繞過。
+    額度還有 → 記一次並回 True；已到保護線或暫停中 → 回 False（呼叫端改走快取／回空）。"""
+    _load_block_once()
+    if time.time() < _blocked_until or budget_left() <= 0:
+        return False
+    with _lock:
+        _calls.append(time.time())
+    _calls_persist()
+    _stats["calls"] += 1
+    return True
+
+
 def status() -> Dict:
     """給管理頁／健康檢查：額度、快取、最近錯誤（不含 token）。"""
     return {"has_token": bool(TOKEN), "hourly_limit": HOURLY_LIMIT, "budget_left": budget_left(),

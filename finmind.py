@@ -110,6 +110,9 @@ def _fetch(dataset: str, data_id: str, start: str) -> List[dict]:
     tok = _token()
     for mode in (["header", "param", "anon"] if tok else ["anon"]):      # token 放標頭被拒→放參數→最後才免登入
         try:
+            import finmind_data   # 共用 finmind_data 的每小時額度記帳（每次實際連線都算一次）
+            if not finmind_data.reserve_call():
+                return []
             headers = {"Authorization": f"Bearer {tok}"} if mode == "header" else {}
             prm = {"dataset": dataset, "data_id": data_id, "start_date": start}
             if mode == "param":

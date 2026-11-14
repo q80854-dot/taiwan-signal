@@ -394,8 +394,29 @@ def job_finmind_warm():
         logger.error(f"job_finmind_warm: {e}", exc_info=True)
 
 
+_OFFHOURS_LAST = {}
+
+
+def _offhours_skip(key: str, min_gap_s: int) -> bool:
+    """2026-11-14（使用者同意第一批清理）：預熱工作在週末與台北 22:00～07:30 仍照白天頻率打外部 API，
+    沒有使用者也在跑。非交易時段改成同一工作至少隔 min_gap_s 秒才跑一次；平日白天照原頻率不變
+    （國定假日平日仍當白天處理，寧可多跑）。回傳 True＝這次略過。"""
+    now = datetime.now(TZ_TAIPEI)
+    off = now.weekday() >= 5 or now.hour >= 22 or (now.hour * 60 + now.minute) < 7 * 60 + 30
+    if not off:
+        return False
+    import time as _tm
+    t = _tm.time()
+    if t - _OFFHOURS_LAST.get(key, 0) < min_gap_s:
+        return True
+    _OFFHOURS_LAST[key] = t
+    return False
+
+
 def job_warm_instrument():
     """預熱個股研究頁會用到的資料（估值、月營收、重大訊息、掃描池），避免部署或重啟後第一位使用者等一兩分鐘。"""
+    if _offhours_skip("warm_instrument", 3600):
+        return
     import time as _t
     t0 = _t.time()
     done = []
@@ -481,6 +502,8 @@ def job_learning_backup(send: bool = True):
 
 def job_econ_warm():
     """預熱首頁美國財經日曆（FMP＋FRED），讓訪客開首頁直接命中快取；未設金鑰時直接略過。"""
+    if _offhours_skip("econ_warm", 7200):
+        return
     try:
         import econ_calendar
         if not (econ_calendar._fmp_key() or econ_calendar._fred_key()):
@@ -496,6 +519,8 @@ def job_market_overview_warm():
     fetch_market_overview() 快取僅 300 秒，冷掉時 /api/state（每頁每 30 秒輪詢）會同步打 4 個外部
     API（指數／外資／regime／融資）數秒，造成每約 5 分鐘一次的頁面卡頓。這裡每 4 分鐘背景刷新
     （略短於 TTL），讓 /api/state 永遠讀到熱快取、不再同步冷抓。純預熱、失敗吞例外。"""
+    if _offhours_skip("market_overview_warm", 1800):
+        return
     try:
         from data_fetcher import fetch_market_overview
         fetch_market_overview()
@@ -3915,9 +3940,23 @@ def _run_compare_backtest_bg(min_score):
     finally:
         _compare_backtest_running.clear()
 
+def _research_bt_offline():
+    """2026-11-14（使用者同意第一批清理）：研究用全量回測（新舊對照、放空關卡驗證、分批出場、
+    因子消融）會在網站 512MB 的程序裡跑 TW50 全量回測，有撐爆記憶體的風險，功能也與離線的
+    research/champion_replay.py 重疊。預設停用、改在研究環境離線跑；已存的結果仍可用 result 端點讀取。
+    確有需要可暫設環境變數 RESEARCH_BACKTEST_ONLINE=1 開啟。"""
+    if os.environ.get("RESEARCH_BACKTEST_ONLINE", "").strip() == "1":
+        return None
+    return jsonify({"status": "disabled",
+                    "note": "研究用全量回測已改為離線執行（research/），避免佔用網站記憶體；已存結果仍可讀取"}), 410
+
+
 @app.route("/api/backtest/compare/run", methods=["POST"])
 @owner_action("backtest_compare_run")
 def api_backtest_compare_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _compare_backtest_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -3964,6 +4003,9 @@ def _run_short_gate_validation_bg(min_score):
 @app.route("/api/backtest/short_gate_validation/run", methods=["POST"])
 @owner_action("backtest_short_gate_validation_run")
 def api_backtest_short_gate_validation_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _short_gate_validation_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -4015,6 +4057,9 @@ def _run_short_gate_validation_bear_bg(min_score, period_start, period_end):
 @app.route("/api/backtest/short_gate_validation_bear/run", methods=["POST"])
 @owner_action("backtest_short_gate_validation_bear_run")
 def api_backtest_short_gate_validation_bear_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _short_gate_validation_bear_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -4119,6 +4164,9 @@ def _run_partial_exit_bt_bg(min_score):
 @app.route("/api/backtest/partial_exit/run", methods=["POST"])
 @owner_action("backtest_partial_exit_run")
 def api_backtest_partial_exit_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _partial_exit_bt_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -4162,6 +4210,9 @@ def _run_ablation_bt_bg(min_score):
 @app.route("/api/backtest/ablation/run", methods=["POST"])
 @owner_action("backtest_ablation_run")
 def api_backtest_ablation_run():
+    off = _research_bt_offline()
+    if off:
+        return off
     if _ablation_bt_running.is_set():
         return jsonify({"status": "already_running"})
     min_score = request.args.get("min_score", default=65.0, type=float)
@@ -4393,7 +4444,7 @@ def diagnostics():
             # ★ 修正：2026-08-30——改用專門的 fugle_key_diagnostic()，用「2330」這個沒有
             #   爭議的真實股票代碼單獨測金鑰本身有沒有效，不再跟 TAIEX/TPEx 這兩個指數
             #   代碼是否被富果接受混在一起判斷，避免誤導。同時把實際 HTTP 狀態碼顯示出來。
-            from fubon_broker import fugle_key_diagnostic
+            from realtime import fugle_key_diagnostic
             _test = fugle_key_diagnostic()
             fugle_status = ("✅ " if _test["ok"] else "❌ ") + _test["detail"]
         except Exception as e:

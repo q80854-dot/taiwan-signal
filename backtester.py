@@ -11,6 +11,54 @@ from config import ACCOUNT_BALANCE_TWD, SIGNAL_THRESHOLDS as THRESH, COMMISSION_
 
 logger = logging.getLogger(__name__)
 
+
+# 2026-11-14：自 scoring_engine.py 原封搬入（該檔其餘為無人呼叫的舊評分法，已刪除）。
+def calc_performance_metrics(equity_curve, trades=None):
+    # ★ 修正：2026-09-19——稽核發現這個函式在「資金歸零/穿倉」（equity 跌到 <=0）
+    # 的極端情境下會直接 crash，不是回傳一個難看的數字而已：
+    #  1) peak 若曾經是 <=0，(peak-v)/peak 會除以0或除以負數，drawdown 失真。
+    #  2) returns 逐筆用前一天equity當分母，若中途某天equity<=0，同樣除以0。
+    #  3) 最關鍵：total_ret<=-1（等於整體虧光或更慘）時，1+total_ret<=0，
+    #     Python對「負數的浮點數次方（非整數指數）」不會報錯，而是安靜地
+    #     回傳一個complex（複數），接下來 round(annual_ret*100,2) 對complex
+    #     呼叫 round() 才會真的丟 TypeError 把整個函式炸掉——這個函式是
+    #     backtester.py 全市場批次回測會呼叫的（見 backtester.py:148），單一
+    #     一檔股票在回測期間出現穿倉情境，就會讓整批回測job當掉、卡在
+    #     "running" 或被外層try/except吞成 "error"，使用者拿不到任何結果。
+    #     這裡全面補上防禦：equity<=0 一律視為無效資料，不讓後面的算式繼續跑。
+    if not equity_curve or len(equity_curve)<2: return {"valid":False}
+    if any(v<=0 for v in equity_curve):
+        return {"valid":False,"reason":"equity_curve 出現歸零或負值（穿倉），無法計算績效指標"}
+    peak=equity_curve[0]; max_dd=0.0
+    for v in equity_curve:
+        if v>peak: peak=v
+        dd=(peak-v)/peak
+        if dd>max_dd: max_dd=dd
+    returns=[(equity_curve[i]-equity_curve[i-1])/equity_curve[i-1] for i in range(1,len(equity_curve))]
+    if len(returns)>1:
+        rf=0.05/252; excess=[r-rf for r in returns]; mean_e=sum(excess)/len(excess)
+        std_e=math.sqrt(sum((r-mean_e)**2 for r in excess)/max(len(excess)-1,1))
+        sharpe=round(mean_e/std_e*math.sqrt(252),3) if std_e>1e-10 and math.isfinite(mean_e/std_e) else 0
+    else: sharpe=0
+    total_ret=(equity_curve[-1]-equity_curve[0])/equity_curve[0]
+    n_days=max(len(equity_curve),1)
+    annual_ret=round((1+total_ret)**(252/n_days)-1,4) if n_days>0 and (1+total_ret)>0 else (-1.0 if (1+total_ret)<=0 else 0)
+    calmar=round(annual_ret/max_dd,3) if max_dd>0 and math.isfinite(annual_ret/max_dd) else 0
+    wins=[t for t in (trades or []) if t.get("pnl_twd",t.get("pnl",0))>0]
+    losses=[t for t in (trades or []) if t.get("pnl_twd",t.get("pnl",0))<0]
+    max_consec=0; cur=0
+    for t in (trades or []):
+        if t.get("pnl_twd",t.get("pnl",0))<0: cur+=1; max_consec=max(max_consec,cur)
+        else: cur=0
+    avg_win =sum(t.get("pnl_twd",t.get("pnl",0)) for t in wins) /max(len(wins),1)
+    avg_loss=sum(abs(t.get("pnl_twd",t.get("pnl",0))) for t in losses)/max(len(losses),1)
+    wr=len(wins)/max(len(wins)+len(losses),1)
+    return {"valid":True,"sharpe":sharpe,"sharpe_grade":"優" if sharpe>=2 else "良" if sharpe>=1.5 else "普" if sharpe>=1 else "差",
+            "max_drawdown":round(max_dd*100,2),"dd_grade":"優" if max_dd<0.05 else "良" if max_dd<0.10 else "普" if max_dd<0.20 else "危險",
+            "calmar":calmar,"annual_return":round(annual_ret*100,2),"total_return":round(total_ret*100,2),
+            "win_rate":round(wr*100,1),"actual_rr":round(avg_win/avg_loss,2) if avg_loss>0 else 0,
+            "max_consec_loss":max_consec,"n_trades":len(trades or []),"equity_start":equity_curve[0],"equity_end":equity_curve[-1]}
+
 # ★ 新增：2026-09-24——使用者要求「用新增的東西（K線快取／總經權重／基本面硬性
 # 過濾）做詳細回測，跟過去策略比較勝率有沒有提升」，後續並明確要求「用真實資料
 # 回測，不要假數據，能補的都補上」。目前實際能不能被回測驗證：
@@ -538,7 +586,6 @@ def backtest_symbol_tw(ticker, initial_balance=None, min_score=None, use_macro_o
     """
     from data_fetcher   import fetch_ohlcv
     from signal_engine  import check_multi_timeframe_tw, calc_stop_loss_tw, calc_take_profits_tw, calc_position_size
-    from scoring_engine import calc_performance_metrics
     from state_store    import store
     min_score = min_score if min_score is not None else THRESH["min_score"]
     balance=initial_balance or ACCOUNT_BALANCE_TWD
@@ -913,7 +960,6 @@ def portfolio_backtest_tw(tickers=None, min_score=None, max_positions=None,
     from data_fetcher  import fetch_ohlcv
     from signal_engine import check_multi_timeframe_tw, calc_stop_loss_tw, calc_take_profits_tw, calc_position_size
     from stock_universe import get_tw50_components, get_stock_info
-    from scoring_engine import calc_performance_metrics
     from config import ACCOUNT_BALANCE_TWD, MAX_SIMULTANEOUS_POSITIONS, MAX_PORTFOLIO_RISK, CIRCUIT_BREAKER
     LOOKBACK = 130
     EXPIRE_DAYS = CIRCUIT_BREAKER.get("signal_expire_days", 15)   # ★ 2026-11-09 Phase B：回測也套用到期窗
@@ -1286,7 +1332,6 @@ def backtest_symbol_tw_partial(ticker, initial_balance=None, min_score=None,
                                 use_macro_overlay=False, use_fundamentals_filter=False, pit_universe=None) -> Dict:
     from data_fetcher   import fetch_ohlcv
     from signal_engine  import check_multi_timeframe_tw, calc_stop_loss_tw, calc_take_profits_tw, calc_position_size
-    from scoring_engine import calc_performance_metrics
     min_score = min_score if min_score is not None else THRESH["min_score"]
     balance=initial_balance or ACCOUNT_BALANCE_TWD
     data=fetch_ohlcv(ticker,"daily")
