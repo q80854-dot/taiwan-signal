@@ -1,6 +1,7 @@
 ﻿# 證交所（上市）官方歷史資料下載（在台灣的個人電腦執行；Windows 內建 PowerShell，不需安裝任何東西）
 # 內容：停牌、減資（每年）、除權息、處置、注意股（每月），預設 2020-01 至今；加 -From 2008 可從 2008 年起補抓（已抓過的會跳過）。
-# 加參數 -OddLot 另抓盤中零股（每日，約 2 小時）。加 -Taifex 另抓期交所三大法人期貨（台指、小台）與選擇權買賣權分計，2008～2017 每月一份（約 20 分鐘）。官網沒有的年份會記為失敗，不算成功。
+# 加參數 -OddLot 另抓盤中零股（每日，約 2 小時）。加 -Taifex 另抓期交所三大法人期貨（台指、小台）與選擇權買賣權分計，每月一份（約 10 分鐘）。
+# 官網提供的範圍（2026-11-14 實測）：停牌 100/10/03（2011-10-03）起、減資 2011 年起、期交所下載只給最近 3 年；範圍外不查詢、不記失敗，也不補資料。
 # 每筆原樣保存並記錄網址、時間、SHA-256；被擋或不是 JSON 的記為失敗，不算成功。可中斷後重跑接續。
 param([switch]$OddLot, [int]$From = 2020, [switch]$Taifex)
 $ErrorActionPreference = "Stop"
@@ -45,8 +46,11 @@ function Get-One($name, $urls) {
 for ($y = $From; $y -le $Today.Year; $y++) {
     $a = "{0}0101" -f $y
     $b = if ($y -lt $Today.Year) { "{0}1231" -f $y } else { $Today.ToString("yyyyMMdd") }
-    Get-One "halt_$y" @("${Base}afterTrading/TWTAWU?startDate=$a&endDate=$b&querytype=3&response=json", "${Base}afterTrading/TWTAWU?startDate=$a&endDate=$b&response=json")
-    Get-One "reduction_$y" @("${Base}reducation/TWTAUU?startDate=$a&endDate=$b&response=json")
+    if ($y -ge 2011) {
+        $ha = if ($y -eq 2011) { "20111003" } else { $a }
+        Get-One "halt_$y" @("${Base}afterTrading/TWTAWU?startDate=$ha&endDate=$b&querytype=3&response=json", "${Base}afterTrading/TWTAWU?startDate=$ha&endDate=$b&response=json")
+        Get-One "reduction_$y" @("${Base}reducation/TWTAUU?startDate=$a&endDate=$b&response=json")
+    }
 }
 $m = Get-Date -Year $From -Month 1 -Day 1
 while ($m -le $Today) {
@@ -69,10 +73,11 @@ if ($OddLot) {
 }
 if ($Taifex) {
     $TF = "https://www.taifex.com.tw/cht/3/"
-    $m = Get-Date -Year 2008 -Month 1 -Day 1
-    $stop = Get-Date -Year 2017 -Month 12 -Day 31
+    $t3 = $Today.AddYears(-3).AddMonths(1)
+    $m = Get-Date -Year $t3.Year -Month $t3.Month -Day 1
+    $stop = $Today
     while ($m -le $stop) {
-        $e = $m.AddMonths(1).AddDays(-1)
+        $e = $m.AddMonths(1).AddDays(-1); if ($e -gt $Today) { $e = $Today }
         $k = $m.ToString("yyyyMM")
         foreach ($job in @(@("taifex_fut_TXF_$k", "futContractsDateDown", "TXF"), @("taifex_fut_MXF_$k", "futContractsDateDown", "MXF"), @("taifex_opt_TXO_$k", "callsAndPutsDateDown", "TXO"))) {
             $out = Join-Path $Raw "$($job[0]).csv"
