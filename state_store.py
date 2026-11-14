@@ -750,6 +750,21 @@ class StateStore:
             logger.warning(f"read_meta({key}): {e}")
             return ("error", None)
 
+    def prune_meta_prefix(self, prefix: str, older_than_days: int) -> int:
+        """刪除 key 以 prefix 開頭、且 updated_at 早於 N 天前的 meta 列，回傳刪除筆數。
+        2026-11-14 記憶體／磁碟稽核：finmind_data 的持久快取鍵（fm:<雜湊>）含查詢起日，短 TTL 的鍵
+        每天換新、長 TTL 的鍵每月換新——超過一個多月沒更新的鍵之後不可能再被讀到。"""
+        if not prefix or older_than_days < 7:
+            return 0          # 防呆：不允許空前綴或過短期限
+        cut = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat()
+        try:
+            with self._conn() as conn:
+                cur = conn.execute("DELETE FROM meta WHERE key LIKE ? AND updated_at < ?", (prefix + "%", cut))
+                return int(getattr(cur, "rowcount", 0) or 0)
+        except Exception as e:
+            logger.warning(f"prune_meta_prefix({prefix}): {e}")
+            return 0
+
     def set_meta(self, key: str, value: Any) -> bool:
         """寫入 meta。★ F-07（2026-11-04）：改為回傳是否成功，讓關鍵資料（如每日虧損）
         的呼叫端能得知寫入失敗、不把失敗當成功；既有忽略回傳值的呼叫端行為不變。"""
@@ -1090,13 +1105,20 @@ class StateStore:
             logger.warning(f"get_inst_dates: {e}")
             return []
 
-    def get_inst_since(self, min_date: str) -> List[Dict]:
+    def get_inst_since(self, min_date: str, code: Optional[str] = None) -> List[Dict]:
+        """code 有給時只讀那一檔（2026-11-14 記憶體稽核：個股頁原本每次讀全市場 20 天約 2.6 萬列、約 13MB 再於 Python 篩選）。"""
         try:
             with self._conn() as conn:
-                rows = conn.execute(
-                    "SELECT trade_date,code,name,foreign_net,trust_net,total_net FROM inst_daily "
-                    "WHERE trade_date>=? ORDER BY trade_date", (min_date,)
-                ).fetchall()
+                if code:
+                    rows = conn.execute(
+                        "SELECT trade_date,code,name,foreign_net,trust_net,total_net FROM inst_daily "
+                        "WHERE trade_date>=? AND code=? ORDER BY trade_date", (min_date, str(code))
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT trade_date,code,name,foreign_net,trust_net,total_net FROM inst_daily "
+                        "WHERE trade_date>=? ORDER BY trade_date", (min_date,)
+                    ).fetchall()
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning(f"get_inst_since: {e}")

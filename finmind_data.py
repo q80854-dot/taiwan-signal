@@ -44,7 +44,7 @@ _token_bad_until = 0.0                      # token 被拒時，暫時改用免�
 _blocked_until = 0.0                        # 被 FinMind 回報額度用完／維護時，暫停到這個時間
 _stats = {"calls": 0, "cache_hits": 0, "errors": 0, "last_error": None, "last_ok": None, "last_http": None, "auth": None}
 _POOL = ThreadPoolExecutor(max_workers=5)
-_MAX_CACHE = 800
+_MAX_CACHE = 250   # 2026-11-14 記憶體稽核：存的是原始列（一檔約 1.3MB），800 筆估 60–100MB；DB 另有持久快取可回填
 _FIN_DAYS = 1500                              # 三張財報共用同一個查詢區間（約 16 季），才會命中同一份快取、不多吃額度
 
 # 各資料的快取秒數：盤後資料一天才變一次，不必頻繁問；新聞與當日籌碼短一點。

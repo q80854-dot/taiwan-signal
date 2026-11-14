@@ -150,6 +150,17 @@ def job_report_boot_catchup():
     except Exception as e:
         logger.error(f"job_report_boot_catchup: {e}", exc_info=True)
 
+def job_prune_finmind_persist():
+    """每週清理 meta 表裡 finmind_data 持久快取（fm:<雜湊>）中 40 天以上沒更新的鍵。
+    鍵含查詢起日：短 TTL 每天換新鍵、長 TTL 每月換新鍵，舊鍵只佔資料庫空間、永遠不會再被讀。"""
+    try:
+        from state_store import store
+        n = store.prune_meta_prefix("fm:", 40)
+        logger.info(f"job_prune_finmind_persist: 清除 {n} 筆過期的 FinMind 持久快取")
+    except Exception as e:
+        logger.warning(f"job_prune_finmind_persist: {e}")
+
+
 def job_rescale_open_once():
     """2026-10-28 使用者要求：把舊規則（單檔 30%）開出的追蹤部位，依新規則（單檔 ≤ 資金÷持倉上限、
     成本合計 ≤ 資金、組合風險 ≤ 6%）縮小股數。只執行一次（meta 旗標），並留下前後對照紀錄與系統通知。"""
@@ -1059,6 +1070,9 @@ def setup_scheduler():
     scheduler.add_job(job_daily_scan,       CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="daily_scan",       replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     scheduler.add_job(job_scan_watchdog,    CronTrigger(hour=17, minute=0,  day_of_week="mon-fri", timezone=TZ_TAIPEI), id="scan_watchdog",   replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
     scheduler.add_job(job_collect_inst, CronTrigger(hour="17,19", minute=40, day_of_week="mon-fri", timezone=TZ_TAIPEI), id="collect_inst", replace_existing=True, misfire_grace_time=3600, coalesce=True, max_instances=1)
+    # 2026-11-14 記憶體／磁碟稽核：每週清一次 FinMind 持久快取中 40 天以上沒更新的鍵（之後不可能再被讀到）
+    scheduler.add_job(job_prune_finmind_persist, CronTrigger(day_of_week="sun", hour=3, minute=23, timezone=TZ_TAIPEI),
+                      id="prune_finmind_persist", replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=6 * 3600)
     scheduler.add_job(lambda: logger.debug("❤️ 心跳"), "interval", hours=1, id="heartbeat")
     # ★ 2026-11-05：全域排程錯誤告警——任何排程工作拋出未捕捉例外都主動 Telegram 通知站主
     # （_on_job_error 內建去重，30 分鐘同類只一則）。補上「只有自己 try/except 的工作才會通知」的缺口。
@@ -3327,6 +3341,11 @@ def _long_history(t):
         d["quality"] = {"bars": len(d["dates"]), "bad_ohlc": bad, "zero_volume": sum(1 for v in d["volumes"] if v == 0),
                         "source": "Yahoo Finance 日線（還原價，已含除權息調整）" + (f"；最新 {n_fm} 根由 FinMind 補上" if n_fm else "")}
         _long_hist_cache[t] = (_t.time(), d)
+        # 2026-11-14 記憶體稽核：每檔約 288KB、原本永不刪除——清掉過期的，最多留 40 檔
+        for _k in [k for k, v in list(_long_hist_cache.items()) if _t.time() - v[0] >= 1800]:
+            _long_hist_cache.pop(_k, None)
+        while len(_long_hist_cache) > 40:
+            _long_hist_cache.pop(min(_long_hist_cache, key=lambda k: _long_hist_cache[k][0]), None)
         return d
     except Exception as e:
         logger.warning(f"_long_history {t}: {e}")
@@ -3497,7 +3516,7 @@ def api_instrument(ticker: str):
         from state_store import store as _st3
         dates = _st3.get_inst_dates(limit=20)
         if dates:
-            rows = [r for r in _st3.get_inst_since(dates[-1]) if r.get("code") == code]
+            rows = [r for r in _st3.get_inst_since(dates[-1], code=code) if r.get("code") == code]
             seq = [{"date": r["trade_date"], "foreign": r["foreign_net"], "trust": r["trust_net"],
                     "dealer": (r["total_net"] or 0) - (r["foreign_net"] or 0) - (r["trust_net"] or 0),
                     "total": r["total_net"]} for r in sorted(rows, key=lambda r: r["trade_date"], reverse=True)]

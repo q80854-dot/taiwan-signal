@@ -1138,11 +1138,18 @@ def get_stock_info(ticker: str) -> Optional[Dict]:
 def get_stock_info_any(ticker: str) -> Optional[Dict]:
     """★ 新增：2026-09-29——查全部上市櫃股票（不受掃描池門檻限制），供個股
     研究頁查詢用。跟 get_stock_info() 的差別只在資料來源：這個查
-    build_full_universe()。"""
-    for s in build_full_universe():
-        if s["ticker"] == ticker:
-            return s
-    return None
+    build_full_universe()。
+    ★ 2026-11-14 記憶體稽核：原本每次查一檔都重建並排序全市場約 2000 筆 dict；改為 60 秒內共用一份
+    「代號→資料」索引（全市場資料本身的更新週期遠長於此，不影響正確性）。"""
+    global _ANY_IDX
+    now = time.time()
+    src = build_full_universe
+    if _ANY_IDX is None or now - _ANY_IDX[0] > 60 or _ANY_IDX[2] is not src:
+        _ANY_IDX = (now, {s["ticker"]: s for s in src()}, src)
+    return _ANY_IDX[1].get(ticker)
+
+
+_ANY_IDX = None
 
 def get_sector_stocks(sector: str) -> List[str]:
     return [s["ticker"] for s in build_universe() if s.get("sector") == sector]
